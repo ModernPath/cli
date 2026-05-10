@@ -1,0 +1,113 @@
+# Release workflow for ModernPath CLI
+#
+# Triggered when a tag like v0.1.0 is pushed:
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# This workflow:
+# 1. Builds binaries for all platforms
+# 2. Creates tar.gz archives
+# 3. Generates SHA256 checksums
+# 4. Creates a GitHub release with all artifacts
+# 5. Triggers the homebrew-tap update workflow
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          BINARY_NAME="modernpath"
+
+          mkdir -p dist
+
+          # Build for each platform
+          platforms=(
+            "darwin/amd64"
+            "darwin/arm64"
+            "linux/amd64"
+            "linux/arm64"
+            "windows/amd64"
+          )
+
+          for platform in "${platforms[@]}"; do
+            IFS='/' read -r os arch <<< "$platform"
+
+            binary="${BINARY_NAME}"
+            if [ "$os" = "windows" ]; then
+              binary="${BINARY_NAME}.exe"
+            fi
+
+            echo "Building ${os}/${arch}..."
+            GOOS=$os GOARCH=$arch go build \
+              -ldflags="-s -w -X github.com/modernpath/cli/cmd.Version=${VERSION}" \
+              -o "dist/${binary}" .
+
+            # Create archive
+            archive_name="${BINARY_NAME}-${os}-${arch}"
+            if [ "$os" = "windows" ]; then
+              (cd dist && zip "${archive_name}.zip" "${binary}")
+              rm "dist/${binary}"
+            else
+              (cd dist && tar -czf "${archive_name}.tar.gz" "${binary}")
+              rm "dist/${binary}"
+            fi
+          done
+
+      - name: Generate checksums
+        id: checksums
+        run: |
+          cd dist
+
+          # Generate checksums file
+          sha256sum * > checksums.txt
+
+          # Extract individual checksums for homebrew
+          echo "DARWIN_ARM64=$(sha256sum modernpath-darwin-arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "DARWIN_AMD64=$(sha256sum modernpath-darwin-amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "LINUX_ARM64=$(sha256sum modernpath-linux-arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "LINUX_AMD64=$(sha256sum modernpath-linux-amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+
+      - name: Update Homebrew Tap
+        if: ${{ !contains(github.ref, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh workflow run update-formula.yml \
+            -R modernpath/homebrew-tap \
+            -f version=${{ steps.version.outputs.VERSION }} \
+            -f darwin_arm64_sha256=${{ steps.checksums.outputs.DARWIN_ARM64 }} \
+            -f darwin_amd64_sha256=${{ steps.checksums.outputs.DARWIN_AMD64 }} \
+            -f linux_arm64_sha256=${{ steps.checksums.outputs.LINUX_ARM64 }} \
+            -f linux_amd64_sha256=${{ steps.checksums.outputs.LINUX_AMD64 }}

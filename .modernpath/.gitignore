@@ -1,0 +1,3 @@
+# ModernPath CLI - ignore sensitive files
+auth.json
+*.log
