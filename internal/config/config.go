@@ -16,14 +16,24 @@ const (
 
 // Config holds the project-level configuration
 type Config struct {
-	APIURL         string `json:"api_url"`
-	SystemID       int    `json:"system_id,omitempty"`
-	SystemName     string `json:"system_name,omitempty"`
-	SystemSlug     string `json:"system_slug,omitempty"`
-	InitiativeID   int    `json:"initiative_id,omitempty"`
-	InitiativeName string `json:"initiative_name,omitempty"`
-	LastSyncAt     string `json:"last_sync_at,omitempty"`
-	AutoSync       bool   `json:"auto_sync,omitempty"`
+	APIURL             string             `json:"api_url"`
+	SystemID           int                `json:"system_id,omitempty"`
+	SystemName         string             `json:"system_name,omitempty"`
+	SystemSlug         string             `json:"system_slug,omitempty"`
+	InitMode           string             `json:"init_mode,omitempty"`
+	WorkspaceMembers   []WorkspaceMember  `json:"workspace_members,omitempty"`
+	InitiativeID       int                `json:"initiative_id,omitempty"`
+	InitiativeName     string             `json:"initiative_name,omitempty"`
+	LastSyncAt         string             `json:"last_sync_at,omitempty"`
+	AutoSync           bool               `json:"auto_sync,omitempty"`
+}
+
+// WorkspaceMember binds a platform workspace member slug to a local checkout folder.
+type WorkspaceMember struct {
+	Slug        string `json:"slug"`
+	FullName    string `json:"full_name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	LocalPath   string `json:"local_path,omitempty"`
 }
 
 // legacyConfig is used only for reading old config files that use architecture_* keys.

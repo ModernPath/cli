@@ -64,13 +64,23 @@ func DoAuthenticatedPostRaw(url string, body io.Reader, timeout time.Duration) (
 
 // System represents a ModernPath system
 type System struct {
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
-	Slug       string `json:"slug"`
-	Description string `json:"description"`
-	SystemType string `json:"system_type"`
-	Status     string `json:"status"`
-	AISummary  string `json:"ai_summary"`
+	ID              int                `json:"id"`
+	Name            string             `json:"name"`
+	Slug            string             `json:"slug"`
+	Description     string             `json:"description"`
+	SystemType      string             `json:"system_type"`
+	ArchitectureType string            `json:"architecture_type"`
+	Status          string             `json:"status"`
+	AISummary       string             `json:"ai_summary"`
+	AnalysisMode    string             `json:"analysis_mode"`
+	WorkspaceMembers []WorkspaceMember `json:"workspace_members"`
+}
+
+// WorkspaceMember describes one repository in a unified workspace system.
+type WorkspaceMember struct {
+	Slug        string `json:"slug"`
+	FullName    string `json:"full_name"`
+	DisplayName string `json:"display_name"`
 }
 
 // Client is the ModernPath API client
@@ -158,6 +168,12 @@ func (c *Client) ListSystems() ([]System, error) {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	for i := range systems {
+		if systems[i].SystemType == "" {
+			systems[i].SystemType = systems[i].ArchitectureType
+		}
+	}
+
 	return systems, nil
 }
 
@@ -176,6 +192,10 @@ func (c *Client) GetSystem(id int) (*System, error) {
 	var sys System
 	if err := json.NewDecoder(resp.Body).Decode(&sys); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if sys.SystemType == "" {
+		sys.SystemType = sys.ArchitectureType
 	}
 
 	return &sys, nil

@@ -15,6 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type initFinalizeOptions struct {
+	force           bool
+	initMode        string
+	localRepos      []localGitRepo
+	platformMembers []api.WorkspaceMember
+}
+
 var (
 	systemIDFlag    int
 	systemNameFlag  string
@@ -49,7 +56,6 @@ func init() {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	// Check if already initialized
 	if config.IsInitialized() && !force {
 		cfg, _ := config.ReadConfig()
 		printWarning("Already initialized with system: %s\n", cfg.SystemName)
@@ -57,7 +63,26 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Get API URL
+	client, baseURL, err := connectInitClient()
+	if err != nil {
+		return err
+	}
+
+	systems, err := client.ListSystems()
+	if err != nil {
+		printError("Failed to list systems: %v\n", err)
+		return err
+	}
+
+	selectedSystem, err := resolveSingleRepoSystemSelection(client, systems)
+	if err != nil {
+		return err
+	}
+
+	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{force: force, initMode: "repo"})
+}
+
+func connectInitClient() (*api.Client, string, error) {
 	baseURL := apiURL
 	if baseURL == "" {
 		if initLocal {
@@ -74,67 +99,51 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	printInfo("Connecting to ModernPath at %s...\n", baseURL)
 
-	// Load auth token if available
 	auth, _ := config.ReadAuth()
 	token := ""
 	if auth != nil {
 		token = auth.Token
 	}
 
-	// Create API client
 	client := api.NewClient(baseURL, token)
 
-	// Health check
 	if err := client.HealthCheck(); err != nil {
 		printError("Cannot connect to ModernPath: %v\n", err)
 		printInfo("Make sure the ModernPath server is running\n")
-		return err
+		return nil, "", err
 	}
 
 	printSuccess("Connected to ModernPath\n")
+	return client, baseURL, nil
+}
 
-	// List systems
-	systems, err := client.ListSystems()
-	if err != nil {
-		printError("Failed to list systems: %v\n", err)
-		return err
-	}
-
-	// Select system
-	var selectedSystem *api.System
-
+func resolveSingleRepoSystemSelection(client *api.Client, systems []api.System) (*api.System, error) {
 	if systemIDFlag > 0 {
-		// Find by ID
 		for i := range systems {
 			if systems[i].ID == systemIDFlag {
-				selectedSystem = &systems[i]
-				break
+				selected := systems[i]
+				return &selected, nil
 			}
 		}
-		if selectedSystem == nil {
-			printError("System with ID %d not found\n", systemIDFlag)
-			return fmt.Errorf("system not found")
-		}
-	} else if systemNameFlag != "" {
-		// Find by name (partial match)
-		for i := range systems {
-			if strings.Contains(strings.ToLower(systems[i].Name), strings.ToLower(systemNameFlag)) {
-				selectedSystem = &systems[i]
-				break
-			}
-		}
-		if selectedSystem == nil {
-			printError("System matching '%s' not found\n", systemNameFlag)
-			return fmt.Errorf("system not found")
-		}
-	} else {
-		// Interactive selection (includes "+ New project" option)
-		selectedSystem, err = selectSystem(client, systems)
-		if err != nil {
-			return err
-		}
+		printError("System with ID %d not found\n", systemIDFlag)
+		return nil, fmt.Errorf("system not found")
 	}
 
+	if systemNameFlag != "" {
+		for i := range systems {
+			if strings.Contains(strings.ToLower(systems[i].Name), strings.ToLower(systemNameFlag)) {
+				selected := systems[i]
+				return &selected, nil
+			}
+		}
+		printError("System matching '%s' not found\n", systemNameFlag)
+		return nil, fmt.Errorf("system not found")
+	}
+
+	return selectSystem(client, systems)
+}
+
+func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.System, opts initFinalizeOptions) error {
 	fmt.Printf("\n")
 	printInfo("Selected: %s\n", selectedSystem.Name)
 	if selectedSystem.Description != "" {
@@ -142,7 +151,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\n")
 
-	// Download export
 	printInfo("Downloading documentation and analysis data...\n")
 
 	zipData, err := client.DownloadExport(selectedSystem.ID)
@@ -153,22 +161,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	printSuccess("Downloaded %d bytes\n", len(zipData))
 
-	// For --force re-inits, clear the selected system export tree first.
-	// Otherwise stale files/folders from previous layouts remain visible
-	// (e.g. old module angle subfolders after flattening behavior changes).
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 
-	if force {
+	if opts.force {
 		if err := cleanSystemExport(cwd, selectedSystem.Slug); err != nil {
 			printError("Failed to clean existing export: %v\n", err)
 			return err
 		}
 	}
 
-	// Extract zip
 	printInfo("Extracting to .modernpath/...\n")
 
 	if err := extractZip(zipData); err != nil {
@@ -176,12 +180,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Save config
 	cfg := &config.Config{
-		APIURL:           baseURL,
+		APIURL:     baseURL,
 		SystemID:   selectedSystem.ID,
 		SystemName: selectedSystem.Name,
 		SystemSlug: selectedSystem.Slug,
+		InitMode:   opts.initMode,
+	}
+
+	if opts.initMode == "workspace" {
+		cfg.WorkspaceMembers = buildWorkspaceConfigMembers(opts.localRepos, opts.platformMembers)
 	}
 
 	if err := config.WriteConfig(cfg); err != nil {
@@ -189,7 +197,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Add .modernpath/ to .gitignore
 	if err := addToGitignore(cwd); err != nil {
 		printWarning("Could not update .gitignore: %v\n", err)
 	} else {
@@ -197,13 +204,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\n")
-	printSuccess("ModernPath initialized!\n")
+	if opts.initMode == "workspace" {
+		printSuccess("ModernPath workspace initialized!\n")
+	} else {
+		printSuccess("ModernPath initialized!\n")
+	}
 	fmt.Printf("\n")
 	fmt.Println("Available commands:")
 	fmt.Println("  modernpath search <query>   Search documentation")
 	fmt.Println("  modernpath ask <query> --format=json  Build context for AI")
 	fmt.Println("  modernpath review           Review git changes")
-	fmt.Println("  modernpath sync             Update from platform")
+	fmt.Println("  modernpath docs sync        Update from platform")
 	fmt.Println("  modernpath status           Show current status")
 	fmt.Printf("\n")
 

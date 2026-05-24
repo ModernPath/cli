@@ -32,6 +32,12 @@ platforms=(
 for platform in "${platforms[@]}"; do
     IFS='/' read -r os arch suffix <<< "$platform"
     
+    # Skip Windows builds if zip is not available (e.g., in Docker)
+    if [ "$os" = "windows" ] && ! command -v zip &> /dev/null; then
+        echo "Skipping ${os}/${arch} (zip not available)..."
+        continue
+    fi
+    
     binary_name="${BINARY_NAME}${suffix}"
     archive_name="${BINARY_NAME}-${os}-${arch}"
     
