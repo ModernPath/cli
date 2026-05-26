@@ -268,7 +268,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	// Create project folder (unless --in-place)
 	projectDir := "."
-	slug := slugify(name)
+	slug := config.Slugify(name)
 	
 	if !inPlace {
 		projectDir = slug
@@ -731,16 +731,7 @@ func buildProjectOverview(arch *SystemResult) string {
 }
 
 func slugify(name string) string {
-	slug := strings.ToLower(name)
-	slug = strings.ReplaceAll(slug, " ", "-")
-	// Remove non-alphanumeric except hyphens
-	var result strings.Builder
-	for _, r := range slug {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			result.WriteRune(r)
-		}
-	}
-	return strings.Trim(result.String(), "-")
+	return config.Slugify(name)
 }
 
 // Helper to get current directory name

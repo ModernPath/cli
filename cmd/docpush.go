@@ -21,7 +21,7 @@ type docPushManifest struct {
 
 func modernpathReservedTopDir(name string) bool {
 	switch strings.ToLower(name) {
-	case "viewer", "memories", "specs", "artifacts", "organization", "patterns", "workflows", "scripts", "datamodel":
+	case "viewer", "memories", "specs", "tasks", "artifacts", "organization", "patterns", "workflows", "scripts", "datamodel":
 		return true
 	default:
 		return false

@@ -48,15 +48,7 @@ var workStatusCmd = &cobra.Command{
 	RunE:  runWorkStatus,
 }
 
-// work tasks - List tasks for current epic (was: work epics)
-var workTasksCmd = &cobra.Command{
-	Use:   "tasks [epic_id]",
-	Short: "List tasks for an epic",
-	Long:  `List all tasks for an epic. Uses the current epic from config if no ID provided.`,
-	RunE:  runWorkTasks,
-}
-
-// work subtasks - List subtasks for a task (was: work tasks)
+// work subtasks - List subtasks for a task
 var workSubtasksCmd = &cobra.Command{
 	Use:   "subtasks <task_id>",
 	Short: "List subtasks for a task",
@@ -119,7 +111,7 @@ var workSpecsGenerateCmd = &cobra.Command{
 
 var workSpecsSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Download specifications to local .modernpath/specs/ folder",
+	Short: "Download specifications to the active epic folder under .modernpath/tasks/",
 	RunE:  runWorkSpecsSync,
 }
 
@@ -133,6 +125,23 @@ var (
 	workNewType string
 )
 
+// workInitiative mirrors GET /api/work/initiatives list items (Initiative schema uses "title", not "name").
+type workInitiative struct {
+	ID            int    `json:"id"`
+	Title         string `json:"title"`
+	Name          string `json:"name"` // legacy alias; prefer Title
+	Status        string `json:"status"`
+	WorkflowPhase string `json:"workflow_phase"`
+	ProjectType   string `json:"project_type"`
+}
+
+func (i workInitiative) displayTitle() string {
+	if i.Title != "" {
+		return i.Title
+	}
+	return i.Name
+}
+
 func init() {
 	rootCmd.AddCommand(workCmd)
 	
@@ -140,7 +149,6 @@ func init() {
 	workCmd.AddCommand(workListCmd)
 	workCmd.AddCommand(workSelectCmd)
 	workCmd.AddCommand(workStatusCmd)
-	workCmd.AddCommand(workTasksCmd)
 	workCmd.AddCommand(workSubtasksCmd)
 	workCmd.AddCommand(workNewCmd)
 	workCmd.AddCommand(workDeriveCmd)
@@ -184,13 +192,7 @@ func runWorkList(cmd *cobra.Command, args []string) error {
 	}
 
 	var result struct {
-		Data []struct {
-			ID            int    `json:"id"`
-			Name          string `json:"name"`
-			Status        string `json:"status"`
-			WorkflowPhase string `json:"workflow_phase"`
-			ProjectType   string `json:"project_type"`
-		} `json:"data"`
+		Data []workInitiative `json:"data"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -213,9 +215,9 @@ func runWorkList(cmd *cobra.Command, args []string) error {
 			marker := "  "
 			if epic.ID == cfg.InitiativeID {
 				marker = "→ "
-				cyan.Printf("%s[%d] %s\n", marker, epic.ID, epic.Name)
+				cyan.Printf("%s[%d] %s\n", marker, epic.ID, epic.displayTitle())
 			} else {
-				fmt.Printf("%s[%d] %s\n", marker, epic.ID, epic.Name)
+				fmt.Printf("%s[%d] %s\n", marker, epic.ID, epic.displayTitle())
 			}
 			fmt.Printf("      Status: %s | Phase: %s\n", epic.Status, epic.WorkflowPhase)
 		}
@@ -253,13 +255,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 	}
 
 	var result struct {
-		Data []struct {
-			ID            int    `json:"id"`
-			Name          string `json:"name"`
-			Status        string `json:"status"`
-			WorkflowPhase string `json:"workflow_phase"`
-			ProjectType   string `json:"project_type"`
-		} `json:"data"`
+		Data []workInitiative `json:"data"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -281,7 +277,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 		found := false
 		for _, epic := range result.Data {
 			if epic.ID == selectedID {
-				selectedName = epic.Name
+				selectedName = epic.displayTitle()
 				selectedProjectType = epic.ProjectType
 				found = true
 				break
@@ -299,10 +295,10 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 				marker = "→ "
 			}
 			typeLabel := ""
-			if epic.ProjectType == "transformation" {
+			if epic.ProjectType == "transformation" || epic.ProjectType == "transform" {
 				typeLabel = " [TRANSFORM]"
 			}
-			items[i] = fmt.Sprintf("%s[%d] %s%s - %s (%s)", marker, epic.ID, epic.Name, typeLabel, epic.Status, epic.WorkflowPhase)
+			items[i] = fmt.Sprintf("%s[%d] %s%s - %s (%s)", marker, epic.ID, epic.displayTitle(), typeLabel, epic.Status, epic.WorkflowPhase)
 		}
 
 		prompt := promptui.Select{
@@ -317,27 +313,33 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 		}
 
 		selectedID = result.Data[idx].ID
-		selectedName = result.Data[idx].Name
+		selectedName = result.Data[idx].displayTitle()
 		selectedProjectType = result.Data[idx].ProjectType
 	}
 
 	cfg.InitiativeID = selectedID
 	cfg.InitiativeName = selectedName
 
+	fmt.Println()
+	printInfo("Syncing specifications for epic [%d]...\n", selectedID)
+	specsRelPath, err := syncSpecs(cfg.APIURL, selectedID, selectedName)
+	if err != nil {
+		printWarning("Failed to sync specs: %v\n", err)
+	} else {
+		cfg.InitiativeSpecsDir = specsRelPath
+		printSuccess("Specifications synced to .modernpath/%s/\n", specsRelPath)
+	}
+
 	if err := config.WriteConfig(cfg); err != nil {
 		printError("Failed to save config: %v\n", err)
 		return err
 	}
 
-	fmt.Println()
-	printInfo("Syncing specifications for epic [%d]...\n", selectedID)
-	if err := syncSpecs(cfg.APIURL, selectedID); err != nil {
-		printWarning("Failed to sync specs: %v\n", err)
-	} else {
-		printSuccess("Specifications synced to .modernpath/specs/\n")
+	if err := fetchTasksForInitiative(cfg, selectedID); err != nil {
+		printWarning("Failed to fetch task context: %v\n", err)
 	}
 
-	if selectedProjectType == "transformation" {
+	if selectedProjectType == "transformation" || selectedProjectType == "transform" {
 		fmt.Println()
 		printInfo("Transformation epic detected - syncing source files...\n")
 		if err := autoSyncTransformFiles(cfg, selectedID); err != nil {
@@ -435,88 +437,6 @@ func runWorkStatus(cmd *cobra.Command, args []string) error {
 		taskResp.Body.Close()
 	}
 
-	return nil
-}
-
-func runWorkTasks(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadConfig()
-	if err != nil {
-		printError("Failed to read config: %v\n", err)
-		return err
-	}
-
-	var epicID int
-	if len(args) > 0 {
-		fmt.Sscanf(args[0], "%d", &epicID)
-	} else if cfg.InitiativeID > 0 {
-		epicID = cfg.InitiativeID
-	} else {
-		printError("No epic ID provided and none configured.\n")
-		printInfo("Usage: modernpath work tasks [epic_id]\n")
-		return nil
-	}
-
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/epics", cfg.APIURL, epicID)
-
-	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
-	if err != nil {
-		printError("Failed to connect: %v\n", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		printError("API error: %s - %s\n", resp.Status, string(body))
-		return nil
-	}
-
-	var result struct {
-		Data []struct {
-			ID          string      `json:"id"`
-			Code        string      `json:"code"`
-			Name        string      `json:"name"`
-			Status      string      `json:"status"`
-			Priority    interface{} `json:"priority"`
-			StoryPoints int         `json:"story_points"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		printError("Failed to parse response: %v\n", err)
-		return err
-	}
-
-	bold := color.New(color.Bold)
-	green := color.New(color.FgGreen)
-	yellow := color.New(color.FgYellow)
-
-	fmt.Println()
-	bold.Printf("Tasks for Epic %d\n", epicID)
-	fmt.Println("─────────────────────────────────────────")
-
-	if len(result.Data) == 0 {
-		fmt.Println("No tasks found.")
-		printInfo("Run 'modernpath work specs generate' to create specifications first,\n")
-		printInfo("then run 'modernpath work derive' to create tasks.\n")
-	} else {
-		for _, task := range result.Data {
-			statusColor := color.New(color.FgWhite)
-			switch task.Status {
-			case "done":
-				statusColor = green
-			case "in_progress":
-				statusColor = yellow
-			}
-
-			fmt.Printf("[%s] %s\n", task.Code, task.Name)
-			fmt.Printf("      ID: %s | Status: ", task.ID)
-			statusColor.Printf("%s", task.Status)
-			fmt.Printf(" | Points: %d\n", task.StoryPoints)
-		}
-	}
-
-	fmt.Println()
 	return nil
 }
 
@@ -675,6 +595,7 @@ func runWorkNew(cmd *cobra.Command, args []string) error {
 			} `json:"idea"`
 			Initiative struct {
 				ID            int    `json:"id"`
+				Title         string `json:"title"`
 				Name          string `json:"name"`
 				Goal          string `json:"goal"`
 				Status        string `json:"status"`
@@ -690,7 +611,12 @@ func runWorkNew(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	printSuccess("Epic created!\n")
 	fmt.Println()
-	fmt.Printf("  📋 Epic: %s\n", result.Data.Initiative.Name)
+	initiativeTitle := result.Data.Initiative.Title
+	if initiativeTitle == "" {
+		initiativeTitle = result.Data.Initiative.Name
+	}
+
+	fmt.Printf("  📋 Epic: %s\n", initiativeTitle)
 	fmt.Printf("     ID: %d | Status: %s | Phase: %s\n",
 		result.Data.Initiative.ID,
 		result.Data.Initiative.Status,
@@ -698,7 +624,8 @@ func runWorkNew(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	cfg.InitiativeID = result.Data.Initiative.ID
-	cfg.InitiativeName = result.Data.Initiative.Name
+	cfg.InitiativeName = initiativeTitle
+	cfg.InitiativeSpecsDir = config.InitiativeSpecsRelPath(result.Data.Initiative.ID, initiativeTitle)
 	if err := config.WriteConfig(cfg); err != nil {
 		printWarning("Failed to update config: %v\n", err)
 	} else {
@@ -791,7 +718,7 @@ func runWorkDerive(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  ⏱️  Duration: %s\n", elapsed.Round(time.Second))
 	fmt.Println()
 	printInfo("Next steps:\n")
-	fmt.Println("  List tasks: modernpath work tasks")
+	fmt.Println("  List tasks: modernpath tasks list")
 	fmt.Println("  Start implementing: modernpath dev task")
 
 	return nil
@@ -871,14 +798,20 @@ func runWorkSpecsSync(cmd *cobra.Command, args []string) error {
 	printInfo("Syncing specifications for epic %d...\n", cfg.InitiativeID)
 	fmt.Println()
 
-	if err := syncSpecs(cfg.APIURL, cfg.InitiativeID); err != nil {
+	specsRelPath, err := syncSpecs(cfg.APIURL, cfg.InitiativeID, cfg.InitiativeName)
+	if err != nil {
 		printError("Failed to sync specs: %v\n", err)
 		return err
 	}
 
+	cfg.InitiativeSpecsDir = specsRelPath
+	if err := config.WriteConfig(cfg); err != nil {
+		printWarning("Failed to update config: %v\n", err)
+	}
+
 	printSuccess("Specifications synced successfully!\n")
 	fmt.Println()
-	printInfo("Specifications are now available in: .modernpath/specs/\n")
+	printInfo("Specifications are now available in: .modernpath/%s/\n", specsRelPath)
 
 	return nil
 }
@@ -903,7 +836,13 @@ func runWorkSpecsPush(cmd *cobra.Command, args []string) error {
 	printInfo("Pushing specifications for epic %d...\n", cfg.InitiativeID)
 	fmt.Println()
 
-	count, err := pushSpecs(baseURL, cfg.InitiativeID)
+	specsDir, err := config.ResolveInitiativeSpecsDir(cfg)
+	if err != nil {
+		printError("Failed to resolve specs directory: %v\n", err)
+		return err
+	}
+
+	count, err := pushSpecs(baseURL, cfg.InitiativeID, specsDir)
 	if err != nil {
 		printError("Failed to push specs: %v\n", err)
 		return err
@@ -911,7 +850,7 @@ func runWorkSpecsPush(cmd *cobra.Command, args []string) error {
 
 	if count == 0 {
 		printWarning("No specifications found to push.\n")
-		printInfo("Make sure you have specs in .modernpath/specs/\n")
+		printInfo("Make sure you have specs in .modernpath/%s/\n", config.ResolveInitiativeSpecsRelPath(cfg))
 		return nil
 	}
 
@@ -1016,6 +955,7 @@ func generateTransformAgentsMD(cfg *config.Config, filesResp *TransformSourceFil
 	agentsCtx := &agents.TransformContext{
 		InitiativeID:     d.InitiativeID,
 		InitiativeName:   d.InitiativeName,
+		SpecsRelPath:     config.ResolveInitiativeSpecsRelPath(cfg),
 		SourceSystemID:   d.SourceSystemID,
 		TargetSystemID:   d.TargetSystemID,
 		SourceSystemName: fmt.Sprintf("Source System %d", d.SourceSystemID),
@@ -1036,11 +976,13 @@ func generateTransformAgentsMD(cfg *config.Config, filesResp *TransformSourceFil
 		}
 	}
 
-	specsDir := ".modernpath/specs"
-	if entries, err := os.ReadDir(specsDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				agentsCtx.SpecCategories = append(agentsCtx.SpecCategories, entry.Name())
+	specsDir, err := config.ResolveInitiativeSpecsDir(cfg)
+	if err == nil {
+		if entries, readErr := os.ReadDir(specsDir); readErr == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					agentsCtx.SpecCategories = append(agentsCtx.SpecCategories, entry.Name())
+				}
 			}
 		}
 	}

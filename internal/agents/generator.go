@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/modernpath/cli/internal/config"
 )
 
 // TransformContext holds all the context needed to generate modernpath_agents.md
@@ -33,6 +35,7 @@ type TransformContext struct {
 	// Specifications
 	Specs          []SpecFile
 	SpecCategories []string
+	SpecsRelPath   string
 
 	// Metadata
 	GeneratedAt string
@@ -134,7 +137,7 @@ Documentation for the **target** system you're building:
 No target documentation synced yet. Run ` + "`" + `modernpath docs sync` + "`" + ` to download.
 {{- end }}
 
-### Specifications (.modernpath/specs/)
+### Specifications (.modernpath/{{ if .SpecsRelPath }}{{ .SpecsRelPath }}{{ else }}tasks/{{ end }}/)
 
 Transformation specifications organized by category:
 
@@ -188,7 +191,7 @@ modernpath ask "What is the data flow for user login?"
 
 ## Transformation Workflow
 
-1. **Read the specs** in ` + "`" + `.modernpath/specs/` + "`" + ` to understand requirements
+1. **Read the specs** in ` + "`" + `.modernpath/{{ if .SpecsRelPath }}{{ .SpecsRelPath }}{{ else }}specs{{ end }}/` + "`" + ` to understand requirements
 2. **Review source docs** in ` + "`" + `.modernpath/source_docs/` + "`" + ` to understand the legacy system
 3. **Review source files** in ` + "`" + `.modernpath/source/` + "`" + ` for each item
 4. **Check target docs** under ` + "`" + `.modernpath/<system-slug>/` + "`" + ` (e.g. ` + "`" + `architecture/` + "`" + `) for target patterns
@@ -323,8 +326,18 @@ func GenerateFromManifest(manifestPath, outputPath string) error {
 		})
 	}
 
-	// Scan for specs
-	specsDir := filepath.Join(filepath.Dir(manifestPath), "..", "specs")
+	// Scan for specs in the active epic folder when available.
+	modernpathRoot := filepath.Join(filepath.Dir(manifestPath), "..")
+	specsDir := filepath.Join(modernpathRoot, "specs")
+	if cfg, cfgErr := config.ReadConfig(); cfgErr == nil && cfg.InitiativeID > 0 {
+		if resolved, resolveErr := config.ResolveInitiativeSpecsDir(cfg); resolveErr == nil {
+			specsDir = resolved
+			ctx.SpecsRelPath = config.ResolveInitiativeSpecsRelPath(cfg)
+		}
+	}
+	if ctx.SpecsRelPath == "" {
+		ctx.SpecsRelPath = "specs"
+	}
 	if entries, err := os.ReadDir(specsDir); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {

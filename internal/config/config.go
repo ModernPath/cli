@@ -24,6 +24,7 @@ type Config struct {
 	WorkspaceMembers   []WorkspaceMember  `json:"workspace_members,omitempty"`
 	InitiativeID       int                `json:"initiative_id,omitempty"`
 	InitiativeName     string             `json:"initiative_name,omitempty"`
+	InitiativeSpecsDir string             `json:"initiative_specs_dir,omitempty"`
 	LastSyncAt         string             `json:"last_sync_at,omitempty"`
 	AutoSync           bool               `json:"auto_sync,omitempty"`
 }
@@ -45,8 +46,9 @@ type legacyConfig struct {
 	SystemID         int    `json:"system_id,omitempty"`
 	SystemName       string `json:"system_name,omitempty"`
 	SystemSlug       string `json:"system_slug,omitempty"`
-	InitiativeID     int    `json:"initiative_id,omitempty"`
-	InitiativeName   string `json:"initiative_name,omitempty"`
+	InitiativeID       int    `json:"initiative_id,omitempty"`
+	InitiativeName     string `json:"initiative_name,omitempty"`
+	InitiativeSpecsDir string `json:"initiative_specs_dir,omitempty"`
 	LastSyncAt       string `json:"last_sync_at,omitempty"`
 	AutoSync         bool   `json:"auto_sync,omitempty"`
 }
@@ -148,8 +150,9 @@ func ReadConfig() (*Config, error) {
 
 	config := &Config{
 		APIURL:         legacy.APIURL,
-		InitiativeID:   legacy.InitiativeID,
-		InitiativeName: legacy.InitiativeName,
+		InitiativeID:       legacy.InitiativeID,
+		InitiativeName:     legacy.InitiativeName,
+		InitiativeSpecsDir: legacy.InitiativeSpecsDir,
 		LastSyncAt:     legacy.LastSyncAt,
 		AutoSync:       legacy.AutoSync,
 	}
@@ -177,11 +180,15 @@ func ReadConfig() (*Config, error) {
 		config.APIURL = DefaultAPIURL
 	}
 
+	config.InitiativeSpecsDir = NormalizeEpicWorkspaceRelPath(config.InitiativeSpecsDir)
+
 	return config, nil
 }
 
 // WriteConfig writes the configuration file
 func WriteConfig(config *Config) error {
+	config.InitiativeSpecsDir = NormalizeEpicWorkspaceRelPath(config.InitiativeSpecsDir)
+
 	configDir, err := GetConfigDir(true)
 	if err != nil {
 		return err

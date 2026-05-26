@@ -83,29 +83,32 @@ func runSync(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// syncSpecs downloads specs from the API and saves them to .modernpath/specs/ folder
-// It clears the existing specs folder before downloading new ones
-func syncSpecs(baseURL string, initiativeID int) error {
-	// Get config directory
+// syncSpecs downloads specs from the API and saves them to .modernpath/tasks/<id>-<slug>/<category>/.
+// Task context files live alongside those folders at the epic workspace root.
+// Returns the relative path under .modernpath.
+func syncSpecs(baseURL string, initiativeID int, initiativeTitle string) (string, error) {
 	configDir, err := config.GetConfigDir(true)
 	if err != nil {
-		return fmt.Errorf("failed to get config directory: %w", err)
+		return "", fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	// Specs directory is inside .modernpath
-	specsDir := filepath.Join(configDir, "specs")
+	specsRelPath := config.InitiativeSpecsRelPath(initiativeID, initiativeTitle)
+	specsDir := filepath.Join(configDir, filepath.FromSlash(specsRelPath))
+	tasksRoot := filepath.Join(configDir, "tasks")
 
-	// Clear existing specs if directory exists
+	if err := os.MkdirAll(tasksRoot, 0755); err != nil {
+		return "", fmt.Errorf("failed to create tasks directory: %w", err)
+	}
+
 	if _, err := os.Stat(specsDir); err == nil {
-		printInfo("Clearing existing specs...\n")
-		if err := os.RemoveAll(specsDir); err != nil {
-			printWarning("Failed to clear existing specs: %v\n", err)
+		printInfo("Clearing existing spec categories for epic [%d]...\n", initiativeID)
+		if err := config.ClearEpicSpecCategoryDirs(specsDir); err != nil {
+			printWarning("Failed to clear existing spec categories: %v\n", err)
 		}
 	}
 
-	// Create specs directory
 	if err := os.MkdirAll(specsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create specs directory: %w", err)
+		return "", fmt.Errorf("failed to create epic workspace directory: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/api/work/initiatives/%d/export-specs", baseURL, initiativeID)
@@ -113,13 +116,13 @@ func syncSpecs(baseURL string, initiativeID int) error {
 	// Use authenticated GET to include the auth token
 	resp, err := api.DoAuthenticatedGet(url, 60*time.Second)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
+		return "", fmt.Errorf("API error: %s - %s", resp.Status, string(body))
 	}
 
 	var result struct {
@@ -141,7 +144,7 @@ func syncSpecs(baseURL string, initiativeID int) error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return err
+		return "", err
 	}
 
 	// Save specs by category
@@ -150,7 +153,7 @@ func syncSpecs(baseURL string, initiativeID int) error {
 		// Create category directory
 		categoryDir := filepath.Join(specsDir, category)
 		if err := os.MkdirAll(categoryDir, 0755); err != nil {
-			return fmt.Errorf("failed to create category directory %s: %w", category, err)
+			return "", fmt.Errorf("failed to create category directory %s: %w", category, err)
 		}
 
 		for _, spec := range specs {
@@ -185,8 +188,8 @@ func syncSpecs(baseURL string, initiativeID int) error {
 		}
 	}
 
-	printInfo("Saved %d specification files to .modernpath/specs/\n", specCount)
-	return nil
+	printInfo("Saved %d specification files to .modernpath/%s/\n", specCount, specsRelPath)
+	return specsRelPath, nil
 }
 
 // pushDocs reads markdown from .modernpath/ (system exports + legacy docs/{slug}/) and uploads to the server.
@@ -376,18 +379,12 @@ func pushDocs(cfg *config.Config) (int, error) {
 	return totalImported, nil
 }
 
-// pushSpecs reads local specs from .modernpath/specs/ and uploads them to the server
-func pushSpecs(baseURL string, initiativeID int) (int, error) {
-	// Get config directory
-	configDir, err := config.GetConfigDir(true)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get config directory: %w", err)
+// pushSpecs reads local specs from the active epic folder and uploads them to the server.
+func pushSpecs(baseURL string, initiativeID int, specsDir string) (int, error) {
+	if specsDir == "" {
+		return 0, fmt.Errorf("specs directory not configured")
 	}
 
-	// Specs directory is inside .modernpath
-	specsDir := filepath.Join(configDir, "specs")
-
-	// Check if specs directory exists
 	if _, err := os.Stat(specsDir); os.IsNotExist(err) {
 		return 0, fmt.Errorf("specs directory not found: %s", specsDir)
 	}

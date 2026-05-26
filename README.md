@@ -345,7 +345,7 @@ Manage specifications for an epic.
 # Generate specifications (triggers pipeline)
 modernpath work specs generate
 
-# Download specifications to local .modernpath/specs/ folder
+# Download specifications to the active epic workspace under .modernpath/tasks/<epic-slug>/
 modernpath work specs sync
 
 # Push local specifications back to the platform
@@ -376,7 +376,8 @@ This analyzes your specifications and creates:
 
 **Note:** When you select an epic with `modernpath work select`, it automatically:
 - Updates `.modernpath/config.json` with the selected epic
-- Syncs specifications to `.modernpath/specs/` folder
+- Syncs specifications to `.modernpath/tasks/<epic-slug>/` (category subfolders)
+- Downloads task context files into the same epic folder (`.md` files at the root)
 
 ## Configuration
 
@@ -388,8 +389,12 @@ Configuration is stored in `.modernpath/`:
 ├── auth.json             # Credentials (gitignored)
 ├── {slug}.sqlite         # SQLite database
 ├── docs/                 # Markdown documentation
-└── specs/                # Specifications (synced when selecting epic)
-    └── {category}/       # Organized by category
+└── tasks/                # Epic workspaces (synced when selecting epic)
+    └── {id}-{slug}/      # One folder per epic
+        ├── architecture/ # Spec categories (subfolders)
+        ├── requirements/
+        ├── {uuid}-*.md   # Task context files (at epic root)
+        └── ...
 ```
 
 ### config.json
