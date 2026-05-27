@@ -90,6 +90,7 @@ jobs:
           echo "DARWIN_AMD64=$(sha256sum modernpath-darwin-amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           echo "LINUX_ARM64=$(sha256sum modernpath-linux-arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           echo "LINUX_AMD64=$(sha256sum modernpath-linux-amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "WINDOWS_AMD64=$(sha256sum modernpath-windows-amd64.zip | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -111,3 +112,15 @@ jobs:
             -f darwin_amd64_sha256=${{ steps.checksums.outputs.DARWIN_AMD64 }} \
             -f linux_arm64_sha256=${{ steps.checksums.outputs.LINUX_ARM64 }} \
             -f linux_amd64_sha256=${{ steps.checksums.outputs.LINUX_AMD64 }}
+
+      - name: Update Scoop bucket
+        if: ${{ !contains(github.ref, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        continue-on-error: true
+        run: |
+          gh workflow run update-formula.yml \
+            -R ModernPath/scoop-bucket \
+            -f version=${{ steps.version.outputs.VERSION }} \
+            -f windows_sha256=${{ steps.checksums.outputs.WINDOWS_AMD64 }} || \
+          echo "Scoop bucket update skipped (create ModernPath/scoop-bucket repo and re-run)"

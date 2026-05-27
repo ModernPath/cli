@@ -17,6 +17,35 @@ A portable command-line tool for working with ModernPath system documentation an
 
 ## Installation
 
+### macOS (Homebrew)
+
+```bash
+brew tap modernpath/tap
+brew install modernpath
+```
+
+### Linux (install script)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ModernPath/cli/main/scripts/install.sh | bash
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/ModernPath/cli/main/scripts/install.ps1 | iex
+modernpath --version
+```
+
+Or with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add modernpath https://github.com/ModernPath/scoop-bucket
+scoop install modernpath
+```
+
+Release artifacts: `modernpath-windows-amd64.zip` on [GitHub Releases](https://github.com/ModernPath/cli/releases).
+
 ### Build from source
 
 ```bash
