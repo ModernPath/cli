@@ -21,7 +21,8 @@ A portable command-line tool for working with ModernPath system documentation an
 
 ```bash
 brew tap modernpath/tap
-brew install modernpath
+brew trust --formula modernpath/tap/modernpath
+brew install modernpath/tap/modernpath
 ```
 
 ### Linux (install script)

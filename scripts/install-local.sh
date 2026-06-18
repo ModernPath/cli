@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VERSION="${MODERNPATH_VERSION:-0.1.2}"
+VERSION="${MODERNPATH_VERSION:-0.2.0}"
 LDFLAGS="-X github.com/modernpath/cli/cmd.Version=${VERSION}"
 
 echo "Building modernpath ${VERSION}..."
