@@ -27,6 +27,10 @@ type Config struct {
 	InitiativeSpecsDir string             `json:"initiative_specs_dir,omitempty"`
 	LastSyncAt         string             `json:"last_sync_at,omitempty"`
 	AutoSync           bool               `json:"auto_sync,omitempty"`
+	// CurrentRelease is the workspace-level release stamp factory sync sends
+	// in the batch envelope (REQ-CROSS-017). Local machine state — the tracked
+	// source of truth is process/releases.md. Set via `factory release use`.
+	CurrentRelease string `json:"current_release,omitempty"`
 }
 
 // WorkspaceMember binds a platform workspace member slug to a local checkout folder.
@@ -51,6 +55,7 @@ type legacyConfig struct {
 	InitiativeSpecsDir string `json:"initiative_specs_dir,omitempty"`
 	LastSyncAt       string `json:"last_sync_at,omitempty"`
 	AutoSync         bool   `json:"auto_sync,omitempty"`
+	CurrentRelease   string `json:"current_release,omitempty"`
 }
 
 // Auth holds authentication credentials
@@ -155,6 +160,7 @@ func ReadConfig() (*Config, error) {
 		InitiativeSpecsDir: legacy.InitiativeSpecsDir,
 		LastSyncAt:     legacy.LastSyncAt,
 		AutoSync:       legacy.AutoSync,
+		CurrentRelease: legacy.CurrentRelease,
 	}
 
 	// Use new system_* keys if present, otherwise fall back to old architecture_* keys

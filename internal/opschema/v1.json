@@ -1,0 +1,589 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://modernpath.ai/contracts/sync/v1.schema.json",
+  "title": "ModernPath workspace\u2194server sync batch (v1)",
+  "description": "The canonical sync op contract (REQ-CROSS-012, converged into the central contracts/ home per OQ-A1x USER:2026-07-28). This file is the ONE source: the server serves a byte-identical copy at GET /api/v1/sync/schema (apps/aiengine_web/priv/sync-schema/v1.json) and the modernpath CLI embeds one (tools/modernpath/internal/opschema/v1.json) \u2014 both kept in lockstep by tests. Prose form: docs/data/42-sync-contract.md. OpenAPI binding: contracts/openapi/sync-api.yaml.",
+  "x-schema-version": 1,
+  "type": "object",
+  "required": [
+    "system_id",
+    "ops"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ],
+      "description": "Absent = the pre-versioning wire shape, treated as 1. Unsupported values are rejected 422 {message, supported} before any write."
+    },
+    "system_id": {
+      "type": "integer"
+    },
+    "release": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional workspace-level release stamp (slug, e.g. modernpath-v1-09 \u2014 REQ-CROSS-017). The server resolves it once per batch (find-or-create per tenant, name = slug, status planned) and stamps release_id on every upserted requirement/epic \u2014 including hash-unchanged rows (targeted restamp; shadows/events untouched). A frozen (bundle released) or closed (released/archived) release rejects the batch 422 before any write. Absent = unscoped: existing stamps are left untouched, never nulled."
+    },
+    "ops": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/op"
+      }
+    }
+  },
+  "$defs": {
+    "op": {
+      "type": "object",
+      "required": [
+        "type",
+        "payload"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_requirement"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_requirement_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_epic"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_epic_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_gate"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_gate_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "emit_events"
+            },
+            "payload": {
+              "$ref": "#/$defs/emit_events_payload"
+            }
+          }
+        }
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/actor_kind"
+        },
+        "agent_slug": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": "integer"
+        }
+      },
+      "description": "P2: attributable actors. 'external' = a real person outside the platform (e.g. a PR author) \u2014 carries a handle in agent_slug, never a fake User row."
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "name",
+        "content_md"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": "integer"
+        },
+        "content_md": {
+          "type": "string",
+          "maxLength": 65536
+        }
+      },
+      "description": "One epic-folder spec file (REQ-CROSS-023, EPIC-SYNC-006). external_id = the workspace-relative path (e.g. epics/EPIC-SYNC-006-epics-carry-specs/specs/architecture.md), derived from the epic record path. The server maps basename \u2192 planning_artifacts artifact_type/category; content over maxLength is truncated by the builders with a loud warning."
+    },
+    "criterion": {
+      "type": "object",
+      "required": [
+        "external_id"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "position": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "criterion",
+            "scenario"
+          ]
+        },
+        "given": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "then": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "source_citations": {
+          "type": "array"
+        },
+        "verification_refs": {
+          "type": "array"
+        }
+      },
+      "description": "One of (given+then) or statement must be present. Replace-set semantics: the payload set is active; absent criteria flip to superseded, never deleted."
+    },
+    "gate_hold": {
+      "type": "object",
+      "required": [
+        "held_external_id",
+        "held_entity_type"
+      ],
+      "properties": {
+        "held_external_id": {
+          "type": "string"
+        },
+        "held_entity_type": {
+          "type": "string",
+          "enum": [
+            "requirement",
+            "epic",
+            "gate"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "work_event": {
+      "type": "object",
+      "required": [
+        "dedupe_key",
+        "occurred_at",
+        "event_type"
+      ],
+      "properties": {
+        "dedupe_key": {
+          "type": "string",
+          "description": "Idempotency handle \u2014 unique per (tenant, dedupe_key); duplicates are counted, never errors."
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_type": {
+          "$ref": "#/$defs/event_type"
+        },
+        "subject_external_id": {
+          "type": "string"
+        },
+        "subject_type": {
+          "type": "string"
+        },
+        "source_tag": {
+          "type": "string"
+        },
+        "related": {
+          "type": "array"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "origin": {
+          "$ref": "#/$defs/origin"
+        }
+      }
+    },
+    "upsert_requirement_payload": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "content_hash"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "system",
+            "user"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_status": {
+          "type": "string",
+          "enum": [
+            "PROPOSED",
+            "READY",
+            "IN_PROGRESS",
+            "IN_REVIEW",
+            "DONE",
+            "DEFERRED",
+            "BLOCKED",
+            "OBSOLETE",
+            "LOWER_VERIFIED",
+            "UPPER_VALIDATED"
+          ]
+        },
+        "source_citations": {
+          "type": "array"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        }
+      }
+    },
+    "upsert_epic_payload": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "content_hash"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "upper_loop_status": {
+          "type": "string"
+        },
+        "lower_loop_status": {
+          "type": "string"
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "specs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spec"
+          },
+          "description": "Epic-folder spec files (REQ-CROSS-023). Present iff the epic record is folder-form (\u2026/EPIC.md) \u2014 present-empty archives all sync-owned artifacts; absent (file-form epics) never touches them. Replace-set into planning_artifacts by (initiative, external_id): absent specs flip to archived, never deleted; content edits reset status to draft (approval is content-bound)."
+        },
+        "requirement_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approval": {
+          "type": "object",
+          "properties": {
+            "approved_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "basis": {
+              "type": "string"
+            },
+            "source_tag": {
+              "type": "string"
+            }
+          }
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        }
+      },
+      "description": "The board status axis is set once at creation and never overwritten by sync (design \u00a71.3)."
+    },
+    "upsert_gate_payload": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "content_hash"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "question",
+            "decision",
+            "approval_request",
+            "triage",
+            "spec_approval"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "body_md": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "description": "Gate options. REQ-PLN-048: rich options carry outcome/pros/cons/reversibility and at most one recommended flag; heuristic options carry key/label/body only.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "outcome": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "pros": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "cons": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "reversibility": {
+                "enum": [
+                  "one_way",
+                  "two_way"
+                ]
+              },
+              "recommended": {
+                "type": "boolean"
+              },
+              "recommendation_rationale": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "key"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "recommended_option_key": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "server"
+          ]
+        },
+        "origin_ref": {
+          "type": "string"
+        },
+        "opened_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "answered",
+            "dismissed"
+          ]
+        },
+        "answered_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "chosen_option_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_tag": {
+          "type": "string"
+        },
+        "answerer": {
+          "$ref": "#/$defs/actor"
+        },
+        "holds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gate_hold"
+          }
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        },
+        "brief": {
+          "type": "object",
+          "description": "EPIC-DEC-001 (REQ-PLN-047): the plain-language decision brief \u2014 the gate's primary face; body_md stays the collapsed technical layer.",
+          "properties": {
+            "what": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "why_now": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "changes_if_approved": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "risk_if_wrong": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "recommendation": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "additionalProperties": false
+        },
+        "brief_image_url": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional illustrative image URL from the image service (REQ-AGT-027)."
+        }
+      },
+      "description": "Rule S6: server wins answers \u2014 once answered on the server, sync updates content fields but never the answer block."
+    },
+    "emit_events_payload": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "events"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/work_event"
+          }
+        }
+      }
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "requirement_created",
+        "status_changed",
+        "criteria_changed",
+        "gate_opened",
+        "gate_answered",
+        "approval_granted",
+        "evidence_recorded",
+        "drift_detected",
+        "discovery_captured",
+        "commit_burst",
+        "session_heartbeat_transition",
+        "release_frozen",
+        "release_reopened",
+        "sync_applied",
+        "pr_opened",
+        "pr_merged",
+        "pr_closed"
+      ]
+    },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "workspace",
+        "server",
+        "bridge"
+      ]
+    },
+    "actor_kind": {
+      "type": "string",
+      "enum": [
+        "human",
+        "agent",
+        "system",
+        "external"
+      ]
+    }
+  }
+}

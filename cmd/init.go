@@ -23,10 +23,10 @@ type initFinalizeOptions struct {
 }
 
 var (
-	systemIDFlag    int
-	systemNameFlag  string
-	force     bool
-	initLocal bool
+	systemIDFlag   int
+	systemNameFlag string
+	force          bool
+	initLocal      bool
 )
 
 var initCmd = &cobra.Command{
@@ -153,7 +153,7 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 
 	printInfo("Downloading documentation and analysis data...\n")
 
-	zipData, err := client.DownloadExport(selectedSystem.ID)
+	zipData, err := downloadExportWithStatus(client, selectedSystem.ID)
 	if err != nil {
 		printError("Failed to download export: %v\n", err)
 		return err
@@ -219,6 +219,16 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	fmt.Printf("\n")
 
 	return nil
+}
+
+func downloadExportWithStatus(client *api.Client, systemID int) ([]byte, error) {
+	return client.DownloadExportWithProgress(systemID, func(status, progress string) {
+		if progress != "" {
+			printInfo("Export %s: %s\n", status, progress)
+			return
+		}
+		printInfo("Export %s...\n", status)
+	})
 }
 
 func selectSystem(client *api.Client, systems []api.System) (*api.System, error) {

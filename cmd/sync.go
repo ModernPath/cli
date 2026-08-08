@@ -54,7 +54,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	// Download system export
 	printInfo("Downloading system data...\n")
 
-	zipData, err := client.DownloadExport(cfg.SystemID)
+	zipData, err := downloadExportWithStatus(client, cfg.SystemID)
 	if err != nil {
 		printError("Failed to download: %v\n", err)
 		return err
@@ -331,7 +331,7 @@ func pushDocs(cfg *config.Config) (int, error) {
 
 		payload := map[string]interface{}{
 			"system_id": systemID,
-			"docs":            batch,
+			"docs":      batch,
 		}
 
 		jsonPayload, err := json.Marshal(payload)

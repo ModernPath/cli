@@ -246,7 +246,7 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 	// Download system export (documentation only, not specs)
 	printInfo("Downloading system documentation...\n")
 
-	zipData, err := client.DownloadExport(cfg.SystemID)
+	zipData, err := downloadExportWithStatus(client, cfg.SystemID)
 	if err != nil {
 		printError("Failed to download: %v\n", err)
 		return err

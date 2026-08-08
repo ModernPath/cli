@@ -15,6 +15,8 @@ import (
 
 const exportDownloadTimeout = 30 * time.Minute
 
+var exportPollInterval = 2 * time.Second
+
 // NewAuthenticatedRequest creates an HTTP request with auth token from config.
 // This is a convenience function for commands that don't use the full API client.
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
@@ -64,15 +66,15 @@ func DoAuthenticatedPostRaw(url string, body io.Reader, timeout time.Duration) (
 
 // System represents a ModernPath system
 type System struct {
-	ID              int                `json:"id"`
-	Name            string             `json:"name"`
-	Slug            string             `json:"slug"`
-	Description     string             `json:"description"`
-	SystemType      string             `json:"system_type"`
+	ID               int               `json:"id"`
+	Name             string            `json:"name"`
+	Slug             string            `json:"slug"`
+	Description      string            `json:"description"`
+	SystemType       string            `json:"system_type"`
 	ArchitectureType string            `json:"architecture_type"`
-	Status          string             `json:"status"`
-	AISummary       string             `json:"ai_summary"`
-	AnalysisMode    string             `json:"analysis_mode"`
+	Status           string            `json:"status"`
+	AISummary        string            `json:"ai_summary"`
+	AnalysisMode     string            `json:"analysis_mode"`
 	WorkspaceMembers []WorkspaceMember `json:"workspace_members"`
 }
 
@@ -209,16 +211,25 @@ type exportJobStartResponse struct {
 }
 
 type exportJobStatusResponse struct {
-	ID           string `json:"id"`
-	Status       string `json:"status"`
-	ErrorMessage string `json:"error_message"`
-	DownloadPath string `json:"download_path"`
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	ErrorMessage   string `json:"error_message"`
+	ProgressStatus string `json:"progress_status"`
+	DownloadPath   string `json:"download_path"`
 }
+
+type ExportProgressFunc func(status, progress string)
 
 // DownloadExport downloads the system export as a zip file.
 // Uses async export (POST + poll + file GET) so each HTTP call returns quickly — required when
 // a front load balancer has a low idle timeout (e.g. Hetzner Cloud ~60s).
 func (c *Client) DownloadExport(systemID int) ([]byte, error) {
+	return c.DownloadExportWithProgress(systemID, nil)
+}
+
+// DownloadExportWithProgress downloads the system export as a zip file and reports
+// status changes while the server-side export job is running.
+func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgressFunc) ([]byte, error) {
 	apiBase := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
 	startURL := fmt.Sprintf(
 		"%s/api/systems/%d/export/jobs?include_sqlite=false&include_markdown=true",
@@ -257,11 +268,13 @@ func (c *Client) DownloadExport(systemID int) ([]byte, error) {
 		return nil, fmt.Errorf("invalid start export response (missing paths)")
 	}
 
-	pollURL := apiBase + started.PollPath
+	pollPath := canonicalExportJobPath(started.PollPath, systemID, started.ID, false)
+	pollURL := apiBase + pollPath
 	deadline := time.Now().Add(exportDownloadTimeout)
 	var lastStatus string
+	var lastProgress string
 	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+		time.Sleep(exportPollInterval)
 
 		pollReq, err := http.NewRequest("GET", pollURL, nil)
 		if err != nil {
@@ -290,23 +303,47 @@ func (c *Client) DownloadExport(systemID int) ([]byte, error) {
 		if err := json.Unmarshal(pb, &st); err != nil {
 			return nil, fmt.Errorf("parse export status: %w", err)
 		}
+		if progress != nil && (st.Status != lastStatus || st.ProgressStatus != lastProgress) {
+			progress(st.Status, st.ProgressStatus)
+			lastProgress = st.ProgressStatus
+		}
 		lastStatus = st.Status
 		switch st.Status {
-		case "ready":
+		case "ready", "completed", "complete", "succeeded", "success":
 			rel := st.DownloadPath
 			if rel == "" {
 				rel = started.DownloadPath
 			}
+			rel = canonicalExportJobPath(rel, systemID, started.ID, true)
 			return c.downloadExportZipByPath(rel)
-		case "failed":
+		case "failed", "error", "cancelled", "canceled", "expired":
 			msg := strings.TrimSpace(st.ErrorMessage)
 			if msg == "" {
-				msg = "export job failed"
+				msg = fmt.Sprintf("export job ended with status %q", st.Status)
 			}
 			return nil, fmt.Errorf("export failed: %s", msg)
 		}
 	}
 	return nil, fmt.Errorf("export timed out waiting for zip (last status %q)", lastStatus)
+}
+
+func canonicalExportJobPath(path string, systemID int, jobID string, file bool) string {
+	path = strings.TrimSpace(path)
+	if path == "" || systemID == 0 || jobID == "" {
+		return path
+	}
+
+	suffix := ""
+	if file {
+		suffix = "/file"
+	}
+
+	canonical := fmt.Sprintf("/api/systems/%d/export/jobs/%s%s", systemID, jobID, suffix)
+	if strings.Contains(path, fmt.Sprintf("/export/jobs/%s%s", jobID, suffix)) {
+		return canonical
+	}
+
+	return path
 }
 
 func (c *Client) downloadExportZipByPath(path string) ([]byte, error) {
@@ -376,6 +413,13 @@ func (c *Client) downloadExportZipByPath(path string) ([]byte, error) {
 // with a non-public CA). MODERNPATH_EXPORT_STRICT_TLS=1 forces verification.
 func (c *Client) exportHTTPClientForURL(rawURL string) *http.Client {
 	insecure := exportShouldSkipTLSVerify()
+
+	if c.HTTPClient != nil && c.HTTPClient.Transport != nil {
+		return &http.Client{
+			Timeout:   exportDownloadTimeout,
+			Transport: c.HTTPClient.Transport,
+		}
+	}
 
 	tr, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {

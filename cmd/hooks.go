@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
 var (
-	hooksCursor bool
-	hooksClaude bool
-	hooksCodex  bool
-	hooksAll    bool
+	hooksCursor    bool
+	hooksClaude    bool
+	hooksCodex     bool
+	hooksAll       bool
+	hooksNoSync    bool
+	hooksNoContext bool
 )
 
 var hooksCmd = &cobra.Command{
@@ -64,6 +67,8 @@ func init() {
 	hooksInstallCmd.Flags().BoolVar(&hooksClaude, "claude", false, "Install for Claude Code only")
 	hooksInstallCmd.Flags().BoolVar(&hooksCodex, "codex", false, "Install for Codex only")
 	hooksInstallCmd.Flags().BoolVar(&hooksAll, "all", false, "Install for all agents")
+	hooksInstallCmd.Flags().BoolVar(&hooksNoSync, "no-sync", false, "Skip the auto-sync hook family (EPIC-SYNC-009)")
+	hooksInstallCmd.Flags().BoolVar(&hooksNoContext, "no-context", false, "Skip the context-injection hook family")
 
 	hooksCmd.AddCommand(hooksInstallCmd)
 	hooksCmd.AddCommand(hooksUninstallCmd)
@@ -102,7 +107,11 @@ $context
 ---"
 
   escaped=$(echo "$full_context" | jq -Rs .)
-  echo "{\"additional_context\": $escaped}"
+  # The agents' documented contract is hookSpecificOutput.additionalContext.
+  # A bare {"additional_context": ...} is parsed as a hook response, matches no
+  # known field, and is silently discarded — the context was fetched and thrown
+  # away (measured RUN:2026-08-08: 0/2 delivered vs 2/2 for this shape).
+  echo "{\"hookSpecificOutput\": {\"hookEventName\": \"__MP_EVENT__\", \"additionalContext\": $escaped}}"
 else
   echo '{}'
 fi
@@ -243,23 +252,55 @@ func installForAgent(agent agentConfig) error {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
 	}
 
-	// Write hook script
-	hookPath := filepath.Join(agent.hooksDir, agent.scriptName)
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		return fmt.Errorf("failed to write hook script: %w", err)
+	// Context-injection family (the original hook)
+	if !hooksNoContext {
+		hookPath := filepath.Join(agent.hooksDir, agent.scriptName)
+		// The event name is baked in per agent: Claude/Codex use UserPromptSubmit,
+		// Cursor uses beforeSubmitPrompt, and the payload must name its own event.
+		script := strings.ReplaceAll(hookScript, "__MP_EVENT__", agent.eventName)
+		if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
+			return fmt.Errorf("failed to write hook script: %w", err)
+		}
+
+		var err error
+		switch agent.name {
+		case "Cursor":
+			err = writeCursorConfig(agent)
+		case "Claude Code":
+			err = writeClaudeConfig(agent)
+		case "Codex":
+			err = writeCodexConfig(agent)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
-	// Write/update config file based on agent type
-	switch agent.name {
-	case "Cursor":
-		return writeCursorConfig(agent)
-	case "Claude Code":
-		return writeClaudeConfig(agent)
-	case "Codex":
-		return writeCodexConfig(agent)
+	// Sync family (EPIC-SYNC-009, D-AS-3: both by default). Claude Code
+	// carries the full trigger set; Cursor/Codex wiring is deferred until
+	// their end-of-turn event vocabularies are verified (epic record).
+	if !hooksNoSync {
+		if agent.name == "Claude Code" {
+			if err := installSyncFamilyClaude(agent); err != nil {
+				return err
+			}
+		} else {
+			printInfo("%s: sync-hook wiring deferred (event vocabulary unverified — EPIC-SYNC-009)\n", agent.name)
+		}
 	}
 
 	return nil
+}
+
+// containsSyncMarker reports whether any entry's JSON mentions the marker.
+func containsSyncMarker(entries []interface{}, marker string) bool {
+	for _, e := range entries {
+		raw, _ := json.Marshal(e)
+		if raw != nil && containsStr(string(raw), marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCursorConfig(agent agentConfig) error {
@@ -296,21 +337,28 @@ func writeClaudeConfig(agent agentConfig) error {
 		settings = make(map[string]interface{})
 	}
 
-	// Add hooks section
-	hooks := map[string]interface{}{
-		agent.eventName: []map[string]interface{}{
+	// MERGE into the hooks section (EPIC-SYNC-009 fix: the previous code
+	// replaced the whole section, clobbering user hooks + other families)
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	if hooks == nil {
+		hooks = map[string]interface{}{}
+	}
+
+	entry := map[string]interface{}{
+		"matcher": "*",
+		"hooks": []map[string]interface{}{
 			{
-				"matcher": "*",
-				"hooks": []map[string]interface{}{
-					{
-						"type":    "command",
-						"command": filepath.Join(agent.hooksDir, agent.scriptName),
-						"args":    []string{},
-						"timeout": 60,
-					},
-				},
+				"type":    "command",
+				"command": filepath.Join(agent.hooksDir, agent.scriptName),
+				"args":    []string{},
+				"timeout": 60,
 			},
 		},
+	}
+
+	existing, _ := hooks[agent.eventName].([]interface{})
+	if !containsSyncMarker(existing, agent.scriptName) {
+		hooks[agent.eventName] = append(existing, interface{}(entry))
 	}
 	settings["hooks"] = hooks
 
@@ -359,6 +407,12 @@ func runHooksUninstall(cmd *cobra.Command, args []string) error {
 				removed = append(removed, hookAgents[agentKey].name)
 			}
 		}
+
+		// sync family (EPIC-SYNC-009): remove script + settings entries
+		if agent.name == "Claude Code" && syncFamilyInstalled(agent) {
+			uninstallSyncFamilyClaude(agent)
+			removed = append(removed, agent.name+" (sync)")
+		}
 	}
 
 	if len(removed) > 0 {
@@ -379,6 +433,23 @@ func runHooksUninstall(cmd *cobra.Command, args []string) error {
 }
 
 func runHooksStatus(cmd *cobra.Command, args []string) error {
+	// EPIC-SYNC-009: per-family reporting rides on top of the original output
+	defer func() {
+		fmt.Println()
+		printInfo("Sync hook family (EPIC-SYNC-009):\n")
+		for _, key := range []string{"claude", "cursor", "codex"} {
+			agent := hookAgents[key]
+			switch {
+			case agent.name == "Claude Code" && syncFamilyInstalled(agent):
+				fmt.Printf("  %s: installed (SessionStart · Stop · SessionEnd → detached --if-quiescent sync)\n", agent.name)
+			case agent.name == "Claude Code":
+				fmt.Printf("  %s: not installed\n", agent.name)
+			default:
+				fmt.Printf("  %s: deferred (event vocabulary unverified)\n", agent.name)
+			}
+		}
+	}()
+
 	fmt.Println("ModernPath Hooks Status")
 	fmt.Println("═══════════════════════════════════════")
 	fmt.Println()
