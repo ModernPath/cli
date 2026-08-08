@@ -152,11 +152,28 @@ func capRunes(s string, n int) string {
 	return s
 }
 
+// splitCells splits a markdown table row on unescaped pipes.
+//
+// A cell may legitimately contain "\|" — sampo's REQ-AP-103 title says
+// "REDUCES \|difference\| toward zero". Splitting on every pipe shifted the
+// columns after it, so prose was read as the work_status and the server
+// rejected the batch at op 285, with 284 ops already applied.
 func splitCells(line string) []string {
-	parts := strings.Split(line, "|")
-	for i, p := range parts {
-		parts[i] = strings.TrimSpace(p)
+	var parts []string
+	var cur strings.Builder
+	for i := 0; i < len(line); i++ {
+		switch {
+		case line[i] == '\\' && i+1 < len(line) && line[i+1] == '|':
+			cur.WriteByte('|') // escaped: literal content, not a delimiter
+			i++
+		case line[i] == '|':
+			parts = append(parts, strings.TrimSpace(cur.String()))
+			cur.Reset()
+		default:
+			cur.WriteByte(line[i])
+		}
 	}
+	parts = append(parts, strings.TrimSpace(cur.String()))
 	return parts
 }
 
@@ -169,23 +186,64 @@ func cell(cells []string, i int) string {
 
 // ---------------------------------------------------------------- rdd-ledger-v1
 
+// statusTermRe takes the leading vocabulary term out of a status cell.
+var statusTermRe = regexp.MustCompile(`^[*_\s]*([A-Za-z_]+)`)
+
+// normalizeStatus reduces a status cell to the vocabulary term the contract
+// validates. Real ledgers annotate the term — "DONE (DEMO-GRADE)",
+// "DEFERRED — waiting on GAP-009", "**DONE**" — and the annotation is prose
+// that belongs to the ledger, not to the wire. Sending it whole had the server
+// reject a 1427-op batch at op 1363, after 1362 had applied.
+func normalizeStatus(cellText string) string {
+	m := statusTermRe.FindStringSubmatch(cellText)
+	if m == nil {
+		return strings.ToUpper(strings.TrimSpace(cellText))
+	}
+	return strings.ToUpper(m[1])
+}
+
+// ledgerContext derives a ledger's bounded-context code from its path,
+// supporting both documented layouts. Returns "" when the path is not a ledger.
+func ledgerContext(path string) string {
+	base := filepath.Base(path)
+	if m := ledgerFileRe.FindStringSubmatch(base); m != nil {
+		return m[1]
+	}
+	if !strings.EqualFold(base, "REQUIREMENTS.md") {
+		return ""
+	}
+	dir := filepath.Base(filepath.Dir(path))
+	if m := ledgerDirRe.FindStringSubmatch(dir); m != nil {
+		return strings.ToUpper(m[1])
+	}
+	return ""
+}
+
 var (
-	ledgerFileRe   = regexp.MustCompile(`^([A-Z]+)-REQUIREMENTS\.md$`)
+	ledgerFileRe = regexp.MustCompile(`^([A-Z]+)-REQUIREMENTS\.md$`)
+	// the context directory: letters only, so "libs" or "." never becomes one
+	ledgerDirRe    = regexp.MustCompile(`^([A-Za-z]{2,10})$`)
 	ledgerRowRe    = regexp.MustCompile(`^\|\s*(REQ-[A-Z]+-\d+)\s*\|`)
 	ledgerDetailRe = regexp.MustCompile(`^###\s+(REQ-[A-Z]+-\d+)`)
 	headingH2Re    = regexp.MustCompile(`^##\s`)
 	headingH3Re    = regexp.MustCompile(`^###\s`)
 )
 
-// ParseLedger parses one tasks/<CTX>-REQUIREMENTS.md file (rdd-ledger-v1).
-// Files whose basename doesn't match the ledger convention are skipped
-// (returns nil) — the caller reports that as a manifest mismatch.
+// ParseLedger parses one ledger file (rdd-ledger-v1). Two layouts are the
+// documented convention and both are accepted:
+//
+//	tasks/<CTX>-REQUIREMENTS.md   context in the filename (this workspace)
+//	libs/<ctx>/REQUIREMENTS.md    context in the directory (generic framework)
+//
+// The second was rejected until 2026-08-08, when the first real client
+// repository turned out to use it and had all 19 of its ledgers skipped.
+// A bare REQUIREMENTS.md with no context directory is still skipped: there is
+// nothing to derive a context from, and guessing would mislabel every row.
 func ParseLedger(path string, content string) []Req {
-	m := ledgerFileRe.FindStringSubmatch(filepath.Base(path))
-	if m == nil {
+	ctx := ledgerContext(path)
+	if ctx == "" {
 		return nil
 	}
-	ctx := m[1]
 
 	// detail blocks: ### REQ-XXX-NNN ... until the next ###/## heading or EOF
 	// (extract.js uses a lookahead; RE2 has none, so scan lines with offsets)
@@ -219,7 +277,7 @@ func ParseLedger(path string, content string) []Req {
 			ID:     cell(cells, 1),
 			Title:  cell(cells, 2),
 			Stage:  cell(cells, 3),
-			Status: strings.ToUpper(cell(cells, 4)),
+			Status: normalizeStatus(cell(cells, 4)),
 			Source: cell(cells, 5),
 			Ctx:    ctx,
 			Detail: details[cell(cells, 1)],

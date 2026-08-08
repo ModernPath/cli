@@ -575,3 +575,83 @@ func TestScenarioIDsAreNamespacedByTheirEpic(t *testing.T) {
 		t.Errorf("id = %q, want EPIC-PORTFOLIO-038#SCN-AK-001", idOf(b))
 	}
 }
+
+// REQ-CROSS-031: the generic RDD framework puts a context's ledger at
+// libs/<ctx>/REQUIREMENTS.md — context in the DIRECTORY — while this workspace
+// uses tasks/<CTX>-REQUIREMENTS.md. Only the second was accepted, so the first
+// real client repository had all 19 of its ledgers skipped and synced 0 ops.
+// Both layouts are the documented convention; both must parse.
+func TestParseLedgerAcceptsDirectoryScopedContext(t *testing.T) {
+	body := "## Dashboard — BNK\nTotals: 1 DONE\n\n" +
+		"| ID | Title | Stage | Status | Source | Tests | Code |\n|--|--|--|--|--|--|--|\n" +
+		"| REQ-BNK-001 | Statement ingestion | P | DONE | x | t | c |\n"
+
+	for _, path := range []string{
+		"tasks/BNK-REQUIREMENTS.md",  // this workspace
+		"libs/bnk/REQUIREMENTS.md",   // the generic framework
+		"libs/BNK/REQUIREMENTS.md",   // either case
+	} {
+		reqs := ParseLedger(path, body)
+		if len(reqs) != 1 {
+			t.Fatalf("%s: expected 1 requirement, got %d", path, len(reqs))
+		}
+		if reqs[0].Ctx != "BNK" {
+			t.Errorf("%s: context = %q, want BNK", path, reqs[0].Ctx)
+		}
+		if reqs[0].ID != "REQ-BNK-001" {
+			t.Errorf("%s: id = %q", path, reqs[0].ID)
+		}
+	}
+
+	// A bare REQUIREMENTS.md with no context directory is still skipped — there
+	// is nothing to derive a context from, and guessing would mislabel rows.
+	if reqs := ParseLedger("REQUIREMENTS.md", body); reqs != nil {
+		t.Errorf("a context-less REQUIREMENTS.md must be skipped, got %d", len(reqs))
+	}
+}
+
+// REQ-CROSS-031: a markdown table cell may contain an escaped pipe. Splitting
+// naively on "|" shifts every column after it, so a requirement whose TITLE
+// contains \|difference\| had prose parsed as its work_status and the server
+// rejected the whole batch at op 285 — after 284 had already applied.
+func TestSplitCellsRespectsEscapedPipes(t *testing.T) {
+	line := `| REQ-AP-103 | Reduces \|difference\| toward zero | A4 | DONE | src | t | c |`
+	cells := splitCells(line)
+	if len(cells) < 5 {
+		t.Fatalf("too few cells: %d (%q)", len(cells), cells)
+	}
+	if cells[1] != "REQ-AP-103" {
+		t.Errorf("id cell = %q", cells[1])
+	}
+	if cells[2] != "Reduces |difference| toward zero" {
+		t.Errorf("title cell = %q — the escape should be resolved, not split on", cells[2])
+	}
+	if cells[4] != "DONE" {
+		t.Errorf("status cell = %q, want DONE — columns shifted", cells[4])
+	}
+}
+
+// REQ-CROSS-031: a ledger's status cell carries the vocabulary term, sometimes
+// with a human qualifier or markdown emphasis around it — "DONE (DEMO-GRADE)",
+// "**DONE**". The term is what the contract validates; the qualifier is prose
+// that belongs to the ledger. Sending the whole cell got the batch rejected at
+// op 1363 with 1362 already applied.
+func TestParseLedgerNormalisesQualifiedStatuses(t *testing.T) {
+	rows := map[string]string{
+		"DONE (DEMO-GRADE)":            "DONE",
+		"**DONE**":                     "DONE",
+		"DEFERRED — waiting on GAP-009": "DEFERRED",
+		"IN_REVIEW":                    "IN_REVIEW",
+	}
+	for cell, want := range rows {
+		body := "## Dashboard — TAX\nTotals: 1 DONE\n\n| ID | Title | Stage | Status |\n|--|--|--|--|\n" +
+			"| REQ-TAX-001 | a thing | F1 | " + cell + " |\n"
+		reqs := ParseLedger("libs/tax/REQUIREMENTS.md", body)
+		if len(reqs) != 1 {
+			t.Fatalf("%q: expected 1 requirement, got %d", cell, len(reqs))
+		}
+		if reqs[0].Status != want {
+			t.Errorf("%q → status %q, want %q", cell, reqs[0].Status, want)
+		}
+	}
+}

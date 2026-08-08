@@ -36,7 +36,7 @@ func Snapshot(root string, m *manifest.Manifest) (Data, []string) {
 		reqs := ParseLedger(file, string(content))
 		if reqs == nil {
 			warnings = append(warnings, fmt.Sprintf(
-				"requirements: %s does not match the rdd-ledger-v1 naming convention (<CTX>-REQUIREMENTS.md) — skipped", rel(root, file)))
+				"requirements: %s is not a recognised ledger path — expected <CTX>-REQUIREMENTS.md or <ctx>/REQUIREMENTS.md — skipped", rel(root, file)))
 			continue
 		}
 		data.Reqs = append(data.Reqs, reqs...)
