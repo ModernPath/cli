@@ -397,6 +397,7 @@ var factoryReleaseClearCmd = &cobra.Command{
 // ---------------------------------------------------------------- sync
 
 var factorySyncDryRun bool
+var factorySyncJSON bool
 
 var (
 	factorySyncIfQuiescent bool
@@ -427,6 +428,18 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		return err
 	}
 	printGapWarnings(warnings)
+	// --json owns stdout: a prose banner ahead of the batch makes it unparseable
+	// by the very tools the flag exists for.
+	if dryRun && factorySyncJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]any{
+			"schema_version": opschema.SchemaVersion,
+			"system_id":      env.SystemID,
+			"release":        env.CurrentRelease,
+			"ops":            ops,
+		})
+	}
 	if env.CurrentRelease == "" {
 		// D2 doctrine: never a silent skip — unscoped sync proceeds (it never
 		// un-stamps anything) but says so loudly (REQ-CROSS-017).
@@ -437,9 +450,13 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 	}
 
 	if dryRun {
+		// A ten-line list of ids cannot answer "did the field I changed come
+		// out right?" — which is the only question a dry run is for. --json
+		// emits the batch the sync would send, so it can be read back before
+		// it lands rather than after (PROCESS §1.10).
 		for i, op := range ops {
 			if i >= 10 {
-				fmt.Printf("  … %d more\n", len(ops)-10)
+				fmt.Printf("  … %d more (use --json for the full batch)\n", len(ops)-10)
 				break
 			}
 			payload, _ := op["payload"].(map[string]any)
@@ -1054,6 +1071,7 @@ func init() {
 	factoryConnectCmd.Flags().IntVar(&factoryConnectSystem, "system", 0, "System id to bind this workspace to")
 
 	factorySyncCmd.Flags().BoolVar(&factorySyncDryRun, "dry-run", false, "print the ops without sending")
+	factorySyncCmd.Flags().BoolVar(&factorySyncJSON, "json", false, "with --dry-run: emit the full op batch as JSON")
 
 	factoryAnswerCmd.Flags().StringVar(&answerText, "text", "", "the answer, recorded verbatim as the USER: decision")
 	factoryAnswerCmd.Flags().StringVar(&answerOptions, "options", "", "chosen option keys, comma-separated")

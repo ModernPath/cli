@@ -9,12 +9,22 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 )
 
 const syncHookScriptName = "modernpath-sync.sh"
+
+// The hook calls the INSTALLED CLI directly rather than a repo script. A
+// tracked script is one merge away from disappearing — PR merges 30-33
+// resolved .claude/ against it, and every Stop afterwards failed with
+// "No such file or directory" (RUN:2026-08-10), which is the opposite of a
+// hook that never errors into the harness. Guarded so a machine without the
+// CLI no-ops, detached so the harness never waits.
+func syncHookCommand(event string) string {
+	return "command -v modernpath >/dev/null 2>&1 && " +
+		"( modernpath factory sync --if-quiescent --trigger " + event + " >/dev/null 2>&1 & ) ; exit 0"
+}
 
 // The script detaches the gated sync and returns immediately (D-AS-5):
 // the harness never waits on network, parsing, or the server. All outcomes
@@ -27,17 +37,18 @@ exit 0
 
 var claudeSyncEvents = []string{"SessionStart", "Stop", "SessionEnd"}
 
-// installSyncFamilyClaude writes the sync script and MERGES the trigger
-// entries into .claude/settings.json — existing events and hooks (the
-// context family included) are preserved.
+// installSyncFamilyClaude MERGES the trigger entries into
+// .claude/settings.json — existing events and hooks (the context family
+// included) are preserved. It writes NO script: the entries invoke the
+// installed CLI directly, so nothing a merge can delete sits in the path.
 func installSyncFamilyClaude(agent agentConfig) error {
 	if err := os.MkdirAll(agent.hooksDir, 0o755); err != nil {
 		return err
 	}
-	scriptPath := filepath.Join(agent.hooksDir, syncHookScriptName)
-	if err := os.WriteFile(scriptPath, []byte(syncHookScript), 0o755); err != nil {
-		return err
-	}
+
+	// a legacy install left a script behind; remove it so no entry can point
+	// at a file that a branch switch removes (RUN:2026-08-10)
+	_ = os.Remove(filepath.Join(agent.hooksDir, syncHookScriptName))
 
 	var settings map[string]interface{}
 	if data, err := os.ReadFile(agent.configPath); err == nil {
@@ -52,11 +63,26 @@ func installSyncFamilyClaude(agent agentConfig) error {
 	}
 
 	for _, event := range claudeSyncEvents {
+		// Migrate: drop any entry left by an older install (they point at a
+		// script that no longer exists, so the harness errors on every
+		// trigger). Without this the legacy entry counts as "installed" and
+		// the broken wiring survives forever (RUN:2026-08-10).
+		if existing, ok := hooks[event].([]interface{}); ok {
+			var kept []interface{}
+			for _, e := range existing {
+				raw, _ := json.Marshal(e)
+				if !containsStr(string(raw), syncHookScriptName) {
+					kept = append(kept, e)
+				}
+			}
+			hooks[event] = kept
+		}
+
 		entry := map[string]interface{}{
 			"hooks": []interface{}{
 				map[string]interface{}{
 					"type":    "command",
-					"command": fmt.Sprintf("MP_SYNC_TRIGGER=%s %s", event, scriptPath),
+					"command": syncHookCommand(event),
 					"timeout": 10,
 				},
 			},
@@ -77,10 +103,17 @@ func installSyncFamilyClaude(agent agentConfig) error {
 	return os.WriteFile(agent.configPath, data, 0o644)
 }
 
+// our entries are recognised by the CLI invocation they carry (or, for legacy
+// installs, the old script name)
+const syncHookMarker = "factory sync --if-quiescent"
+
 func containsSyncHook(entries []interface{}) bool {
 	for _, e := range entries {
 		raw, _ := json.Marshal(e)
-		if raw != nil && containsStr(string(raw), syncHookScriptName) {
+		if raw == nil {
+			continue
+		}
+		if containsStr(string(raw), syncHookMarker) || containsStr(string(raw), syncHookScriptName) {
 			return true
 		}
 	}
@@ -123,7 +156,7 @@ func uninstallSyncFamilyClaude(agent agentConfig) {
 		var kept []interface{}
 		for _, e := range entries {
 			raw, _ := json.Marshal(e)
-			if !containsStr(string(raw), syncHookScriptName) {
+			if !containsStr(string(raw), syncHookMarker) && !containsStr(string(raw), syncHookScriptName) {
 				kept = append(kept, e)
 			}
 		}

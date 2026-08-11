@@ -6,8 +6,12 @@ package rdd
 // content hashes so the extractor switch causes zero re-sync churn.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modernpath/cli/internal/manifest"
 )
 
 func detailWithCriteria() string {
@@ -343,7 +347,7 @@ func TestSpecApprovalLineClassification(t *testing.T) {
 		{strings.Replace(speccedRecord, "SPEC-READY — awaiting the gate.", "SPEC-APPROVED — reviewed · USER:2026-08-05", 1), "approved"},
 		// APPROVED without a USER tag is NOT an approval (honesty rule)
 		{strings.Replace(speccedRecord, "SPEC-READY — awaiting the gate.", "SPEC-APPROVED — someone said ok", 1), "ready"},
-		{epicRecord, ""},        // no section = legacy
+		{epicRecord, ""}, // no section = legacy
 		{"## Specification status\nThe specs live in specs/ and are prose.\n", ""}, // section, no marker = legacy
 	}
 	for i, c := range cases {
@@ -587,9 +591,9 @@ func TestParseLedgerAcceptsDirectoryScopedContext(t *testing.T) {
 		"| REQ-BNK-001 | Statement ingestion | P | DONE | x | t | c |\n"
 
 	for _, path := range []string{
-		"tasks/BNK-REQUIREMENTS.md",  // this workspace
-		"libs/bnk/REQUIREMENTS.md",   // the generic framework
-		"libs/BNK/REQUIREMENTS.md",   // either case
+		"tasks/BNK-REQUIREMENTS.md", // this workspace
+		"libs/bnk/REQUIREMENTS.md",  // the generic framework
+		"libs/BNK/REQUIREMENTS.md",  // either case
 	} {
 		reqs := ParseLedger(path, body)
 		if len(reqs) != 1 {
@@ -638,10 +642,10 @@ func TestSplitCellsRespectsEscapedPipes(t *testing.T) {
 // op 1363 with 1362 already applied.
 func TestParseLedgerNormalisesQualifiedStatuses(t *testing.T) {
 	rows := map[string]string{
-		"DONE (DEMO-GRADE)":            "DONE",
-		"**DONE**":                     "DONE",
+		"DONE (DEMO-GRADE)":             "DONE",
+		"**DONE**":                      "DONE",
 		"DEFERRED — waiting on GAP-009": "DEFERRED",
-		"IN_REVIEW":                    "IN_REVIEW",
+		"IN_REVIEW":                     "IN_REVIEW",
 	}
 	for cell, want := range rows {
 		body := "## Dashboard — TAX\nTotals: 1 DONE\n\n| ID | Title | Stage | Status |\n|--|--|--|--|\n" +
@@ -653,5 +657,199 @@ func TestParseLedgerNormalisesQualifiedStatuses(t *testing.T) {
 		if reqs[0].Status != want {
 			t.Errorf("%q → status %q, want %q", cell, reqs[0].Status, want)
 		}
+	}
+}
+
+// REQ-CROSS-031: a bounded-context code may contain a digit — sampo has E2E.
+// The id patterns required [A-Z]+, so EPIC-E2E-001 matched nothing and its
+// work-list row was skipped in silence.
+func TestContextCodesMayContainDigits(t *testing.T) {
+	reqs := ParseLedger("libs/e2e/REQUIREMENTS.md",
+		"## Dashboard — E2E\nTotals: 1 DONE\n\n| ID | Title | Stage | Status |\n|--|--|--|--|\n"+
+			"| REQ-E2E-001 | a journey | P | DONE |\n")
+	if len(reqs) != 1 || reqs[0].Ctx != "E2E" {
+		t.Fatalf("digit-bearing context not parsed: %+v", reqs)
+	}
+	epics := ParseWorklist(
+		"| EPIC-E2E-001 | [r](epics/EPIC-E2E-001.md) | u | s | s | t | U | L | **DONE** | — | n |\n",
+		[]string{"EPIC-E2E-001.md"}, map[string]bool{})
+	if len(epics) != 1 || epics[0].ID != "EPIC-E2E-001" {
+		t.Fatalf("digit-bearing epic id not parsed: %+v", epics)
+	}
+}
+
+// REQ-CROSS-032: two open-question table layouts are in real use.
+//
+//	ours   | ID | Question | Owner | Blocking | See also |        question in col 2, ✅ marks resolved
+//	sampo  | ID | Source | Question | Category | Owner | Blocking | Status |   question in col 3, **RESOLVED**
+//
+// The parser assumed ours: it read column 2 as the question and only looked for
+// ✅/"done". Against sampo it would have published 61 source-doc references as
+// the questions, and treated resolved rows as open. Its id pattern (OQ-\w+) also
+// could not match OQ-UI-Q1, so in practice it matched nothing at all.
+func TestParseOpenQuestionsHandlesBothTableLayouts(t *testing.T) {
+	ours := "| ID | Question | Owner | Blocking | See also |\n|--|--|--|--|--|\n" +
+		"| OQ-001 | **Deployment topology.** Which cloud? | TL | P1 | — |\n" +
+		"| OQ-002 | **Realtime transport.** Which protocol? | TL | ✅ RES-3 | — |\n"
+	got := ParseOpenQuestions(ours)
+	if len(got) != 2 {
+		t.Fatalf("ours: expected 2, got %d", len(got))
+	}
+	if !strings.Contains(got[0].Full, "Which cloud?") {
+		t.Errorf("ours: question = %q", got[0].Full)
+	}
+	if got[0].Resolved || !got[1].Resolved {
+		t.Errorf("ours: resolved flags wrong: %v %v", got[0].Resolved, got[1].Resolved)
+	}
+
+	theirs := "| ID | Source | Question | Category | Owner | Blocking | Status |\n|--|--|--|--|--|--|--|\n" +
+		"| OQ-UI-Q5 | `docs/06` §5.6 | Bulk-approval ergonomics over an approval set? | DOM | PO | REQ-WBX-002 | **OPEN** — per-screen |\n" +
+		"| OQ-UI-Q7 | `docs/06` §4.2 | Status-ribbon responsive collapse behavior? | TECH | TL | FE | **RESOLVED** 2026-06-23 |\n"
+	got = ParseOpenQuestions(theirs)
+	if len(got) != 2 {
+		t.Fatalf("theirs: expected 2, got %d — hyphenated ids must parse", len(got))
+	}
+	if got[0].ID != "OQ-UI-Q5" {
+		t.Errorf("theirs: id = %q", got[0].ID)
+	}
+	if !strings.Contains(got[0].Full, "Bulk-approval ergonomics") {
+		t.Errorf("theirs: took the wrong column as the question: %q", got[0].Full)
+	}
+	if got[0].Resolved || !got[1].Resolved {
+		t.Errorf("theirs: resolved flags wrong: %v %v", got[0].Resolved, got[1].Resolved)
+	}
+}
+
+// REQ-CROSS-034: a gap register is a decision surface too. sampo's holds 30
+// rows — 11 OPEN, 3 DECISION-NEEDED — and none of them reached the queue,
+// because the parser only recognised OQ ids. A capability gap nobody has
+// decided on is exactly the thing Your move exists to show.
+func TestParseOpenQuestionsAcceptsGapRegisterRows(t *testing.T) {
+	doc := "| ID | Gap | Owner | Status |\n|--|--|--|--|\n" +
+		"| GAP-010 | **Asunto-Oy module** — vastikelaskenta and friends | AR+ACC | DECISION-NEEDED |\n" +
+		"| GAP-012 | **Something already specced** | ACC | **RESOLVED-IN-SPEC** (INV-ACC-012) |\n"
+	got := ParseOpenQuestions(doc)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 gap rows, got %d", len(got))
+	}
+	if got[0].ID != "GAP-010" {
+		t.Errorf("id = %q", got[0].ID)
+	}
+	if !strings.Contains(got[0].Full, "Asunto-Oy") {
+		t.Errorf("question cell = %q", got[0].Full)
+	}
+	if got[0].Resolved {
+		t.Error("a DECISION-NEEDED gap is open, not resolved")
+	}
+	if !got[1].Resolved {
+		t.Error("RESOLVED-IN-SPEC must count as resolved")
+	}
+}
+
+// REQ-CROSS-032 follow-up: the longest cell is NOT always the question. A real
+// table has "| ID | Source | Question | Cat | Owner | Blocking for | Suggested
+// default |", and the Suggested-default note is routinely longer than the
+// question it answers — so Mission Control published 60 of them as the
+// questions, each starting "*Suggested default:*". The header names the column;
+// use it, and fall back to longest only when there is no usable header.
+func TestParseOpenQuestionsPrefersTheHeaderNamedQuestionColumn(t *testing.T) {
+	doc := "| ID | Source | Question | Cat | Owner | Blocking for | Suggested default |\n" +
+		"|--|--|--|--|--|--|--|\n" +
+		"| OQ-048 | `domain/16` KYC §12.2 | Person-level dedup across customers' KYC files? | TECH | TL | P5 | " +
+		"*Suggested default:* strict per-file isolation in v1 (simpler privacy posture); revisit with monitoring evidence. |\n"
+
+	got := ParseOpenQuestions(doc)
+	if len(got) != 1 {
+		t.Fatalf("expected 1, got %d", len(got))
+	}
+	if !strings.Contains(got[0].Full, "Person-level dedup") {
+		t.Errorf("took the wrong column: %q", got[0].Full)
+	}
+	if strings.Contains(got[0].Full, "Suggested default") {
+		t.Errorf("published the suggested default as the question: %q", got[0].Full)
+	}
+}
+
+// REQ-PLN-059: the answer is in the document. Having stopped publishing the
+// suggested default AS the question, the extractor then threw it away entirely
+// — 79 questions reached Mission Control with no recommendation, no options and
+// a body identical to the title, so the only honest move on that screen was to
+// go read the source doc. The default is the author's recommendation; it rides
+// as one.
+func TestParseOpenQuestionsCarriesTheSuggestedDefaultAsARecommendation(t *testing.T) {
+	doc := "| ID | Source | Question | Cat | Owner | Blocking for | Status |\n" +
+		"|--|--|--|--|--|--|--|\n" +
+		"| OQ-UI-Q5 | `docs/06` §5.6 | Bulk-approval ergonomics over an approval set? | DOM | PO | **REQ-WBX-002** | " +
+		"**OPEN** — rides until the Approvals inbox is designed. *Suggested default:* bulk-confirm over " +
+		"confidence-sorted selections; never bulk-approve CRITICAL without per-item step-up. |\n"
+
+	got := ParseOpenQuestions(doc)
+	if len(got) != 1 {
+		t.Fatalf("expected 1, got %d", len(got))
+	}
+	if !strings.Contains(got[0].Suggested, "bulk-confirm over confidence-sorted") {
+		t.Errorf("suggested default not carried: %q", got[0].Suggested)
+	}
+	if strings.Contains(got[0].Suggested, "Suggested default") {
+		t.Errorf("kept the label instead of the answer: %q", got[0].Suggested)
+	}
+	if strings.Contains(got[0].Suggested, "OPEN") {
+		t.Errorf("swallowed the status prose ahead of it: %q", got[0].Suggested)
+	}
+
+	op := BuildOQGateOp(got[0])
+	rec, _ := op.Payload["recommendation"].(string)
+	if !strings.Contains(rec, "bulk-confirm over confidence-sorted") {
+		t.Errorf("gate carries no recommendation: %q", rec)
+	}
+}
+
+// A question with no suggested default must not grow an empty recommendation —
+// "recommendation attached" on a gate that has none is a worse lie than none.
+func TestOQGateOmitsAnAbsentRecommendation(t *testing.T) {
+	doc := "| ID | Question |\n|--|--|\n| OQ-101 | Does the ledger own release membership? |\n"
+	got := ParseOpenQuestions(doc)
+	if len(got) != 1 {
+		t.Fatalf("expected 1, got %d", len(got))
+	}
+	if _, ok := BuildOQGateOp(got[0]).Payload["recommendation"]; ok {
+		t.Error("emitted a recommendation key for a question that has none")
+	}
+}
+
+// REQ-CROSS-032 follow-up: a manifest may map several files to one document
+// type. Only files[0] was read, so mapping a gap register alongside an
+// open-questions inventory silently stopped parsing the inventory — its 54
+// gates stayed on the server frozen at whatever text they had when last seen,
+// and no error said so.
+func TestSnapshotReadsEveryMappedOpenQuestionFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, body string) {
+		if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/05-gap-register.md", "| ID | Gap | Status |\n|--|--|--|\n| GAP-010 | A capability gap | OPEN |\n")
+	write("docs/08-open-questions.md", "| ID | Question | Owner |\n|--|--|--|\n| OQ-048 | A real question? | TL |\n")
+	if err := os.MkdirAll(filepath.Join(root, ".modernpath"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(".modernpath/manifest.json", `{"schema_version":1,"documents":{"open_questions":{"paths":["docs/08-open-questions.md","docs/05-gap-register.md"],"format":"rdd-open-questions-v1"}}}`)
+
+	m, _, err := manifest.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := Snapshot(root, m)
+
+	ids := map[string]bool{}
+	for _, o := range data.OQs {
+		ids[o.ID] = true
+	}
+	if !ids["OQ-048"] || !ids["GAP-010"] {
+		t.Fatalf("both mapped files must be parsed, got %v", ids)
 	}
 }

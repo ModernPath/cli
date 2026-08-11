@@ -81,12 +81,16 @@ type Option struct {
 
 // OQ is one process/08 open-questions row.
 type OQ struct {
-	ID       string
-	Title    string
-	Full     string
-	Resolved bool
-	Line     int
-	Pool     []string
+	ID    string
+	Title string
+	Full  string
+	// Suggested is the row's "*Suggested default:*" clause — the author's
+	// recommendation, which rides to the gate so the question is answerable
+	// without opening the source doc (REQ-PLN-059).
+	Suggested string
+	Resolved  bool
+	Line      int
+	Pool      []string
 }
 
 // Commit is one recent git-log entry (newest first).
@@ -110,7 +114,7 @@ type Data struct {
 // ---------------------------------------------------------------- helpers
 
 var idPatterns = map[string]*regexp.Regexp{
-	"REQ":  regexp.MustCompile(`REQ-[A-Z]+-\d+`),
+	"REQ":  regexp.MustCompile(`REQ-[A-Z][A-Z0-9]*-\d+`),
 	"EPIC": regexp.MustCompile(`EPIC-[A-Z]+-\d+`),
 	"RQ":   regexp.MustCompile(`RQ-\d+[a-z]?`),
 	"OQ":   regexp.MustCompile(`OQ-[A-Z0-9x]+\b`),
@@ -220,11 +224,11 @@ func ledgerContext(path string) string {
 }
 
 var (
-	ledgerFileRe = regexp.MustCompile(`^([A-Z]+)-REQUIREMENTS\.md$`)
+	ledgerFileRe = regexp.MustCompile(`^([A-Z][A-Z0-9]*)-REQUIREMENTS\.md$`)
 	// the context directory: letters only, so "libs" or "." never becomes one
-	ledgerDirRe    = regexp.MustCompile(`^([A-Za-z]{2,10})$`)
-	ledgerRowRe    = regexp.MustCompile(`^\|\s*(REQ-[A-Z]+-\d+)\s*\|`)
-	ledgerDetailRe = regexp.MustCompile(`^###\s+(REQ-[A-Z]+-\d+)`)
+	ledgerDirRe    = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9]{1,9})$`)
+	ledgerRowRe    = regexp.MustCompile(`^\|\s*(REQ-[A-Z][A-Z0-9]*-\d+)\s*\|`)
+	ledgerDetailRe = regexp.MustCompile(`^###\s+(REQ-[A-Z][A-Z0-9]*-\d+)`)
 	headingH2Re    = regexp.MustCompile(`^##\s`)
 	headingH3Re    = regexp.MustCompile(`^###\s`)
 )
@@ -289,9 +293,9 @@ func ParseLedger(path string, content string) []Req {
 // ---------------------------------------------------------------- rdd-worklist-v1
 
 var (
-	worklistRowRe  = regexp.MustCompile(`^\|\s*(EPIC-[A-Z]+-[\d.]+[^|]*)\|`)
+	worklistRowRe  = regexp.MustCompile(`^\|\s*(EPIC-[A-Z][A-Z0-9]*-[\d.]+[^|]*)\|`)
 	epicRecordRe   = regexp.MustCompile(`\((epics/[^)]+\.md)\)`)
-	epicBaseRe     = regexp.MustCompile(`^EPIC-[A-Z]+-\d+`)
+	epicBaseRe     = regexp.MustCompile(`^EPIC-[A-Z][A-Z0-9]*-\d+`)
 	awaitingRe     = regexp.MustCompile(`(?i)awaiting approval`)
 	pendingLeadRe  = regexp.MustCompile(`(?i)^pending`)
 	proposedRe     = regexp.MustCompile(`(?i)PROPOSED`)
@@ -547,29 +551,78 @@ func parseRecommendation(body string) string {
 // ---------------------------------------------------------------- rdd-open-questions-v1
 
 var (
-	oqRowRe    = regexp.MustCompile(`^\|\s*(OQ-\w+)\s*\|`)
-	oqDoneRe   = regexp.MustCompile(`(?i)done`)
-	sentenceRe = regexp.MustCompile(`^([^.?]*[.?])`)
+	oqRowRe      = regexp.MustCompile("^\\|\\s*~{0,2}((?:OQ|GAP)-[\\w.-]+?)~{0,2}\\s*\\|")
+	oqDoneRe     = regexp.MustCompile(`(?i)done`)
+	oqResolvedRe = regexp.MustCompile(`(?i)✅|~~\s*OQ-|\bRESOLVED\b|\bDONE\b`)
+	sentenceRe   = regexp.MustCompile(`^([^.?]*[.?])`)
+	// The clause runs from the label to the end of its cell. Which column
+	// carries it differs by layout, so the row is scanned rather than indexed.
+	oqSuggestedRe = regexp.MustCompile(`(?i)\*{1,2}\s*suggested default\s*:?\s*\*{1,2}\s*(.+)$`)
 )
+
+// oqSuggested returns the row's suggested-default clause, without its label.
+func oqSuggested(cells []string) string {
+	for _, c := range cells {
+		if m := oqSuggestedRe.FindStringSubmatch(strings.TrimSpace(c)); m != nil {
+			return strip(strings.TrimSpace(m[1]))
+		}
+	}
+	return ""
+}
+
+// oqQuestionCell picks the prose cell holding the question. Two layouts are in
+// use — question in column 2 (ours) and in column 3 after a source-doc column
+// (a client's) — so the longest cell wins rather than a fixed index. Reading a
+// fixed column against the other layout publishes source-doc references as the
+// questions, which is worse than not parsing at all.
+func oqQuestionCell(cells, header []string) string {
+	// A named column beats a guess. Real tables carry a "Suggested default"
+	// column that is routinely LONGER than the question it answers, so the
+	// longest cell is only a fallback for headerless tables.
+	for i, h := range header {
+		if i < len(cells) && strings.EqualFold(strings.TrimSpace(h), "question") {
+			return cells[i]
+		}
+	}
+	best := ""
+	for i, c := range cells {
+		if i == 0 || i == 1 {
+			continue // leading empty + the id
+		}
+		if len(c) > len(best) {
+			best = c
+		}
+	}
+	return best
+}
 
 // ParseOpenQuestions parses process/08-open-questions.md (rdd-open-questions-v1).
 func ParseOpenQuestions(content string) []OQ {
 	var oqs []OQ
+	var header []string
 	for i, line := range strings.Split(content, "\n") {
 		if !oqRowRe.MatchString(line) {
+			// remember the most recent table header, so the question column can
+			// be found by name rather than guessed at
+			if strings.HasPrefix(strings.TrimSpace(line), "|") && strings.Contains(strings.ToLower(line), "question") {
+				header = splitCells(line)
+			}
 			continue
 		}
 		cells := splitCells(line)
-		q := strip(cell(cells, 2))
+		q := strip(oqQuestionCell(cells, header))
 		title := q
 		if m := sentenceRe.FindStringSubmatch(q); m != nil {
 			title = m[1]
 		}
 		oqs = append(oqs, OQ{
-			ID:       cell(cells, 1),
-			Title:    capRunes(title, 140),
-			Full:     q,
-			Resolved: strings.Contains(line, "✅") || oqDoneRe.MatchString(cell(cells, 4)),
+			ID:        oqRowRe.FindStringSubmatch(line)[1],
+			Title:     capRunes(title, 140),
+			Full:      q,
+			Suggested: oqSuggested(cells),
+			// Scan the whole row: layouts differ on which column carries the
+			// verdict, and a struck-through id is itself a resolution marker.
+			Resolved: oqResolvedRe.MatchString(line),
 			Line:     i + 1,
 			Pool:     idMentions(line, "REQ", "EPIC"),
 		})

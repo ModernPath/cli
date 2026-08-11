@@ -23,14 +23,15 @@ var assets embed.FS
 // repository. These paths are kit-namespaced — nothing but the kit ever lives
 // there — so they are replaced wholesale on upgrade.
 var installTargets = map[string]string{
-	"assets/rdd/PROCESS.md":                 ".claude/rdd/PROCESS.md",
-	"assets/rdd/platform.md":                ".claude/rdd/platform.md",
-	"assets/rdd/README.md":                  ".claude/rdd/README.md",
-	"assets/skills/rdd-build-loop/SKILL.md": ".claude/skills/rdd-build-loop/SKILL.md",
-	"assets/skills/rdd-planning/SKILL.md":   ".claude/skills/rdd-planning/SKILL.md",
-	"assets/skills/rdd-ledger/SKILL.md":     ".claude/skills/rdd-ledger/SKILL.md",
-	"assets/skills/rdd-discovery/SKILL.md":  ".claude/skills/rdd-discovery/SKILL.md",
-	"assets/hooks/rdd-gate.sh":              ".claude/hooks/rdd-gate.sh",
+	"assets/rdd/PROCESS.md":                       ".claude/rdd/PROCESS.md",
+	"assets/rdd/platform.md":                      ".claude/rdd/platform.md",
+	"assets/rdd/README.md":                        ".claude/rdd/README.md",
+	"assets/skills/rdd-build-loop/SKILL.md":       ".claude/skills/rdd-build-loop/SKILL.md",
+	"assets/skills/rdd-planning/SKILL.md":         ".claude/skills/rdd-planning/SKILL.md",
+	"assets/skills/rdd-ledger/SKILL.md":           ".claude/skills/rdd-ledger/SKILL.md",
+	"assets/skills/rdd-discovery/SKILL.md":        ".claude/skills/rdd-discovery/SKILL.md",
+	"assets/skills/rdd-reverse-engineer/SKILL.md": ".claude/skills/rdd-reverse-engineer/SKILL.md",
+	"assets/hooks/rdd-gate.sh":                    ".claude/hooks/rdd-gate.sh",
 }
 
 // mergeTargets are files a client may already own. A real repository turned up

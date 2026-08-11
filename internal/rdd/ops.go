@@ -268,7 +268,7 @@ var (
 	approvalPendingRe = regexp.MustCompile(`(?i)_pending`)
 	userTagRe         = regexp.MustCompile(`USER:\d{4}-\d{2}-\d{2}`)
 	approvedLineRe    = regexp.MustCompile(`(?m)^\*{0,2}APPROVED\b[^\n]*USER:\d{4}-\d{2}-\d{2}[^\n]*$`)
-	reqIDGlobalRe     = regexp.MustCompile(`REQ-[A-Z]+-\d+`)
+	reqIDGlobalRe     = regexp.MustCompile(`REQ-[A-Z][A-Z0-9]*-\d+`)
 )
 
 // approvalLineOf finds the epic record's recorded approval, if any: an
@@ -337,7 +337,7 @@ var (
 	scenarioSectionRe = regexp.MustCompile(`(?s)(?:^|\n)##\s+(?:BDD )?[Aa]cceptance scenarios[^\n]*\n(.*?)(\n## |\z)`)
 	scenarioRowRe     = regexp.MustCompile(`^\s*\|`)
 	tableDividerRe    = regexp.MustCompile(`^\s*\|[\s\-:|]+\|\s*$`)
-	scnIDRe           = regexp.MustCompile(`\bSCN-[A-Z]+-\d+\b`)
+	scnIDRe           = regexp.MustCompile(`\bSCN-[A-Z][A-Z0-9]*-\d+\b`)
 )
 
 // textColumns are the header names that hold the scenario's prose, in the order
@@ -572,6 +572,12 @@ func BuildOQGateOp(item OQ) Op {
 		"origin":      "workspace",
 		"origin_ref":  originRef,
 		"opened_at":   openedAt,
+	}
+	// REQ-PLN-059: the row's suggested default is the author's recommendation.
+	// Only set when present — "recommendation attached" on a gate with none
+	// would be a worse lie than showing nothing.
+	if item.Suggested != "" {
+		payload["recommendation"] = item.Suggested
 	}
 	if item.Resolved {
 		userTag := userTagRe.FindString(item.Full)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
@@ -77,45 +76,17 @@ func init() {
 }
 
 // Hook script shared by all agents
-const hookScript = `#!/bin/bash
-# ModernPath Context Injection Hook
-# Uses LLM-based relevance evaluation and intelligent query decomposition
-# Compatible with: Cursor, Claude Code, Codex
+// contextHookMarker identifies our context entry in an agent's config — the
+// command itself, since the hook no longer owns a file to be named after.
+const contextHookMarker = "context --hook"
 
-set -e
-
-input=$(cat)
-prompt=$(echo "$input" | jq -r '.prompt // empty')
-
-if [ -z "$prompt" ]; then
-  echo '{}'
-  exit 0
-fi
-
-if [ ! -f ".modernpath/config.json" ]; then
-  echo '{}'
-  exit 0
-fi
-
-context=$(timeout 55 modernpath context "$prompt" 2>/dev/null || echo "")
-
-if [ -n "$context" ] && [ "$context" != "" ]; then
-  full_context="## ModernPath Architectural Context
-
-$context
-
----"
-
-  escaped=$(echo "$full_context" | jq -Rs .)
-  # The agents' documented contract is hookSpecificOutput.additionalContext.
-  # A bare {"additional_context": ...} is parsed as a hook response, matches no
-  # known field, and is silently discarded — the context was fetched and thrown
-  # away (measured RUN:2026-08-08: 0/2 delivered vs 2/2 for this shape).
-  echo "{\"hookSpecificOutput\": {\"hookEventName\": \"__MP_EVENT__\", \"additionalContext\": $escaped}}"
-else
-  echo '{}'
-fi
-`
+// contextHookCommand runs the installed CLI. `command -v` makes a missing binary
+// a silent no-op and `|| echo '{}'` guarantees the agent gets a well-formed
+// response whatever happens — a context hook must never cost the user a prompt.
+func contextHookCommand(event string) string {
+	return "command -v modernpath >/dev/null 2>&1 && " +
+		"modernpath context --hook " + event + " 2>/dev/null || echo '{}'"
+}
 
 type agentConfig struct {
 	name       string
@@ -252,15 +223,12 @@ func installForAgent(agent agentConfig) error {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
 	}
 
-	// Context-injection family (the original hook)
+	// Context-injection family (the original hook). It writes no file: the
+	// event name is baked into the command per agent (Claude/Codex use
+	// UserPromptSubmit, Cursor beforeSubmitPrompt) and the CLI emits the
+	// envelope itself.
 	if !hooksNoContext {
-		hookPath := filepath.Join(agent.hooksDir, agent.scriptName)
-		// The event name is baked in per agent: Claude/Codex use UserPromptSubmit,
-		// Cursor uses beforeSubmitPrompt, and the payload must name its own event.
-		script := strings.ReplaceAll(hookScript, "__MP_EVENT__", agent.eventName)
-		if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
-			return fmt.Errorf("failed to write hook script: %w", err)
-		}
+		os.Remove(filepath.Join(agent.hooksDir, agent.scriptName))
 
 		var err error
 		switch agent.name {
@@ -309,7 +277,7 @@ func writeCursorConfig(agent agentConfig) error {
 		"hooks": map[string]interface{}{
 			agent.eventName: []map[string]interface{}{
 				{
-					"command":    filepath.Join(agent.hooksDir, agent.scriptName),
+					"command":    contextHookCommand(agent.eventName),
 					"timeout":    60,
 					"failClosed": false,
 				},
@@ -349,17 +317,29 @@ func writeClaudeConfig(agent agentConfig) error {
 		"hooks": []map[string]interface{}{
 			{
 				"type":    "command",
-				"command": filepath.Join(agent.hooksDir, agent.scriptName),
+				"command": contextHookCommand(agent.eventName),
 				"args":    []string{},
 				"timeout": 60,
 			},
 		},
 	}
 
+	// Drop any entry left by an older install: it points at a script this
+	// version deletes, so keeping it would fire a missing file on every prompt
+	// — and counting it as "installed" would make reinstall unable to repair
+	// (RUN:2026-08-10, the sync family's defect).
 	existing, _ := hooks[agent.eventName].([]interface{})
-	if !containsSyncMarker(existing, agent.scriptName) {
-		hooks[agent.eventName] = append(existing, interface{}(entry))
+	var kept []interface{}
+	for _, e := range existing {
+		raw, _ := json.Marshal(e)
+		if !containsStr(string(raw), agent.scriptName) {
+			kept = append(kept, e)
+		}
 	}
+	if !containsSyncMarker(kept, contextHookMarker) {
+		kept = append(kept, interface{}(entry))
+	}
+	hooks[agent.eventName] = kept
 	settings["hooks"] = hooks
 
 	data, err := json.MarshalIndent(settings, "", "  ")
@@ -380,7 +360,7 @@ func writeCodexConfig(agent agentConfig) error {
 					"hooks": []map[string]interface{}{
 						{
 							"type":    "command",
-							"command": filepath.Join(agent.hooksDir, agent.scriptName),
+							"command": contextHookCommand(agent.eventName),
 							"timeout": 60,
 						},
 					},

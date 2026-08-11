@@ -71,9 +71,13 @@ func Snapshot(root string, m *manifest.Manifest) (Data, []string) {
 			data.RQs = ParseReviewQueue(string(content))
 		}
 	}
-	if files := m.Resolve(root, manifest.DocOpenQuestions); len(files) > 0 {
-		if content, err := os.ReadFile(files[0]); err == nil {
-			data.OQs = ParseOpenQuestions(string(content))
+	// Every mapped file, not just the first: a manifest may point this document
+	// type at several (an open-questions inventory AND a gap register). Reading
+	// files[0] alone silently stopped parsing the inventory when a second path
+	// was added — its gates froze at their last-seen text with no error.
+	for _, f := range m.Resolve(root, manifest.DocOpenQuestions) {
+		if content, err := os.ReadFile(f); err == nil {
+			data.OQs = append(data.OQs, ParseOpenQuestions(string(content))...)
 		}
 	}
 
