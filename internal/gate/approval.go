@@ -16,7 +16,8 @@ var (
 	// Either shape is in use: a markdown link, or a plain backticked path.
 	epicRecordLinkRe = regexp.MustCompile("\\((epics/[^)]+\\.md)\\)|`(epics/[^`]+\\.md)`")
 	doneCellRe       = regexp.MustCompile(`(?i)\bDONE\b`)
-	userTagRe        = regexp.MustCompile(`USER:\d{4}-\d{2}-\d{2}`)
+	// No USER:-tag pattern lives here any more: matching one was the restatement
+	// that let the work-list cell drift from the rule the record is held to.
 )
 
 // CheckApprovals verifies that every epic the work-list calls DONE has a
@@ -53,6 +54,29 @@ func CheckApprovals(root string) ([]Violation, error) {
 		}
 		id := m[1]
 
+		// REQ-CROSS-167 (`RUN:2026-09-01`): the row's own cells are read FIRST.
+		//
+		// This sat below the record-link branch, which appends a violation and
+		// continues — so a DONE row recording a sourced approval in its cells was
+		// reported unverifiable whenever it linked no record. That is the very
+		// shape the row describes as fixed, repaired for the link-present path
+		// only. On the live corpus it produced five false reports, each against a
+		// row carrying `approved USER:…`, found by turning on
+		// TestRealWorkspaceApprovals.
+		//
+		// Both cells count. Most rows record the approval in the Approval cell,
+		// but the Overall cell legitimately carries it inline —
+		// "**DONE — approved `USER:2026-07-21`**" — and criterion 2 says that
+		// satisfies the gate. Each is judged by the same rule as the record, not
+		// by a bare USER: tag: a tag proves someone wrote a date, not that they
+		// approved.
+		if rdd.CompletionApprovalIn(cells[9]) != "" {
+			continue
+		}
+		if len(cells) > 10 && rdd.CompletionApprovalIn(cells[10]) != "" {
+			continue
+		}
+
 		link := epicRecordLinkRe.FindStringSubmatch(line)
 		if link == nil {
 			found = append(found, Violation{
@@ -71,11 +95,15 @@ func CheckApprovals(root string) ([]Violation, error) {
 		// Approval is recorded in one of two places in practice: the epic
 		// record's own section, or the work-list row's Approval cell. Both are
 		// real — the cell is how most of this corpus records it — so either
-		// satisfies the gate, provided it carries a USER: source.
-		if len(cells) > 10 && userTagRe.MatchString(cells[10]) {
-			continue
-		}
-
+		// satisfies the gate.
+		//
+		// The cell is judged by the same rule as the record, not by a bare
+		// USER: tag: a tag proves someone wrote a date, not that they approved.
+		// A cell reading "SPEC-APPROVE-EPIC-X (approved USER:…)" or "pending —
+		// awaiting confirm" satisfied the old test, which put the majority of
+		// this corpus outside the rule the comment above promises to delegate.
+		// A cell that does not satisfy it falls through to the record, which
+		// may carry the real approval.
 		record, err := os.ReadFile(filepath.Join(root, rel))
 		if os.IsNotExist(err) {
 			found = append(found, Violation{
@@ -118,12 +146,16 @@ func CheckAll(root string) ([]Violation, error) {
 	return append(ledgers, approvals...), nil
 }
 
-// baselinePath is deliberately NOT under .modernpath/, which holds credentials
-// and machine state and is gitignored in every workspace that uses it. A
-// baseline that is not committed is a per-developer baseline: everyone sees the
-// same backlog, everyone re-accepts it locally, and the shared contract the
-// gate is supposed to create never exists.
-const baselinePath = ".claude/gate-baseline"
+// baselinePath is deliberately NOT under the local-state portion of
+// .modernpath/, which holds credentials and machine state and is gitignored in
+// every workspace that uses it. (.modernpath/rdd is a separate, versioned
+// process package.) A baseline that is not committed is a per-developer
+// baseline: everyone sees the same backlog, everyone re-accepts it locally, and
+// the shared contract the gate is supposed to create never exists.
+const (
+	baselinePath       = ".modernpath/rdd/gate-baseline"
+	legacyBaselinePath = ".claude/gate-baseline"
+)
 
 // Baseline is the set of violations a repository already had when the gate was
 // introduced. Adopting a gate on an existing codebase is only workable if the
@@ -135,6 +167,9 @@ type Baseline map[string]bool
 // baseline, which is the correct default for a new repository.
 func LoadBaseline(root string) (Baseline, error) {
 	body, err := os.ReadFile(filepath.Join(root, baselinePath))
+	if os.IsNotExist(err) {
+		body, err = os.ReadFile(filepath.Join(root, legacyBaselinePath))
+	}
 	if os.IsNotExist(err) {
 		return Baseline{}, nil
 	}
@@ -148,6 +183,32 @@ func LoadBaseline(root string) (Baseline, error) {
 		}
 	}
 	return b, nil
+}
+
+// MigrateLegacyBaseline gives hook adapters an agent-neutral process-data
+// path while preserving repositories that adopted the original Claude path.
+// The legacy file is left untouched; removing project data is not an install
+// operation.
+func MigrateLegacyBaseline(root string) error {
+	current := filepath.Join(root, baselinePath)
+	if _, err := os.Stat(current); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	legacy := filepath.Join(root, legacyBaselinePath)
+	body, err := os.ReadFile(legacy)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(current), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(current, body, 0o644)
 }
 
 // WriteBaseline records the current violations as accepted.

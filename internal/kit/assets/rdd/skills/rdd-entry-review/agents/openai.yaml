@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Entry Review"
+  short_description: "Evaluate and apply the entry gate"
+  default_prompt: "Use $rdd-entry-review to evaluate this scope for implementation entry."

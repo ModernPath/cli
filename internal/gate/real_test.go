@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// REQ-CROSS-030: the process gates, exercised against real ledgers rather than
+// fixtures — a gate that only passes on synthetic input proves nothing.
+//
 // Runs the gate against this workspace's own ledgers when pointed at it:
 //
 //	MP_GATE_ROOT=/path/to/workspace go test ./internal/gate -run Real -v

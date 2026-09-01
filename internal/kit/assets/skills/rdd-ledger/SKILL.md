@@ -11,7 +11,15 @@ One ledger per bounded context, at `tasks/<CTX>-REQUIREMENTS.md`. It opens with
 a dashboard table — the at-a-glance completeness view — and continues with detail
 blocks carrying acceptance criteria and test links.
 
-**Requirement id:** `REQ-<CTX>-NNN`, e.g. `REQ-USR-014`. Stable, never reused.
+**Requirement id:** `UR-<CTX>-NNN` for a user requirement, `SR-<CTX>-NNN` for a
+system requirement, e.g. `UR-USR-003` / `SR-USR-014`. Stable, never reused.
+
+The prefix is not decoration: the store routes user and system requirements to
+different tables, and a UR owns acceptance scenarios and upper evidence while an
+SR owns lower evidence. Writing every row as `REQ-` files a user requirement
+under a system requirement's evidence class — a silent loss, not a formatting
+choice. `REQ-<CTX>-NNN` is the historical form and still means a system
+requirement, so existing ledgers keep working unchanged.
 
 ## Status vocabulary
 
@@ -21,6 +29,7 @@ blocks carrying acceptance criteria and test links.
 | `READY` | Criteria written and reviewed; ready to build |
 | `IN_PROGRESS` | Tests written (red) and/or implementation underway |
 | `IN_REVIEW` | Green and traced; awaiting sign-off |
+| `PENDING_VERIFICATION` | **Derived from shipped code**: described and accepted as accurate, awaiting a test. Never used for work this process built — that is `IN_REVIEW`. Keeping the two apart is what makes "accept everything verified" a safe instruction (REQ-CROSS-066) |
 | `DONE` | Merged; all criteria pass; traced; logged |
 | `DEFERRED` | Consciously not now — **must** carry a reason and a tracking link |
 | `BLOCKED` | Cannot proceed — **must** carry the blocking question id |
@@ -83,7 +92,7 @@ together:
 Verify after any batch of changes:
 
 ```bash
-grep -oE "\| (DONE|IN_REVIEW|IN_PROGRESS|READY|PROPOSED|DEFERRED|BLOCKED) \|" \
+grep -oE "\| (DONE|IN_REVIEW|PENDING_VERIFICATION|IN_PROGRESS|READY|PROPOSED|DEFERRED|BLOCKED) \|" \
   tasks/<CTX>-REQUIREMENTS.md | sort | uniq -c
 grep "^Totals:" tasks/<CTX>-REQUIREMENTS.md
 ```

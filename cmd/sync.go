@@ -13,86 +13,18 @@ import (
 
 	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
-	"github.com/spf13/cobra"
 )
 
-var syncCmd = &cobra.Command{
-	Use:   "sync",
-	Short: "Sync documentation from ModernPath platform",
-	Long: `Download the latest documentation and analysis data
-from the ModernPath platform.
-
-This updates the local .modernpath directory with the latest data.
-Note: Specifications are automatically synced when selecting an initiative
-via 'modernpath work select'.`,
-	RunE: runSync,
-}
-
-func runSync(cmd *cobra.Command, args []string) error {
-	if !config.IsInitialized() {
-		printError("Not initialized. Run 'modernpath init' first.\n")
-		return nil
-	}
-
-	cfg, err := config.ReadConfig()
-	if err != nil {
-		printError("Failed to read config: %v\n", err)
-		return err
-	}
-
-	printInfo("Syncing %s from %s...\n", cfg.SystemName, cfg.APIURL)
-
-	// Create API client
-	client := api.NewClient(cfg.APIURL, "")
-
-	// Health check
-	if err := client.HealthCheck(); err != nil {
-		printError("Cannot connect to ModernPath: %v\n", err)
-		return err
-	}
-
-	// Download system export
-	printInfo("Downloading system data...\n")
-
-	zipData, err := downloadExportWithStatus(client, cfg.SystemID)
-	if err != nil {
-		printError("Failed to download: %v\n", err)
-		return err
-	}
-
-	printSuccess("Downloaded %d bytes\n", len(zipData))
-
-	// Extract
-	printInfo("Extracting...\n")
-
-	if err := extractZip(zipData); err != nil {
-		printError("Failed to extract: %v\n", err)
-		return err
-	}
-
-	// Note: Specs are now synced automatically when selecting an initiative
-	// via 'modernpath work select' command
-
-	// Update last sync time
-	cfg.LastSyncAt = time.Now().Format(time.RFC3339)
-	if err := config.WriteConfig(cfg); err != nil {
-		printWarning("Failed to update config: %v\n", err)
-	}
-
-	printSuccess("Sync complete!\n")
-	return nil
-}
-
-// syncSpecs downloads specs from the API and saves them to .modernpath/tasks/<id>-<slug>/<category>/.
-// Task context files live alongside those folders at the epic workspace root.
-// Returns the relative path under .modernpath.
-func syncSpecs(baseURL string, initiativeID int, initiativeTitle string) (string, error) {
-	configDir, err := config.GetConfigDir(true)
+// Q-ARCH-016 (USER:2026-08-18): the top-level `sync` command was defined but
+// never registered; deleted — `docs sync` and `factory sync` are the living
+// replacements. The helpers below remain in use by `docs sync`/`docs push`.
+func syncSpecs(baseURL string, epicID int, epicTitle string) (string, error) {
+	configDir, err := config.WorkspaceConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	specsRelPath := config.InitiativeSpecsRelPath(initiativeID, initiativeTitle)
+	specsRelPath := config.EpicSpecsRelPath(epicID, epicTitle)
 	specsDir := filepath.Join(configDir, filepath.FromSlash(specsRelPath))
 	tasksRoot := filepath.Join(configDir, "tasks")
 
@@ -101,7 +33,7 @@ func syncSpecs(baseURL string, initiativeID int, initiativeTitle string) (string
 	}
 
 	if _, err := os.Stat(specsDir); err == nil {
-		printInfo("Clearing existing spec categories for epic [%d]...\n", initiativeID)
+		printInfo("Clearing existing spec categories for epic [%d]...\n", epicID)
 		if err := config.ClearEpicSpecCategoryDirs(specsDir); err != nil {
 			printWarning("Failed to clear existing spec categories: %v\n", err)
 		}
@@ -111,7 +43,7 @@ func syncSpecs(baseURL string, initiativeID int, initiativeTitle string) (string
 		return "", fmt.Errorf("failed to create epic workspace directory: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/export-specs", baseURL, initiativeID)
+	url := fmt.Sprintf("%s/api/work/epics/%d/export-specs", baseURL, epicID)
 
 	// Use authenticated GET to include the auth token
 	resp, err := api.DoAuthenticatedGet(url, 60*time.Second)
@@ -127,10 +59,10 @@ func syncSpecs(baseURL string, initiativeID int, initiativeTitle string) (string
 
 	var result struct {
 		Data struct {
-			InitiativeID   int    `json:"initiative_id"`
-			InitiativeName string `json:"initiative_name"`
-			ExportedAt     string `json:"exported_at"`
-			Specs          map[string][]struct {
+			EpicID     int    `json:"epic_id"`
+			EpicTitle  string `json:"epic_title"`
+			ExportedAt string `json:"exported_at"`
+			Specs      map[string][]struct {
 				ID           int         `json:"id"`
 				Name         string      `json:"name"`
 				Filename     string      `json:"filename"`
@@ -199,7 +131,7 @@ func pushDocs(cfg *config.Config) (int, error) {
 		return 0, fmt.Errorf("config is required")
 	}
 
-	configDir, err := config.GetConfigDir(true)
+	configDir, err := config.WorkspaceConfigDir()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get config directory: %w", err)
 	}
@@ -329,9 +261,11 @@ func pushDocs(cfg *config.Config) (int, error) {
 			printInfo("  Pushing batch %d-%d of %d...\n", i+1, end, len(docs))
 		}
 
+		// The server's import_docs clause matches "architecture_id" — its
+		// current shape is canonical (USER:2026-08-18, REQ-CROSS-207).
 		payload := map[string]interface{}{
-			"system_id": systemID,
-			"docs":      batch,
+			"architecture_id": systemID,
+			"docs":            batch,
 		}
 
 		jsonPayload, err := json.Marshal(payload)
@@ -380,7 +314,7 @@ func pushDocs(cfg *config.Config) (int, error) {
 }
 
 // pushSpecs reads local specs from the active epic folder and uploads them to the server.
-func pushSpecs(baseURL string, initiativeID int, specsDir string) (int, error) {
+func pushSpecs(baseURL string, epicID int, specsDir string) (int, error) {
 	if specsDir == "" {
 		return 0, fmt.Errorf("specs directory not configured")
 	}
@@ -445,7 +379,7 @@ func pushSpecs(baseURL string, initiativeID int, specsDir string) (int, error) {
 	printInfo("Found %d spec files to push\n", len(specs))
 
 	// Send to server
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/import-specs", baseURL, initiativeID)
+	url := fmt.Sprintf("%s/api/work/epics/%d/import-specs", baseURL, epicID)
 
 	payload := map[string]interface{}{
 		"specs": specs,

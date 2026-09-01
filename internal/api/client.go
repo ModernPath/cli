@@ -11,11 +11,17 @@ import (
 	"time"
 
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 )
 
 const exportDownloadTimeout = 30 * time.Minute
 
 var exportPollInterval = 2 * time.Second
+
+// REQ-CROSS-176: how long an unchanged export status may stay silent. A big
+// export sits in "generating" for minutes; without a periodic report the wait
+// is indistinguishable from a hang, and users kill syncs that were working.
+var exportHeartbeatEvery = 15 * time.Second
 
 // NewAuthenticatedRequest creates an HTTP request with auth token from config.
 // This is a convenience function for commands that don't use the full API client.
@@ -24,6 +30,7 @@ func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request,
 	if err != nil {
 		return nil, err
 	}
+	platform.Prepare(req)
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -31,7 +38,9 @@ func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request,
 	// Add auth token if available
 	auth, _ := config.ReadAuth()
 	if auth != nil && auth.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+auth.Token)
+		if err := platform.Authorize(req, auth.Token); err != nil {
+			return nil, err
+		}
 	}
 
 	return req, nil
@@ -126,12 +135,13 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 	if err != nil {
 		return nil, err
 	}
+	platform.Prepare(req)
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if err := platform.Authorize(req, c.Token); err != nil {
+		return nil, err
 	}
 
 	return c.HTTPClient.Do(req)
@@ -139,7 +149,13 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 
 // HealthCheck checks if the API is reachable
 func (c *Client) HealthCheck() error {
-	resp, err := c.HTTPClient.Get(c.BaseURL + "/_health")
+	req, err := http.NewRequest("GET", c.BaseURL+platform.HealthPath(c.BaseURL), nil)
+	if err != nil {
+		return fmt.Errorf("cannot reach API: %w", err)
+	}
+	platform.Prepare(req)
+
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("cannot reach API: %w", err)
 	}
@@ -241,8 +257,9 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 	if err != nil {
 		return nil, err
 	}
-	if c.Token != "" {
-		startReq.Header.Set("Authorization", "Bearer "+c.Token)
+	platform.Prepare(startReq)
+	if err := platform.Authorize(startReq, c.Token); err != nil {
+		return nil, err
 	}
 	startReq.Header.Set("Accept", "application/json")
 	startReq.Header.Set("X-Requested-With", "ModernPath-CLI")
@@ -270,9 +287,11 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 
 	pollPath := canonicalExportJobPath(started.PollPath, systemID, started.ID, false)
 	pollURL := apiBase + pollPath
-	deadline := time.Now().Add(exportDownloadTimeout)
+	begun := time.Now()
+	deadline := begun.Add(exportDownloadTimeout)
 	var lastStatus string
 	var lastProgress string
+	lastReport := begun
 	for time.Now().Before(deadline) {
 		time.Sleep(exportPollInterval)
 
@@ -280,8 +299,9 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 		if err != nil {
 			return nil, err
 		}
-		if c.Token != "" {
-			pollReq.Header.Set("Authorization", "Bearer "+c.Token)
+		platform.Prepare(pollReq)
+		if err := platform.Authorize(pollReq, c.Token); err != nil {
+			return nil, err
 		}
 		pollReq.Header.Set("Accept", "application/json")
 		pollReq.Header.Set("X-Requested-With", "ModernPath-CLI")
@@ -303,9 +323,20 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 		if err := json.Unmarshal(pb, &st); err != nil {
 			return nil, fmt.Errorf("parse export status: %w", err)
 		}
-		if progress != nil && (st.Status != lastStatus || st.ProgressStatus != lastProgress) {
+		changed := st.Status != lastStatus || st.ProgressStatus != lastProgress
+		if progress != nil && changed {
 			progress(st.Status, st.ProgressStatus)
 			lastProgress = st.ProgressStatus
+			lastReport = time.Now()
+		} else if progress != nil && time.Since(lastReport) >= exportHeartbeatEvery {
+			// Heartbeat: nothing changed, but say so — a working wait and a
+			// dead one must not look identical (REQ-CROSS-176).
+			detail := "still working"
+			if st.ProgressStatus != "" {
+				detail = st.ProgressStatus + " — still working"
+			}
+			progress(st.Status, fmt.Sprintf("%s, %s elapsed", detail, time.Since(begun).Round(time.Second)))
+			lastReport = time.Now()
 		}
 		lastStatus = st.Status
 		switch st.Status {
@@ -352,8 +383,9 @@ func (c *Client) downloadExportZipByPath(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	platform.Prepare(req)
+	if err := platform.Authorize(req, c.Token); err != nil {
+		return nil, err
 	}
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("X-Requested-With", "ModernPath-CLI")

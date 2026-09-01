@@ -2,7 +2,8 @@ package rdd
 
 // EPIC-DEC-001 (REQ-PLN-047, D-DEC-1 workspace-first): the **Brief:** block —
 // a gate source's plain-language executive summary, authored at gate-open.
-// Mirrored byte-for-byte in mission-control/cli/ops.js (node parity).
+// Was mirrored byte-for-byte by a node op-builder in the workspace; that
+// mirror is retired and this is now the only implementation.
 
 import (
 	"regexp"

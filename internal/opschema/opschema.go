@@ -25,6 +25,10 @@ const SchemaVersion = 1
 
 type propSpec struct {
 	MaxLength int `json:"maxLength"`
+	// Enum is the closed vocabulary the contract declares for a field, read so
+	// callers can assert what the three copies say. This validator does not
+	// enforce it — the server does, loudly, before any write.
+	Enum []string `json:"enum"`
 }
 
 type defSpec struct {

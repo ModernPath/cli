@@ -35,13 +35,13 @@ var initCmd = &cobra.Command{
 	Long: `Initialize a ModernPath project in the current directory.
 
 This command will:
-1. Connect to the ModernPath platform (beta.modernpath.ai by default)
+1. Connect to the ModernPath platform (cloud production, api.modernpath.ai, by default)
 2. Let you select a system
 3. Download the documentation and analysis data
 4. Create a .modernpath directory with all the data
 
 Example:
-  modernpath init                    # Connect to beta.modernpath.ai
+  modernpath init                    # Connect to cloud production
   modernpath init --local            # Connect to localhost:4000
   modernpath init --system-id=3      # Specify system ID
   modernpath init --system="my-app"  # Specify system by name`,
@@ -52,14 +52,14 @@ func init() {
 	initCmd.Flags().IntVar(&systemIDFlag, "system-id", 0, "System ID to initialize")
 	initCmd.Flags().StringVar(&systemNameFlag, "system", "", "System name to initialize")
 	initCmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing .modernpath directory")
-	initCmd.Flags().BoolVar(&initLocal, "local", false, "Use local server (localhost:4000) instead of beta.modernpath.ai")
+	initCmd.Flags().BoolVar(&initLocal, "local", false, "Use local server (localhost:4000) instead of cloud production")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
 	if config.IsInitialized() && !force {
 		cfg, _ := config.ReadConfig()
 		printWarning("Already initialized with system: %s\n", cfg.SystemName)
-		printInfo("Use --force to reinitialize or 'modernpath sync' to update\n")
+		printInfo("Use --force to reinitialize or 'modernpath docs sync' to update\n")
 		return nil
 	}
 
@@ -166,6 +166,14 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 		return err
 	}
 
+	// Captured before extraction: extractZip creates the local .modernpath, and
+	// FindConfigDir matches the first such directory walking up, so afterwards
+	// the "prior" binding would resolve to the one init is about to create.
+	priorBindingDir, err := config.FindConfigDir()
+	if err != nil {
+		return err
+	}
+
 	if opts.force {
 		if err := cleanSystemExport(cwd, selectedSystem.Slug); err != nil {
 			printError("Failed to clean existing export: %v\n", err)
@@ -175,7 +183,7 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 
 	printInfo("Extracting to .modernpath/...\n")
 
-	if err := extractZip(zipData); err != nil {
+	if err := extractZip(cwd, zipData); err != nil {
 		printError("Failed to extract: %v\n", err)
 		return err
 	}
@@ -192,15 +200,33 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 		cfg.WorkspaceMembers = buildWorkspaceConfigMembers(opts.localRepos, opts.platformMembers)
 	}
 
-	if err := config.WriteConfig(cfg); err != nil {
+	// InitConfig, not WriteConfig: `init` binds the directory the user is
+	// standing in, which is the one case where a nested binding is intended.
+	if err := config.InitConfig(cfg); err != nil {
 		printError("Failed to save config: %v\n", err)
 		return err
+	}
+
+	newBindingDir := filepath.Join(cwd, config.ConfigDir)
+
+	carried, err := carryCredentialFromShadowedBinding(priorBindingDir, newBindingDir)
+	if err != nil {
+		printWarning("Could not carry the existing credential: %v\n", err)
+	} else if carried {
+		printInfo("Carried your existing credential into this workspace's binding\n")
+	}
+
+	// A binding without a credential answers 401 on every call, and ReadAuth
+	// reports a missing file as "not signed in" rather than as an error — so
+	// without this the next command is the first sign anything is wrong.
+	if auth, err := config.ReadAuth(); err == nil && auth.Token == "" {
+		printWarning("No credential for this workspace — run 'modernpath auth' before syncing\n")
 	}
 
 	if err := addToGitignore(cwd); err != nil {
 		printWarning("Could not update .gitignore: %v\n", err)
 	} else {
-		printInfo("Added .modernpath/ to .gitignore\n")
+		printInfo("Ignored local .modernpath state; kept .modernpath/rdd versioned\n")
 	}
 
 	fmt.Printf("\n")
@@ -213,7 +239,7 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	fmt.Println("Available commands:")
 	fmt.Println("  modernpath search <query>   Search documentation")
 	fmt.Println("  modernpath ask <query> --format=json  Build context for AI")
-	fmt.Println("  modernpath review           Review git changes")
+	fmt.Println("  modernpath work review      Review git changes")
 	fmt.Println("  modernpath docs sync        Update from platform")
 	fmt.Println("  modernpath status           Show current status")
 	fmt.Printf("\n")
@@ -295,52 +321,73 @@ func createNewProject(client *api.Client) (*api.System, error) {
 	return arch, nil
 }
 
-// addToGitignore adds .modernpath/ to the project's .gitignore file if not already present
+const modernpathGitignoreBlock = `# ModernPath CLI local data (process package is versioned)
+/.modernpath/*
+!/.modernpath/rdd/
+!/.modernpath/rdd/**
+`
+
+// addToGitignore ignores ModernPath credentials and machine state while
+// leaving the installed process package versioned. It also upgrades the broad
+// .modernpath/ rule written by older CLI releases.
 func addToGitignore(projectDir string) error {
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
 
-	// Read existing .gitignore if it exists
 	existingContent := ""
 	if data, err := os.ReadFile(gitignorePath); err == nil {
 		existingContent = string(data)
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
-	// Check if .modernpath/ is already in .gitignore
-	if strings.Contains(existingContent, ".modernpath/") || strings.Contains(existingContent, ".modernpath\n") {
-		return nil // Already present
+	controlled := map[string]bool{
+		"# ModernPath CLI local data (process package is versioned)": true,
+		".modernpath":          true,
+		"/.modernpath":         true,
+		".modernpath/":         true,
+		"/.modernpath/":        true,
+		".modernpath/*":        true,
+		"/.modernpath/*":       true,
+		"!.modernpath/rdd/":    true,
+		"!/.modernpath/rdd/":   true,
+		"!.modernpath/rdd/**":  true,
+		"!/.modernpath/rdd/**": true,
+	}
+	kept := make([]string, 0)
+	for _, line := range strings.Split(existingContent, "\n") {
+		if !controlled[strings.TrimSpace(line)] {
+			kept = append(kept, line)
+		}
 	}
 
-	// Prepare the entry to add
-	entry := "\n# ModernPath CLI local data\n.modernpath/\n"
-
-	// If file doesn't end with newline, add one
-	if existingContent != "" && !strings.HasSuffix(existingContent, "\n") {
-		entry = "\n" + entry
+	content := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	if content != "" {
+		content += "\n\n"
 	}
+	content += modernpathGitignoreBlock
+	return os.WriteFile(gitignorePath, []byte(content), 0o644)
+}
 
-	// Append to .gitignore
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// extractZipIntoWorkspace extracts a system export into the BOUND workspace —
+// the directory whose .modernpath the config was read from. Anchoring on the
+// invocation directory instead forked the workspace when a sync ran from a
+// subdirectory: the export landed under <cwd>/.modernpath, and the next
+// WriteConfig resolved to that just-created nested binding.
+func extractZipIntoWorkspace(zipData []byte) error {
+	configDir, err := config.WorkspaceConfigDir()
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
-	if _, err := f.WriteString(entry); err != nil {
-		return err
-	}
-
-	return nil
+	return extractZip(filepath.Dir(configDir), zipData)
 }
 
-func extractZip(zipData []byte) error {
+// extractZip extracts a system export under root/.modernpath. Only `modernpath
+// init` passes the current directory: init binds HERE, and its extract runs
+// before the binding is written.
+func extractZip(root string, zipData []byte) error {
 	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return fmt.Errorf("failed to open zip: %w", err)
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
 	}
 
 	filesExtracted := 0
@@ -365,8 +412,8 @@ func extractZip(zipData []byte) error {
 		exportPath := remapExportPath(file.Name)
 
 		// Security: ensure path doesn't escape
-		destPath := filepath.Join(cwd, exportPath)
-		if !strings.HasPrefix(destPath, cwd) {
+		destPath := filepath.Join(root, exportPath)
+		if !strings.HasPrefix(destPath, root) {
 			continue
 		}
 
@@ -421,6 +468,52 @@ func extractZip(zipData []byte) error {
 	}
 
 	return nil
+}
+
+// carryCredentialFromShadowedBinding copies the credential from a binding that
+// `init` is about to shadow into the new nested one.
+//
+// `init` is the one command that means "here" (see config.WriteConfig), so it
+// can create a .modernpath nested under an existing one. The nested binding
+// then shadows the parent for every later command — and the credential lives
+// beside the binding, so a user who authenticated moments earlier becomes
+// silently unauthenticated. config.ReadAuth returns an empty Auth for a missing
+// file rather than an error, so nothing complains until the next API call
+// answers 401.
+//
+// RUN:2026-08-23 (nextpath-ai): auth succeeded and wrote auth.json to the bound
+// parent workspace; `init --force` in the subdirectory then created a
+// credential-less nested binding, and an entire reverse-engineering pass ran
+// against a store it could never reach.
+//
+// Same user, same machine, same API URL, and init gitignores auth.json in the
+// new directory — so carrying it is the behaviour the user already expects.
+// An existing credential in the target is never overwritten.
+func carryCredentialFromShadowedBinding(priorDir, newDir string) (bool, error) {
+	if priorDir == "" || priorDir == newDir {
+		return false, nil
+	}
+
+	dst := filepath.Join(newDir, config.AuthFile)
+	if _, err := os.Stat(dst); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+
+	data, err := os.ReadFile(filepath.Join(priorDir, config.AuthFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func cleanSystemExport(cwd, slug string) error {

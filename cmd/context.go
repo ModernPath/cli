@@ -78,10 +78,15 @@ func runContext(cmd *cobra.Command, args []string) error {
 	// lesson applied to its sibling).
 	if contextHookEvent != "" {
 		payload, _ := io.ReadAll(os.Stdin)
+		prompt := promptFromHookPayload(payload)
+		// REQ-PLN-135 §135.4: record a refs-only focus signal locally and, only
+		// on a conclusion, spawn a detached `focus --infer`. No prompt text and
+		// no extra request on the hook's deadline unless a ref is confirmed.
+		recordFocusSignalFromPrompt(".", prompt)
 		fmt.Print(contextHookOutputWithin(
 			time.Duration(contextDeadlineSeconds)*time.Second,
 			contextHookEvent,
-			promptFromHookPayload(payload),
+			prompt,
 			fetchContextOutcome,
 		))
 		return nil

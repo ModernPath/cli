@@ -2,9 +2,8 @@ package rdd
 
 // EPIC-DEC-001 (REQ-PLN-047, D-DEC-1 workspace-first): a gate source may carry
 // a **Brief:** block — plain-language what/why-now/changes/risk/recommendation
-// (+ optional Image url). Parsed here, mirrored byte-for-byte in
-// mission-control/cli/ops.js, carried on the upsert_gate payload ONLY when
-// present (brief-less gates keep identical payloads — no hash churn).
+// (+ optional Image url). Parsed here and carried on the upsert_gate payload
+// ONLY when present (brief-less gates keep identical payloads — no hash churn).
 
 import "testing"
 
@@ -68,15 +67,29 @@ func TestRQGateOpCarriesBriefOnlyWhenPresent(t *testing.T) {
 	}
 }
 
+// PROCESS.md: "Every human gate carries a brief." An approval gate that reaches
+// a decision-maker without one asks them to decide from an id.
+//
+// This test skipped itself for a while and nobody could see it. When
+// REQ-CROSS-139 made the builder refuse to OPEN a gate over an epic with no
+// evidence, this fixture stopped producing a gate — and the `if !ok { t.Skip }`
+// turned that into a silent pass. `go test` prints ok either way; only `-v`
+// shows SKIP. Lower is set now for the same reason the holds test sets it, and
+// the not-emitted case is a failure, because a gate that is not built is
+// precisely what would make the assertion below vacuous (`RUN:2026-09-01`).
 func TestEpicApprovalGateCarriesBrief(t *testing.T) {
 	record := "# EPIC-X — t\n\n## Approval\npending\n\n" + briefBody + "\n"
-	epic := Epic{ID: "EPIC-X", State: "awaiting-approval"}
+	epic := Epic{ID: "EPIC-X", State: "awaiting-approval", Lower: "**LOWER_VERIFIED**"}
 	op, ok := BuildApprovalGateOp(epic, record)
 	if !ok {
-		t.Skip("approval gate not emitted for this fixture shape")
+		t.Fatal("no approval gate emitted — the brief assertion below would not run")
 	}
-	if _, present := op.Payload["brief"]; !present {
+	brief, present := op.Payload["brief"].(map[string]any)
+	if !present {
 		t.Fatal("epic approval gate should carry the record's brief")
+	}
+	if what, _ := brief["what"].(string); what == "" {
+		t.Fatalf("the brief reached the gate without its keystone What line: %#v", brief)
 	}
 }
 
@@ -85,7 +98,9 @@ func TestEpicApprovalGateCarriesBrief(t *testing.T) {
 // "## Requirements in this epic" section — approval-gate holds must read both.
 func TestApprovalGateHoldsFromRealizesHeader(t *testing.T) {
 	record := "# EPIC-Y — t\n\n- **Status:** IN_REVIEW\n- **Realizes:** REQ-PLN-047..050 (`tasks/PLN-REQUIREMENTS.md`) · REQ-AGT-027\n\n## Approval\npending\n"
-	op, ok := BuildApprovalGateOp(Epic{ID: "EPIC-Y", State: "awaiting-approval"}, record)
+	// Lower is set because REQ-CROSS-139 refuses to OPEN a gate over an epic with
+	// no evidence. This test is about holds, not about that rule.
+	op, ok := BuildApprovalGateOp(Epic{ID: "EPIC-Y", State: "awaiting-approval", Lower: "**LOWER_VERIFIED**"}, record)
 	if !ok {
 		t.Fatal("gate not emitted")
 	}
@@ -103,5 +118,45 @@ func TestApprovalGateHoldsFromRealizesHeader(t *testing.T) {
 	}
 	if !seen["REQ-AGT-027"] {
 		t.Fatalf("second Realizes id missing: %#v", holds)
+	}
+}
+
+// REQ-CROSS-142: a brief written on an open question reaches its gate.
+//
+// The row records two independent faults, either fatal on its own: BuildOQGateOp
+// never called addGateBrief, and OQ.Full collapses newlines so the bullet regex
+// (anchored at ^\s*[-*]) could never match. The second was fixed — OQ.Raw exists
+// with a comment saying it keeps "the line structure intact" — and the first was
+// withdrawn in the origin/main merge. Half a fix, and no test to notice.
+//
+// Question is the largest gate kind on the system, so this is the queue's main
+// surface reading process vocabulary instead of product language.
+func TestOpenQuestionGateCarriesItsBrief(t *testing.T) {
+	op := BuildOQGateOp(OQ{ID: "Q-ARCH-002", Title: "Where does the schema live?",
+		Full: "flattened text", Raw: briefBody, Line: 12})
+
+	brief, ok := op.Payload["brief"].(map[string]any)
+	if !ok {
+		t.Fatalf("no brief on the gate payload: %#v", op.Payload["brief"])
+	}
+	if what, _ := brief["what"].(string); what == "" {
+		t.Fatalf("the brief reached the gate without its keystone What line: %#v", brief)
+	}
+	if op.Payload["brief_image_url"] != "/api/v1/images/4965cfc7-78ac-447e-94f8-b3cf99321e23" {
+		t.Fatalf("brief image lost: %v", op.Payload["brief_image_url"])
+	}
+}
+
+// The other half of the criterion, and the one that protects 147 existing
+// questions: a question with no brief must add no brief key at all, so its op
+// hash is byte-identical to before.
+func TestABrieflessQuestionGateAddsNoBriefKey(t *testing.T) {
+	op := BuildOQGateOp(OQ{ID: "Q-ARCH-003", Title: "T", Full: "body", Raw: "just a question body", Line: 13})
+
+	if _, present := op.Payload["brief"]; present {
+		t.Error("brief key must be ABSENT when no brief block — its presence churns every existing question's hash")
+	}
+	if _, present := op.Payload["brief_image_url"]; present {
+		t.Error("brief_image_url must be absent too")
 	}
 }

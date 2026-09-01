@@ -2,10 +2,11 @@
 // (REQ-CROSS-029).
 //
 // Everything the installer writes is tool-owned and replaced wholesale on
-// upgrade — except one file. `AGENTS.md` belongs to the client (their stack,
-// commands, architecture) and must also carry the block that points non-Claude
-// agents at the process, because Codex reads AGENTS.md and does not read
-// CLAUDE.md (measured RUN:2026-08-08: Codex 6/6 via AGENTS.md, 0 via CLAUDE.md).
+// upgrade except the three agent-channel entry files it merges. `AGENTS.md`
+// belongs to the client (their stack, commands, architecture) and must also
+// carry the block that points non-Claude agents at the process, because Codex
+// reads AGENTS.md and does not read CLAUDE.md (measured RUN:2026-08-08: Codex
+// 6/6 via AGENTS.md, 0 via CLAUDE.md).
 //
 // That shared file is the only seam where an upgrade could destroy work the
 // client did, so the merge below is deliberately conservative: it rewrites only
@@ -30,7 +31,7 @@ const (
 // ErrDamagedMarkers reports a document whose managed region cannot be located
 // unambiguously: one marker without its partner, or an end before its begin.
 var ErrDamagedMarkers = errors.New(
-	"managed block markers are damaged (unpaired or out of order) — fix them by hand; " +
+	"managed block markers are damaged (unpaired, out of order, or duplicated) — fix them by hand; " +
 		"refusing to rewrite in case client content would be lost")
 
 // MergeManagedBlock returns doc with the managed region set to block.
@@ -46,7 +47,7 @@ func MergeManagedBlock(doc, block string) (string, error) {
 	begin := strings.Index(doc, BeginMarker)
 	end := strings.Index(doc, EndMarker)
 	switch {
-	case begin >= 0 && end < 0, begin < 0 && end >= 0, begin >= 0 && end < begin:
+	case MarkersDamaged(doc):
 		return "", ErrDamagedMarkers
 	case begin >= 0:
 		return doc[:begin] + managed + doc[end+len(EndMarker):], nil
@@ -71,5 +72,23 @@ func MergeManagedBlock(doc, block string) (string, error) {
 func HasManagedBlock(doc string) bool {
 	begin := strings.Index(doc, BeginMarker)
 	end := strings.Index(doc, EndMarker)
-	return begin >= 0 && end > begin
+	return begin >= 0 && end > begin && !MarkersDamaged(doc)
+}
+
+// MarkersDamaged reports whether doc's managed region cannot be located
+// unambiguously: one marker without its partner, an end before its begin, or
+// more than one of either marker. A duplicate block would otherwise leave the
+// second copy permanently stale — refreshed never, trusted forever.
+func MarkersDamaged(doc string) bool {
+	begin := strings.Index(doc, BeginMarker)
+	end := strings.Index(doc, EndMarker)
+	switch {
+	case begin < 0 && end < 0:
+		return false
+	case begin < 0 || end < 0 || end < begin:
+		return true
+	}
+	tail := doc[end+len(EndMarker):]
+	return strings.Contains(tail, BeginMarker) || strings.Contains(tail, EndMarker) ||
+		strings.Contains(doc[begin+len(BeginMarker):end], BeginMarker)
 }

@@ -14,41 +14,37 @@ func TestFileName(t *testing.T) {
 }
 
 func TestSummaryDisplayTitle(t *testing.T) {
-	s := Summary{Title: "OAuth login", Name: "ignored"}
+	s := Summary{Title: "OAuth login"}
 	if got := s.DisplayTitle(); got != "OAuth login" {
 		t.Fatalf("DisplayTitle() = %q", got)
 	}
 
-	s = Summary{Name: "Legacy name"}
-	if got := s.DisplayTitle(); got != "Legacy name" {
-		t.Fatalf("DisplayTitle() = %q", got)
-	}
 }
 
 func TestRenderMarkdownIncludesSections(t *testing.T) {
 	ctx := &Context{}
-	ctx.Epic.Code = "EPIC-001"
-	ctx.Epic.Title = "Repository Analysis"
-	ctx.Epic.Description = "Analyze the repository."
-	ctx.Epic.Status = "todo"
-	ctx.Epic.StoryPoints = 40
-	ctx.Initiative.ID = 157
-	ctx.Initiative.Title = "Simplify roles"
-	ctx.Stories = append(ctx.Stories, struct {
+	ctx.Task.Code = "TASK-001"
+	ctx.Task.Title = "Repository Analysis"
+	ctx.Task.Description = "Analyze the repository."
+	ctx.Task.Status = "todo"
+	ctx.Task.EstimatedStoryPoints = 40
+	ctx.Epic.ID = 157
+	ctx.Epic.Title = "Simplify roles"
+	ctx.Subtasks = append(ctx.Subtasks, struct {
 		ID                 string        `json:"id"`
 		Code               string        `json:"code"`
 		Title              string        `json:"title"`
 		Description        string        `json:"description"`
-		StoryType          string        `json:"story_type"`
+		SubtaskType        string        `json:"subtask_type"`
 		Status             string        `json:"status"`
-		StoryPoints        int           `json:"story_points"`
+		EstimatedPoints    int           `json:"estimated_points"`
 		AcceptanceCriteria []interface{} `json:"acceptance_criteria"`
 	}{
-		Code: "STORY-001", Title: "Map modules", Description: "Create module map", Status: "todo",
+		Code: "SUB-001", Title: "Map modules", Description: "Create module map", Status: "todo",
 	})
 
-	md := RenderMarkdown(ctx, Summary{ID: "abc", Code: "EPIC-001", Title: "Repository Analysis"})
-	for _, want := range []string{"# Repository Analysis", "## Description", "## Initiative", "## Stories", "STORY-001"} {
+	md := RenderMarkdown(ctx, Summary{ID: "abc", Code: "TASK-001", Title: "Repository Analysis"})
+	for _, want := range []string{"# Repository Analysis", "## Description", "## Epic", "## Subtasks", "SUB-001"} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("RenderMarkdown() missing %q\n%s", want, md)
 		}

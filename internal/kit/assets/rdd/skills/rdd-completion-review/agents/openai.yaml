@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Completion Review"
+  short_description: "Audit delivery and apply completion"
+  default_prompt: "Use $rdd-completion-review to audit and complete this delivered scope."

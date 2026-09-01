@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Triage"
+  short_description: "Route discoveries and user feedback"
+  default_prompt: "Use $rdd-triage to classify and route these discoveries."

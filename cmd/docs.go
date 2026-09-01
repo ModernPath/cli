@@ -15,6 +15,7 @@ import (
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -50,9 +51,10 @@ func (c *authenticatedClient) Get(url string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	platform.Prepare(req)
 	req.Header.Set("Accept", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if err := platform.Authorize(req, c.token); err != nil {
+		return nil, err
 	}
 	return c.client.Do(req)
 }
@@ -62,10 +64,11 @@ func (c *authenticatedClient) Post(url string, contentType string, body io.Reade
 	if err != nil {
 		return nil, err
 	}
+	platform.Prepare(req)
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if err := platform.Authorize(req, c.token); err != nil {
+		return nil, err
 	}
 	return c.client.Do(req)
 }
@@ -75,9 +78,10 @@ func (c *authenticatedClient) Delete(url string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	platform.Prepare(req)
 	req.Header.Set("Accept", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if err := platform.Authorize(req, c.token); err != nil {
+		return nil, err
 	}
 	return c.client.Do(req)
 }
@@ -95,7 +99,7 @@ var docsSyncCmd = &cobra.Command{
 from the ModernPath platform.
 
 This updates the local .modernpath directory with the latest documentation.
-Note: Specifications are synced automatically when selecting an initiative
+Note: Specifications are synced automatically when selecting an Epic
 via 'modernpath work select'.`,
 	RunE: runDocsSync,
 }
@@ -257,7 +261,7 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 	// Extract (updates .modernpath export tree; does not touch specs)
 	printInfo("Extracting documentation...\n")
 
-	if err := extractZip(zipData); err != nil {
+	if err := extractZipIntoWorkspace(zipData); err != nil {
 		printError("Failed to extract: %v\n", err)
 		return err
 	}

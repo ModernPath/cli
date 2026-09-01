@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Build"
+  short_description: "Execute one red-first SR slice"
+  default_prompt: "Use $rdd-build to execute the next approved SR slice."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Cold Review"
+  short_description: "Audit a requirement plan independently"
+  default_prompt: "Use $rdd-cold-review to audit this planning packet independently."

@@ -24,7 +24,6 @@ var (
 	ralphCompletionPromise string
 	ralphTool              string
 	ralphNoCommit          bool
-	ralphVerbose           bool
 	ralphAll               bool
 	ralphYesAll            bool
 )
@@ -36,8 +35,8 @@ type RalphState struct {
 	MaxIterations     int       `json:"max_iterations"`
 	MinIterations     int       `json:"min_iterations"`
 	CompletionPromise string    `json:"completion_promise"`
-	EpicID            string    `json:"epic_id"`
-	EpicTitle         string    `json:"epic_title"`
+	TaskID            string    `json:"task_id"`
+	TaskTitle         string    `json:"task_title"`
 	Tool              string    `json:"tool"`
 	StartedAt         time.Time `json:"started_at"`
 }
@@ -49,73 +48,33 @@ type RalphHistory struct {
 }
 
 type IterationRecord struct {
-	Iteration           int       `json:"iteration"`
-	StartedAt           time.Time `json:"started_at"`
-	EndedAt             time.Time `json:"ended_at"`
-	DurationMs          int64     `json:"duration_ms"`
-	ExitCode            int       `json:"exit_code"`
-	CompletionDetected  bool      `json:"completion_detected"`
-	FilesModified       int       `json:"files_modified"`
+	Iteration          int       `json:"iteration"`
+	StartedAt          time.Time `json:"started_at"`
+	EndedAt            time.Time `json:"ended_at"`
+	DurationMs         int64     `json:"duration_ms"`
+	ExitCode           int       `json:"exit_code"`
+	CompletionDetected bool      `json:"completion_detected"`
+	FilesModified      int       `json:"files_modified"`
 }
 
-var ralphCmd = &cobra.Command{
-	Use:   "ralph [epic_id]",
-	Short: "Run iterative AI development loop for an epic (Ralph Wiggum technique)",
-	Long: `Run an AI coding agent in an iterative loop until the task is complete.
-
-Based on the Ralph Wiggum technique (ghuntley.com/ralph), this command:
-1. Builds a comprehensive prompt from epic specs and context
-2. Launches an AI coding agent (OpenCode, Cursor, etc.)
-3. Checks output for completion promise
-4. Loops until success or max iterations
-
-The AI sees its previous work in files each iteration, enabling
-incremental progress on complex tasks.
-
-Examples:
-  modernpath ralph                           # Interactive epic selection
-  modernpath ralph abc123-uuid               # Specific epic  
-  modernpath ralph --max-iterations 10       # Limit iterations
-  modernpath ralph --tool opencode           # Use specific tool
-  modernpath ralph --status                  # Check loop status`,
-	RunE: runRalph,
-}
-
-var ralphStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show current Ralph loop status",
-	RunE:  runRalphStatus,
-}
-
-func init() {
-	// Command moved to dev.go as dev ralph subcommand
-	// Keeping file for reference but not registering command
-	// Flags are registered in dev.go init()
-
-	ralphCmd.Flags().IntVar(&ralphMaxIterations, "max-iterations", 20, "Maximum iterations before stopping")
-	ralphCmd.Flags().IntVar(&ralphMinIterations, "min-iterations", 1, "Minimum iterations before completion allowed")
-	ralphCmd.Flags().StringVar(&ralphCompletionPromise, "completion-promise", "COMPLETE", "Text that signals completion")
-	ralphCmd.Flags().StringVarP(&ralphTool, "tool", "t", "", "AI tool to use (opencode, cursor, claude)")
-	ralphCmd.Flags().BoolVar(&ralphNoCommit, "no-commit", false, "Don't auto-commit after iterations")
-	ralphCmd.Flags().BoolVarP(&ralphVerbose, "verbose", "V", false, "Verbose output")
-	ralphCmd.Flags().BoolVar(&ralphAll, "all", false, "Work through ALL pending epics in logical order")
-	ralphCmd.Flags().BoolVar(&ralphYesAll, "yes-all", false, "Tell AI to auto-approve all actions (bash, file writes, etc)")
-}
+// Q-ARCH-016 (USER:2026-08-18): the top-level `ralph`/`ralph status` command
+// definitions (never registered on root) were deleted — `dev ralph` is the
+// living entry point; its flags are registered on devRalphCmd in dev.go.
 
 func runRalph(cmd *cobra.Command, args []string) error {
 	fmt.Println("🚀 Starting Ralph...")
 	fmt.Println("   Reading config...")
-	
+
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
 	}
-	
-	fmt.Printf("   Config loaded: initiative=%d, arch=%d\n", cfg.InitiativeID, cfg.SystemID)
 
-	if cfg.InitiativeID == 0 {
-		printError("No initiative configured. Run 'modernpath init' or 'modernpath new' first.\n")
+	fmt.Printf("   Config loaded: epic=%d, system=%d\n", cfg.EpicID, cfg.SystemID)
+
+	if cfg.EpicID == 0 {
+		printError("No Epic configured. Run 'modernpath init' or 'modernpath new' first.\n")
 		return nil
 	}
 
@@ -124,12 +83,12 @@ func runRalph(cmd *cobra.Command, args []string) error {
 	if state != nil && state.Active {
 		printError("A Ralph loop is already active (iteration %d)\n", state.Iteration)
 		printInfo("Started at: %s\n", state.StartedAt.Format(time.RFC3339))
-		printInfo("To check status: modernpath ralph status\n")
+		printInfo("To check status: modernpath dev ralph status\n")
 		printInfo("To cancel, press Ctrl+C in its terminal or delete .modernpath/ralph-state.json\n")
 		return nil
 	}
 
-	// Handle --all mode: work through all pending epics
+	// Handle --all mode: work through all pending Tasks.
 	if ralphAll {
 		return runRalphAll(cfg)
 	}
@@ -189,8 +148,8 @@ func runRalph(cmd *cobra.Command, args []string) error {
 		MaxIterations:     ralphMaxIterations,
 		MinIterations:     ralphMinIterations,
 		CompletionPromise: ralphCompletionPromise,
-		EpicID:            taskID,
-		EpicTitle:         task.Name,
+		TaskID:            taskID,
+		TaskTitle:         task.Name,
 		Tool:              toolName,
 		StartedAt:         time.Now(),
 	}
@@ -327,7 +286,7 @@ func runRalphStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		elapsed := time.Since(state.StartedAt)
 		fmt.Println("\n🔄 ACTIVE LOOP")
-		fmt.Printf("   Epic:         [%s] %s\n", state.EpicID[:8], state.EpicTitle)
+		fmt.Printf("   Task:         [%s] %s\n", shortTaskID(state.TaskID), state.TaskTitle)
 		fmt.Printf("   Tool:         %s\n", state.Tool)
 		fmt.Printf("   Iteration:    %d / %d\n", state.Iteration, state.MaxIterations)
 		fmt.Printf("   Started:      %s\n", state.StartedAt.Format(time.RFC3339))
@@ -382,14 +341,14 @@ You are in an iterative development loop. Work on the task below until you can g
 		sb.WriteString("\n\n")
 	}
 
-	// Add user stories
-	if len(task.Stories) > 0 {
-		sb.WriteString("### User Stories\n\n")
-		for _, story := range task.Stories {
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", story.Code, story.Title))
-			if story.AcceptanceCriteria != nil {
+	// Add subtasks
+	if len(task.Subtasks) > 0 {
+		sb.WriteString("### Subtasks\n\n")
+		for _, subtask := range task.Subtasks {
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", subtask.Code, subtask.Title))
+			if subtask.AcceptanceCriteria != nil {
 				sb.WriteString("  - Acceptance Criteria:\n")
-				switch ac := story.AcceptanceCriteria.(type) {
+				switch ac := subtask.AcceptanceCriteria.(type) {
 				case string:
 					sb.WriteString(fmt.Sprintf("    - %s\n", ac))
 				case []interface{}:
@@ -485,33 +444,36 @@ func runAITool(tool DevTool, prompt string, state *RalphState) (string, int, err
 		}
 		fmt.Println("   (OpenCode output will appear below)")
 		fmt.Println()
-		
+
 		// Build command args
 		args := []string{"run"}
-		
+
 		// Use the "ralph" agent that auto-approves everything if --yes-all is set
 		if ralphYesAll {
 			args = append(args, "--agent", "ralph")
 		}
-		
+
 		// Add the prompt as the message
 		args = append(args, prompt)
-		
+
 		cmd = exec.Command("opencode", args...)
-		
+
 		// Create a custom writer that prefixes lines and captures output
 		writer := &progressWriter{
 			underlying: os.Stdout,
 			buffer:     &output,
 			prefix:     "│ ",
 		}
-		
+
 		cmd.Stdout = writer
 		cmd.Stderr = &progressWriter{underlying: os.Stderr, prefix: "│ "}
 		cmd.Stdin = os.Stdin // Allow interactive input!
-		
+
 	default:
-		// Other tools - just launch and show prompt
+		// Other tools - just launch and show prompt.
+		// Honest about the mode (REQ-CROSS-211, automation deferred
+		// USER:2026-08-18): only OpenCode receives the prompt automatically.
+		printWarning("%s mode is MANUAL: the prompt is not passed to the tool automatically (only OpenCode is automated).\n", tool.Name)
 		printInfo("Prompt saved to: %s\n", promptFile)
 		printInfo("Paste the prompt into %s and work on the task.\n", tool.Name)
 		printInfo("When done, the loop will check for completion.\n\n")
@@ -523,12 +485,12 @@ func runAITool(tool DevTool, prompt string, state *RalphState) (string, int, err
 
 	// Print running indicator
 	fmt.Println("┌─ AI Output ────────────────────────────────────────────────────────")
-	
+
 	err := cmd.Run()
-	
+
 	fmt.Println("└────────────────────────────────────────────────────────────────────")
 	fmt.Println()
-	
+
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -558,7 +520,7 @@ func (w *progressWriter) Write(p []byte) (n int, err error) {
 	if w.buffer != nil {
 		w.buffer.Write(p)
 	}
-	
+
 	// Write with prefix to underlying
 	for _, b := range p {
 		if w.lineStart {
@@ -625,6 +587,13 @@ func formatDuration(ms int64) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
+func shortTaskID(taskID string) string {
+	if len(taskID) <= 8 {
+		return taskID
+	}
+	return taskID[:8]
+}
+
 // State persistence functions
 func getRalphStatePath() string {
 	return filepath.Join(".modernpath", "ralph-state.json")
@@ -639,11 +608,17 @@ func loadRalphState() (*RalphState, error) {
 	if err != nil {
 		return nil, err
 	}
-	var state RalphState
-	if err := json.Unmarshal(data, &state); err != nil {
+	var persisted struct {
+		RalphState
+		LegacyEpicID string `json:"epic_id"`
+	}
+	if err := json.Unmarshal(data, &persisted); err != nil {
 		return nil, err
 	}
-	return &state, nil
+	if persisted.TaskID == "" {
+		persisted.TaskID = persisted.LegacyEpicID
+	}
+	return &persisted.RalphState, nil
 }
 
 func saveRalphState(state *RalphState) error {
@@ -684,23 +659,23 @@ func clearRalphHistory() {
 	os.Remove(getRalphHistoryPath())
 }
 
-// OrderedEpic represents an epic in the ordered list
-type OrderedEpic struct {
-	ID          string `json:"id"`
-	Code        string `json:"code"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	StoryPoints int    `json:"story_points"`
+// OrderedTask is one Task in Ralph's server-computed implementation order.
+type OrderedTask struct {
+	ID                   string `json:"id"`
+	Code                 string `json:"code"`
+	Title                string `json:"title"`
+	Status               string `json:"status"`
+	EstimatedStoryPoints int    `json:"estimated_story_points"`
 }
 
-// runRalphAll runs ralph on all pending epics in logical order
+// runRalphAll runs Ralph on all pending Tasks in logical order.
 func runRalphAll(cfg *config.Config) error {
 	fmt.Println(`
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                    ModernPath Ralph - Full Initiative Mode                   ║
-║              Working through ALL pending epics in logical order              ║
+║                       ModernPath Ralph - Full Epic Mode                       ║
+║              Working through ALL pending Tasks in logical order              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣`)
-	fmt.Printf("║  Initiative: %s (ID: %d)\n", cfg.InitiativeName, cfg.InitiativeID)
+	fmt.Printf("║  Epic:   %s (ID: %d)\n", cfg.EpicName, cfg.EpicID)
 	fmt.Printf("║  System:       %s\n", cfg.SystemName)
 	fmt.Printf("║  Started: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	if ralphYesAll {
@@ -708,41 +683,41 @@ func runRalphAll(cfg *config.Config) error {
 	}
 	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
-	// Get ordered epics from API
+	// Get ordered Tasks from API.
 	fmt.Println()
-	fmt.Println("🧠 Step 1: Fetching and ordering epics with AI...")
+	fmt.Println("🧠 Step 1: Fetching and ordering Tasks with AI...")
 	fmt.Println("────────────────────────────────────────────────────────────────────")
-	
-	orderedEpics, err := getOrderedEpics(cfg)
+
+	orderedTasks, err := getOrderedTasks(cfg)
 	if err != nil {
 		printError("Failed to get ordered epics: %v\n", err)
 		return err
 	}
 
-	if len(orderedEpics) == 0 {
+	if len(orderedTasks) == 0 {
 		fmt.Println()
 		fmt.Println("╔══════════════════════════════════════════════════════════════════╗")
-		fmt.Println("║  ✅ All epics are already complete! Nothing to do.              ║")
+		fmt.Println("║  ✅ All Tasks are already complete! Nothing to do.              ║")
 		fmt.Println("╚══════════════════════════════════════════════════════════════════╝")
 		return nil
 	}
 
 	// Calculate total story points
 	totalPoints := 0
-	for _, e := range orderedEpics {
-		totalPoints += e.StoryPoints
+	for _, task := range orderedTasks {
+		totalPoints += task.EstimatedStoryPoints
 	}
 
-	fmt.Printf("\n✓ Found %d pending epics (%d story points total)\n", len(orderedEpics), totalPoints)
+	fmt.Printf("\n✓ Found %d pending Tasks (%d points total)\n", len(orderedTasks), totalPoints)
 	fmt.Println()
 	fmt.Println("📋 Implementation Order (determined by AI):")
 	fmt.Println("────────────────────────────────────────────────────────────────────")
-	for i, epic := range orderedEpics {
+	for i, task := range orderedTasks {
 		statusIcon := "⬜"
-		if epic.Status == "in_progress" {
+		if task.Status == "in_progress" {
 			statusIcon = "🔄"
 		}
-		fmt.Printf("  %s %2d. [%s] %s (%d pts)\n", statusIcon, i+1, epic.Code, epic.Title, epic.StoryPoints)
+		fmt.Printf("  %s %2d. [%s] %s (%d pts)\n", statusIcon, i+1, task.Code, task.Title, task.EstimatedStoryPoints)
 	}
 	fmt.Println("────────────────────────────────────────────────────────────────────")
 	fmt.Println()
@@ -750,7 +725,7 @@ func runRalphAll(cfg *config.Config) error {
 	// Select tool once for all epics
 	fmt.Println("🔧 Step 2: Selecting AI tool...")
 	fmt.Println("────────────────────────────────────────────────────────────────────")
-	
+
 	toolName := ralphTool
 	if toolName == "" {
 		var err error
@@ -799,24 +774,24 @@ func runRalphAll(cfg *config.Config) error {
 	fmt.Println("                    STARTING EPIC IMPLEMENTATION                    ")
 	fmt.Println("════════════════════════════════════════════════════════════════════")
 
-	// Work through each epic
+	// Work through each Task.
 	totalStart := time.Now()
 	completedCount := 0
 	blockedCount := 0
 
-	for epicIdx, epic := range orderedEpics {
+	for taskIndex, task := range orderedTasks {
 		fmt.Println()
 		fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
-		fmt.Printf("║  🎯 EPIC %d of %d                                                            \n", epicIdx+1, len(orderedEpics))
-		fmt.Printf("║  Code: %s\n", epic.Code)
-		fmt.Printf("║  Title: %s\n", truncateString(epic.Title, 60))
-		fmt.Printf("║  Story Points: %d\n", epic.StoryPoints)
+		fmt.Printf("║  🎯 TASK %d of %d                                                            \n", taskIndex+1, len(orderedTasks))
+		fmt.Printf("║  Code: %s\n", task.Code)
+		fmt.Printf("║  Title: %s\n", truncateString(task.Title, 60))
+		fmt.Printf("║  Points: %d\n", task.EstimatedStoryPoints)
 		fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
 
-		// Mark epic as in_progress
+		// Mark Task as in_progress.
 		fmt.Println()
-		fmt.Printf("📌 Marking [%s] as in_progress...\n", epic.Code)
-		if err := updateEpicStatus(cfg, epic.ID, "in_progress"); err != nil {
+		fmt.Printf("📌 Marking [%s] as in_progress...\n", task.Code)
+		if err := updateTaskStatus(cfg, task.ID, "in_progress"); err != nil {
 			printWarning("   Failed: %v\n", err)
 		} else {
 			fmt.Println("   ✓ Status updated")
@@ -824,7 +799,7 @@ func runRalphAll(cfg *config.Config) error {
 
 		// Fetch full task details
 		fmt.Printf("\n📥 Fetching full task details...\n")
-		taskDetails, err := fetchTaskDetails(cfg, epic.ID)
+		taskDetails, err := fetchTaskDetails(cfg, task.ID)
 		if err != nil {
 			printError("   Failed: %v\n", err)
 			printError("   Skipping this task...\n")
@@ -837,29 +812,29 @@ func runRalphAll(cfg *config.Config) error {
 		fmt.Println("🚀 Starting Ralph loop...")
 		completed, err := runRalphForTask(taskDetails, specs, cfg, tool)
 		if err != nil {
-			printError("Error during epic: %v\n", err)
-			// Don't stop - continue with next epic
+			printError("Error during Task: %v\n", err)
+			// Don't stop; continue with the next Task.
 		}
 
 		if completed {
-			// Mark epic as done
-			fmt.Printf("\n✅ Marking [%s] as done...\n", epic.Code)
-			if err := updateEpicStatus(cfg, epic.ID, "done"); err != nil {
+			// Mark Task as done.
+			fmt.Printf("\n✅ Marking [%s] as done...\n", task.Code)
+			if err := updateTaskStatus(cfg, task.ID, "done"); err != nil {
 				printWarning("   Failed to update status: %v\n", err)
 			} else {
 				fmt.Println("   ✓ Status updated")
 			}
 			completedCount++
-			
+
 			// Print progress
 			fmt.Println()
-			fmt.Printf("📊 Progress: %d/%d epics completed (%.0f%%)\n", 
-				completedCount, len(orderedEpics), 
-				float64(completedCount)/float64(len(orderedEpics))*100)
+			fmt.Printf("📊 Progress: %d/%d Tasks completed (%.0f%%)\n",
+				completedCount, len(orderedTasks),
+				float64(completedCount)/float64(len(orderedTasks))*100)
 		} else {
-			fmt.Printf("\n⚠️  [%s] not completed (max iterations reached)\n", epic.Code)
+			fmt.Printf("\n⚠️  [%s] not completed (max iterations reached)\n", task.Code)
 			fmt.Printf("   Marking as blocked...\n")
-			updateEpicStatus(cfg, epic.ID, "blocked")
+			updateTaskStatus(cfg, task.ID, "blocked")
 			blockedCount++
 		}
 	}
@@ -868,20 +843,20 @@ func runRalphAll(cfg *config.Config) error {
 	totalDuration := time.Since(totalStart)
 	fmt.Println()
 	fmt.Println("════════════════════════════════════════════════════════════════════════════════")
-	fmt.Println("                         INITIATIVE SUMMARY                                     ")
+	fmt.Println("                            EPIC SUMMARY                                        ")
 	fmt.Println("════════════════════════════════════════════════════════════════════════════════")
 	fmt.Println()
-	
-	if completedCount == len(orderedEpics) {
-		fmt.Println("  🎉 ALL EPICS COMPLETED SUCCESSFULLY!")
+
+	if completedCount == len(orderedTasks) {
+		fmt.Println("  🎉 ALL TASKS COMPLETED SUCCESSFULLY!")
 	} else {
-		fmt.Printf("  📊 Partial completion: %d/%d epics\n", completedCount, len(orderedEpics))
+		fmt.Printf("  📊 Partial completion: %d/%d Tasks\n", completedCount, len(orderedTasks))
 	}
-	
+
 	fmt.Println()
 	fmt.Println("  ┌─────────────────────────────────────────────────────────────────┐")
-	fmt.Printf("  │  ✅ Completed:    %d epics\n", completedCount)
-	fmt.Printf("  │  ⛔ Blocked:      %d epics\n", blockedCount)
+	fmt.Printf("  │  ✅ Completed:    %d Tasks\n", completedCount)
+	fmt.Printf("  │  ⛔ Blocked:      %d Tasks\n", blockedCount)
 	fmt.Printf("  │  ⏱️  Total time:   %s\n", formatDuration(totalDuration.Milliseconds()))
 	fmt.Printf("  │  📆 Finished at:  %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Println("  └─────────────────────────────────────────────────────────────────┘")
@@ -899,8 +874,8 @@ func runRalphForTask(task *TaskDetails, specs []map[string]interface{}, cfg *con
 		MaxIterations:     ralphMaxIterations,
 		MinIterations:     ralphMinIterations,
 		CompletionPromise: ralphCompletionPromise,
-		EpicID:            task.ID,
-		EpicTitle:         task.Name,
+		TaskID:            task.ID,
+		TaskTitle:         task.Name,
 		Tool:              tool.Command,
 		StartedAt:         time.Now(),
 	}
@@ -922,8 +897,8 @@ func runRalphForTask(task *TaskDetails, specs []map[string]interface{}, cfg *con
 		}
 		fmt.Printf("   Desc: %s\n", desc)
 	}
-	if len(task.Stories) > 0 {
-		fmt.Printf("   Stories: %d\n", len(task.Stories))
+	if len(task.Subtasks) > 0 {
+		fmt.Printf("   Subtasks: %d\n", len(task.Subtasks))
 	}
 	fmt.Println()
 
@@ -1010,16 +985,16 @@ func runRalphForTask(task *TaskDetails, specs []map[string]interface{}, cfg *con
 
 		state.Iteration++
 		saveRalphState(state)
-		
+
 		fmt.Println()
 		fmt.Println("⏳ Starting next iteration in 1 second...")
 		time.Sleep(1 * time.Second)
 	}
 }
 
-// getOrderedEpics fetches and orders pending tasks using LLM
-func getOrderedEpics(cfg *config.Config) ([]OrderedEpic, error) {
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/order-epics", cfg.APIURL, cfg.InitiativeID)
+// getOrderedTasks fetches and orders pending Tasks using the server planner.
+func getOrderedTasks(cfg *config.Config) ([]OrderedTask, error) {
+	url := fmt.Sprintf("%s/api/work/epics/%d/order-tasks", cfg.APIURL, cfg.EpicID)
 
 	resp, err := api.DoAuthenticatedPost(url, bytes.NewBuffer([]byte("{}")), 60*time.Second)
 	if err != nil {
@@ -1035,7 +1010,7 @@ func getOrderedEpics(cfg *config.Config) ([]OrderedEpic, error) {
 
 	var result struct {
 		Data struct {
-			OrderedEpics []OrderedEpic `json:"ordered_epics"`
+			OrderedTasks []OrderedTask `json:"ordered_tasks"`
 			Total        int           `json:"total"`
 			Warning      string        `json:"warning,omitempty"`
 		} `json:"data"`
@@ -1049,12 +1024,12 @@ func getOrderedEpics(cfg *config.Config) ([]OrderedEpic, error) {
 		printWarning("%s\n", result.Data.Warning)
 	}
 
-	return result.Data.OrderedEpics, nil
+	return result.Data.OrderedTasks, nil
 }
 
-// updateEpicStatus updates an epic's status via API
-func updateEpicStatus(cfg *config.Config, epicID, status string) error {
-	url := fmt.Sprintf("%s/api/work/epics/%s/status", cfg.APIURL, epicID)
+// updateTaskStatus updates a Task's status through the canonical Task resource.
+func updateTaskStatus(cfg *config.Config, taskID, status string) error {
+	url := fmt.Sprintf("%s/api/work/tasks/%s/status", cfg.APIURL, taskID)
 
 	payload := map[string]string{"status": status}
 	jsonPayload, _ := json.Marshal(payload)

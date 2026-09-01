@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Start"
+  short_description: "Enter a session: preflight, scope, route"
+  default_prompt: "Use $rdd-start to begin requirement-driven work on this scope."

@@ -42,7 +42,7 @@ var supportedTools = map[string]DevTool{
 		Name:        "Claude Code",
 		Command:     "claude",
 		Description: "Anthropic's Claude coding assistant CLI",
-		ConfigFile:  ".claude/mcp_servers.json",
+		ConfigFile:  ".mcp.json",
 	},
 	"codex": {
 		Name:        "Codex CLI",
@@ -63,8 +63,8 @@ func getConfigPath(toolName string) string {
 	case "cursor":
 		return ".cursor/mcp.json"
 	case "claude":
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".claude", "mcp_servers.json")
+		// Project scope — the location Claude Code loads (REQ-CROSS-211).
+		return ".mcp.json"
 	default:
 		return supportedTools[toolName].ConfigFile
 	}
@@ -92,14 +92,14 @@ The ModernPath MCP server is automatically configured for the selected tool,
 giving the AI agent access to your project's architecture, specs, and context.
 
 Subcommands:
-  dev [tool] [prompt]   - Simple one-shot task execution
+  dev run <tool> [prompt] - Simple one-shot task execution
   dev task [task_id]    - Implement a task once
   dev ralph [task_id]   - Iterative implementation loop (Ralph Wiggum technique)
   dev setup [tool]      - Setup MCP server for a tool
   dev list              - List supported AI coding agents
 
 Examples:
-  modernpath dev opencode "implement the game loop"
+  modernpath dev run opencode "implement the game loop"
   modernpath dev task                           # Interactive task selection
   modernpath dev ralph abc123-uuid --tool opencode`,
 }
@@ -181,29 +181,29 @@ var devRalphStatusCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(devCmd)
-	
+
 	// Add subcommands
 	devCmd.AddCommand(devRunCmd)
 	devCmd.AddCommand(devTaskCmd)
 	devCmd.AddCommand(devRalphCmd)
 	devCmd.AddCommand(devSetupCmd)
 	devCmd.AddCommand(devListCmd)
-	
+
 	devRalphCmd.AddCommand(devRalphStatusCmd)
 
-	// Flags for dev run (backward compatibility - can be called as "dev [tool] [task]")
-	devCmd.Flags().Bool("setup", false, "Setup MCP for tool without running")
-	
+	// --setup rides dev run — registering it on the RunE-less dev group made
+	// it unreachable (pre-PR review finding A4).
+	devRunCmd.Flags().Bool("setup", false, "Setup MCP for tool without running")
+
 	// Flags for dev task
 	devTaskCmd.Flags().StringVarP(&implementTool, "tool", "t", "", "AI coding agent to use (opencode, cursor, claude, codex)")
-	
+
 	// Flags for dev ralph
 	devRalphCmd.Flags().IntVar(&ralphMaxIterations, "max-iterations", 20, "Maximum iterations before stopping")
 	devRalphCmd.Flags().IntVar(&ralphMinIterations, "min-iterations", 1, "Minimum iterations before completion allowed")
 	devRalphCmd.Flags().StringVar(&ralphCompletionPromise, "completion-promise", "COMPLETE", "Text that signals completion")
 	devRalphCmd.Flags().StringVarP(&ralphTool, "tool", "t", "", "AI tool to use (opencode, cursor, claude)")
 	devRalphCmd.Flags().BoolVar(&ralphNoCommit, "no-commit", false, "Don't auto-commit after iterations")
-	devRalphCmd.Flags().BoolVarP(&ralphVerbose, "verbose", "V", false, "Verbose output")
 	devRalphCmd.Flags().BoolVar(&ralphAll, "all", false, "Work through ALL pending tasks in logical order")
 	devRalphCmd.Flags().BoolVar(&ralphYesAll, "yes-all", false, "Tell AI to auto-approve all actions (bash, file writes, etc)")
 }
@@ -274,7 +274,7 @@ func runDevTask(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cfg.InitiativeID == 0 {
+	if cfg.EpicID == 0 {
 		printError("No epic configured. Run 'modernpath work select' first.\n")
 		return nil
 	}
@@ -403,7 +403,7 @@ func runDevList(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  modernpath dev <tool> [task]     Launch tool with optional task")
+	fmt.Println("  modernpath dev run <tool> [task] Launch tool with optional task")
 	fmt.Println("  modernpath dev setup <tool>      Configure MCP for tool")
 	fmt.Println()
 	return nil
@@ -485,8 +485,8 @@ func buildDevPrompt(task string, cfg *config.Config) string {
 	if cfg.SystemName != "" {
 		sb.WriteString(fmt.Sprintf("\nProject: %s\n", cfg.SystemName))
 	}
-	if cfg.InitiativeName != "" {
-		sb.WriteString(fmt.Sprintf("Initiative: %s\n", cfg.InitiativeName))
+	if cfg.EpicName != "" {
+		sb.WriteString(fmt.Sprintf("Epic: %s\n", cfg.EpicName))
 	}
 
 	return sb.String()
@@ -597,30 +597,33 @@ func setupCursorMCP(cfg *config.Config) error {
 }
 
 func setupClaudeMCP(cfg *config.Config) error {
-	home, _ := os.UserHomeDir()
-	configPath := filepath.Join(home, ".claude", "mcp_servers.json")
+	// Project-scope .mcp.json is the location Claude Code actually loads;
+	// the old ~/.claude/mcp_servers.json target was a file nothing reads —
+	// setup claimed success over a no-op (REQ-CROSS-211, USER:2026-08-18).
+	configPath := ".mcp.json"
 
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		return err
-	}
-
-	// Read existing config or create new
+	// Merge-preserving: existing servers survive.
 	var mcpConfig map[string]interface{}
 	if data, err := os.ReadFile(configPath); err == nil {
-		json.Unmarshal(data, &mcpConfig)
+		if err := json.Unmarshal(data, &mcpConfig); err != nil {
+			return fmt.Errorf(".mcp.json exists but is not valid JSON — fix or remove it: %w", err)
+		}
 	}
 	if mcpConfig == nil {
 		mcpConfig = make(map[string]interface{})
 	}
 
-	// Add MCP server
-	mcpConfig["modernpath"] = map[string]interface{}{
-		"type": "url",
-		"url":  fmt.Sprintf("%s/api/mcp", cfg.APIURL),
+	servers, _ := mcpConfig["mcpServers"].(map[string]interface{})
+	if servers == nil {
+		servers = make(map[string]interface{})
 	}
 
-	// Write config
+	servers["modernpath"] = map[string]interface{}{
+		"type": "http",
+		"url":  fmt.Sprintf("%s/api/mcp", cfg.APIURL),
+	}
+	mcpConfig["mcpServers"] = servers
+
 	data, err := json.MarshalIndent(mcpConfig, "", "  ")
 	if err != nil {
 		return err
@@ -643,14 +646,14 @@ var implementTool string
 type TaskDetails struct {
 	ID          string            `json:"id"`
 	Code        string            `json:"code"`
-	Name        string            `json:"name"`
+	Name        string            `json:"title"`
 	Description string            `json:"description"`
 	Status      string            `json:"status"`
-	Stories     []StoryDetails    `json:"stories"`
+	Subtasks    []SubtaskDetails  `json:"subtasks"`
 	Context     map[string]string `json:"context"`
 }
 
-type StoryDetails struct {
+type SubtaskDetails struct {
 	ID                 string      `json:"id"`
 	Code               string      `json:"code"`
 	Title              string      `json:"title"`
@@ -659,8 +662,7 @@ type StoryDetails struct {
 }
 
 func selectTaskForImplementation(cfg *config.Config) (string, error) {
-	// Fetch tasks (what was epics - now under initiative which is now epic)
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/epics", cfg.APIURL, cfg.InitiativeID)
+	url := fmt.Sprintf("%s/api/work/epics/%d/tasks", cfg.APIURL, cfg.EpicID)
 	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
 	if err != nil {
 		return "", err
@@ -671,7 +673,7 @@ func selectTaskForImplementation(cfg *config.Config) (string, error) {
 		Data []struct {
 			ID     string `json:"id"`
 			Code   string `json:"code"`
-			Name   string `json:"name"`
+			Name   string `json:"title"`
 			Status string `json:"status"`
 		} `json:"data"`
 	}
@@ -714,7 +716,7 @@ func selectTaskForImplementation(cfg *config.Config) (string, error) {
 }
 
 func fetchTaskDetails(cfg *config.Config, taskID string) (*TaskDetails, error) {
-	url := fmt.Sprintf("%s/api/work/epics/%s", cfg.APIURL, taskID)
+	url := fmt.Sprintf("%s/api/work/tasks/%s", cfg.APIURL, taskID)
 	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
 	if err != nil {
 		return nil, err
@@ -738,7 +740,7 @@ func fetchTaskDetails(cfg *config.Config, taskID string) (*TaskDetails, error) {
 }
 
 func fetchRelatedSpecs(cfg *config.Config) ([]map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/specs", cfg.APIURL, cfg.InitiativeID)
+	url := fmt.Sprintf("%s/api/work/epics/%d/specs", cfg.APIURL, cfg.EpicID)
 	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
 	if err != nil {
 		return nil, err
@@ -804,18 +806,18 @@ func buildImplementationPrompt(task *TaskDetails, specs []map[string]interface{}
 		sb.WriteString("\n\n")
 	}
 
-	// Add user stories
-	if len(task.Stories) > 0 {
-		sb.WriteString("## User Stories\n\n")
-		for _, story := range task.Stories {
-			sb.WriteString(fmt.Sprintf("### %s: %s\n", story.Code, story.Title))
-			if story.Description != "" {
-				sb.WriteString(story.Description)
+	// Add subtasks
+	if len(task.Subtasks) > 0 {
+		sb.WriteString("## Subtasks\n\n")
+		for _, subtask := range task.Subtasks {
+			sb.WriteString(fmt.Sprintf("### %s: %s\n", subtask.Code, subtask.Title))
+			if subtask.Description != "" {
+				sb.WriteString(subtask.Description)
 				sb.WriteString("\n")
 			}
-			if story.AcceptanceCriteria != nil {
+			if subtask.AcceptanceCriteria != nil {
 				sb.WriteString("\n**Acceptance Criteria:**\n")
-				switch ac := story.AcceptanceCriteria.(type) {
+				switch ac := subtask.AcceptanceCriteria.(type) {
 				case string:
 					sb.WriteString(ac)
 					sb.WriteString("\n")
@@ -856,7 +858,7 @@ func buildImplementationPrompt(task *TaskDetails, specs []map[string]interface{}
 	// Add project context
 	sb.WriteString("## Project Context\n\n")
 	sb.WriteString(fmt.Sprintf("- **Project:** %s\n", cfg.SystemName))
-	sb.WriteString(fmt.Sprintf("- **Epic:** %s\n", cfg.InitiativeName))
+	sb.WriteString(fmt.Sprintf("- **Epic:** %s\n", cfg.EpicName))
 	sb.WriteString(fmt.Sprintf("- **Task ID:** %s\n", task.ID))
 
 	return sb.String()

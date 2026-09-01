@@ -25,13 +25,13 @@ func Slugify(name string) string {
 	return slug
 }
 
-// InitiativeSpecsDirName returns the folder name for an epic workspace, e.g. "157-simplify-roles-and-navigation".
-func InitiativeSpecsDirName(initiativeID int, title string) string {
+// EpicSpecsDirName returns the folder name for an epic workspace, e.g. "157-simplify-roles-and-navigation".
+func EpicSpecsDirName(epicID int, title string) string {
 	slug := Slugify(title)
 	if slug == "" {
-		return fmt.Sprintf("%d", initiativeID)
+		return fmt.Sprintf("%d", epicID)
 	}
-	return fmt.Sprintf("%d-%s", initiativeID, slug)
+	return fmt.Sprintf("%d-%s", epicID, slug)
 }
 
 // NormalizeEpicWorkspaceRelPath rewrites legacy specs/<slug> paths to tasks/<slug>.
@@ -46,25 +46,25 @@ func NormalizeEpicWorkspaceRelPath(rel string) string {
 	return rel
 }
 
-// InitiativeSpecsRelPath returns the epic workspace path relative to .modernpath,
+// EpicSpecsRelPath returns the epic workspace path relative to .modernpath,
 // e.g. "tasks/157-simplify-roles-and-navigation". Spec category subfolders and
 // task context .md files both live under this directory.
-func InitiativeSpecsRelPath(initiativeID int, title string) string {
-	return filepath.ToSlash(filepath.Join("tasks", InitiativeSpecsDirName(initiativeID, title)))
+func EpicSpecsRelPath(epicID int, title string) string {
+	return filepath.ToSlash(filepath.Join("tasks", EpicSpecsDirName(epicID, title)))
 }
 
-// LegacyInitiativeSpecsRelPath is the pre-unification layout under .modernpath/specs/.
-func LegacyInitiativeSpecsRelPath(initiativeID int, title string) string {
-	return filepath.ToSlash(filepath.Join("specs", InitiativeSpecsDirName(initiativeID, title)))
+// LegacyEpicSpecsRelPath is the pre-unification layout under .modernpath/specs/.
+func LegacyEpicSpecsRelPath(epicID int, title string) string {
+	return filepath.ToSlash(filepath.Join("specs", EpicSpecsDirName(epicID, title)))
 }
 
 // EpicWorkspaceAbsDir returns the absolute path to an epic workspace folder.
-func EpicWorkspaceAbsDir(initiativeID int, title string) (string, error) {
-	configDir, err := GetConfigDir(true)
+func EpicWorkspaceAbsDir(epicID int, title string) (string, error) {
+	configDir, err := WorkspaceConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, filepath.FromSlash(InitiativeSpecsRelPath(initiativeID, title))), nil
+	return filepath.Join(configDir, filepath.FromSlash(EpicSpecsRelPath(epicID, title))), nil
 }
 
 // ClearEpicSpecCategoryDirs removes category subfolders from an epic workspace
@@ -87,8 +87,8 @@ func ClearEpicSpecCategoryDirs(epicDir string) error {
 	return nil
 }
 
-// ResolveInitiativeSpecsDir returns the absolute path to the active epic workspace directory.
-func ResolveInitiativeSpecsDir(cfg *Config) (string, error) {
+// ResolveEpicSpecsDir returns the absolute path to the active epic workspace directory.
+func ResolveEpicSpecsDir(cfg *Config) (string, error) {
 	configDir, err := GetConfigDir(false)
 	if err != nil {
 		return "", err
@@ -97,14 +97,14 @@ func ResolveInitiativeSpecsDir(cfg *Config) (string, error) {
 		return "", fmt.Errorf("config directory not found")
 	}
 
-	if cfg.InitiativeID > 0 && cfg.InitiativeName != "" {
-		canonicalRel := InitiativeSpecsRelPath(cfg.InitiativeID, cfg.InitiativeName)
+	if cfg.EpicID > 0 && cfg.EpicName != "" {
+		canonicalRel := EpicSpecsRelPath(cfg.EpicID, cfg.EpicName)
 		canonical := filepath.Join(configDir, filepath.FromSlash(canonicalRel))
 		if _, err := os.Stat(canonical); err == nil {
 			return canonical, nil
 		}
 
-		legacyRel := LegacyInitiativeSpecsRelPath(cfg.InitiativeID, cfg.InitiativeName)
+		legacyRel := LegacyEpicSpecsRelPath(cfg.EpicID, cfg.EpicName)
 		legacy := filepath.Join(configDir, filepath.FromSlash(legacyRel))
 		if _, err := os.Stat(legacy); err == nil {
 			return legacy, nil
@@ -116,8 +116,8 @@ func ResolveInitiativeSpecsDir(cfg *Config) (string, error) {
 		return canonical, nil
 	}
 
-	if cfg.InitiativeSpecsDir != "" {
-		normalized := NormalizeEpicWorkspaceRelPath(cfg.InitiativeSpecsDir)
+	if cfg.EpicSpecsDir != "" {
+		normalized := NormalizeEpicWorkspaceRelPath(cfg.EpicSpecsDir)
 		candidate := filepath.Join(configDir, filepath.FromSlash(normalized))
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
@@ -131,13 +131,13 @@ func ResolveInitiativeSpecsDir(cfg *Config) (string, error) {
 	return filepath.Join(configDir, "tasks"), nil
 }
 
-// ResolveInitiativeSpecsRelPath returns the display path relative to .modernpath for the active epic.
-func ResolveInitiativeSpecsRelPath(cfg *Config) string {
-	if cfg.InitiativeID > 0 && cfg.InitiativeName != "" {
-		return InitiativeSpecsRelPath(cfg.InitiativeID, cfg.InitiativeName)
+// ResolveEpicSpecsRelPath returns the display path relative to .modernpath for the active epic.
+func ResolveEpicSpecsRelPath(cfg *Config) string {
+	if cfg.EpicID > 0 && cfg.EpicName != "" {
+		return EpicSpecsRelPath(cfg.EpicID, cfg.EpicName)
 	}
-	if cfg.InitiativeSpecsDir != "" {
-		return NormalizeEpicWorkspaceRelPath(cfg.InitiativeSpecsDir)
+	if cfg.EpicSpecsDir != "" {
+		return NormalizeEpicWorkspaceRelPath(cfg.EpicSpecsDir)
 	}
 	return "tasks"
 }

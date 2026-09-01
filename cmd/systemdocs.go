@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -72,8 +73,8 @@ var systemDocsListCmd = &cobra.Command{
 }
 
 var (
-	systemDocsPushType   string
-	systemDocsPullOutput string
+	systemDocsPushType        string
+	systemDocsPullOutput      string
 	systemDocsPullContentOnly bool
 )
 
@@ -94,18 +95,18 @@ func init() {
 
 // SystemDocument represents a document from the API
 type SystemDocument struct {
-	ID               int               `json:"id"`
-	Name             string            `json:"name"`
-	Description      string            `json:"description"`
-	DocumentType     string            `json:"document_type"`
-	FileType         string            `json:"file_type"`
-	FileSize         int               `json:"file_size"`
-	Content          string            `json:"content"`
-	Summary          string            `json:"summary"`
-	HasEncryptedFile bool              `json:"has_encrypted_file"`
+	ID               int                    `json:"id"`
+	Name             string                 `json:"name"`
+	Description      string                 `json:"description"`
+	DocumentType     string                 `json:"document_type"`
+	FileType         string                 `json:"file_type"`
+	FileSize         int                    `json:"file_size"`
+	Content          string                 `json:"content"`
+	Summary          string                 `json:"summary"`
+	HasEncryptedFile bool                   `json:"has_encrypted_file"`
 	Metadata         map[string]interface{} `json:"metadata"`
-	InsertedAt       string            `json:"inserted_at"`
-	UpdatedAt        string            `json:"updated_at"`
+	InsertedAt       string                 `json:"inserted_at"`
+	UpdatedAt        string                 `json:"updated_at"`
 }
 
 func runSystemDocsPush(cmd *cobra.Command, args []string) error {
@@ -247,10 +248,11 @@ func uploadSystemDocument(client *authenticatedClient, systemID int, filePath, d
 	if err != nil {
 		return fmt.Errorf("cannot create request: %w", err)
 	}
+	platform.Prepare(req)
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if client.token != "" {
-		req.Header.Set("Authorization", "Bearer "+client.token)
+	if err := platform.Authorize(req, client.token); err != nil {
+		return err
 	}
 
 	resp, err := client.client.Do(req)

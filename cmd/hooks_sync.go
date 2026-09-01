@@ -3,9 +3,8 @@ package cmd
 // EPIC-SYNC-009 (REQ-CROSS-027): the second hook family — automatic syncs.
 // The context-injection family is untouched; this file owns everything sync.
 //
-// Claude Code gets the full D-AS-1 trigger set (SessionStart · Stop ·
-// SessionEnd). Cursor/Codex sync wiring is deferred until their end-of-turn
-// event vocabularies are verified (recorded in the epic) — `status` says so.
+// Claude Code and Codex get the full D-AS-1 trigger set (SessionStart · Stop ·
+// SessionEnd). Codex's Stop contract additionally requires JSON on stdout.
 
 import (
 	"encoding/json"
@@ -26,6 +25,14 @@ func syncHookCommand(event string) string {
 		"( modernpath factory sync --if-quiescent --trigger " + event + " >/dev/null 2>&1 & ) ; exit 0"
 }
 
+// Codex validates successful Stop output as JSON. The sync remains detached,
+// then the hook always emits a valid empty response even when modernpath is not
+// on PATH. SessionEnd shares this command but has a stricter config timeout.
+func codexSyncHookCommand(event string) string {
+	return "command -v modernpath >/dev/null 2>&1 && " +
+		"( modernpath factory sync --if-quiescent --trigger " + event + " >/dev/null 2>&1 & ) ; printf '{}'"
+}
+
 // The script detaches the gated sync and returns immediately (D-AS-5):
 // the harness never waits on network, parsing, or the server. All outcomes
 // land in .modernpath/sync-hooks.log via the CLI itself (D-AS-4).
@@ -36,12 +43,21 @@ exit 0
 `
 
 var claudeSyncEvents = []string{"SessionStart", "Stop", "SessionEnd"}
+var codexSyncEvents = []string{"SessionStart", "Stop", "SessionEnd"}
 
 // installSyncFamilyClaude MERGES the trigger entries into
 // .claude/settings.json — existing events and hooks (the context family
 // included) are preserved. It writes NO script: the entries invoke the
 // installed CLI directly, so nothing a merge can delete sits in the path.
 func installSyncFamilyClaude(agent agentConfig) error {
+	return installSyncFamily(agent, claudeSyncEvents, false)
+}
+
+func installSyncFamilyCodex(agent agentConfig) error {
+	return installSyncFamily(agent, codexSyncEvents, true)
+}
+
+func installSyncFamily(agent agentConfig, events []string, codex bool) error {
 	if err := os.MkdirAll(agent.hooksDir, 0o755); err != nil {
 		return err
 	}
@@ -50,48 +66,40 @@ func installSyncFamilyClaude(agent agentConfig) error {
 	// at a file that a branch switch removes (RUN:2026-08-10)
 	_ = os.Remove(filepath.Join(agent.hooksDir, syncHookScriptName))
 
-	var settings map[string]interface{}
-	if data, err := os.ReadFile(agent.configPath); err == nil {
-		_ = json.Unmarshal(data, &settings)
-	}
-	if settings == nil {
-		settings = map[string]interface{}{}
+	settings, err := readSettingsForMerge(agent.configPath)
+	if err != nil {
+		return err
 	}
 	hooks, _ := settings["hooks"].(map[string]interface{})
 	if hooks == nil {
 		hooks = map[string]interface{}{}
 	}
 
-	for _, event := range claudeSyncEvents {
-		// Migrate: drop any entry left by an older install (they point at a
-		// script that no longer exists, so the harness errors on every
-		// trigger). Without this the legacy entry counts as "installed" and
-		// the broken wiring survives forever (RUN:2026-08-10).
-		if existing, ok := hooks[event].([]interface{}); ok {
-			var kept []interface{}
-			for _, e := range existing {
-				raw, _ := json.Marshal(e)
-				if !containsStr(string(raw), syncHookScriptName) {
-					kept = append(kept, e)
-				}
+	for _, event := range events {
+		// Replace only ModernPath-owned entries. This migrates the old script
+		// adapter, updates prior command shapes, and collapses duplicates.
+		existing, _ := hooks[event].([]interface{})
+		kept := dropEntriesWithMarkers(existing, syncHookMarker, syncHookScriptName)
+
+		command := syncHookCommand(event)
+		timeout := 10
+		if codex {
+			command = codexSyncHookCommand(event)
+			if event == "SessionEnd" {
+				timeout = 3
 			}
-			hooks[event] = kept
 		}
 
 		entry := map[string]interface{}{
 			"hooks": []interface{}{
 				map[string]interface{}{
 					"type":    "command",
-					"command": syncHookCommand(event),
-					"timeout": 10,
+					"command": command,
+					"timeout": timeout,
 				},
 			},
 		}
-
-		existing, _ := hooks[event].([]interface{})
-		if !containsSyncHook(existing) {
-			hooks[event] = append(existing, entry)
-		}
+		hooks[event] = append(kept, entry)
 	}
 
 	settings["hooks"] = hooks
@@ -133,47 +141,72 @@ func indexOf(haystack, needle string) int {
 	return -1
 }
 
-// uninstallSyncFamilyClaude removes the script and the sync entries, leaving
-// every other hook untouched.
-func uninstallSyncFamilyClaude(agent agentConfig) {
+// uninstallSyncFamilyClaude removes the legacy script and the sync entries,
+// leaving every other hook untouched. It reports whether it removed any entry.
+func uninstallSyncFamilyClaude(agent agentConfig) (bool, error) {
 	_ = os.Remove(filepath.Join(agent.hooksDir, syncHookScriptName))
 
-	data, err := os.ReadFile(agent.configPath)
-	if err != nil {
-		return
-	}
-	var settings map[string]interface{}
-	if json.Unmarshal(data, &settings) != nil || settings == nil {
-		return
-	}
-	hooks, _ := settings["hooks"].(map[string]interface{})
-	if hooks == nil {
-		return
-	}
-
-	for _, event := range claudeSyncEvents {
-		entries, _ := hooks[event].([]interface{})
-		var kept []interface{}
-		for _, e := range entries {
-			raw, _ := json.Marshal(e)
-			if !containsStr(string(raw), syncHookMarker) && !containsStr(string(raw), syncHookScriptName) {
-				kept = append(kept, e)
-			}
-		}
-		if len(kept) == 0 {
-			delete(hooks, event)
-		} else {
-			hooks[event] = kept
-		}
-	}
-	settings["hooks"] = hooks
-
-	if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
-		_ = os.WriteFile(agent.configPath, out, 0o644)
-	}
+	return removeHookEntries(agent.configPath, claudeSyncEvents, syncHookMarker, syncHookScriptName)
 }
 
+func uninstallSyncFamilyCodex(agent agentConfig) (bool, error) {
+	_ = os.Remove(filepath.Join(agent.hooksDir, syncHookScriptName))
+
+	return removeHookEntries(agent.configPath, codexSyncEvents, syncHookMarker, syncHookScriptName)
+}
+
+// syncFamilyInstalled asks the settings, not the filesystem: this install
+// deliberately writes no script, so the old os.Stat probe answered "not
+// installed" for every correctly wired repository — and uninstall and status
+// both believed it.
 func syncFamilyInstalled(agent agentConfig) bool {
-	_, err := os.Stat(filepath.Join(agent.hooksDir, syncHookScriptName))
-	return err == nil
+	return syncFamilyState(agent) == hookStateConfigured
+}
+
+// syncFamilyWiring reports which of the family's triggers are wired and which
+// are not, in claudeSyncEvents order.
+//
+// It is deliberately separate from syncFamilyInstalled rather than folded into
+// it: uninstall and status are both built on that uniform marker predicate, and
+// narrowing it to "all three or nothing" would leave a partial install
+// unremovable.
+func syncFamilyWiring(agent agentConfig) (wired, missing []string) {
+	settings, err := readSettingsForMerge(agent.configPath)
+	if err != nil {
+		// A settings file this version cannot parse is not an empty one, so
+		// fall back to the uniform predicate rather than reporting the family
+		// absent on a file that may well wire it.
+		if syncFamilyInstalled(agent) {
+			return append([]string(nil), claudeSyncEvents...), nil
+		}
+		return nil, append([]string(nil), claudeSyncEvents...)
+	}
+
+	hooks, _ := settings["hooks"].(map[string]interface{})
+	for _, event := range claudeSyncEvents {
+		entries, _ := hooks[event].([]interface{})
+		// Exactly one entry in the CURRENT form, which is what familyConfigState
+		// requires. containsSyncHook is deliberately not used here: it also
+		// matches the legacy script name and never counts, so a legacy install
+		// and a duplicated one both read as wired — and the caller then names
+		// all three triggers and the detached --if-quiescent behaviour, which a
+		// legacy script does not run.
+		if countCurrentSyncHooks(entries) == 1 {
+			wired = append(wired, event)
+		} else {
+			missing = append(missing, event)
+		}
+	}
+	return wired, missing
+}
+
+func countCurrentSyncHooks(entries []interface{}) int {
+	n := 0
+	for _, e := range entries {
+		raw, _ := json.Marshal(e)
+		if raw != nil && containsStr(string(raw), syncHookMarker) {
+			n++
+		}
+	}
+	return n
 }

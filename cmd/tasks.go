@@ -37,7 +37,7 @@ func init() {
 	tasksCmd.AddCommand(tasksFetchCmd)
 }
 
-func resolveInitiativeID(cfg *config.Config, args []string) (int, error) {
+func resolveEpicID(cfg *config.Config, args []string) (int, error) {
 	if len(args) > 0 {
 		var epicID int
 		if _, err := fmt.Sscanf(args[0], "%d", &epicID); err != nil || epicID == 0 {
@@ -45,8 +45,8 @@ func resolveInitiativeID(cfg *config.Config, args []string) (int, error) {
 		}
 		return epicID, nil
 	}
-	if cfg.InitiativeID > 0 {
-		return cfg.InitiativeID, nil
+	if cfg.EpicID > 0 {
+		return cfg.EpicID, nil
 	}
 	return 0, fmt.Errorf("no epic configured; run 'modernpath work select' first")
 }
@@ -58,11 +58,11 @@ func runTasksList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	epicID, err := resolveInitiativeID(cfg, args)
+	epicID, err := resolveEpicID(cfg, args)
 	if err != nil {
 		printError("%v\n", err)
 		printInfo("Usage: modernpath tasks list [epic_id]\n")
-		return nil
+		return err
 	}
 
 	summaries, err := tasks.List(cfg.APIURL, epicID, api.DoAuthenticatedGet)
@@ -96,7 +96,7 @@ func runTasksList(cmd *cobra.Command, args []string) error {
 			fmt.Printf("[%s] %s\n", task.Code, task.DisplayTitle())
 			fmt.Printf("      ID: %s | Status: ", task.ID)
 			statusColor.Printf("%s", task.Status)
-			fmt.Printf(" | Points: %d\n", task.StoryPoints)
+			fmt.Printf(" | Points: %d\n", task.EstimatedStoryPoints)
 		}
 	}
 
@@ -111,16 +111,16 @@ func runTasksFetch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	epicID, err := resolveInitiativeID(cfg, args)
+	epicID, err := resolveEpicID(cfg, args)
 	if err != nil {
 		printError("%v\n", err)
 		printInfo("Usage: modernpath tasks fetch [epic_id]\n")
-		return nil
+		return err
 	}
 
 	printInfo("Fetching task context for epic %d...\n", epicID)
 
-	count, warnings, err := tasks.FetchAll(cfg.APIURL, epicID, cfg.InitiativeName, api.DoAuthenticatedGet)
+	count, warnings, err := tasks.FetchAll(cfg.APIURL, epicID, cfg.EpicName, api.DoAuthenticatedGet)
 	if err != nil {
 		printError("Failed to fetch tasks: %v\n", err)
 		for _, warning := range warnings {
@@ -138,15 +138,15 @@ func runTasksFetch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	relPath := config.InitiativeSpecsRelPath(epicID, cfg.InitiativeName)
+	relPath := config.EpicSpecsRelPath(epicID, cfg.EpicName)
 	printSuccess("Saved %d task context file(s) to .modernpath/%s/\n", count, relPath)
 	return nil
 }
 
-func fetchTasksForInitiative(cfg *config.Config, initiativeID int) error {
-	printInfo("Fetching task context files for epic [%d]...\n", initiativeID)
+func fetchTasksForEpic(cfg *config.Config, epicID int) error {
+	printInfo("Fetching task context files for epic [%d]...\n", epicID)
 
-	count, warnings, err := tasks.FetchAll(cfg.APIURL, initiativeID, cfg.InitiativeName, api.DoAuthenticatedGet)
+	count, warnings, err := tasks.FetchAll(cfg.APIURL, epicID, cfg.EpicName, api.DoAuthenticatedGet)
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func fetchTasksForInitiative(cfg *config.Config, initiativeID int) error {
 		return nil
 	}
 
-	relPath := config.InitiativeSpecsRelPath(initiativeID, cfg.InitiativeName)
+	relPath := config.EpicSpecsRelPath(epicID, cfg.EpicName)
 	printSuccess("Saved %d task context file(s) to .modernpath/%s/\n", count, relPath)
 	return nil
 }

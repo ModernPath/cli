@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Reverse-Engineer"
+  short_description: "Adopt a codebase: derive DERIVED candidates"
+  default_prompt: "Use $rdd-reverse-engineer to bootstrap a requirement corpus from this codebase."

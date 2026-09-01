@@ -17,11 +17,24 @@ import (
 // the rest are optional enrichment — absent files are skipped quietly,
 // absent MANDATED files are reported loudly by sync (never a silent skip).
 const (
-	DocRequirements  = "requirements"
-	DocWorklist      = "worklist"
-	DocEpics         = "epics"
-	DocReviewQueue   = "review_queue"
-	DocOpenQuestions = "open_questions"
+	DocRequirements = "requirements"
+	// SR-SY-1403 (EPIC-SYNC-014): the user-requirement layer the UR/SCN
+	// derivation pass writes under requirements/. Optional enrichment, never
+	// mandated — most workspaces do not have it yet.
+	DocUserRequirements = "user_requirements"
+	DocWorklist         = "worklist"
+	DocEpics            = "epics"
+	DocReviewQueue      = "review_queue"
+	DocOpenQuestions    = "open_questions"
+	// REQ-CROSS-223 (EPIC-CLI-003): unrouted triage discoveries and
+	// capability gaps gain a store home for the ledger import. Optional —
+	// absence is a fact about the workspace, never an error.
+	DocBacklog     = "backlog"
+	DocGapRegister = "gap_register"
+	// REQ-CROSS-237: the gate flat-file. A reverse-engineering pass writes its
+	// confirmation gates here, and until this doc type existed nothing read
+	// them — a DERIVED corpus arrived with no way to be confirmed.
+	DocGates = "gates"
 )
 
 // MandatedTypes per decision D2 (USER:2026-07-28).
@@ -29,11 +42,15 @@ var MandatedTypes = []string{DocRequirements, DocWorklist, DocEpics}
 
 // KnownFormats maps each named parser format to the doc type it parses.
 var KnownFormats = map[string]string{
-	"rdd-ledger-v1":         DocRequirements,
-	"rdd-worklist-v1":       DocWorklist,
-	"rdd-epic-v1":           DocEpics,
-	"rdd-review-queue-v1":   DocReviewQueue,
-	"rdd-open-questions-v1": DocOpenQuestions,
+	"rdd-ledger-v1":            DocRequirements,
+	"rdd-user-requirements-v1": DocUserRequirements,
+	"rdd-worklist-v1":          DocWorklist,
+	"rdd-epic-v1":              DocEpics,
+	"rdd-review-queue-v1":      DocReviewQueue,
+	"rdd-open-questions-v1":    DocOpenQuestions,
+	"rdd-backlog-v1":           DocBacklog,
+	"rdd-gap-register-v1":      DocGapRegister,
+	"rdd-gates-v1":             DocGates,
 }
 
 // DocSpec is one document-type entry: where the files live and which named
@@ -68,11 +85,15 @@ func Default() *Manifest {
 	return &Manifest{
 		SchemaVersion: 1,
 		Documents: map[string]DocSpec{
-			DocRequirements:  {Paths: []string{"tasks/*-REQUIREMENTS.md"}, Format: "rdd-ledger-v1"},
-			DocWorklist:      {Path: "WORKLIST.md", Format: "rdd-worklist-v1"},
-			DocEpics:         {Paths: []string{"epics/*"}, Format: "rdd-epic-v1"},
-			DocReviewQueue:   {Path: "docs/85-loop-review-queue.md", Format: "rdd-review-queue-v1"},
-			DocOpenQuestions: {Path: "process/08-open-questions.md", Format: "rdd-open-questions-v1"},
+			DocRequirements:     {Paths: []string{"tasks/*-REQUIREMENTS.md"}, Format: "rdd-ledger-v1"},
+			DocUserRequirements: {Paths: []string{"requirements/*-USER-REQUIREMENTS.md"}, Format: "rdd-user-requirements-v1"},
+			DocWorklist:         {Path: "WORKLIST.md", Format: "rdd-worklist-v1"},
+			DocEpics:            {Paths: []string{"epics/*"}, Format: "rdd-epic-v1"},
+			DocReviewQueue:      {Path: "docs/85-loop-review-queue.md", Format: "rdd-review-queue-v1"},
+			DocOpenQuestions:    {Path: "process/08-open-questions.md", Format: "rdd-open-questions-v1"},
+			DocBacklog:          {Path: "BACKLOG.md", Format: "rdd-backlog-v1"},
+			DocGapRegister:      {Path: "process/gap-register.md", Format: "rdd-gap-register-v1"},
+			DocGates:            {Path: "file-state/GATES.md", Format: "rdd-gates-v1"},
 		},
 	}
 }

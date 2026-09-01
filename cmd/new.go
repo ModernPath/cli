@@ -15,18 +15,19 @@ import (
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
 var (
-	projectName     string
-	projectDesc     string
-	descFile        string
-	techProfile     string
-	projectType     string
-	skipInit        bool
-	inPlace         bool
-	yesFlag         bool
+	projectName string
+	projectDesc string
+	descFile    string
+	techProfile string
+	projectType string
+	skipInit    bool
+	inPlace     bool
+	yesFlag     bool
 )
 
 // TechProfile represents a technology standards profile
@@ -55,7 +56,7 @@ Steps:
 1. Select a technology standards profile (customer-specific)
 2. Name your project
 3. Provide a description (text or from a file)
-4. Generate the system and initial initiative
+4. Generate the system and initial Epic
 
 Examples:
   modernpath new                                     # Interactive - creates folder
@@ -80,6 +81,8 @@ func init() {
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
+	// A failed run is a report, not a misuse of the command.
+	cmd.SilenceUsage = true
 	// Get API URL
 	baseURL := apiURL
 	if baseURL == "" {
@@ -150,7 +153,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		fmt.Println("Describe the product, its purpose, target users, and key features.")
 		fmt.Println("The more detail you provide, the better the generated system.")
 		fmt.Println()
-		
+
 		prompt := promptui.Prompt{
 			Label: "What are you building?",
 			Validate: func(input string) error {
@@ -166,7 +169,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 			return promptErr
 		}
 	}
-	
+
 	// Final validation
 	if len(strings.TrimSpace(description)) < 20 {
 		printError("Description is too short. Please provide a meaningful description.\n")
@@ -242,7 +245,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	printSuccess("System created (ID: %d)\n", archResult.ID)
-	
+
 	// Show generated product definition
 	if archResult.ProductDefinition != nil {
 		if vision, ok := archResult.ProductDefinition["vision"].(string); ok && vision != "" {
@@ -256,40 +259,49 @@ func runNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Create initial initiative with product definition as project overview
-	printInfo("Creating initial initiative...\n")
+	// Create the initial Epic with the product definition as project overview.
+	// Failures here join the same honest-exit path as local setup:
+	// a warning under a "✨ Project Created!" banner and exit 0 is how a repo
+	// ends up with local Epic configuration that names no server row.
+	printInfo("Creating initial Epic...\n")
 
-	initID, err := createInitiative(baseURL, archResult)
+	var setupErr error
+
+	epicID, err := createEpic(baseURL, archResult)
 	if err != nil {
-		printWarning("Failed to create initiative: %v (system was created)\n", err)
+		printError("Failed to create Epic: %v\n", err)
+		setupErr = err
 	} else {
-		printSuccess("Initiative created (ID: %d)\n", initID)
+		printSuccess("Epic created (ID: %d)\n", epicID)
 	}
 
 	// Create project folder (unless --in-place)
 	projectDir := "."
 	slug := config.Slugify(name)
-	
+
 	if !inPlace {
 		projectDir = slug
-		
+
 		// Check if folder already exists
 		if _, err := os.Stat(projectDir); err == nil {
 			printError("Directory '%s' already exists\n", projectDir)
 			printInfo("Use --in-place to initialize in current directory\n")
 			return fmt.Errorf("directory exists")
 		}
-		
+
 		fmt.Println()
 		printInfo("Creating project folder: %s/\n", projectDir)
-		
+
 		if err := os.MkdirAll(projectDir, 0755); err != nil {
 			printError("Failed to create directory: %v\n", err)
 			return err
 		}
 	}
 
-	// Initialize .modernpath if not skipped
+	// Initialize .modernpath if not skipped. Failures here are remembered and
+	// fail the command: the system already exists on the server, and a "✨"
+	// exit 0 over a repo whose config or ignore rules are broken hides exactly
+	// the state the user must repair.
 	if !skipInit {
 		printInfo("Initializing .modernpath/...\n")
 
@@ -297,40 +309,61 @@ func runNew(cmd *cobra.Command, args []string) error {
 		modernpathDir := filepath.Join(projectDir, ".modernpath")
 		if err := os.MkdirAll(modernpathDir, 0755); err != nil {
 			printWarning("Failed to create .modernpath: %v\n", err)
+			setupErr = err
 		} else {
-			// Save config (including initiative ID)
+			// Save config (including Epic ID). The name is written only
+			// when there is an id behind it — a config naming an Epic
+			// that does not exist reads as success.
 			cfg := &config.Config{
-				APIURL:           baseURL,
+				APIURL:     baseURL,
 				SystemID:   archResult.ID,
 				SystemName: name,
 				SystemSlug: slug,
-				InitiativeID:     initID,
-				InitiativeName:   name + " - Initial Development",
+			}
+			if epicID != 0 {
+				cfg.EpicID = epicID
+				cfg.EpicName = epicTitle(name)
 			}
 
 			configPath := filepath.Join(modernpathDir, "config.json")
 			configData, _ := json.MarshalIndent(cfg, "", "  ")
 			if err := os.WriteFile(configPath, configData, 0644); err != nil {
 				printWarning("Failed to save config: %v\n", err)
+				setupErr = err
 			} else {
 				printSuccess("Config saved to %s/.modernpath/config.json\n", projectDir)
 			}
-			
+
 			// Create .gitignore for auth.json inside .modernpath
 			innerGitignorePath := filepath.Join(modernpathDir, ".gitignore")
 			innerGitignoreContent := "# ModernPath - ignore sensitive files\nauth.json\n*.log\n"
 			os.WriteFile(innerGitignorePath, []byte(innerGitignoreContent), 0644)
-			
-			// Add .modernpath/ to project's .gitignore
-			if err := addToGitignore(projectDir); err != nil {
-				printWarning("Could not update .gitignore: %v\n", err)
-			} else {
-				printInfo("Added .modernpath/ to .gitignore\n")
-			}
 		}
-		
+
+		// Ignore local state while keeping the installed process versioned.
+		// Outside the MkdirAll branch on purpose: a failed .modernpath setup
+		// must not leave a broad `.modernpath/` rule hiding the process package.
+		if err := addToGitignore(projectDir); err != nil {
+			printWarning("Could not update .gitignore: %v\n", err)
+			setupErr = err
+		} else {
+			printInfo("Ignored local .modernpath state; kept .modernpath/rdd versioned\n")
+		}
+
 		// Generate README.md with product definition
 		generateProjectReadme(projectDir, archResult)
+	}
+
+	if setupErr != nil {
+		fmt.Println()
+		printError("Setup did not finish: %v\n", setupErr)
+		if epicID != 0 {
+			printInfo("Already on the server (nothing was rolled back): System %d, Epic %d\n", archResult.ID, epicID)
+		} else {
+			printInfo("Already on the server (nothing was rolled back): System %d — it has no Epic\n", archResult.ID)
+		}
+		printInfo("Fix the cause and run `modernpath init` in %s to finish the local setup\n", projectDir)
+		return setupErr
 	}
 
 	// Print next steps
@@ -344,7 +377,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("  1. View in UI:    %s/systems/%d\n", baseURL, archResult.ID)
 	}
-	fmt.Printf("  %d. Sync docs:     modernpath sync\n", ifThen(!inPlace, 3, 2))
+	fmt.Printf("  %d. Sync docs:     modernpath docs sync\n", ifThen(!inPlace, 3, 2))
 	fmt.Printf("  %d. Search:        modernpath search \"...\"\n", ifThen(!inPlace, 4, 3))
 	fmt.Printf("  %d. Ask questions: modernpath ask \"...\"\n", ifThen(!inPlace, 5, 4))
 	fmt.Println()
@@ -388,7 +421,7 @@ func selectTechProfile(baseURL string, projectDescription string) (*SelectionRes
 				AISelected:  true,
 			}, nil
 		}
-		
+
 		// Find matching profile
 		lowerProfile := strings.ToLower(techProfile)
 		for i := range profiles {
@@ -402,19 +435,19 @@ func selectTechProfile(baseURL string, projectDescription string) (*SelectionRes
 
 	// Build selection items - AI option first
 	items := []string{"🤖 Let AI decide (tech stack + project type)"}
-	
+
 	for _, p := range profiles {
 		icon := p.Icon
 		if icon == "" {
 			icon = "🎯"
 		}
 		tags := strings.Join(p.Tags, ", ")
-		
+
 		defaultMarker := ""
 		if p.IsDefault {
 			defaultMarker = " ⭐"
 		}
-		
+
 		if p.Description != "" {
 			items = append(items, fmt.Sprintf("%s %s%s - %s [%s]", icon, p.Name, defaultMarker, p.Description, tags))
 		} else {
@@ -462,37 +495,36 @@ type AIRecommendation struct {
 
 func generateTechProfileWithAI(baseURL, projectDescription string) (*AIRecommendation, error) {
 	printInfo("Asking AI to recommend tech stack and project type...\n")
-	
+
 	payload := map[string]interface{}{
 		"description": projectDescription,
 	}
-	
+
 	jsonPayload, _ := json.Marshal(payload)
-	
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Post(baseURL+"/api/tech-profiles/generate", "application/json", bytes.NewBuffer(jsonPayload))
+
+	resp, err := authedRequest(http.MethodPost, baseURL+"/api/tech-profiles/generate", bytes.NewBuffer(jsonPayload), 60*time.Second)
 	if err != nil {
 		printWarning("AI generation failed: %v\n", err)
 		return nil, fmt.Errorf("AI generation unavailable")
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		printWarning("AI generation failed: %s\n", string(body))
 		return nil, fmt.Errorf("AI generation failed")
 	}
-	
+
 	var result struct {
 		Profile     TechProfile `json:"profile"`
 		ProjectType string      `json:"project_type"`
 		Reasoning   string      `json:"reasoning"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	
+
 	// Show AI's reasoning
 	fmt.Println()
 	bold := color.New(color.Bold)
@@ -507,7 +539,7 @@ func generateTechProfileWithAI(baseURL, projectDescription string) (*AIRecommend
 		gray.Printf("   %s\n", result.Reasoning)
 	}
 	fmt.Println()
-	
+
 	return &AIRecommendation{
 		Profile:     &result.Profile,
 		ProjectType: result.ProjectType,
@@ -515,9 +547,27 @@ func generateTechProfileWithAI(baseURL, projectDescription string) (*AIRecommend
 	}, nil
 }
 
+// authedRequest issues a request carrying the stored auth token — the same
+// credential path init uses. A bare http.Client sends no Authorization, so
+// every call 401s against an authenticated server.
+func authedRequest(method, url string, body io.Reader, timeout time.Duration) (*http.Response, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	platform.Prepare(req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if auth, _ := config.ReadAuth(); auth != nil {
+		if err := platform.Authorize(req, auth.Token); err != nil {
+			return nil, err
+		}
+	}
+	return (&http.Client{Timeout: timeout}).Do(req)
+}
+
 func fetchTechProfiles(baseURL string) ([]TechProfile, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(baseURL + "/api/tech-profiles")
+	resp, err := authedRequest(http.MethodGet, baseURL+"/api/tech-profiles", nil, 10*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +591,7 @@ type SystemResult struct {
 	Name              string                 `json:"name"`
 	Slug              string                 `json:"slug"`
 	Description       string                 `json:"description"`
-	SystemType  string                 `json:"system_type"`
+	SystemType        string                 `json:"system_type"`
 	AISummary         string                 `json:"ai_summary"`
 	ProductDefinition map[string]interface{} `json:"product_definition"`
 	TechStack         map[string]interface{} `json:"tech_stack"`
@@ -549,12 +599,12 @@ type SystemResult struct {
 
 func createSystem(baseURL, name, description string, profile *TechProfile, projectType string) (*SystemResult, error) {
 	payload := map[string]interface{}{
-		"name":               name,
-		"description":        description,
-		"system_type":  projectType,
-		"status":             "active",
+		"name":        name,
+		"description": description,
+		"system_type": projectType,
+		"status":      "active",
 	}
-	
+
 	// Check if this is an AI-generated profile (ID starts with "ai-generated")
 	if strings.HasPrefix(profile.ID, "ai-generated") {
 		// Pass tech_stack directly for AI-generated profiles
@@ -568,8 +618,7 @@ func createSystem(baseURL, name, description string, profile *TechProfile, proje
 	jsonPayload, _ := json.Marshal(payload)
 
 	// Longer timeout for AI generation
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Post(baseURL+"/api/systems", "application/json", bytes.NewBuffer(jsonPayload))
+	resp, err := authedRequest(http.MethodPost, baseURL+"/api/systems", bytes.NewBuffer(jsonPayload), 120*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -588,30 +637,43 @@ func createSystem(baseURL, name, description string, profile *TechProfile, proje
 	return &result, nil
 }
 
-func createInitiative(baseURL string, arch *SystemResult) (int, error) {
+// epicTitle names the Epic `modernpath new` opens a System with.
+func epicTitle(systemName string) string {
+	return systemName + " - Initial Development"
+}
+
+func createEpic(baseURL string, arch *SystemResult) (int, error) {
 	// Build project overview from product definition
 	projectOverview := buildProjectOverview(arch)
-	
+
+	// The Epic's name field is `title`, and it is required —
+	// CODE:apps/storage/lib/storage/schema/epic.ex:changeset
+	// (`validate_required([:title, :status])`). Posting `name` made every
+	// `modernpath new` answer 422 {"errors":{"title":["can't be blank"]}},
+	// so no System ever got its initial Epic.
+	//
+	// `status` must be a board column or the card lands in none of them; the
+	// built-in set is todo · in_progress · blocked · done —
+	// CODE:apps/storage/lib/storage/repositories/board_column_config_repo.ex:@defaults
 	payload := map[string]interface{}{
-		"name":                    arch.Name + " - Initial Development",
-		"description":             arch.Description,
-		"system_id":  arch.ID,
-		"status":                  "planning",
-		"priority":                "high",
-		"project_type":            "greenfield",
-		"project_overview":        projectOverview,
-		"auto_generated":          true,
-		"workflow_phase":          "discovery",
+		"title":            epicTitle(arch.Name),
+		"description":      arch.Description,
+		"system_id":        arch.ID,
+		"status":           "todo",
+		"priority":         "high",
+		"project_type":     "greenfield",
+		"project_overview": projectOverview,
+		"auto_generated":   true,
+		"workflow_phase":   "discovery",
 		"metadata": map[string]interface{}{
-			"source": "cli",
+			"source":     "cli",
 			"created_by": "modernpath new",
 		},
 	}
 
 	jsonPayload, _ := json.Marshal(payload)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Post(baseURL+"/api/work/initiatives", "application/json", bytes.NewBuffer(jsonPayload))
+	resp, err := authedRequest(http.MethodPost, baseURL+"/api/work/epics", bytes.NewBuffer(jsonPayload), 30*time.Second)
 	if err != nil {
 		return 0, err
 	}
@@ -638,41 +700,41 @@ func createInitiative(baseURL string, arch *SystemResult) (int, error) {
 // Build project overview markdown from system result
 func buildProjectOverview(arch *SystemResult) string {
 	var overview strings.Builder
-	
+
 	overview.WriteString(fmt.Sprintf("# Product Specification: %s\n\n", arch.Name))
 	overview.WriteString("**Version:** 1.0\n")
 	overview.WriteString("**Status:** Draft\n")
 	overview.WriteString(fmt.Sprintf("**Date:** %s\n\n", time.Now().Format("January 2, 2006")))
-	
+
 	overview.WriteString("## 1. Executive Summary\n\n")
 	overview.WriteString("### Product Overview\n")
 	overview.WriteString(fmt.Sprintf("%s\n\n", arch.Description))
-	
+
 	if arch.ProductDefinition != nil {
 		// Vision
 		if vision, ok := arch.ProductDefinition["vision"].(string); ok && vision != "" {
 			overview.WriteString("### Vision\n")
 			overview.WriteString(fmt.Sprintf("%s\n\n", vision))
 		}
-		
+
 		// Value Proposition
 		if value, ok := arch.ProductDefinition["value_proposition"].(string); ok && value != "" {
 			overview.WriteString("### Key Value Proposition\n")
 			overview.WriteString(fmt.Sprintf("%s\n\n", value))
 		}
-		
+
 		// Target Users
 		if targetUsers, ok := arch.ProductDefinition["target_users"].(string); ok && targetUsers != "" {
 			overview.WriteString("### Target Market/Users\n")
 			overview.WriteString(fmt.Sprintf("%s\n\n", targetUsers))
 		}
-		
+
 		// Mission
 		if mission, ok := arch.ProductDefinition["mission"].(string); ok && mission != "" {
 			overview.WriteString("## 2. Mission Statement\n\n")
 			overview.WriteString(fmt.Sprintf("%s\n\n", mission))
 		}
-		
+
 		// Key Features
 		if features, ok := arch.ProductDefinition["key_features"].([]interface{}); ok && len(features) > 0 {
 			overview.WriteString("## 3. Core Features & Capabilities\n\n")
@@ -684,7 +746,7 @@ func buildProjectOverview(arch *SystemResult) string {
 				}
 			}
 		}
-		
+
 		// Success Metrics
 		if metrics, ok := arch.ProductDefinition["success_metrics"].([]interface{}); ok && len(metrics) > 0 {
 			overview.WriteString("## 4. Success Metrics\n\n")
@@ -696,11 +758,11 @@ func buildProjectOverview(arch *SystemResult) string {
 			overview.WriteString("\n")
 		}
 	}
-	
+
 	// Tech Stack
 	if arch.TechStack != nil {
 		overview.WriteString("## 5. Technical Foundation\n\n")
-		
+
 		if langs, ok := arch.TechStack["languages"].([]interface{}); ok && len(langs) > 0 {
 			langStrs := make([]string, 0)
 			for _, l := range langs {
@@ -710,7 +772,7 @@ func buildProjectOverview(arch *SystemResult) string {
 			}
 			overview.WriteString(fmt.Sprintf("**Languages:** %s\n", strings.Join(langStrs, ", ")))
 		}
-		
+
 		if fws, ok := arch.TechStack["frameworks"].([]interface{}); ok && len(fws) > 0 {
 			fwStrs := make([]string, 0)
 			for _, f := range fws {
@@ -720,13 +782,13 @@ func buildProjectOverview(arch *SystemResult) string {
 			}
 			overview.WriteString(fmt.Sprintf("**Frameworks:** %s\n", strings.Join(fwStrs, ", ")))
 		}
-		
+
 		overview.WriteString("\n")
 	}
-	
+
 	overview.WriteString("---\n")
 	overview.WriteString("*Generated by ModernPath CLI*\n")
-	
+
 	return overview.String()
 }
 
@@ -748,33 +810,33 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 	if arch == nil {
 		return
 	}
-	
+
 	var readme strings.Builder
-	
+
 	// Header
 	readme.WriteString(fmt.Sprintf("# %s\n\n", arch.Name))
 	readme.WriteString(fmt.Sprintf("> %s\n\n", arch.Description))
-	
+
 	// Product Definition
 	if arch.ProductDefinition != nil {
 		readme.WriteString("## Product Overview\n\n")
-		
+
 		if vision, ok := arch.ProductDefinition["vision"].(string); ok && vision != "" {
 			readme.WriteString(fmt.Sprintf("**Vision:** %s\n\n", vision))
 		}
-		
+
 		if mission, ok := arch.ProductDefinition["mission"].(string); ok && mission != "" {
 			readme.WriteString(fmt.Sprintf("**Mission:** %s\n\n", mission))
 		}
-		
+
 		if targetUsers, ok := arch.ProductDefinition["target_users"].(string); ok && targetUsers != "" {
 			readme.WriteString(fmt.Sprintf("**Target Users:** %s\n\n", targetUsers))
 		}
-		
+
 		if value, ok := arch.ProductDefinition["value_proposition"].(string); ok && value != "" {
 			readme.WriteString(fmt.Sprintf("**Value Proposition:** %s\n\n", value))
 		}
-		
+
 		// Key Features
 		if features, ok := arch.ProductDefinition["key_features"].([]interface{}); ok && len(features) > 0 {
 			readme.WriteString("## Key Features\n\n")
@@ -785,7 +847,7 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 			}
 			readme.WriteString("\n")
 		}
-		
+
 		// Success Metrics
 		if metrics, ok := arch.ProductDefinition["success_metrics"].([]interface{}); ok && len(metrics) > 0 {
 			readme.WriteString("## Success Metrics\n\n")
@@ -797,11 +859,11 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 			readme.WriteString("\n")
 		}
 	}
-	
+
 	// Tech Stack
 	if arch.TechStack != nil {
 		readme.WriteString("## Tech Stack\n\n")
-		
+
 		if langs, ok := arch.TechStack["languages"].([]interface{}); ok && len(langs) > 0 {
 			readme.WriteString("**Languages:** ")
 			langStrs := make([]string, 0)
@@ -813,7 +875,7 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 			readme.WriteString(strings.Join(langStrs, ", "))
 			readme.WriteString("\n\n")
 		}
-		
+
 		if fws, ok := arch.TechStack["frameworks"].([]interface{}); ok && len(fws) > 0 {
 			readme.WriteString("**Frameworks:** ")
 			fwStrs := make([]string, 0)
@@ -825,7 +887,7 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 			readme.WriteString(strings.Join(fwStrs, ", "))
 			readme.WriteString("\n\n")
 		}
-		
+
 		if dbs, ok := arch.TechStack["databases"].([]interface{}); ok && len(dbs) > 0 {
 			readme.WriteString("**Databases:** ")
 			dbStrs := make([]string, 0)
@@ -838,7 +900,7 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 			readme.WriteString("\n\n")
 		}
 	}
-	
+
 	// Getting Started placeholder
 	readme.WriteString("## Getting Started\n\n")
 	readme.WriteString("```bash\n")
@@ -848,7 +910,7 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 	readme.WriteString("# Start development\n")
 	readme.WriteString("npm run dev\n")
 	readme.WriteString("```\n\n")
-	
+
 	// ModernPath section
 	readme.WriteString("## ModernPath\n\n")
 	readme.WriteString("This project was created with [ModernPath](https://modernpath.dev).\n\n")
@@ -860,9 +922,9 @@ func generateProjectReadme(projectDir string, arch *SystemResult) {
 	readme.WriteString("modernpath ask \"How does X work?\"\n")
 	readme.WriteString("\n")
 	readme.WriteString("# Sync latest docs\n")
-	readme.WriteString("modernpath sync\n")
+	readme.WriteString("modernpath docs sync\n")
 	readme.WriteString("```\n")
-	
+
 	// Write README.md
 	readmePath := filepath.Join(projectDir, "README.md")
 	if err := os.WriteFile(readmePath, []byte(readme.String()), 0644); err != nil {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Deliver"
+  short_description: "Run requirement delivery through DONE"
+  default_prompt: "Use $rdd-deliver to take the selected requirement scope through the complete controlled delivery loop."

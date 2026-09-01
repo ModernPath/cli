@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.6.0 — the process became twelve passes, and the loop got a place to stand
+
+`modernpath install` now writes the full requirement-driven process rather than a
+handful of skills: **twelve passes** under `.modernpath/rdd/skills/`, each one a
+phase you can enter and exit, pinned to `req-driven-dev@e3f60dde`.
+
+`rdd-start` · `rdd-discover` · `rdd-plan` · `rdd-cold-review` · `rdd-entry-review`
+· `rdd-build` · `rdd-verify` · `rdd-completion-review` · `rdd-triage` ·
+`rdd-deliver` · `rdd-audit` · `rdd-reverse-engineer`
+
+The old flat set (`rdd-planning`, `rdd-discovery`, `rdd-build-loop`) is gone. The
+replacement is not a rename: entry is now a gate with a packet behind it,
+cold review runs from a context that did not author what it reviews, and
+completion audits evidence at the delivered revision rather than at the revision
+someone remembered. `PROCESS.md` ships alongside as the single authority, and
+`file-state/` carries the record shapes it serializes.
+
+### `modernpath focus` — say what you are on, without claiming it
+
+Visibility only: no assignment, no lock, nobody's queue changes. Declare it,
+clear it, list what everyone else declared. `--infer` reads the refs you are
+actually touching and proposes the answer, with a hysteresis buffer so a single
+stray file does not flip your focus. A transition emits `focus_changed` naming
+the human who caused it.
+
+### Your move, on arrival
+
+A `SessionStart` hook writes a personal brief: what is waiting on **you**,
+ordered by what it unblocks, not by when it was created. The hook family owns no
+repository files — it reads and writes nothing you have to merge.
+
+### `factory sync` stops falling over on a bad afternoon
+
+Tunable chunk size, retry on 5xx instead of abandoning the batch, and `--no-docs`
+when you want records without the document payload. Reachability warnings now
+name the system they could not reach, which turns "connection failed" into
+something you can act on.
+
+### Fixes worth naming
+
+- **The health probe never sent the bearer**, so a reachable system answered
+  `401` and reported itself unreachable. Two of the three probes also skipped the
+  Gateway prefix.
+- **12 of 20 open-question gates were losing their brief** between authoring and
+  the wire — the decision arrived without the reason for it.
+- **Five approval reports were false.** A dormant test, switched on, found them.
+- **The answered-gate log was written into a directory the CLI never creates.**
+  `factory pull --apply` opened `mission-control/ANSWERS.md`, got `ENOENT`,
+  swallowed it, and reported success — so in every installed workspace the log
+  was silently empty. It now writes `ANSWERS.md` and `answers.jsonl` at the
+  workspace root.
+- **Hook migration was guarded for Claude and not for Cursor**, so Cursor users
+  kept a stale hook after upgrading.
+
+### Changed defaults
+
+- `modernpath env` defaults to **cloud production**. `beta` still exists as a
+  named environment, now marked deprecated.
+- The `--legacy-extractor` flag is removed. It shelled out to a node op-builder
+  that only ever existed in one repository; the bundled Go parsers have been the
+  default for some time and are now the only implementation.
+
 ## v0.5.0 — a repository with no requirements gets a ledger
 
 `modernpath install` now ships **`rdd-reverse-engineer`**: the method for turning

@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Discover"
+  short_description: "Discover and source product intent"
+  default_prompt: "Use $rdd-discover to source and classify this product intent."

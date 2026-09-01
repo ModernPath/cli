@@ -3,11 +3,14 @@ package cmd
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
+	"github.com/modernpath/cli/internal/zitadel"
 	"github.com/spf13/cobra"
 )
 
@@ -15,18 +18,72 @@ var (
 	envSet string
 )
 
+// knownEnvironment is a named ModernPath server `modernpath env` can switch to.
+type knownEnvironment struct {
+	Name       string
+	URL        string
+	Desc       string
+	Deprecated bool
+}
+
+// knownEnvironments is the embedded set the CLI offers by name. The cloud URLs
+// are the same baked-in Zitadel profile hosts auth (`--sso` / `--sso --test`)
+// and the platform layer use, so there is one source of truth for them and the
+// env names line up with the auth flags. Beta is retained as an explicitly
+// deprecated target during the beta→cloud migration rather than dropped, so a
+// workspace still pointed at it is named rather than shown as "custom".
+func knownEnvironments() []knownEnvironment {
+	return []knownEnvironment{
+		{"production", zitadel.ProdProfile.APIURL, "ModernPath production (cloud)", false},
+		{"test", zitadel.TestProfile.APIURL, "ModernPath test-plat (cloud)", false},
+		{"local", config.LocalAPIURL, "Local development server", false},
+		{"beta", config.BetaAPIURL, "Legacy beta — being decommissioned", true},
+	}
+}
+
+// environmentName maps a URL back to its known environment name, or "custom".
+// One mapping shared by `env` and `status` so the two never disagree.
+func environmentName(url string) string {
+	for _, e := range knownEnvironments() {
+		if url == e.URL {
+			return e.Name
+		}
+	}
+	return "custom"
+}
+
+// environmentURL resolves an environment name (and its aliases) to a URL. ok is
+// false for a name that is not a known environment, so the caller can fall back
+// to treating the argument as a raw URL.
+func environmentURL(name string) (string, bool) {
+	switch name {
+	case "production", "prod":
+		return zitadel.ProdProfile.APIURL, true
+	case "test", "test-plat":
+		return zitadel.TestProfile.APIURL, true
+	case "local", "localhost", "dev":
+		return config.LocalAPIURL, true
+	case "beta":
+		return config.BetaAPIURL, true
+	}
+	return "", false
+}
+
 var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "Manage ModernPath environment settings",
-	Long: `View and manage which ModernPath environment (local or production) the CLI connects to.
+	Long: `View and manage which ModernPath environment the CLI connects to.
 
 Available environments:
-  production  - https://beta.modernpath.ai (default)
+  production  - https://api.modernpath.ai (cloud, default)
+  test        - https://api.workload.test-plat.modernpath.ai (cloud test-plat)
   local       - http://localhost:4000
+  beta        - https://beta.modernpath.ai (legacy, being decommissioned)
 
 Examples:
   modernpath env                    # Show current environment
-  modernpath env --set=production   # Switch to production
+  modernpath env --set=production   # Switch to cloud production
+  modernpath env --set=test         # Switch to cloud test-plat
   modernpath env --set=local        # Switch to local development
   modernpath env --set=custom       # Set a custom URL interactively`,
 	RunE: runEnv,
@@ -45,7 +102,7 @@ var envTestCmd = &cobra.Command{
 }
 
 func init() {
-	envCmd.Flags().StringVar(&envSet, "set", "", "Set environment: production, local, or custom")
+	envCmd.Flags().StringVar(&envSet, "set", "", "Set environment: production, test, local, beta, custom, or a URL")
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envTestCmd)
 	rootCmd.AddCommand(envCmd)
@@ -81,44 +138,28 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	bold.Println("Available Environments")
 	fmt.Println("─────────────────────────────────────────")
 
-	envs := []struct {
-		name    string
-		url     string
-		desc    string
-		current bool
-	}{
-		{
-			name:    "production",
-			url:     config.DefaultAPIURL,
-			desc:    "ModernPath production server",
-			current: cfg.APIURL == config.DefaultAPIURL || cfg.APIURL == "",
-		},
-		{
-			name:    "local",
-			url:     config.LocalAPIURL,
-			desc:    "Local development server",
-			current: cfg.APIURL == config.LocalAPIURL,
-		},
-	}
-
-	for _, env := range envs {
-		marker := "  "
-		if env.current {
-			marker = "→ "
-			green.Printf("%s%s\n", marker, env.name)
-		} else {
-			fmt.Printf("%s%s\n", marker, env.name)
+	// An empty binding falls back to the default (production), so mark that row
+	// current too — the same rule ReadConfig applies.
+	for _, env := range knownEnvironments() {
+		current := cfg.APIURL == env.URL ||
+			(env.URL == config.DefaultAPIURL && cfg.APIURL == "")
+		name := env.Name
+		if env.Deprecated {
+			name += "  (deprecated)"
 		}
-		cyan.Printf("      URL: %s\n", env.url)
-		fmt.Printf("      %s\n", env.desc)
+		marker := "  "
+		if current {
+			marker = "→ "
+			green.Printf("%s%s\n", marker, name)
+		} else {
+			fmt.Printf("%s%s\n", marker, name)
+		}
+		cyan.Printf("      URL: %s\n", env.URL)
+		fmt.Printf("      %s\n", env.Desc)
 	}
 
-	// Check if using a custom URL
-	isCustom := cfg.APIURL != "" &&
-		cfg.APIURL != config.DefaultAPIURL &&
-		cfg.APIURL != config.LocalAPIURL
-
-	if isCustom {
+	// A URL that matches no known environment is a custom binding.
+	if cfg.APIURL != "" && environmentName(cfg.APIURL) == "custom" {
 		fmt.Println()
 		green.Printf("→ custom\n")
 		cyan.Printf("      URL: %s\n", cfg.APIURL)
@@ -141,14 +182,19 @@ func runEnvTest(cmd *cobra.Command, args []string) error {
 		apiURL = config.DefaultAPIURL
 	}
 
-	envName := getEnvironmentName(apiURL)
+	envName := environmentName(apiURL)
 
 	fmt.Println()
 	printInfo("Testing connection to %s (%s)...\n", envName, apiURL)
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	healthReq, authorized, err := healthProbe(apiURL)
+	if err != nil {
+		return err
+	}
+
 	start := time.Now()
-	resp, err := client.Get(apiURL + "/_health")
+	resp, err := client.Do(healthReq)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -176,6 +222,7 @@ func runEnvTest(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		printWarning("Server responded but health check failed\n")
 		fmt.Printf("  Status: %s\n", resp.Status)
+		fmt.Print(unauthenticatedProbeHint(resp.StatusCode, authorized))
 	}
 
 	// Test authentication if we have a token
@@ -185,7 +232,14 @@ func runEnvTest(cmd *cobra.Command, args []string) error {
 		printInfo("Testing authentication...\n")
 
 		req, _ := http.NewRequest("GET", apiURL+"/api/systems", nil)
-		req.Header.Set("Authorization", "Bearer "+auth.Token)
+		platform.Prepare(req)
+		if err := platform.Authorize(req, auth.Token); err != nil {
+			// A local refusal is the answer to "is my authentication working" —
+			// report it and stop, rather than reporting a connection error for a
+			// request that was never sent.
+			printWarning("%v\n", err)
+			return nil
+		}
 		req.Header.Set("Accept", "application/json")
 
 		authResp, err := client.Do(req)
@@ -210,14 +264,49 @@ func runEnvTest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// healthProbe builds the request that answers "is this server reachable and
+// healthy". Both `env` and `env test` ask that question, and both used to
+// build it themselves — which is how each acquired a different wrong answer
+// on a platform API host (REQ-CROSS-290): one addressed `/_health`, off the
+// prefix the Gateway routes to core, and neither sent the stored bearer to an
+// edge that authenticates every route it fronts.
+//
+// The returned bool reports whether a credential was attached, so a caller
+// can tell "the server rejected my token" from "I had no token to send".
+// A token the project-audience pre-check refuses is left off rather than
+// failing the probe: reachability is a separate question from credential
+// validity, and `env test` reports the refusal on its own line.
+func healthProbe(apiURL string) (*http.Request, bool, error) {
+	req, err := http.NewRequest("GET", apiURL+platform.HealthPath(apiURL), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	platform.Prepare(req)
+
+	auth, _ := config.ReadAuth()
+	if auth == nil || auth.Token == "" {
+		return req, false, nil
+	}
+	if err := platform.Authorize(req, auth.Token); err != nil {
+		return req, false, nil
+	}
+	return req, true, nil
+}
+
+// unauthenticatedProbeHint explains a 401 that the probe itself caused, so the
+// reader is not sent to debug a server that is answering correctly.
+func unauthenticatedProbeHint(status int, authorized bool) string {
+	if status != http.StatusUnauthorized || authorized {
+		return ""
+	}
+	return "  This host authenticates its health check; no usable credential was sent.\n" +
+		"  Run 'modernpath auth' and try again.\n"
+}
+
 func setEnvironment(cfg *config.Config, env string) error {
 	var newURL string
 
 	switch env {
-	case "production", "prod":
-		newURL = config.DefaultAPIURL
-	case "local", "localhost", "dev":
-		newURL = config.LocalAPIURL
 	case "custom":
 		// Interactive custom URL input
 		prompt := promptui.Prompt{
@@ -230,12 +319,14 @@ func setEnvironment(cfg *config.Config, env string) error {
 		}
 		newURL = result
 	default:
-		// Check if it's a URL directly
-		if len(env) > 4 && (env[:4] == "http" || env[:5] == "https") {
+		if url, ok := environmentURL(env); ok {
+			newURL = url
+		} else if strings.HasPrefix(env, "http://") || strings.HasPrefix(env, "https://") {
+			// A full URL is accepted directly.
 			newURL = env
 		} else {
 			printError("Unknown environment: %s\n", env)
-			printInfo("Available environments: production, local, custom\n")
+			printInfo("Available environments: production, test, local, beta, custom\n")
 			printInfo("Or provide a full URL: --set=https://your-server.com\n")
 			return nil
 		}
@@ -248,7 +339,7 @@ func setEnvironment(cfg *config.Config, env string) error {
 		return err
 	}
 
-	envName := getEnvironmentName(newURL)
+	envName := environmentName(newURL)
 	printSuccess("Environment set to %s\n", envName)
 	fmt.Printf("  URL: %s\n", newURL)
 	fmt.Println()
@@ -263,7 +354,7 @@ func displayEnvironmentStatus(cfg *config.Config) {
 		apiURL = config.DefaultAPIURL
 	}
 
-	envName := getEnvironmentName(apiURL)
+	envName := environmentName(apiURL)
 
 	bold := color.New(color.Bold)
 	cyan := color.New(color.FgCyan)
@@ -280,15 +371,24 @@ func displayEnvironmentStatus(cfg *config.Config) {
 
 	// Check connection status
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(apiURL + "/_health")
+	req, authorized, err := healthProbe(apiURL)
 	cyan.Printf("  Status: ")
-	if err != nil {
+	switch {
+	case err != nil:
 		color.Red("Unreachable")
-	} else {
+	default:
+		resp, err := client.Do(req)
+		if err != nil {
+			color.Red("Unreachable")
+			break
+		}
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
+		switch {
+		case resp.StatusCode == http.StatusOK:
 			color.Green("Connected")
-		} else {
+		case resp.StatusCode == http.StatusUnauthorized && !authorized:
+			color.Yellow("Unauthenticated (run 'modernpath auth')")
+		default:
 			color.Yellow("Degraded (%s)", resp.Status)
 		}
 	}
@@ -300,15 +400,4 @@ func displayEnvironmentStatus(cfg *config.Config) {
 	fmt.Println("  modernpath env test      - Test current connection")
 	fmt.Println("  modernpath env --set=X   - Switch environment")
 	fmt.Println()
-}
-
-func getEnvironmentName(url string) string {
-	switch url {
-	case config.DefaultAPIURL:
-		return "production"
-	case config.LocalAPIURL:
-		return "local"
-	default:
-		return "custom"
-	}
 }

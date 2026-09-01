@@ -13,51 +13,46 @@ import (
 	"github.com/modernpath/cli/internal/config"
 )
 
-// Summary is a task plan epic row from GET /api/work/initiatives/:id/epics.
+// Summary is a Task row from GET /api/work/epics/:id/tasks.
 type Summary struct {
-	ID          string `json:"id"`
-	Code        string `json:"code"`
-	Title       string `json:"title"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	StoryPoints int    `json:"story_points"`
+	ID                   string `json:"id"`
+	Code                 string `json:"code"`
+	Title                string `json:"title"`
+	Description          string `json:"description"`
+	Status               string `json:"status"`
+	EstimatedStoryPoints int    `json:"estimated_story_points"`
 }
 
 func (s Summary) DisplayTitle() string {
-	if s.Title != "" {
-		return s.Title
-	}
-	return s.Name
+	return s.Title
 }
 
-// Context is the full development context from GET /api/work/epics/:id/context.
+// Context is the full development context from GET /api/work/tasks/:id/context.
 type Context struct {
+	Task struct {
+		ID                   string `json:"id"`
+		Code                 string `json:"code"`
+		Title                string `json:"title"`
+		Description          string `json:"description"`
+		Status               string `json:"status"`
+		EstimatedStoryPoints int    `json:"estimated_story_points"`
+	} `json:"task"`
 	Epic struct {
-		ID          string `json:"id"`
-		Code        string `json:"code"`
+		ID          int    `json:"id"`
 		Title       string `json:"title"`
 		Description string `json:"description"`
-		Status      string `json:"status"`
-		StoryPoints int    `json:"story_points"`
 	} `json:"epic"`
-	Initiative struct {
-		ID            int    `json:"id"`
-		Title         string `json:"title"`
-		Description   string `json:"description"`
-		GeneratedFrom string `json:"generated_from"`
-	} `json:"initiative"`
-	System json.RawMessage `json:"system"`
-	Stories []struct {
+	System   json.RawMessage `json:"system"`
+	Subtasks []struct {
 		ID                 string        `json:"id"`
 		Code               string        `json:"code"`
 		Title              string        `json:"title"`
 		Description        string        `json:"description"`
-		StoryType          string        `json:"story_type"`
+		SubtaskType        string        `json:"subtask_type"`
 		Status             string        `json:"status"`
-		StoryPoints        int           `json:"story_points"`
+		EstimatedPoints    int           `json:"estimated_points"`
 		AcceptanceCriteria []interface{} `json:"acceptance_criteria"`
-	} `json:"stories"`
+	} `json:"subtasks"`
 	DevelopmentWorkflows []struct {
 		Name         string `json:"name"`
 		WorkflowType string `json:"workflow_type"`
@@ -86,16 +81,16 @@ func FileName(taskID, title string) string {
 
 // TasksDir returns the absolute path to .modernpath/tasks (epic workspace parent).
 func TasksDir() (string, error) {
-	configDir, err := config.GetConfigDir(true)
+	configDir, err := config.WorkspaceConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(configDir, "tasks"), nil
 }
 
-// List fetches task summaries for an initiative.
-func List(baseURL string, initiativeID int, doGet func(string, time.Duration) (*http.Response, error)) ([]Summary, error) {
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/epics", baseURL, initiativeID)
+// List fetches Task summaries for an Epic.
+func List(baseURL string, epicID int, doGet func(string, time.Duration) (*http.Response, error)) ([]Summary, error) {
+	url := fmt.Sprintf("%s/api/work/epics/%d/tasks", baseURL, epicID)
 	resp, err := doGet(url, 30*time.Second)
 	if err != nil {
 		return nil, err
@@ -116,9 +111,9 @@ func List(baseURL string, initiativeID int, doGet func(string, time.Duration) (*
 	return result.Data, nil
 }
 
-// FetchContext downloads full context for one task epic.
+// FetchContext downloads full context for one Task.
 func FetchContext(baseURL, taskID string, doGet func(string, time.Duration) (*http.Response, error)) (*Context, error) {
-	url := fmt.Sprintf("%s/api/work/epics/%s/context", baseURL, taskID)
+	url := fmt.Sprintf("%s/api/work/tasks/%s/context", baseURL, taskID)
 	resp, err := doGet(url, 60*time.Second)
 	if err != nil {
 		return nil, err
@@ -139,11 +134,11 @@ func FetchContext(baseURL, taskID string, doGet func(string, time.Duration) (*ht
 	return &result.Data, nil
 }
 
-// FetchAll downloads context for every task in an initiative into the epic workspace
+// FetchAll downloads context for every Task in an Epic into the Epic workspace
 // at .modernpath/tasks/<id>-<slug>/ (task .md files at the workspace root).
 // Returns the number saved and any per-task warnings (partial failures).
-func FetchAll(baseURL string, initiativeID int, initiativeTitle string, doGet func(string, time.Duration) (*http.Response, error)) (int, []string, error) {
-	workspaceDir, err := config.EpicWorkspaceAbsDir(initiativeID, initiativeTitle)
+func FetchAll(baseURL string, epicID int, epicTitle string, doGet func(string, time.Duration) (*http.Response, error)) (int, []string, error) {
+	workspaceDir, err := config.EpicWorkspaceAbsDir(epicID, epicTitle)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -151,7 +146,7 @@ func FetchAll(baseURL string, initiativeID int, initiativeTitle string, doGet fu
 		return 0, nil, fmt.Errorf("failed to create epic workspace directory: %w", err)
 	}
 
-	summaries, err := List(baseURL, initiativeID, doGet)
+	summaries, err := List(baseURL, epicID, doGet)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -166,8 +161,8 @@ func FetchAll(baseURL string, initiativeID int, initiativeTitle string, doGet fu
 		}
 
 		title := summary.DisplayTitle()
-		if title == "" && ctx.Epic.Title != "" {
-			title = ctx.Epic.Title
+		if title == "" && ctx.Task.Title != "" {
+			title = ctx.Task.Title
 		}
 
 		filename := FileName(summary.ID, title)
@@ -192,34 +187,31 @@ func RenderMarkdown(ctx *Context, summary Summary) string {
 
 	title := summary.DisplayTitle()
 	if title == "" {
-		title = ctx.Epic.Title
+		title = ctx.Task.Title
 	}
 	code := summary.Code
 	if code == "" {
-		code = ctx.Epic.Code
+		code = ctx.Task.Code
 	}
 
 	b.WriteString("# ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("> Task **%s** | Status: **%s** | Story points: **%d**\n\n", code, ctx.Epic.Status, ctx.Epic.StoryPoints))
+	b.WriteString(fmt.Sprintf("> Task **%s** | Status: **%s** | Estimated points: **%d**\n\n", code, ctx.Task.Status, ctx.Task.EstimatedStoryPoints))
 
-	if ctx.Epic.Description != "" {
+	if ctx.Task.Description != "" {
 		b.WriteString("## Description\n\n")
-		b.WriteString(ctx.Epic.Description)
+		b.WriteString(ctx.Task.Description)
 		b.WriteString("\n\n")
 	}
 
-	if ctx.Initiative.Title != "" {
-		b.WriteString("## Initiative\n\n")
-		b.WriteString(fmt.Sprintf("- **ID:** %d\n", ctx.Initiative.ID))
-		b.WriteString(fmt.Sprintf("- **Title:** %s\n", ctx.Initiative.Title))
-		if ctx.Initiative.GeneratedFrom != "" {
-			b.WriteString(fmt.Sprintf("- **Source:** %s\n", ctx.Initiative.GeneratedFrom))
-		}
-		if ctx.Initiative.Description != "" {
+	if ctx.Epic.Title != "" {
+		b.WriteString("## Epic\n\n")
+		b.WriteString(fmt.Sprintf("- **ID:** %d\n", ctx.Epic.ID))
+		b.WriteString(fmt.Sprintf("- **Title:** %s\n", ctx.Epic.Title))
+		if ctx.Epic.Description != "" {
 			b.WriteString("\n")
-			b.WriteString(ctx.Initiative.Description)
+			b.WriteString(ctx.Epic.Description)
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
@@ -232,25 +224,25 @@ func RenderMarkdown(ctx *Context, summary Summary) string {
 		b.WriteString("\n```\n\n")
 	}
 
-	if len(ctx.Stories) > 0 {
-		b.WriteString("## Stories\n\n")
-		for _, story := range ctx.Stories {
-			b.WriteString(fmt.Sprintf("### %s — %s\n\n", story.Code, story.Title))
-			b.WriteString(fmt.Sprintf("- **Status:** %s\n", story.Status))
-			if story.StoryType != "" {
-				b.WriteString(fmt.Sprintf("- **Type:** %s\n", story.StoryType))
+	if len(ctx.Subtasks) > 0 {
+		b.WriteString("## Subtasks\n\n")
+		for _, subtask := range ctx.Subtasks {
+			b.WriteString(fmt.Sprintf("### %s — %s\n\n", subtask.Code, subtask.Title))
+			b.WriteString(fmt.Sprintf("- **Status:** %s\n", subtask.Status))
+			if subtask.SubtaskType != "" {
+				b.WriteString(fmt.Sprintf("- **Type:** %s\n", subtask.SubtaskType))
 			}
-			if story.StoryPoints > 0 {
-				b.WriteString(fmt.Sprintf("- **Story points:** %d\n", story.StoryPoints))
+			if subtask.EstimatedPoints > 0 {
+				b.WriteString(fmt.Sprintf("- **Estimated points:** %d\n", subtask.EstimatedPoints))
 			}
-			if story.Description != "" {
+			if subtask.Description != "" {
 				b.WriteString("\n")
-				b.WriteString(story.Description)
+				b.WriteString(subtask.Description)
 				b.WriteString("\n")
 			}
-			if len(story.AcceptanceCriteria) > 0 {
+			if len(subtask.AcceptanceCriteria) > 0 {
 				b.WriteString("\n**Acceptance criteria:**\n\n")
-				for _, item := range story.AcceptanceCriteria {
+				for _, item := range subtask.AcceptanceCriteria {
 					b.WriteString(fmt.Sprintf("- %s\n", formatValue(item)))
 				}
 			}

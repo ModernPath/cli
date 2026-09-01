@@ -20,6 +20,18 @@ func hookLogPath(root string) string { return filepath.Join(root, ".modernpath",
 func lastSyncOkPath(root string) string {
 	return filepath.Join(root, ".modernpath", "last-sync-ok")
 }
+
+// recordSyncSucceeded stamps the state-sync lane. Two readers depend on the
+// exact shape: `modernpath status` parses it as RFC3339, and quiescentPrecheck
+// debounces the hooks on this file — so a manual sync legitimately quietens the
+// next hook run, having just done its work.
+//
+// The error is the caller's to surface: a sync that landed but could not
+// stamp leaves status reporting "Never" and the debounce misjudging, and
+// swallowing the write failure makes that contradiction undiagnosable.
+func recordSyncSucceeded(root string) error {
+	return os.WriteFile(lastSyncOkPath(root), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
+}
 func syncLockPath(root string) string { return filepath.Join(root, ".modernpath", "sync.lock") }
 
 func hookLog(root, trigger, outcome, reason string) {
@@ -101,7 +113,8 @@ func factorySyncQuiescent(trigger string, minInterval time.Duration) error {
 		return nil
 	}
 
-	_ = os.WriteFile(lastSyncOkPath(env.Root), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
+	// factorySyncRun has already stamped it (REQ-CROSS-117); the hook lane adds
+	// only its own log line.
 	hookLog(env.Root, trigger, "synced", "ok")
 	return nil
 }

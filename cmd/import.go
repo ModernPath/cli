@@ -17,6 +17,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,8 @@ var (
 	importLocal     bool
 	importName      string
 	importMaxSizeMB int
+	importExclude   []string
+	importNoIgnore  bool
 )
 
 const (
@@ -59,6 +62,8 @@ func init() {
 	importCmd.Flags().BoolVar(&importLocal, "local", false, "Import by uploading local files")
 	importCmd.Flags().StringVar(&importName, "name", "", "System name (default: folder name)")
 	importCmd.Flags().IntVar(&importMaxSizeMB, "max-size", defaultMaxSizeMB, "Maximum upload size in MB")
+	importCmd.Flags().StringArrayVar(&importExclude, "exclude", nil, "Exclude paths matching a name, path glob or basename glob (repeatable)")
+	importCmd.Flags().BoolVar(&importNoIgnore, "no-gitignore", false, "Upload files that .gitignore excludes (off by default)")
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -95,7 +100,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	// Get API URL and check connection
 	baseURL := getAPIURL()
 	client := &http.Client{Timeout: 10 * time.Second}
-	
+
 	// Check auth
 	auth, _ := config.ReadAuth()
 	if auth == nil || auth.Token == "" {
@@ -104,7 +109,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Health check
-	resp, err := client.Get(baseURL + "/_health")
+	healthReq, _, err := healthProbe(baseURL)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(healthReq)
 	if err != nil {
 		printError("Cannot connect to ModernPath at %s\n", baseURL)
 		return err
@@ -194,7 +203,7 @@ func getAPIURL() string {
 
 func selectImportMethod(hasGitRemote bool) (string, error) {
 	var items []string
-	
+
 	if hasGitRemote {
 		items = []string{
 			"🌐 Import via Git URL (recommended) - ModernPath clones the repository",
@@ -229,7 +238,7 @@ func selectImportMethod(hasGitRemote bool) (string, error) {
 			return "cancel", nil
 		}
 	}
-	
+
 	switch index {
 	case 0:
 		return "local", nil
@@ -250,8 +259,11 @@ func importViaGit(baseURL, token, name, gitURL string) error {
 	jsonPayload, _ := json.Marshal(payload)
 
 	req, _ := http.NewRequest("POST", baseURL+"/api/systems/import", bytes.NewBuffer(jsonPayload))
+	platform.Prepare(req)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+	if err := platform.Authorize(req, token); err != nil {
+		return err
+	}
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
@@ -289,15 +301,18 @@ func importViaGit(baseURL, token, name, gitURL string) error {
 func importViaUpload(baseURL, token, name, sourceDir string) error {
 	printInfo("Scanning directory...\n")
 
-	// Calculate size first
-	var totalSize int64
-	var fileCount int
-	
+	type candidate struct {
+		abs  string
+		rel  string
+		size int64
+	}
+	var cands []candidate
+
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		
+
 		// Skip directories we don't want
 		if info.IsDir() {
 			base := filepath.Base(path)
@@ -306,14 +321,17 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 			}
 			return nil
 		}
-		
+
 		// Skip files we don't want
 		if shouldSkipImportFile(info.Name()) {
 			return nil
 		}
-		
-		totalSize += info.Size()
-		fileCount++
+
+		rel, relErr := filepath.Rel(sourceDir, path)
+		if relErr != nil {
+			return nil
+		}
+		cands = append(cands, candidate{path, filepath.ToSlash(rel), info.Size()})
 		return nil
 	})
 
@@ -322,13 +340,51 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 		return err
 	}
 
+	// REQ-CROSS-172: drop what the repository already calls junk, and what the
+	// operator named. Both are REPORTED — a filter that silently removes most of
+	// a codebase is indistinguishable from one that found a small codebase.
+	ignored := make(map[string]bool)
+	if !importNoIgnore {
+		rels := make([]string, 0, len(cands))
+		for _, c := range cands {
+			rels = append(rels, c.rel)
+		}
+		if ignored, err = gitIgnoredSet(sourceDir, rels); err != nil {
+			printError("Failed to consult .gitignore: %v\n", err)
+			return err
+		}
+	}
+
+	var files []candidate
+	var totalSize, sizeIgnored, sizeExcluded int64
+	var nIgnored, nExcluded int
+	for _, c := range cands {
+		switch {
+		case ignored[c.rel]:
+			sizeIgnored += c.size
+			nIgnored++
+		case matchesExclude(c.rel, importExclude):
+			sizeExcluded += c.size
+			nExcluded++
+		default:
+			files = append(files, c)
+			totalSize += c.size
+		}
+	}
+
 	sizeMB := float64(totalSize) / (1024 * 1024)
-	fmt.Printf("  Files: %d\n", fileCount)
+	fmt.Printf("  Files: %d\n", len(files))
 	fmt.Printf("  Size:  %.2f MB\n", sizeMB)
+	if nIgnored > 0 {
+		fmt.Printf("  Skipped (.gitignore): %d files, %.2f MB\n", nIgnored, float64(sizeIgnored)/(1024*1024))
+	}
+	if nExcluded > 0 {
+		fmt.Printf("  Skipped (--exclude):  %d files, %.2f MB\n", nExcluded, float64(sizeExcluded)/(1024*1024))
+	}
 
 	if sizeMB > float64(importMaxSizeMB) {
 		printError("Directory too large (%.2f MB > %d MB limit)\n", sizeMB, importMaxSizeMB)
-		printInfo("Consider using git import instead, or increase limit with --max-size\n")
+		printInfo("Narrow it with --exclude <name|glob>, use git import, or raise --max-size\n")
 		return fmt.Errorf("directory too large")
 	}
 
@@ -338,49 +394,25 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	var zipBuffer bytes.Buffer
 	zipWriter := zip.NewWriter(&zipBuffer)
 
-	err = filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+	// The set was decided above; zipping walks that list rather than the tree
+	// again, so the archive cannot disagree with the size that was checked.
+	for _, c := range files {
+		writer, err := zipWriter.Create(c.rel)
 		if err != nil {
-			return nil
-		}
-
-		// Skip directories we don't want
-		if info.IsDir() {
-			base := filepath.Base(path)
-			if shouldSkipImportDir(base) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Skip files we don't want
-		if shouldSkipImportFile(info.Name()) {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return nil
-		}
-
-		// Create file in zip
-		writer, err := zipWriter.Create(relPath)
-		if err != nil {
+			printError("Failed to create zip: %v\n", err)
 			return err
 		}
 
-		file, err := os.Open(path)
+		file, err := os.Open(c.abs)
 		if err != nil {
-			return nil // Skip files we can't read
+			continue // Skip files we can't read
 		}
-		defer file.Close()
-
 		_, err = io.Copy(writer, file)
-		return err
-	})
-
-	if err != nil {
-		printError("Failed to create zip: %v\n", err)
-		return err
+		file.Close()
+		if err != nil {
+			printError("Failed to create zip: %v\n", err)
+			return err
+		}
 	}
 
 	zipWriter.Close()
@@ -407,8 +439,11 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	mpWriter.Close()
 
 	req, _ := http.NewRequest("POST", baseURL+"/api/systems/import", &requestBody)
+	platform.Prepare(req)
 	req.Header.Set("Content-Type", mpWriter.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+token)
+	if err := platform.Authorize(req, token); err != nil {
+		return err
+	}
 
 	// Longer timeout for upload
 	client := &http.Client{Timeout: 300 * time.Second}
@@ -454,10 +489,10 @@ func handleImportSuccess(baseURL string, archID int, archName, archSlug string) 
 	// Save config
 	cwd, _ := os.Getwd()
 	modernpathDir := filepath.Join(cwd, ".modernpath")
-	
+
 	if err := os.MkdirAll(modernpathDir, 0755); err == nil {
 		cfg := &config.Config{
-			APIURL:           getAPIURL(),
+			APIURL:     getAPIURL(),
 			SystemID:   archID,
 			SystemName: archName,
 			SystemSlug: archSlug,
@@ -515,14 +550,14 @@ func shouldSkipImportFile(name string) bool {
 		".ttf", ".otf", ".woff", ".woff2", ".eot",
 		".sqlite", ".db",
 	}
-	
+
 	ext := strings.ToLower(filepath.Ext(name))
 	for _, skip := range skipExtensions {
 		if ext == skip {
 			return true
 		}
 	}
-	
+
 	// Skip specific files
 	skipFiles := []string{
 		".DS_Store", "Thumbs.db", ".env", ".env.local",
@@ -533,6 +568,6 @@ func shouldSkipImportFile(name string) bool {
 			return true
 		}
 	}
-	
+
 	return false
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"net/url"
 	"strconv"
 	"strings"
@@ -169,10 +170,10 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 		}
 		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
 			printError("API error: %s\n", errResp.Error)
-		} else {
-			printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
+			return fmt.Errorf("API error: %s", errResp.Error)
 		}
-		return nil
+		printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
+		return fmt.Errorf("API error: HTTP %d", resp.StatusCode)
 	}
 
 	var fileResp FileReadResponse
@@ -202,8 +203,8 @@ func displayFileContent(resp *FileReadResponse) {
 	fmt.Println()
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 
-	// Content with line numbers
-	lines := strings.Split(d.Content, "\n")
+	// Content with line numbers (server-side numbering stripped first)
+	lines := strings.Split(stripServerLineNumbers(d.Content), "\n")
 	startNum := 1
 	if d.StartLine > 0 {
 		startNum = d.StartLine
@@ -283,10 +284,10 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 		}
 		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
 			printError("API error: %s\n", errResp.Error)
-		} else {
-			printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
+			return fmt.Errorf("API error: %s", errResp.Error)
 		}
-		return nil
+		printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
+		return fmt.Errorf("API error: HTTP %d", resp.StatusCode)
 	}
 
 	var docResp DocReadResponse
@@ -379,3 +380,34 @@ func newReadAPIClient(cfg *config.Config) *authenticatedClient {
 		baseURL: baseURL,
 	}
 }
+
+// stripServerLineNumbers removes the server's own "   N | " line numbering
+// when EVERY non-empty line carries it, so the CLI's gutter is the only one
+// (REQ-CROSS-210 cosmetics: read-file rendered "1 │     1 | defmodule…").
+// Mixed content passes through untouched — a file whose real text happens to
+// contain that shape on some lines must not be mangled.
+func stripServerLineNumbers(content string) string {
+	lines := strings.Split(content, "\n")
+
+	numbered := false
+	for _, l := range lines {
+		if l == "" {
+			continue
+		}
+		if !serverNumberedLineRe.MatchString(l) {
+			return content
+		}
+		numbered = true
+	}
+	if !numbered {
+		return content
+	}
+
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = serverNumberedLineRe.ReplaceAllString(l, "")
+	}
+	return strings.Join(out, "\n")
+}
+
+var serverNumberedLineRe = regexp.MustCompile(`^\s*\d+ \| `)

@@ -25,14 +25,14 @@ var workCmd = &cobra.Command{
 	Long:  `View and manage work items including epics, tasks, and subtasks.`,
 }
 
-// work list - List epics (was: work initiatives)
+// work list - List epics.
 var workListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List epics for current system",
 	RunE:  runWorkList,
 }
 
-// work select - Select an epic (was: select initiative)
+// work select - Select an epic.
 var workSelectCmd = &cobra.Command{
 	Use:   "select [epic_id]",
 	Short: "Select an epic to work on",
@@ -125,8 +125,8 @@ var (
 	workNewType string
 )
 
-// workInitiative mirrors GET /api/work/initiatives list items (Initiative schema uses "title", not "name").
-type workInitiative struct {
+// workEpic mirrors GET /api/work/epics list items.
+type workEpic struct {
 	ID            int    `json:"id"`
 	Title         string `json:"title"`
 	Name          string `json:"name"` // legacy alias; prefer Title
@@ -135,7 +135,7 @@ type workInitiative struct {
 	ProjectType   string `json:"project_type"`
 }
 
-func (i workInitiative) displayTitle() string {
+func (i workEpic) displayTitle() string {
 	if i.Title != "" {
 		return i.Title
 	}
@@ -144,7 +144,7 @@ func (i workInitiative) displayTitle() string {
 
 func init() {
 	rootCmd.AddCommand(workCmd)
-	
+
 	// Main work commands
 	workCmd.AddCommand(workListCmd)
 	workCmd.AddCommand(workSelectCmd)
@@ -153,13 +153,13 @@ func init() {
 	workCmd.AddCommand(workNewCmd)
 	workCmd.AddCommand(workDeriveCmd)
 	workCmd.AddCommand(workReviewCmd)
-	
+
 	// Specs subcommands
 	workCmd.AddCommand(workSpecsCmd)
 	workSpecsCmd.AddCommand(workSpecsGenerateCmd)
 	workSpecsCmd.AddCommand(workSpecsSyncCmd)
 	workSpecsCmd.AddCommand(workSpecsPushCmd)
-	
+
 	// Flags
 	workNewCmd.Flags().StringVarP(&workNewType, "type", "t", "feature", "Idea type: feature, innovation, gap, trend")
 }
@@ -176,7 +176,7 @@ func runWorkList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	url := fmt.Sprintf("%s/api/work/initiatives?system_id=%d", cfg.APIURL, cfg.SystemID)
+	url := fmt.Sprintf("%s/api/work/epics?system_id=%d", cfg.APIURL, cfg.SystemID)
 
 	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
 	if err != nil {
@@ -192,7 +192,7 @@ func runWorkList(cmd *cobra.Command, args []string) error {
 	}
 
 	var result struct {
-		Data []workInitiative `json:"data"`
+		Data []workEpic `json:"data"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -213,7 +213,7 @@ func runWorkList(cmd *cobra.Command, args []string) error {
 	} else {
 		for _, epic := range result.Data {
 			marker := "  "
-			if epic.ID == cfg.InitiativeID {
+			if epic.ID == cfg.EpicID {
 				marker = "→ "
 				cyan.Printf("%s[%d] %s\n", marker, epic.ID, epic.displayTitle())
 			} else {
@@ -239,7 +239,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	url := fmt.Sprintf("%s/api/work/initiatives?system_id=%d", cfg.APIURL, cfg.SystemID)
+	url := fmt.Sprintf("%s/api/work/epics?system_id=%d", cfg.APIURL, cfg.SystemID)
 
 	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
 	if err != nil {
@@ -255,7 +255,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 	}
 
 	var result struct {
-		Data []workInitiative `json:"data"`
+		Data []workEpic `json:"data"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -291,7 +291,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 		items := make([]string, len(result.Data))
 		for i, epic := range result.Data {
 			marker := ""
-			if epic.ID == cfg.InitiativeID {
+			if epic.ID == cfg.EpicID {
 				marker = "→ "
 			}
 			typeLabel := ""
@@ -317,8 +317,8 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 		selectedProjectType = result.Data[idx].ProjectType
 	}
 
-	cfg.InitiativeID = selectedID
-	cfg.InitiativeName = selectedName
+	cfg.EpicID = selectedID
+	cfg.EpicName = selectedName
 
 	fmt.Println()
 	printInfo("Syncing specifications for epic [%d]...\n", selectedID)
@@ -326,7 +326,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		printWarning("Failed to sync specs: %v\n", err)
 	} else {
-		cfg.InitiativeSpecsDir = specsRelPath
+		cfg.EpicSpecsDir = specsRelPath
 		printSuccess("Specifications synced to .modernpath/%s/\n", specsRelPath)
 	}
 
@@ -335,7 +335,7 @@ func runWorkSelect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := fetchTasksForInitiative(cfg, selectedID); err != nil {
+	if err := fetchTasksForEpic(cfg, selectedID); err != nil {
 		printWarning("Failed to fetch task context: %v\n", err)
 	}
 
@@ -362,21 +362,21 @@ func runWorkStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cfg.InitiativeID == 0 {
+	if cfg.EpicID == 0 {
 		printError("No epic configured. Run 'modernpath work select' first.\n")
-		return nil
+		return fmt.Errorf("no epic configured")
 	}
 
 	bold := color.New(color.Bold)
 
 	fmt.Println()
-	bold.Printf("📋 Epic Status: %s\n", cfg.InitiativeName)
+	bold.Printf("📋 Epic Status: %s\n", cfg.EpicName)
 	fmt.Println("───────────────────────────────────────────────────────────")
-	fmt.Printf("  Epic ID: %d\n", cfg.InitiativeID)
+	fmt.Printf("  Epic ID: %d\n", cfg.EpicID)
 	fmt.Println()
 
 	// Fetch spec status
-	specURL := fmt.Sprintf("%s/api/work/initiatives/%d/spec-status", cfg.APIURL, cfg.InitiativeID)
+	specURL := fmt.Sprintf("%s/api/work/epics/%d/spec-status", cfg.APIURL, cfg.EpicID)
 	specResp, err := api.DoAuthenticatedGet(specURL, 30*time.Second)
 	if err == nil && specResp.StatusCode == http.StatusOK {
 		var specResult struct {
@@ -404,23 +404,23 @@ func runWorkStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch task status
-	taskURL := fmt.Sprintf("%s/api/work/initiatives/%d/task-derivation-status", cfg.APIURL, cfg.InitiativeID)
+	taskURL := fmt.Sprintf("%s/api/work/epics/%d/task-derivation-status", cfg.APIURL, cfg.EpicID)
 	taskResp, err := api.DoAuthenticatedGet(taskURL, 30*time.Second)
 	if err == nil && taskResp.StatusCode == http.StatusOK {
 		var taskResult struct {
 			Data struct {
-				EpicCount int `json:"epic_count"`
-				Epics     []struct {
-					Code        string `json:"code"`
-					Title       string `json:"title"`
-					Status      string `json:"status"`
-					StoryPoints int    `json:"story_points"`
-				} `json:"epics"`
+				TaskCount int `json:"task_count"`
+				Tasks     []struct {
+					Code                 string `json:"code"`
+					Title                string `json:"title"`
+					Status               string `json:"status"`
+					EstimatedStoryPoints int    `json:"estimated_story_points"`
+				} `json:"tasks"`
 			} `json:"data"`
 		}
 		if json.NewDecoder(taskResp.Body).Decode(&taskResult) == nil {
-			fmt.Printf("📌 Tasks: %d\n", taskResult.Data.EpicCount)
-			for _, task := range taskResult.Data.Epics {
+			fmt.Printf("📌 Tasks: %d\n", taskResult.Data.TaskCount)
+			for _, task := range taskResult.Data.Tasks {
 				statusIcon := "⬜"
 				switch task.Status {
 				case "done":
@@ -430,7 +430,7 @@ func runWorkStatus(cmd *cobra.Command, args []string) error {
 				case "blocked":
 					statusIcon = "🚫"
 				}
-				fmt.Printf("   %s [%s] %s (%d pts)\n", statusIcon, task.Code, task.Title, task.StoryPoints)
+				fmt.Printf("   %s [%s] %s (%d pts)\n", statusIcon, task.Code, task.Title, task.EstimatedStoryPoints)
 			}
 			fmt.Println()
 		}
@@ -438,6 +438,47 @@ func runWorkStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// workSubtask is one subtask under a Task.
+type workSubtask struct {
+	ID              string `json:"id"`
+	Code            string `json:"code"`
+	Title           string `json:"title"`
+	Status          string `json:"status"`
+	Priority        int    `json:"priority"`
+	EstimatedPoints int    `json:"estimated_points"`
+	SubtaskType     string `json:"subtask_type"`
+}
+
+// fetchSubtasks returns the subtasks embedded in GET /api/work/tasks/:id.
+// A non-200 answer is an error — the command must not report success over
+// an API failure.
+func fetchSubtasks(baseURL, taskID string) ([]workSubtask, error) {
+	url := fmt.Sprintf("%s/api/work/tasks/%s", baseURL, taskID)
+
+	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error: %s - %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		Data struct {
+			Subtasks []workSubtask `json:"subtasks"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %v", err)
+	}
+
+	return result.Data.Subtasks, nil
 }
 
 func runWorkSubtasks(cmd *cobra.Command, args []string) error {
@@ -449,35 +490,9 @@ func runWorkSubtasks(cmd *cobra.Command, args []string) error {
 
 	taskID := args[0]
 
-	url := fmt.Sprintf("%s/api/work/epics/%s/tasks", cfg.APIURL, taskID)
-
-	resp, err := api.DoAuthenticatedGet(url, 30*time.Second)
+	subtasks, err := fetchSubtasks(cfg.APIURL, taskID)
 	if err != nil {
-		printError("Failed to connect: %v\n", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		printError("API error: %s - %s\n", resp.Status, string(body))
-		return nil
-	}
-
-	var result struct {
-		Data []struct {
-			ID          string `json:"id"`
-			Code        string `json:"code"`
-			Title       string `json:"title"`
-			Status      string `json:"status"`
-			Priority    int    `json:"priority"`
-			StoryPoints int    `json:"story_points"`
-			TaskType    string `json:"task_type"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		printError("Failed to parse response: %v\n", err)
+		printError("%v\n", err)
 		return err
 	}
 
@@ -489,10 +504,10 @@ func runWorkSubtasks(cmd *cobra.Command, args []string) error {
 	bold.Printf("Subtasks for Task %s\n", taskID)
 	fmt.Println("─────────────────────────────────────────")
 
-	if len(result.Data) == 0 {
+	if len(subtasks) == 0 {
 		fmt.Println("No subtasks found.")
 	} else {
-		for _, subtask := range result.Data {
+		for _, subtask := range subtasks {
 			statusColor := color.New(color.FgWhite)
 			switch subtask.Status {
 			case "done":
@@ -502,9 +517,9 @@ func runWorkSubtasks(cmd *cobra.Command, args []string) error {
 			}
 
 			fmt.Printf("[%s] %s\n", subtask.Code, subtask.Title)
-			fmt.Printf("      Type: %s | Status: ", subtask.TaskType)
+			fmt.Printf("      Status: ")
 			statusColor.Printf("%s", subtask.Status)
-			fmt.Printf(" | Points: %d\n", subtask.StoryPoints)
+			fmt.Printf(" | Points: %d\n", subtask.EstimatedPoints)
 		}
 	}
 
@@ -556,7 +571,7 @@ func runWorkNew(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Type: %s\n", workNewType)
 	fmt.Println()
 
-	url := fmt.Sprintf("%s/api/roadmap/systems/%d/create-idea-and-initiative", baseURL, cfg.SystemID)
+	url := fmt.Sprintf("%s/api/roadmap/systems/%d/create-idea-and-epic", baseURL, cfg.SystemID)
 
 	payload := map[string]interface{}{
 		"description": description,
@@ -593,14 +608,14 @@ func runWorkNew(cmd *cobra.Command, args []string) error {
 				IdeaType string      `json:"idea_type"`
 				Priority string      `json:"priority"`
 			} `json:"idea"`
-			Initiative struct {
+			Epic struct {
 				ID            int    `json:"id"`
 				Title         string `json:"title"`
 				Name          string `json:"name"`
 				Goal          string `json:"goal"`
 				Status        string `json:"status"`
 				WorkflowPhase string `json:"workflow_phase"`
-			} `json:"initiative"`
+			} `json:"epic"`
 		} `json:"data"`
 	}
 
@@ -611,21 +626,21 @@ func runWorkNew(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	printSuccess("Epic created!\n")
 	fmt.Println()
-	initiativeTitle := result.Data.Initiative.Title
-	if initiativeTitle == "" {
-		initiativeTitle = result.Data.Initiative.Name
+	epicTitle := result.Data.Epic.Title
+	if epicTitle == "" {
+		epicTitle = result.Data.Epic.Name
 	}
 
-	fmt.Printf("  📋 Epic: %s\n", initiativeTitle)
+	fmt.Printf("  📋 Epic: %s\n", epicTitle)
 	fmt.Printf("     ID: %d | Status: %s | Phase: %s\n",
-		result.Data.Initiative.ID,
-		result.Data.Initiative.Status,
-		result.Data.Initiative.WorkflowPhase)
+		result.Data.Epic.ID,
+		result.Data.Epic.Status,
+		result.Data.Epic.WorkflowPhase)
 	fmt.Println()
 
-	cfg.InitiativeID = result.Data.Initiative.ID
-	cfg.InitiativeName = initiativeTitle
-	cfg.InitiativeSpecsDir = config.InitiativeSpecsRelPath(result.Data.Initiative.ID, initiativeTitle)
+	cfg.EpicID = result.Data.Epic.ID
+	cfg.EpicName = epicTitle
+	cfg.EpicSpecsDir = config.EpicSpecsRelPath(result.Data.Epic.ID, epicTitle)
 	if err := config.WriteConfig(cfg); err != nil {
 		printWarning("Failed to update config: %v\n", err)
 	} else {
@@ -646,9 +661,9 @@ func runWorkDerive(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cfg.InitiativeID == 0 {
+	if cfg.EpicID == 0 {
 		printError("No epic configured. Run 'modernpath work select' first.\n")
-		return nil
+		return fmt.Errorf("no epic configured")
 	}
 
 	baseURL := cfg.APIURL
@@ -656,15 +671,14 @@ func runWorkDerive(cmd *cobra.Command, args []string) error {
 		baseURL = "http://localhost:4000"
 	}
 
-	printInfo("Deriving tasks from specifications for epic %d...\n", cfg.InitiativeID)
+	printInfo("Deriving tasks from specifications for epic %d...\n", cfg.EpicID)
 	printInfo("This analyzes your specs and creates:\n")
 	fmt.Println("  - Tasks from architecture components")
-	fmt.Println("  - Stories from requirements and flows")
-	fmt.Println("  - Subtasks from interfaces and data entities")
+	fmt.Println("  - Subtasks from requirements, flows, interfaces, and data entities")
 	fmt.Println("  - Dependencies between work items")
 	fmt.Println()
 
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/derive-tasks-agentic", baseURL, cfg.InitiativeID)
+	url := fmt.Sprintf("%s/api/work/epics/%d/derive-tasks-agentic", baseURL, cfg.EpicID)
 
 	startTime := time.Now()
 	printInfo("Deriving tasks (timeout: 5 minutes)...\n")
@@ -695,9 +709,8 @@ func runWorkDerive(cmd *cobra.Command, args []string) error {
 			Success bool   `json:"success"`
 			Message string `json:"message"`
 			Summary struct {
-				Epics   int `json:"epics"`
-				Stories int `json:"stories"`
-				Tasks   int `json:"tasks"`
+				Tasks    int `json:"tasks"`
+				Subtasks int `json:"subtasks"`
 			} `json:"summary"`
 		} `json:"data"`
 	}
@@ -712,9 +725,8 @@ func runWorkDerive(cmd *cobra.Command, args []string) error {
 	printSuccess("Task derivation completed!\n")
 	fmt.Println()
 	fmt.Printf("  📊 Created:\n")
-	fmt.Printf("     - Tasks: %d\n", result.Data.Summary.Epics)
-	fmt.Printf("     - Stories: %d\n", result.Data.Summary.Stories)
-	fmt.Printf("     - Subtasks: %d\n", result.Data.Summary.Tasks)
+	fmt.Printf("     - Tasks: %d\n", result.Data.Summary.Tasks)
+	fmt.Printf("     - Subtasks: %d\n", result.Data.Summary.Subtasks)
 	fmt.Printf("  ⏱️  Duration: %s\n", elapsed.Round(time.Second))
 	fmt.Println()
 	printInfo("Next steps:\n")
@@ -731,9 +743,9 @@ func runWorkSpecsGenerate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cfg.InitiativeID == 0 {
+	if cfg.EpicID == 0 {
 		printError("No epic configured. Run 'modernpath work select' first.\n")
-		return nil
+		return fmt.Errorf("no epic configured")
 	}
 
 	baseURL := cfg.APIURL
@@ -741,7 +753,7 @@ func runWorkSpecsGenerate(cmd *cobra.Command, args []string) error {
 		baseURL = "http://localhost:4000"
 	}
 
-	printInfo("Starting specification pipeline for epic %d...\n", cfg.InitiativeID)
+	printInfo("Starting specification pipeline for epic %d...\n", cfg.EpicID)
 	printInfo("This may take several minutes. Running 6 phases:\n")
 	fmt.Println("  1. Discovery - Requirements & User Stories")
 	fmt.Println("  2. Architecture - Component specs & C4 diagrams")
@@ -751,7 +763,7 @@ func runWorkSpecsGenerate(cmd *cobra.Command, args []string) error {
 	fmt.Println("  6. Validation - Cross-check all outputs")
 	fmt.Println()
 
-	url := fmt.Sprintf("%s/api/work/initiatives/%d/run-pipeline", baseURL, cfg.InitiativeID)
+	url := fmt.Sprintf("%s/api/work/epics/%d/run-pipeline", baseURL, cfg.EpicID)
 
 	startTime := time.Now()
 	printInfo("Executing pipeline (timeout: 5 minutes)...\n")
@@ -790,21 +802,21 @@ func runWorkSpecsSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cfg.InitiativeID == 0 {
+	if cfg.EpicID == 0 {
 		printError("No epic configured. Run 'modernpath work select' first.\n")
-		return nil
+		return fmt.Errorf("no epic configured")
 	}
 
-	printInfo("Syncing specifications for epic %d...\n", cfg.InitiativeID)
+	printInfo("Syncing specifications for epic %d...\n", cfg.EpicID)
 	fmt.Println()
 
-	specsRelPath, err := syncSpecs(cfg.APIURL, cfg.InitiativeID, cfg.InitiativeName)
+	specsRelPath, err := syncSpecs(cfg.APIURL, cfg.EpicID, cfg.EpicName)
 	if err != nil {
 		printError("Failed to sync specs: %v\n", err)
 		return err
 	}
 
-	cfg.InitiativeSpecsDir = specsRelPath
+	cfg.EpicSpecsDir = specsRelPath
 	if err := config.WriteConfig(cfg); err != nil {
 		printWarning("Failed to update config: %v\n", err)
 	}
@@ -823,9 +835,9 @@ func runWorkSpecsPush(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cfg.InitiativeID == 0 {
+	if cfg.EpicID == 0 {
 		printError("No epic configured. Run 'modernpath work select' first.\n")
-		return nil
+		return fmt.Errorf("no epic configured")
 	}
 
 	baseURL := cfg.APIURL
@@ -833,16 +845,16 @@ func runWorkSpecsPush(cmd *cobra.Command, args []string) error {
 		baseURL = "http://localhost:4000"
 	}
 
-	printInfo("Pushing specifications for epic %d...\n", cfg.InitiativeID)
+	printInfo("Pushing specifications for epic %d...\n", cfg.EpicID)
 	fmt.Println()
 
-	specsDir, err := config.ResolveInitiativeSpecsDir(cfg)
+	specsDir, err := config.ResolveEpicSpecsDir(cfg)
 	if err != nil {
 		printError("Failed to resolve specs directory: %v\n", err)
 		return err
 	}
 
-	count, err := pushSpecs(baseURL, cfg.InitiativeID, specsDir)
+	count, err := pushSpecs(baseURL, cfg.EpicID, specsDir)
 	if err != nil {
 		printError("Failed to push specs: %v\n", err)
 		return err
@@ -850,7 +862,7 @@ func runWorkSpecsPush(cmd *cobra.Command, args []string) error {
 
 	if count == 0 {
 		printWarning("No specifications found to push.\n")
-		printInfo("Make sure you have specs in .modernpath/%s/\n", config.ResolveInitiativeSpecsRelPath(cfg))
+		printInfo("Make sure you have specs in .modernpath/%s/\n", config.ResolveEpicSpecsRelPath(cfg))
 		return nil
 	}
 
@@ -873,7 +885,7 @@ func autoSyncTransformFiles(cfg *config.Config, epicID int) error {
 		baseURL = config.DefaultAPIURL
 	}
 
-	requestURL := fmt.Sprintf("%s/api/transform/source-files?initiative_id=%d", baseURL, epicID)
+	requestURL := fmt.Sprintf("%s/api/transform/source-files?epic_id=%d", baseURL, epicID)
 
 	resp, err := api.DoAuthenticatedGet(requestURL, 120*time.Second)
 	if err != nil {
@@ -953,13 +965,13 @@ func generateTransformAgentsMD(cfg *config.Config, filesResp *TransformSourceFil
 	d := filesResp.Data
 
 	agentsCtx := &agents.TransformContext{
-		InitiativeID:     d.InitiativeID,
-		InitiativeName:   d.InitiativeName,
-		SpecsRelPath:     config.ResolveInitiativeSpecsRelPath(cfg),
-		SourceSystemID:   d.SourceSystemID,
-		TargetSystemID:   d.TargetSystemID,
-		SourceSystemName: fmt.Sprintf("Source System %d", d.SourceSystemID),
-		TargetSystemName: fmt.Sprintf("Target System %d", d.TargetSystemID),
+		EpicID:           d.EpicID,
+		EpicName:         d.EpicName,
+		SpecsRelPath:     config.ResolveEpicSpecsRelPath(cfg),
+		SourceSystemID:   d.SourceArchitectureID,
+		TargetSystemID:   d.TargetArchitectureID,
+		SourceSystemName: fmt.Sprintf("Source System %d", d.SourceArchitectureID),
+		TargetSystemName: fmt.Sprintf("Target System %d", d.TargetArchitectureID),
 		SourceFiles:      make([]agents.SourceFile, 0, len(d.Files)),
 	}
 
@@ -976,7 +988,7 @@ func generateTransformAgentsMD(cfg *config.Config, filesResp *TransformSourceFil
 		}
 	}
 
-	specsDir, err := config.ResolveInitiativeSpecsDir(cfg)
+	specsDir, err := config.ResolveEpicSpecsDir(cfg)
 	if err == nil {
 		if entries, readErr := os.ReadDir(specsDir); readErr == nil {
 			for _, entry := range entries {
@@ -1041,11 +1053,11 @@ type TransformSourceFilesResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 	Data    struct {
-		InitiativeID   int    `json:"initiative_id"`
-		InitiativeName string `json:"initiative_name"`
-		SourceSystemID int    `json:"source_system_id"`
-		TargetSystemID int    `json:"target_system_id"`
-		Repository     *struct {
+		EpicID               int    `json:"epic_id"`
+		EpicName             string `json:"epic_name"`
+		SourceArchitectureID int    `json:"source_architecture_id"`
+		TargetArchitectureID int    `json:"target_architecture_id"`
+		Repository           *struct {
 			Name      string `json:"name"`
 			LocalPath string `json:"local_path"`
 		} `json:"repository"`

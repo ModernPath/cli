@@ -1,10 +1,12 @@
 package rdd
 
 // REQ-CROSS-013 / TASK-SY-404 — parser tests for the bundled formats,
-// fixtures distilled from the real modernpath-v1 files the node extractor
-// parses today (mission-control/extract.js).
+// fixtures distilled from the real modernpath-v1 files the retired node
+// extractor parsed.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -179,4 +181,254 @@ func TestParseOpenQuestions(t *testing.T) {
 	if !oqs[1].Resolved {
 		t.Fatalf("✅ row must resolve: %+v", oqs[1])
 	}
+}
+
+// REQ-CROSS-074 (`RUN:2026-08-13`): a third name for the behaviour column.
+// Other modern ledgers head it "Requirement"; this workspace says "Title" and
+// a derived ledger says "Behaviour". Without the synonym the column simply does
+// not bind, the title serializes as "", and the server refuses the whole batch
+// with `422 title: can't be blank` — which is what blocked syncing 1,786
+// requirements.
+func TestLedgerColumnsAcceptsRequirementAsTheTitle(t *testing.T) {
+	lines := []string{
+		"| ID | Requirement | Stage | Status | Source | Evidence | Owner | Code |",
+		"|---|---|---|---|---|---|---|---|",
+		"| REQ-BUL-001 | The web bulletin list identifies the reader from the session | shipped | PENDING_VERIFICATION | UR-BUL-1 | no test | — | `x.cs:40` |",
+	}
+	col := ledgerColumns(lines)
+	if _, ok := col["title"]; !ok {
+		t.Fatal(`the "Requirement" header did not bind the title column`)
+	}
+	if col["title"] != 2 {
+		t.Errorf("title column = %d, want 2", col["title"])
+	}
+	// the columns beside it must still land where they belong
+	for name, want := range map[string]int{"id": 1, "stage": 3, "status": 4, "code": 8} {
+		if col[name] != want {
+			t.Errorf("%s column = %d, want %d", name, col[name], want)
+		}
+	}
+}
+
+// A narrower table that merely mentions requirements must not be mistaken for
+// the dashboard — a real journey table opens with the same two headers.
+func TestLedgerColumnsIgnoresANarrowJourneyTable(t *testing.T) {
+	lines := []string{
+		"| ID | Requirement | Actor | Views | Serves |",
+		"|---|---|---|---|---|",
+		"| UR-BUL-2 | An employee sees how many bulletins they have not read | any user | `/` | tile |",
+		"",
+		"| ID | Requirement | Stage | Status | Source | Evidence | Owner | Code |",
+		"|---|---|---|---|---|---|---|---|",
+		"| REQ-BUL-001 | The web bulletin list identifies the reader | shipped | PENDING_VERIFICATION | UR-BUL-1 | no test | — | `x.cs:40` |",
+	}
+	col := ledgerColumns(lines)
+	if col["status"] != 4 {
+		t.Errorf("status column = %d, want 4 — the journey table was mistaken for the dashboard", col["status"])
+	}
+}
+
+// REQ-CROSS-076 (`RUN:2026-08-13`): a ledger with no `UR` column can still name
+// the parent — a real corpus puts a bare `UR-BUL-1` in the column headed
+// `Source`. 1,336 of 1,786 rows do this, and without reading it every one of
+// them syncs as an orphan.
+//
+// The rule is deliberately narrow: only when the ledger has NO dedicated UR
+// column, and only when the source cell is a BARE UR reference. The other 450
+// rows hold a real source and must be left exactly as they are — a UR mentioned
+// inside a sentence is a citation, not a parent.
+func TestUROutOfTheSourceColumnWhenThereIsNoURColumn(t *testing.T) {
+	lines := []string{
+		"| ID | Requirement | Stage | Status | Source | Evidence | Owner | Code |",
+		"|---|---|---|---|---|---|---|---|",
+		"| REQ-BUL-001 | The reader is identified from the session | shipped | PENDING_VERIFICATION | UR-BUL-1 | no test | — | `x.cs:40` |",
+		"| REQ-BUL-002 | The page size is clamped | shipped | PENDING_VERIFICATION | `docs/06-surfaces.md` §2 | no test | — | `x.cs:39` |",
+		"| REQ-BUL-003 | Marking read uses the route id | shipped | PENDING_VERIFICATION | derived from UR-BUL-1 and the code | no test | — | `x.cs:52` |",
+	}
+	reqs := ParseLedger("tasks/BUL-REQUIREMENTS.md", strings.Join(lines, "\n"))
+	by := map[string]Req{}
+	for _, r := range reqs {
+		by[r.ID] = r
+	}
+	if got := by["REQ-BUL-001"].UR; got != "UR-BUL-1" {
+		t.Errorf("REQ-BUL-001 UR = %q, want UR-BUL-1 (a bare reference in the Source column)", got)
+	}
+	if got := by["REQ-BUL-002"].UR; got != "" {
+		t.Errorf("REQ-BUL-002 UR = %q, want empty — its source is a real source", got)
+	}
+	if got := by["REQ-BUL-003"].UR; got != "" {
+		t.Errorf("REQ-BUL-003 UR = %q, want empty — a UR inside a sentence is a citation, not a parent", got)
+	}
+	// the source itself must survive untouched in every case
+	if by["REQ-BUL-002"].Source == "" {
+		t.Error("the Source cell was consumed")
+	}
+}
+
+// A ledger that HAS a UR column keeps using it, whatever the source says.
+func TestExplicitURColumnWins(t *testing.T) {
+	lines := []string{
+		"| ID | Title | Stage | Status | UR | Source | Evidence | Code |",
+		"|---|---|---|---|---|---|---|---|",
+		"| REQ-X-001 | A thing | MVP | DONE | UR-REAL-1 | UR-DECOY-9 | t | c |",
+	}
+	reqs := ParseLedger("tasks/X-REQUIREMENTS.md", strings.Join(lines, "\n"))
+	if len(reqs) != 1 || reqs[0].UR != "UR-REAL-1" {
+		t.Fatalf("UR = %q, want UR-REAL-1 from the dedicated column", reqs[0].UR)
+	}
+}
+
+// REQ-CROSS-080/081 (EPIC-ARCH-001): the NFR ledger is an ordinary context, so
+// it must parse like one — and its rows must reach the platform with BLOCKED
+// intact. A status silently normalised away would turn every open question into
+// a claim, which is the one outcome D-ARCH-3 exists to prevent.
+func TestNFRLedgerParsesAsAnOrdinaryContext(t *testing.T) {
+	lines := []string{
+		"# NFR — quality attributes",
+		"",
+		"| ID | Title | Stage | Status | UR | Source | Evidence | Code |",
+		"|---|---|---|---|---|---|---|---|",
+		"| REQ-NFR-014 | Analysis fan-out is capped at 4 concurrent tenants | performance | BLOCKED | | `CODE:core/tenant_task.ex:64` | — | — |",
+		"| REQ-NFR-015 | A refresh rejected by the provider ends the session | security | PENDING_VERIFICATION | | `CODE:session.go:358` | `session_integration_test.go` | — |",
+	}
+	reqs := ParseLedger("tasks/NFR-REQUIREMENTS.md", strings.Join(lines, "\n"))
+	if len(reqs) != 2 {
+		t.Fatalf("parsed %d rows, want 2", len(reqs))
+	}
+	by := map[string]Req{}
+	for _, r := range reqs {
+		by[r.ID] = r
+	}
+
+	if got := by["REQ-NFR-014"].Ctx; got != "NFR" {
+		t.Errorf("ctx = %q, want NFR", got)
+	}
+	if got := by["REQ-NFR-014"].Status; got != "BLOCKED" {
+		t.Errorf("status = %q, want BLOCKED — a question must not become a claim", got)
+	}
+	// the taxonomy rides the Stage cell, so it must survive untouched
+	if got := by["REQ-NFR-014"].Stage; got != "performance" {
+		t.Errorf("stage = %q, want performance (the quality-attribute category)", got)
+	}
+	if got := by["REQ-NFR-015"].Status; got != "PENDING_VERIFICATION" {
+		t.Errorf("status = %q, want PENDING_VERIFICATION — the one exception, a threshold a test proves", got)
+	}
+}
+
+// REQ-CROSS-084 (EPIC-ARCH-001 Part C): the explanatory documents and the
+// discovery guides are discovered from the workspace and carried to the
+// platform. Identity is the workspace-relative path; provenance is what makes
+// them separable from uploads and from generated per-module documentation.
+func TestCollectDocumentsFindsExplanationsAndGuides(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/03-architecture.md", "# 03 — Architecture\n\nsubsystems")
+	write("docs/21-integrations.md", "# 21 — Integrations\n\nfailure behaviour")
+	write("docs/adr/0002-job-queue.md", "# 0002 — a job queue\n\nobserved")
+	write("docs/guides/configuration.md", "# Where behaviour is configured\n\nsettings tables")
+	// noise that must NOT be collected: a per-context doc and an unrelated file
+	write("docs/10-analytics.md", "# 10 — Analytics")
+	write("README.md", "# readme")
+
+	docs := CollectDocuments(root)
+	by := map[string]Document{}
+	for _, d := range docs {
+		by[d.Path] = d
+	}
+
+	if len(docs) != 4 {
+		t.Fatalf("collected %d documents, want 4: %v", len(docs), by)
+	}
+	for _, want := range []struct{ path, dtype, prov string }{
+		{"docs/03-architecture.md", "architecture", "derived"},
+		{"docs/21-integrations.md", "architecture", "derived"},
+		{"docs/adr/0002-job-queue.md", "design", "derived"},
+		{"docs/guides/configuration.md", "process", "guide"},
+	} {
+		d, ok := by[want.path]
+		if !ok {
+			t.Errorf("%s was not collected", want.path)
+			continue
+		}
+		if d.Type != want.dtype {
+			t.Errorf("%s type = %q, want %q", want.path, d.Type, want.dtype)
+		}
+		if d.Provenance != want.prov {
+			t.Errorf("%s provenance = %q, want %q — this is what separates a guide from an output", want.path, d.Provenance, want.prov)
+		}
+		if d.Content == "" {
+			t.Errorf("%s carried no content", want.path)
+		}
+	}
+	if _, mined := by["docs/10-analytics.md"]; mined {
+		t.Error("a per-context document was collected — phase D's set is system-wide only")
+	}
+}
+
+// REQ-CROSS-088: phase D's own rule is to ADOPT a maintained architecture
+// document rather than write a competing one ("never write a second document
+// answering a question the repository already answers"). A collector that only
+// knows `docs/03-architecture.md` therefore drops the single most important
+// document in exactly the repositories that already had one — which is what
+// happened on a real estate whose `03` is a root ARCHITECTURE.md (`RUN:2026-08-13`).
+func TestCollectDocumentsAdoptsAnExistingArchitectureDocument(t *testing.T) {
+	write := func(root, rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	arch := func(docs []Document) []Document {
+		var out []Document
+		for _, d := range docs {
+			if d.Type == "architecture" {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+
+	t.Run("a root ARCHITECTURE.md is the architecture document", func(t *testing.T) {
+		root := t.TempDir()
+		write(root, "ARCHITECTURE.md", "# Architecture\n\nservices and schema")
+		got := arch(CollectDocuments(root))
+		if len(got) != 1 || got[0].Path != "ARCHITECTURE.md" {
+			t.Fatalf("architecture documents = %v, want exactly ARCHITECTURE.md", got)
+		}
+		if got[0].Provenance != "derived" || got[0].Content == "" {
+			t.Errorf("adopted document must carry provenance and content, got %+v", got[0])
+		}
+	})
+
+	t.Run("docs/architecture.md is found too", func(t *testing.T) {
+		root := t.TempDir()
+		write(root, "docs/architecture.md", "# Architecture\n\nlower-case")
+		got := arch(CollectDocuments(root))
+		if len(got) != 1 || got[0].Path != "docs/architecture.md" {
+			t.Fatalf("architecture documents = %v, want exactly docs/architecture.md", got)
+		}
+	})
+
+	// The rule that keeps two answers from reaching one reader: phase D's own
+	// file wins, and the adopted one is not carried beside it.
+	t.Run("phase D's own document wins when both exist", func(t *testing.T) {
+		root := t.TempDir()
+		write(root, "ARCHITECTURE.md", "# Architecture\n\nthe old one")
+		write(root, "docs/03-architecture.md", "# 03 — Architecture\n\nthe phase D one")
+		got := arch(CollectDocuments(root))
+		if len(got) != 1 || got[0].Path != "docs/03-architecture.md" {
+			t.Fatalf("architecture documents = %v, want only docs/03-architecture.md", got)
+		}
+	})
 }

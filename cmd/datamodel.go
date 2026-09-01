@@ -13,6 +13,7 @@ import (
 
 	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +59,13 @@ func runDatamodelExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printInfo("Exporting data model for: %s\n", cfg.SystemName)
+	// --json promises parseable stdout — informational lines go to stderr
+	// there (pre-PR review: this was a live D13 instance).
+	if datamodelJSONOutput {
+		fmt.Fprintf(os.Stderr, "exporting data model for %s\n", cfg.SystemName)
+	} else {
+		printInfo("Exporting data model for: %s\n", cfg.SystemName)
+	}
 
 	// Get API URL and token
 	baseURL := apiURL
@@ -76,7 +83,11 @@ func runDatamodelExport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Download data model export
-	printInfo("Downloading data model...\n")
+	if datamodelJSONOutput {
+		fmt.Fprintln(os.Stderr, "downloading data model...")
+	} else {
+		printInfo("Downloading data model...\n")
+	}
 
 	zipData, err := downloadDatamodelExport(baseURL, token, cfg.SystemID)
 	if err != nil {
@@ -119,9 +130,10 @@ func downloadDatamodelExport(baseURL, token string, systemID int) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
+	platform.Prepare(req)
 
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if err := platform.Authorize(req, token); err != nil {
+		return nil, err
 	}
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("X-Requested-With", "ModernPath-CLI")

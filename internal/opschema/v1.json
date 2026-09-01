@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://modernpath.ai/contracts/sync/v1.schema.json",
-  "title": "ModernPath workspace\u2194server sync batch (v1)",
-  "description": "The canonical sync op contract (REQ-CROSS-012, converged into the central contracts/ home per OQ-A1x USER:2026-07-28). This file is the ONE source: the server serves a byte-identical copy at GET /api/v1/sync/schema (apps/aiengine_web/priv/sync-schema/v1.json) and the modernpath CLI embeds one (tools/modernpath/internal/opschema/v1.json) \u2014 both kept in lockstep by tests. Prose form: docs/data/42-sync-contract.md. OpenAPI binding: contracts/openapi/sync-api.yaml.",
+  "title": "ModernPath workspace↔server sync batch (v1)",
+  "description": "The canonical sync op contract (REQ-CROSS-012, converged into the central contracts/ home per OQ-A1x USER:2026-07-28). This file is the ONE source: the server serves a byte-identical copy at GET /api/v1/sync/schema (apps/aiengine_web/priv/sync-schema/v1.json) and the modernpath CLI embeds one (tools/modernpath/internal/opschema/v1.json) — both kept in lockstep by tests. Prose form: docs/data/42-sync-contract.md. OpenAPI binding: contracts/openapi/sync-api.yaml. Fingerprint mapping (REQ-CROSS-254, USER:2026-08-24; REQ-PLN-159, USER:2026-08-26): the applier persists each applied op's content_hash — the canonical-form sha256 the builders compute, one value with sync_shadows.last_hash — into the row's content_fingerprint column. Gate evaluated-scope identity travels separately as optional evaluated_scope_fingerprint; legacy decision_gates.fingerprint is compatibility-only. process_records is excluded — its identity is content_sha256 over the raw bytes.",
   "x-schema-version": 1,
   "type": "object",
   "required": [
@@ -23,7 +23,7 @@
     "release": {
       "type": "string",
       "minLength": 1,
-      "description": "Optional workspace-level release stamp (slug, e.g. modernpath-v1-09 \u2014 REQ-CROSS-017). The server resolves it once per batch (find-or-create per tenant, name = slug, status planned) and stamps release_id on every upserted requirement/epic \u2014 including hash-unchanged rows (targeted restamp; shadows/events untouched). A frozen (bundle released) or closed (released/archived) release rejects the batch 422 before any write. Absent = unscoped: existing stamps are left untouched, never nulled."
+      "description": "Optional workspace-level release stamp (slug, e.g. modernpath-v1-09 — REQ-CROSS-017). The server resolves it once per batch (find-or-create per tenant, name = slug, status planned) and stamps release_id on every upserted requirement/epic — including hash-unchanged rows (targeted restamp; shadows/events untouched). A frozen (bundle released) or closed (released/archived) release rejects the batch 422 before any write. Absent = unscoped: existing stamps are left untouched, never nulled."
     },
     "ops": {
       "type": "array",
@@ -63,6 +63,16 @@
         {
           "properties": {
             "type": {
+              "const": "upsert_backlog_record"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_backlog_record_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
               "const": "upsert_gate"
             },
             "payload": {
@@ -77,6 +87,56 @@
             },
             "payload": {
               "$ref": "#/$defs/emit_events_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_document"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_document_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "report_coverage"
+            },
+            "payload": {
+              "$ref": "#/$defs/report_coverage_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_scenario"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_scenario_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_task"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_task_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_process_record"
+            },
+            "payload": {
+              "$ref": "#/$defs/upsert_process_record_payload"
             }
           }
         }
@@ -96,9 +156,13 @@
         },
         "user_id": {
           "type": "integer"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the human this actor records — resolved server-side against provisioned users for attribution (REQ-CROSS-248)."
         }
       },
-      "description": "P2: attributable actors. 'external' = a real person outside the platform (e.g. a PR author) \u2014 carries a handle in agent_slug, never a fake User row."
+      "description": "P2: attributable actors. 'external' = a real person outside the platform (e.g. a PR author) — carries a handle in agent_slug, never a fake User row."
     },
     "spec": {
       "type": "object",
@@ -122,7 +186,7 @@
           "maxLength": 65536
         }
       },
-      "description": "One epic-folder spec file (REQ-CROSS-023, EPIC-SYNC-006). external_id = the workspace-relative path (e.g. epics/EPIC-SYNC-006-epics-carry-specs/specs/architecture.md), derived from the epic record path. The server maps basename \u2192 planning_artifacts artifact_type/category; content over maxLength is truncated by the builders with a loud warning."
+      "description": "One epic-folder spec file (REQ-CROSS-023, EPIC-SYNC-006). external_id = the workspace-relative path (e.g. epics/EPIC-SYNC-006-epics-carry-specs/specs/architecture.md), derived from the epic record path. The server maps basename → planning_artifacts artifact_type/category; content over maxLength is truncated by the builders with a loud warning."
     },
     "criterion": {
       "type": "object",
@@ -159,7 +223,23 @@
           "type": "array"
         },
         "verification_refs": {
-          "type": "array"
+          "type": "array",
+          "description": "The clause↔test edges (REQ-CROSS-250): typed references, the citation shape.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            }
+          }
         }
       },
       "description": "One of (given+then) or statement must be present. Replace-set semantics: the payload set is active; absent criteria flip to superseded, never deleted."
@@ -197,7 +277,7 @@
       "properties": {
         "dedupe_key": {
           "type": "string",
-          "description": "Idempotency handle \u2014 unique per (tenant, dedupe_key); duplicates are counted, never errors."
+          "description": "Idempotency handle — unique per (tenant, dedupe_key); duplicates are counted, never errors."
         },
         "occurred_at": {
           "type": "string",
@@ -246,6 +326,17 @@
             "user"
           ]
         },
+        "release_exempt": {
+          "type": "boolean",
+          "description": "This requirement describes behaviour that already ships — it is an as-built derivation, not planned work — so it belongs to the base and never to a release (REQ-CROSS-064). The server CLEARS release_id when true, so a re-sync repairs rows a previous batch stamped. Absent or false leaves the normal stamping rule untouched."
+        },
+        "parent_external_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The FIRST user requirement this system requirement serves, by external_id (REQ-CROSS-049, EPIC-SYNC-011), for consumers that read exactly one parent. Absent when the ledger carries no UR column; null clears the link. The server UNIONS this field with parent_external_ids and dedups by trimmed ref, so sending only this field, only the array, or both (the array conventionally repeating this value first) all resolve to the same edge set. Each resolved parent materializes a compliance_traces edge user_requirement -> system_requirement with link_kind 'derives'; an external_id naming no existing user requirement writes no trace and is reported, never fabricated."
+        },
         "title": {
           "type": "string"
         },
@@ -254,6 +345,11 @@
         },
         "context": {
           "type": "string"
+        },
+        "context_name": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "The context's human name from the ledger H1 (e.g. 'Consortiums' for CON). Absent when the ledger names no context; never sent empty."
         },
         "stage": {
           "type": [
@@ -264,10 +360,13 @@
         "work_status": {
           "type": "string",
           "enum": [
+            "DERIVED",
             "PROPOSED",
+            "TODO",
             "READY",
             "IN_PROGRESS",
             "IN_REVIEW",
+            "PENDING_VERIFICATION",
             "DONE",
             "DEFERRED",
             "BLOCKED",
@@ -287,6 +386,65 @@
         },
         "actor": {
           "$ref": "#/$defs/actor"
+        },
+        "parent_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "REQ-CROSS-222: the FULL set of user requirements the row names, in ledger order, present whenever the row names at least one — a single-parent row carries a one-element array. Absence therefore means the row named no parent; it never means the row named exactly one. parent_external_id stays the first entry for consumers that read one, and the server unions the two fields and dedups by trimmed ref, so the repeated first parent writes one edge."
+        },
+        "priority": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "REQ-CROSS-222: the ledger Priority column, verbatim. Omitted when absent."
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "REQ-CROSS-222: the ledger Owner column, verbatim. Omitted when absent."
+        },
+        "release_note": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "REQ-CROSS-222: the ledger Release-class column, verbatim and informational - release routing stays envelope-scoped. Omitted when absent."
+        },
+        "extra_columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 8000
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "REQ-CROSS-222: named extras - never dropped, served back verbatim. Two populations share this carrier: columns the extractor does not recognize, under their ledger heading; and the raw evidence cells under the reserved names `tests_raw` and `code_raw` (222.6), which hold the Tests and Code cells exactly as written, uncapped, beside the parsed source_citations. Reserved names are never a ledger heading, so the two populations stay distinguishable. Placeholder cells (empty or a dash) carry nothing. Omitted when empty."
+        },
+        "detail_md": {
+          "type": "string",
+          "maxLength": 60000,
+          "description": "REQ-CROSS-222: the detail block verbatim (extractor body cap applies). Prose, decorations, and over-cap notes survive here. Omitted when absent."
+        },
+        "source_raw": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "REQ-CROSS-222: the Source cell exactly as written; the parsed source_citations are additive, never a replacement. Omitted when empty."
+        },
+        "superseding_ref": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "REQ-CROSS-222: for OBSOLETE rows, the requirement or epic id the source names as the supersessor. Omitted otherwise."
         }
       }
     },
@@ -310,10 +468,14 @@
           "type": "string"
         },
         "upper_loop_status": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 2000,
+          "description": "REQ-PLN-045: the epic's upper-loop evidence state, from the WORKLIST Upper-status cell. A sentence rather than a token — the tracked corpus writes cells up to 315 units — so the declared width is ~6x the longest observed cell and the server column is text. Omitted when the cell is a placeholder."
         },
         "lower_loop_status": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 2000,
+          "description": "REQ-PLN-045: the epic's lower-loop evidence state, from the WORKLIST Lower-status cell. Same carrier width and placeholder rule as upper_loop_status."
         },
         "scenarios": {
           "type": "array",
@@ -326,7 +488,7 @@
           "items": {
             "$ref": "#/$defs/spec"
           },
-          "description": "Epic-folder spec files (REQ-CROSS-023). Present iff the epic record is folder-form (\u2026/EPIC.md) \u2014 present-empty archives all sync-owned artifacts; absent (file-form epics) never touches them. Replace-set into planning_artifacts by (initiative, external_id): absent specs flip to archived, never deleted; content edits reset status to draft (approval is content-bound)."
+          "description": "Epic-folder spec files (REQ-CROSS-023). Present iff the epic record is folder-form (…/EPIC.md) — present-empty archives all sync-owned artifacts; absent (file-form epics) never touches them. Replace-set into planning_artifacts by (epic, external_id): absent specs flip to archived, never deleted; content edits reset status to draft (approval is content-bound)."
         },
         "requirement_external_ids": {
           "type": "array",
@@ -346,14 +508,42 @@
             },
             "source_tag": {
               "type": "string"
+            },
+            "approver_name": {
+              "type": "string",
+              "description": "The deciding human named by the corpus approval register; the applier resolves it against provisioned users (REQ-CROSS-248)."
+            },
+            "approver_email": {
+              "type": "string"
             }
           }
         },
         "actor": {
           "$ref": "#/$defs/actor"
+        },
+        "process_status": {
+          "type": "string",
+          "enum": [
+            "PROPOSED",
+            "TODO",
+            "IN_PROGRESS",
+            "IN_REVIEW",
+            "DONE",
+            "BLOCKED",
+            "DEFERRED",
+            "OBSOLETE"
+          ],
+          "description": "REQ-CROSS-223: the Epic PROCESS.md lifecycle status, from the WORKLIST Overall-status token. READY and PENDING_VERIFICATION are Requirement-only states. Omitted when the cell carries no token."
+        },
+        "user_requirement_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every user requirement this epic record declares, in declaration order - the sync writer for the epic_user_requirements join. A record declaring several (a multi-row linked-user-requirements table, several outcome headings) carries all of them; reading only the first left the join looking complete while the later memberships had no edge. Omitted when the record declares none."
         }
       },
-      "description": "The board status axis is set once at creation and never overwritten by sync (design \u00a71.3)."
+      "description": "Canonical Epic content and its sole RDD process lifecycle."
     },
     "upsert_gate_payload": {
       "type": "object",
@@ -367,6 +557,11 @@
         },
         "content_hash": {
           "type": "string"
+        },
+        "evaluated_scope_fingerprint": {
+          "type": "string",
+          "maxLength": 255,
+          "description": "Optional independently evaluated exact-scope identity for a gate. It never substitutes for content_hash."
         },
         "kind": {
           "type": "string",
@@ -492,7 +687,7 @@
         },
         "brief": {
           "type": "object",
-          "description": "EPIC-DEC-001 (REQ-PLN-047): the plain-language decision brief \u2014 the gate's primary face; body_md stays the collapsed technical layer.",
+          "description": "EPIC-DEC-001 (REQ-PLN-047): the plain-language decision brief — the gate's primary face; body_md stays the collapsed technical layer.",
           "properties": {
             "what": {
               "type": "string",
@@ -521,9 +716,35 @@
           "type": "string",
           "maxLength": 500,
           "description": "Optional illustrative image URL from the image service (REQ-AGT-027)."
+        },
+        "sources": {
+          "type": "array",
+          "description": "Resolved authority sources for the recorded decision/acceptance (REQ-CROSS-247): USER tags, register ids, document paths — each typed.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "exact_scope": {
+          "type": "array",
+          "description": "The exact items this gate covers — the owning epic and named requirement/scenario ids (REQ-CROSS-247/248).",
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "description": "Rule S6: server wins answers \u2014 once answered on the server, sync updates content fields but never the answer block."
+      "description": "Rule S6: server wins answers — once answered on the server, sync updates content fields but never the answer block."
     },
     "emit_events_payload": {
       "type": "object",
@@ -565,7 +786,9 @@
         "sync_applied",
         "pr_opened",
         "pr_merged",
-        "pr_closed"
+        "pr_closed",
+        "work_selected",
+        "focus_changed"
       ]
     },
     "origin": {
@@ -584,6 +807,513 @@
         "system",
         "external"
       ]
+    },
+    "upsert_document_payload": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "name",
+        "content_md",
+        "content_hash"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "document_type": {
+          "type": "string",
+          "enum": [
+            "requirements",
+            "architecture",
+            "api",
+            "design",
+            "process",
+            "compliance",
+            "other"
+          ]
+        },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "derived",
+            "guide",
+            "authored"
+          ],
+          "description": "derived = written by a derivation pass; guide = a human-written lens the pass reads as input; authored = maintained by hand. This is what separates a repository-synced explanation from an upload and from generated per-module documentation (USER:2026-08-13)."
+        },
+        "content_md": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "content_hash": {
+          "type": "string"
+        }
+      },
+      "description": "One system-scoped explanatory document or discovery guide (REQ-CROSS-084, EPIC-ARCH-001). external_id = the workspace-relative path, which is its identity. System-scoped on purpose: these belong to no requirement and no epic."
+    },
+    "report_coverage_payload": {
+      "type": "object",
+      "required": [
+        "generated_from",
+        "summary"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Stable receipt identity (builders send WORKSPACE-COVERAGE). One receipt per workspace — the op is a last-wins projection, so the id never varies per run."
+        },
+        "generated_from": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Builder provenance: the CLI name and version/commit that measured the numbers (e.g. modernpath@0.9.3). Deliberately NOT hashed into content_hash — it names the instrument, not the measurement."
+        },
+        "content_hash": {
+          "type": "string",
+          "description": "sha256 over the canonical summary object ONLY (not the whole payload): two builders measuring the same tree must produce the same hash — the cross-builder parity guarantee — while generated_from stays free to name each builder."
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "total_rows",
+            "citations",
+            "files",
+            "per_app",
+            "test_axis"
+          ],
+          "properties": {
+            "total_rows": {
+              "type": "integer",
+              "description": "Requirement detail rows across every tasks/*-REQUIREMENTS.md ledger."
+            },
+            "rows_by_ledger": {
+              "type": "object",
+              "maxProperties": 200,
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "description": "Optional per-ledger row counts, keyed by ledger basename."
+            },
+            "citations": {
+              "type": "object",
+              "required": [
+                "at_path",
+                "basename_only",
+                "nowhere"
+              ],
+              "properties": {
+                "at_path": {
+                  "type": "integer"
+                },
+                "basename_only": {
+                  "type": "integer"
+                },
+                "nowhere": {
+                  "type": "integer"
+                }
+              },
+              "description": "Citation integrity counts: distinct citations resolved at their written path, resolved only by basename (non-canonical), or resolving nowhere."
+            },
+            "files": {
+              "type": "object",
+              "required": [
+                "inventory",
+                "covered",
+                "pct"
+              ],
+              "properties": {
+                "inventory": {
+                  "type": "integer"
+                },
+                "covered": {
+                  "type": "integer"
+                },
+                "pct": {
+                  "type": "number",
+                  "description": "covered/inventory as a percentage rounded to one decimal — both builders round identically so the hash holds."
+                }
+              },
+              "description": "Source-file coverage: how much of the real inventory is cited by ≥ 1 requirement."
+            },
+            "per_app": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "required": [
+                  "app",
+                  "files",
+                  "covered"
+                ],
+                "properties": {
+                  "app": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "files": {
+                    "type": "integer"
+                  },
+                  "covered": {
+                    "type": "integer"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "description": "Per-app coverage, apps derived from the tree (top-level directories holding source or cited files), sorted by name."
+            },
+            "test_axis": {
+              "type": "object",
+              "required": [
+                "rows_with_tests",
+                "rows_dash",
+                "rows_neither",
+                "test_files",
+                "test_files_cited"
+              ],
+              "properties": {
+                "rows_with_tests": {
+                  "type": "integer"
+                },
+                "rows_dash": {
+                  "type": "integer",
+                  "description": "Rows that explicitly declare no tests (a 'Tests: —' line)."
+                },
+                "rows_neither": {
+                  "type": "integer"
+                },
+                "test_files": {
+                  "type": "integer"
+                },
+                "test_files_cited": {
+                  "type": "integer"
+                }
+              },
+              "description": "The separate test axis (REQ-CROSS-179): rows claiming tests vs saying nothing, and the tree's test-file inventory vs what is cited."
+            }
+          }
+        }
+      },
+      "description": "The workspace coverage receipt (SR-CMP-9022, EPIC-CMP-902): the `modernpath coverage` summary riding the sync batch. A projection of measured workspace state, not an upsert — the server stores it last-wins under the system's `workspace_coverage` metadata key and stamps receipt time itself; the payload carries no timestamp so the op stays deterministic."
+    },
+    "upsert_backlog_record_payload": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "kind",
+        "title",
+        "content_hash"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Explicit GAP-/DEF- id when the row carries one, else a stable derived BL-<sha256(kind|title)[:12]> id."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "gap"
+          ],
+          "description": "backlog = unrouted triage discovery (BACKLOG.md); gap = capability/specification gap (process/gap-register.md)."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "The stripped first cell of the row."
+        },
+        "notes_md": {
+          "type": "string",
+          "maxLength": 20000,
+          "description": "The notes cell verbatim. Omitted when empty."
+        },
+        "route": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "The tracked-as/route cell verbatim. Omitted when empty."
+        },
+        "source_path": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Workspace-relative file the row came from."
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        },
+        "raised_by": {
+          "type": "string"
+        },
+        "raised_at": {
+          "type": "string",
+          "description": "YYYY-MM-DD from the row provenance; the applier widens to a timestamp."
+        },
+        "observation": {
+          "type": "string"
+        },
+        "why_unrouted": {
+          "type": "string"
+        },
+        "candidate_route": {
+          "type": "string"
+        },
+        "affected_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "routed",
+            "deferred"
+          ]
+        },
+        "disposition_ref": {
+          "type": "string"
+        },
+        "gap_kind": {
+          "type": "string",
+          "enum": [
+            "capability",
+            "ledger"
+          ]
+        },
+        "affected_trace_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "consequence": {
+          "type": "string"
+        },
+        "disclosed_in_gate_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "raw_body": {
+          "type": "string",
+          "description": "The corpus row verbatim — the typed split is a transform, never a loss (REQ-CROSS-251)."
+        }
+      },
+      "additionalProperties": false,
+      "description": "REQ-CROSS-223 (EPIC-CLI-003): one BACKLOG discovery row or gap-register row — the store home the ledger import needs."
+    },
+    "upsert_scenario_payload": {
+      "type": "object",
+      "description": "One declared scenario definition as a first-class process record (REQ-CROSS-252): epic-namespaced identity, declared ownership, G/W/T or statement, source position. Lands in process_scenarios; shadow entity_type scenario.",
+      "required": [
+        "external_id",
+        "content_hash"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string",
+          "description": "Epic-namespaced: EPIC-X#SCN-Y."
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "given": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "then": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "declared_owner_type": {
+          "type": "string",
+          "enum": [
+            "epic",
+            "user_requirement",
+            "system_requirement"
+          ]
+        },
+        "declared_owner_external_id": {
+          "type": "string"
+        },
+        "required_requirement_external_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "evidence_conclusion": {
+          "type": "string",
+          "enum": [
+            "UPPER_VALIDATED",
+            "LOWER_VERIFIED"
+          ],
+          "description": "REQ-CROSS-266: the scenario's evidence conclusion, declared in its status-family cell. A CLOSED vocabulary and a separate axis from `status`: PROCESS.md is explicit that an evidence conclusion is not a lifecycle state, so widening `status` would put an evidence fact where no lifecycle transition can read it. Absent = the row declares none; a token written in a Notes or Evidence column states some other item's evidence and is preserved in source_raw rather than claimed here."
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_line": {
+          "type": "integer"
+        },
+        "source_raw": {
+          "type": "string"
+        },
+        "source_citations": {
+          "type": "array"
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        }
+      }
+    },
+    "upsert_task_payload": {
+      "type": "object",
+      "description": "One declared task as a first-class record (REQ-CROSS-264). Identity is the EPIC-SCOPED COMPOSITE `<epic-code>#<local-id>` — the scenario precedent — because `tasks` has no external_id column and 14 cross-epic TASK-* reuses plus 12 epic-local ordinals are 26 duplicate (system, external_id) keys under bare-code identity. The applier maps it to the row identity (tenant, epic, code) and the read surface serves the composite back. Lands in tasks, epic-parented (system_id NULL, per the tasks_exactly_one_parent check); shadow entity_type task.",
+      "required": [
+        "external_id",
+        "content_hash",
+        "code",
+        "title"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string",
+          "description": "Epic-scoped composite: EPIC-X-001#TASK-X-001 or EPIC-X-001#T3."
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "description": "The LOCAL id — the row identity's code column, never the composite."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "tasks.title is NOT NULL. A declaring row's title cell; an id known only from a WORKLIST cell or a range expansion takes the verbatim source text, capped — prose is never invented."
+        },
+        "process_status": {
+          "type": "string",
+          "description": "The declared process token verbatim, beside the board status axis, which sync never writes after creation."
+        },
+        "owner": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string"
+        },
+        "declared_owner_type": {
+          "type": "string",
+          "enum": [
+            "epic"
+          ]
+        },
+        "declared_owner_external_id": {
+          "type": "string",
+          "description": "The owning epic's code — the prefix of external_id, restated so the applier never parses identity to find a parent."
+        },
+        "sync_born": {
+          "type": "boolean",
+          "description": "`tasks` is the PRODUCT Task table (Board, MCP, derivation). true stamps the row as this import's, and the read surface, the readback and the --from-empty precondition all filter on the stamp."
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_line": {
+          "type": "integer"
+        },
+        "source_raw": {
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        }
+      }
+    },
+    "upsert_process_record_payload": {
+      "type": "object",
+      "description": "One retired corpus file archived byte-exact (REQ-CROSS-253, the §225.6 successor USER:2026-08-24): raw_content is the file's exact bytes base64-encoded on the JSON wire, unsplit; content_sha256 is the sha256 of those bytes and the archive's integrity identity (content_hash stays the op/sync identity). Lands in process_records; shadow entity_type process_record.",
+      "required": [
+        "external_id",
+        "content_hash",
+        "record_type",
+        "raw_content",
+        "content_sha256"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string",
+          "description": "The workspace-relative file path."
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "record_type": {
+          "type": "string",
+          "enum": [
+            "document",
+            "epic",
+            "task",
+            "specification",
+            "requirement",
+            "backlog",
+            "gap",
+            "gate",
+            "evidence",
+            "work_selection",
+            "other"
+          ]
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "raw_content": {
+          "type": "string",
+          "description": "base64 of the exact file bytes."
+        },
+        "content_sha256": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer"
+        },
+        "archive_revision": {
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        }
+      }
     }
   }
 }

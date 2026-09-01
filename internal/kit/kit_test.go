@@ -80,3 +80,16 @@ func TestMergeManagedBlockRefusesMalformedMarkers(t *testing.T) {
 		}
 	}
 }
+
+// With two blocks present only the first was
+// refreshed, leaving the second a permanently stale orphan that silently
+// contradicts the first after any process change. Ambiguous ownership is the
+// damaged-markers case.
+func TestMergeManagedBlockRefusesDuplicateBlocks(t *testing.T) {
+	doc := "# T\n\n" +
+		BeginMarker + "\nold\n" + EndMarker + "\n\nclient rule\n\n" +
+		BeginMarker + "\nold\n" + EndMarker + "\n"
+	if _, err := MergeManagedBlock(doc, "new"); err == nil {
+		t.Fatal("a document with two managed blocks must be refused, not half-refreshed")
+	}
+}

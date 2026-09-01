@@ -4,17 +4,17 @@ package cmd
 // SERVER-SYNC-DESIGN §2.3), folded into the product CLI per USER:2026-07-23
 // ("let's not reinvent the wheel"). Auth and binding are the CLI's own:
 // `.modernpath/config.json` (APIURL + SystemID) and `.modernpath/auth.json`
-// (Bearer), with a gitignored `.modernpath/mp_api_key` fallback (X-API-Key)
-// for headless/dev use. Ledger parsing stays in the workspace's tested
-// Node op-builder (`mission-control/cli/ops-dump.js`) — the CLI shells to it
-// for op JSON and owns everything else.
+// (Bearer). Ledger parsing is the CLI's own bundled parsers; the workspace
+// carries no second implementation to shell out to.
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,7 +29,9 @@ import (
 	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/manifest"
 	"github.com/modernpath/cli/internal/opschema"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/modernpath/cli/internal/rdd"
+	"github.com/modernpath/cli/internal/zitadel"
 	"github.com/spf13/cobra"
 )
 
@@ -58,10 +60,53 @@ type factoryEnv struct {
 	SystemID       int
 	CurrentRelease string // REQ-CROSS-017: the envelope release stamp ("" = unscoped)
 	token          string
-	isAPIKey       bool
+	// callTimeout bounds each API call; zero means the 120s default. migrate
+	// run raises it: a first import's archival document ingest is legitimately
+	// minutes server-side, and an abandoned batch keeps running without the
+	// client.
+	callTimeout time.Duration
 }
 
-func factoryEnvLoad() (*factoryEnv, error) {
+// credentialError marks a failure that re-running the failing command cannot
+// fix: the fix is a different command (`modernpath auth`).
+// Callers that suggest a repair ask errors.As for this type before pointing
+// the reader at a retry loop.
+type credentialError struct {
+	err    error
+	repair string
+}
+
+func (e credentialError) Error() string { return e.err.Error() }
+func (e credentialError) Unwrap() error { return e.err }
+
+// credentialRejected turns a 401 into a statement about the credential. A bare
+// `server 401` is the shape of a rejected request; the reader should not have
+// to infer that the request itself was fine and the credential was not. A 401
+// does not say WHY the credential was rejected — expired, revoked, malformed,
+// or presented to a server that never issued it — so the message names the
+// possibilities rather than asserting the common one.
+func (e *factoryEnv) credentialRejected() error {
+	repair := authRepairCommand(e.APIURL)
+	return credentialError{
+		err:    fmt.Errorf("server rejected the session token — expired, revoked, or issued for a different server; run '%s' to sign in again", repair),
+		repair: repair,
+	}
+}
+
+func authRepairCommand(apiURL string) string {
+	switch apiURL {
+	case zitadel.ProdProfile.APIURL:
+		return "modernpath auth --sso"
+	case zitadel.TestProfile.APIURL:
+		return "modernpath auth --sso --test"
+	case config.LocalAPIURL:
+		return "modernpath auth --local"
+	default:
+		return "modernpath auth --api-url=" + apiURL
+	}
+}
+
+func factoryBindingLoad() (*factoryEnv, error) {
 	cfgDir, err := config.FindConfigDir()
 	if err != nil || cfgDir == "" {
 		return nil, fmt.Errorf("not connected — run 'modernpath factory connect --system <id>' in the workspace root")
@@ -84,18 +129,76 @@ func factoryEnvLoad() (*factoryEnv, error) {
 	if env.APIURL == "" {
 		env.APIURL = config.DefaultAPIURL
 	}
-
-	// the CLI's own auth first; the gitignored dev API key as fallback
-	if auth, err := config.ReadAuth(); err == nil && auth.Token != "" {
-		env.token = auth.Token
-	} else if key, err := os.ReadFile(filepath.Join(cfgDir, "mp_api_key")); err == nil {
-		env.token = strings.TrimSpace(string(key))
-		env.isAPIKey = true
-	} else {
-		return nil, fmt.Errorf("no credentials — 'modernpath auth' or put a platform API key in %s/mp_api_key", config.ConfigDir)
-	}
 	return env, nil
 }
+
+func factoryEnvLoad() (*factoryEnv, error) {
+	env, err := factoryBindingLoad()
+	if err != nil {
+		return nil, err
+	}
+
+	auth, err := config.ReadAuth()
+	if err != nil {
+		repair := authRepairCommand(env.APIURL)
+		return nil, credentialError{
+			err:    fmt.Errorf("auth.json is unreadable (%v) — fix it or run '%s'", err, repair),
+			repair: repair,
+		}
+	}
+	if strings.TrimSpace(auth.Token) == "" {
+		repair := authRepairCommand(env.APIURL)
+		return nil, credentialError{
+			err:    fmt.Errorf("no bearer in auth.json — run '%s'", repair),
+			repair: repair,
+		}
+	}
+	env.token = auth.Token
+
+	// REQ-CROSS-282: refuse before any caller's env.call — factoryEnvLoad is
+	// the single chokepoint every credentialed factory subcommand goes
+	// through, so this protects all of them, not just sync. A check that
+	// itself errors fails open: "couldn't check" is never "confirmed
+	// unreachable," and a transient outage must never block every command.
+	if systems, serr := listSystemsFn(env.APIURL, env.token); serr == nil {
+		if !systemReachable(systems, env.SystemID) {
+			return nil, fmt.Errorf("%s", systemMismatchMessage(env.SystemID, systems))
+		}
+	}
+
+	return env, nil
+}
+
+// releaseWarning names the actual next step for an unscoped sync. Advice must
+// be followable: "select a release" is wrong for a project that has no
+// registry, because creating one is a human product decision the CLI must not
+// make (REQ-CROSS-177). A fresh derived workspace is base work by design.
+func releaseWarning(root string) string {
+	if _, err := os.Stat(filepath.Join(root, "process", "releases.md")); err != nil {
+		return "no release registry — this work lands in the system's base release, where the Ledger will show it (REQ-CROSS-283); when this project adopts releases, create process/releases.md and select one with 'modernpath factory release use <slug>'"
+	}
+	return "no current release — this work lands in the base release; set a delivery release with 'modernpath factory release use <slug>' (registry: process/releases.md)"
+}
+
+// REQ-CROSS-176: when a server call is slow enough to look like a hang, say
+// something. Threshold and destination are variables so the tests can shrink
+// one and capture the other.
+var (
+	slowCallNoticeAfter           = 10 * time.Second
+	slowCallNoticeTo    io.Writer = os.Stderr
+)
+
+// A 5xx from the platform edge on a sync chunk is usually a per-request gateway
+// timeout on a heavy chunk, not a permanent refusal (RUN:2026-08-31: a cold
+// first sync into test-plat answered 504 on a 200-op chunk). Each chunk is its
+// own idempotent server-side transaction, so re-POSTing it is safe. These are
+// variables so a test can shrink the backoff and stub the sleep; a 4xx (401,
+// 422, a validation refusal) is a deterministic answer and is never retried.
+var (
+	syncRetryMaxAttempts               = 4
+	syncRetryBaseBackoff time.Duration = 2 * time.Second
+	syncRetrySleep                     = time.Sleep
+)
 
 func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]any, error) {
 	var body *bytes.Reader
@@ -113,14 +216,25 @@ func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]
 	if err != nil {
 		return 0, nil, err
 	}
+	platform.Prepare(req)
 	req.Header.Set("Content-Type", "application/json")
-	if e.isAPIKey {
-		req.Header.Set("X-API-Key", e.token)
-	} else {
-		req.Header.Set("Authorization", "Bearer "+e.token)
+	if err := platform.Authorize(req, e.token); err != nil {
+		return 0, nil, err
 	}
 
-	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	// REQ-CROSS-176: a call that is taking long says so. Eight sequential
+	// calls at 120s each can turn "a few seconds" into silent minutes on a
+	// stalled connection, and a slow server is indistinguishable from a hung
+	// CLI until this line exists.
+	timeout := e.callTimeout
+	if timeout == 0 {
+		timeout = 120 * time.Second
+	}
+	notice := time.AfterFunc(slowCallNoticeAfter, func() {
+		fmt.Fprintf(slowCallNoticeTo, "… still waiting on %s %s (slow server or connection; times out at %s)\n", method, apiPath, timeout)
+	})
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	notice.Stop()
 	if err != nil {
 		return 0, nil, err
 	}
@@ -128,52 +242,73 @@ func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]
 
 	var decoded map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&decoded)
+
+	// Reported here rather than at each call site: all eight `server %d`
+	// formatters check err first, so one point covers every factory command.
+	if resp.StatusCode == http.StatusUnauthorized {
+		return resp.StatusCode, decoded, e.credentialRejected()
+	}
 	return resp.StatusCode, decoded, nil
 }
 
-// dumpOps shells to the workspace's Node op-builder — the ledger parsing
-// stays in one tested place instead of a second Go implementation.
-func (e *factoryEnv) dumpOps(args ...string) (map[string]any, error) {
-	script := filepath.Join(e.Root, "mission-control", "cli", "ops-dump.js")
-	if _, err := os.Stat(script); err != nil {
-		return nil, fmt.Errorf("this workspace has no mission-control extractor (%s missing) — factory sync runs only in sync-enabled workspaces", script)
+// postSyncBatch POSTs one batch to /api/v1/sync/batch, retrying a 5xx or a
+// transient transport failure with exponential backoff. It returns the last
+// (status, body, err), so an exhausted retry reads exactly like a single failed
+// call and the chunk/refusal handling downstream is unchanged. A 4xx — a
+// credential rejection (status 401, non-nil err) or a server refusal such as
+// 422 — is deterministic and returned at once; only a 5xx (status >= 500) or a
+// transport error (status 0 with a non-nil err) is retried.
+func (e *factoryEnv) postSyncBatch(batchBody map[string]any) (int, map[string]any, error) {
+	var (
+		status int
+		body   map[string]any
+		err    error
+	)
+	for attempt := 1; ; attempt++ {
+		status, body, err = e.call("POST", "/api/v1/sync/batch", batchBody)
+		retriable := status >= 500 || (status == 0 && err != nil)
+		if !retriable || attempt >= syncRetryMaxAttempts {
+			return status, body, err
+		}
+		wait := syncRetryBaseBackoff << (attempt - 1)
+		if err != nil {
+			printWarning("sync POST failed (%v) — attempt %d/%d, retrying in %s", err, attempt, syncRetryMaxAttempts, wait)
+		} else {
+			printWarning("sync POST got server %d — attempt %d/%d, retrying in %s", status, attempt, syncRetryMaxAttempts, wait)
+		}
+		syncRetrySleep(wait)
 	}
-
-	out, err := exec.Command("node", append([]string{script}, args...)...).Output()
-	if err != nil {
-		return nil, fmt.Errorf("ops-dump failed (is node installed?): %w", err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(out, &decoded); err != nil {
-		return nil, fmt.Errorf("ops-dump returned invalid JSON: %w", err)
-	}
-	return decoded, nil
 }
 
-// factoryLegacyExtractor: shell to the workspace's node op-builder instead of
-// the CLI-bundled parsers (the transition escape hatch, REQ-CROSS-013).
-var factoryLegacyExtractor bool
+// syncChunkSizeDefault is how many ops one /api/v1/sync/batch POST carries by
+// default. MODERNPATH_SYNC_CHUNK_SIZE overrides it: on a platform edge with a
+// tight per-request timeout, a large first sync's heaviest chunk can exceed the
+// gateway window, and a smaller chunk brings each POST back under it. Bigger is
+// fewer round trips; smaller is more, each cheaper server-side.
+const syncChunkSizeDefault = 200
 
-// workspaceOps builds the sync op batch. Default: the CLI-bundled parsers
-// driven by .modernpath/manifest.json (defaults = the modernpath-v1 layout —
-// REQ-CROSS-013; no mission-control/ copy needed). Ops are validated against
+// syncChunkSize resolves the per-POST op count from the environment, falling
+// back to the default and warning — never failing — on a value that is not a
+// positive integer (AGENTS.md "a guard flags, it does not delete").
+func syncChunkSize() int {
+	raw := strings.TrimSpace(os.Getenv("MODERNPATH_SYNC_CHUNK_SIZE"))
+	if raw == "" {
+		return syncChunkSizeDefault
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		printWarning("ignoring MODERNPATH_SYNC_CHUNK_SIZE=%q (want a positive integer); using %d", raw, syncChunkSizeDefault)
+		return syncChunkSizeDefault
+	}
+	return n
+}
+
+// workspaceOps builds the sync op batch from the CLI-bundled parsers, driven
+// by .modernpath/manifest.json (defaults = the modernpath-v1 layout —
+// REQ-CROSS-013). Ops are validated against
 // the vendored op schema before they can reach the wire (REQ-CROSS-012).
 // warnings carries the loud mandated-gap report (D2: never a silent skip).
 func (e *factoryEnv) workspaceOps() (ops []map[string]any, warnings []string, err error) {
-	if factoryLegacyExtractor {
-		dump, err := e.dumpOps()
-		if err != nil {
-			return nil, nil, err
-		}
-		opsAny, _ := dump["ops"].([]any)
-		for _, o := range opsAny {
-			if m, ok := o.(map[string]any); ok {
-				ops = append(ops, m)
-			}
-		}
-		return ops, nil, nil
-	}
-
 	m, fromFile, err := manifest.Load(e.Root)
 	if err != nil {
 		return nil, nil, err
@@ -185,6 +320,12 @@ func (e *factoryEnv) workspaceOps() (ops []map[string]any, warnings []string, er
 	data, warnings := rdd.Snapshot(e.Root, m)
 	built := rdd.BuildOps(data, func(rel string) string { return rdd.ReadEpicRecord(e.Root, rel) },
 		time.Now().UTC().Format("2006-01-02"))
+	// SR-CMP-9022: the coverage receipt rides every batch that has ledgers to
+	// measure. Deterministic (no timestamp; hash over the summary only), so an
+	// unchanged tree re-syncs an unchanged op.
+	if covOp, ok := rdd.BuildCoverageOp(e.Root, "modernpath@"+Version); ok {
+		built = append(built, covOp)
+	}
 	for _, op := range built {
 		ops = append(ops, map[string]any{"type": op.Type, "payload": op.Payload})
 	}
@@ -197,24 +338,6 @@ func (e *factoryEnv) workspaceOps() (ops []map[string]any, warnings []string, er
 // workspaceTracePaths returns each requirement's traced file paths (drift's
 // diff scope) from the same extraction path sync uses.
 func (e *factoryEnv) workspaceTracePaths() (map[string][]string, error) {
-	if factoryLegacyExtractor {
-		dump, err := e.dumpOps("--trace-paths")
-		if err != nil {
-			return nil, err
-		}
-		tracePaths, _ := dump["tracePaths"].(map[string]any)
-		out := map[string][]string{}
-		for id, pathsAny := range tracePaths {
-			list, _ := pathsAny.([]any)
-			for _, p := range list {
-				if s, ok := p.(string); ok {
-					out[id] = append(out[id], s)
-				}
-			}
-		}
-		return out, nil
-	}
-
 	m, _, err := manifest.Load(e.Root)
 	if err != nil {
 		return nil, err
@@ -268,49 +391,165 @@ func gitOut(root string, args ...string) string {
 
 var factoryConnectSystem int
 
+// systemLookup reads a bound system's identity from the server.
+type systemLookup func(id int) (name, slug string, err error)
+
+// resolveBinding sets the system id and API URL on cfg. A systemID of 0 means
+// "keep the system this workspace is already bound to", which is what lets a
+// re-run repair an existing config instead of demanding a re-init.
+func resolveBinding(cfg *config.Config, systemID int, apiURLFlag string) error {
+	if systemID == 0 && cfg.SystemID == 0 {
+		return fmt.Errorf("usage: modernpath factory connect --system <id> [--api-url <url>]")
+	}
+	if systemID != 0 && systemID != cfg.SystemID {
+		// a different system: drop the old identity rather than let the new id
+		// wear the old name if the lookup below cannot reach the server
+		cfg.SystemID = systemID
+		cfg.SystemName, cfg.SystemSlug = "", ""
+	}
+	if apiURLFlag != "" {
+		if cfg.APIURL != "" && apiURLFlag != cfg.APIURL {
+			// a different server: the recorded identity was read from the OLD
+			// one, and the same numeric id on another host is another system
+			cfg.SystemName, cfg.SystemSlug = "", ""
+		}
+		cfg.APIURL = apiURLFlag
+	}
+	if cfg.APIURL == "" {
+		cfg.APIURL = config.LocalAPIURL
+	}
+	return nil
+}
+
+// recordSystemIdentity fills in the system's name and slug from the server.
+// Its error is advisory: the binding is written either way, because binding a
+// workspace must not require the network.
+func recordSystemIdentity(cfg *config.Config, lookup systemLookup) error {
+	if lookup == nil {
+		return nil
+	}
+	name, slug, err := lookup(cfg.SystemID)
+	if err != nil {
+		return err // keep whatever was already recorded for this same system
+	}
+	cfg.SystemName, cfg.SystemSlug = name, slug
+	return nil
+}
+
+// connectResult reports what a connect achieved beyond binding.
+type connectResult struct {
+	// IdentityErr is advisory: the binding is saved whether or not the
+	// system's name and slug could be read.
+	IdentityErr error
+}
+
+// connectWorkspace binds, persists, and records the system's identity.
+func connectWorkspace(cfg *config.Config, systemID int, apiURLFlag string,
+	save func(*config.Config) error, lookup systemLookup) (connectResult, error) {
+
+	if err := resolveBinding(cfg, systemID, apiURLFlag); err != nil {
+		return connectResult{}, err
+	}
+	// Save the binding before looking anything up: the lookup authenticates
+	// with credentials it reads back from this workspace's own config, so on a
+	// first connect it cannot succeed until the config exists.
+	if err := save(cfg); err != nil {
+		return connectResult{}, err
+	}
+	res := connectResult{IdentityErr: recordSystemIdentity(cfg, lookup)}
+	if res.IdentityErr != nil {
+		return res, nil
+	}
+	return res, save(cfg)
+}
+
 var factoryConnectCmd = &cobra.Command{
 	Use:   "connect",
 	Short: "Bind this workspace to a System (writes .modernpath/config.json)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if factoryConnectSystem == 0 {
-			return fmt.Errorf("usage: modernpath factory connect --system <id> [--api-url <url>]")
-		}
 		cfg, _ := config.ReadConfig()
 		if cfg == nil {
 			cfg = &config.Config{}
 		}
-		cfg.SystemID = factoryConnectSystem
-		if apiURL != "" {
-			cfg.APIURL = apiURL
-		}
-		if cfg.APIURL == "" {
-			cfg.APIURL = config.LocalAPIURL
-		}
-		if err := config.WriteConfig(cfg); err != nil {
+		res, err := connectWorkspace(cfg, factoryConnectSystem, apiURL, config.WriteConfig, serverSystemLookup())
+		if err != nil {
 			return err
 		}
-		printSuccess("connected: system %d via %s (.modernpath/config.json)", cfg.SystemID, cfg.APIURL)
+		// The written path, not a relative literal: run from a subdirectory,
+		// ".modernpath/config.json" reads as "here" when the binding it updated
+		// is a level or more up.
+		printSuccess("connected: system %d via %s (%s)", cfg.SystemID, cfg.APIURL, connectedConfigPath())
+		if res.IdentityErr != nil {
+			printWarning("could not read the system's name and slug: %v\n  the binding is written — %s\n", res.IdentityErr, identityRepairHint(res.IdentityErr))
+		}
 		return nil
 	},
 }
 
-var factoryStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show the binding, credentials source, and pending op count",
-	RunE: func(cmd *cobra.Command, args []string) error {
+// identityRepairHint names the step that can actually fix the failed identity
+// lookup. Re-running connect repairs a reachability failure; a credential
+// failure re-fails identically until the credential itself is fixed, and
+// pointing the reader at a retry loop hides the real repair.
+func identityRepairHint(err error) string {
+	var ce credentialError
+	if errors.As(err, &ce) {
+		return fmt.Sprintf("run '%s', then re-run 'modernpath factory connect'", ce.repair)
+	}
+	return "re-run 'modernpath factory connect' once the server is reachable"
+}
+
+// connectedConfigPath names the binding that was just written, relative to the
+// working directory when that is shorter to read than the absolute path.
+func connectedConfigPath() string {
+	dir, err := config.FindConfigDir()
+	if err != nil || dir == "" {
+		return filepath.Join(config.ConfigDir, config.ConfigFile)
+	}
+	full := filepath.Join(dir, config.ConfigFile)
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(cwd, full); err == nil && len(rel) < len(full) {
+			return rel
+		}
+	}
+	return full
+}
+
+// serverSystemLookup reads identity through the factory lane's bearer.
+func serverSystemLookup() systemLookup {
+	return func(id int) (string, string, error) {
 		env, err := factoryEnvLoad()
 		if err != nil {
-			return err
+			return "", "", err
 		}
-		source := "auth.json (bearer)"
-		if env.isAPIKey {
-			source = ".modernpath/mp_api_key (X-API-Key)"
+		status, body, err := env.call("GET", fmt.Sprintf("/api/systems/%d", id), nil)
+		if err != nil {
+			return "", "", err
+		}
+		if status != 200 {
+			return "", "", fmt.Errorf("server %d reading system %d", status, id)
+		}
+		name, _ := body["name"].(string)
+		slug, _ := body["slug"].(string)
+		if slug == "" {
+			return "", "", fmt.Errorf("system %d returned no slug", id)
+		}
+		return name, slug, nil
+	}
+}
+
+var factoryStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show the local binding and pending op count",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env, err := factoryBindingLoad()
+		if err != nil {
+			return err
 		}
 		release := env.CurrentRelease
 		if release == "" {
 			release = "(none — sync runs unscoped; set one with 'factory release use <slug>')"
 		}
-		fmt.Printf("workspace: %s\nserver:    %s\nsystem:    %d\nrelease:   %s\nauth:      %s\n", env.Root, env.APIURL, env.SystemID, release, source)
+		fmt.Printf("workspace: %s\nserver:    %s\nsystem:    %d\nrelease:   %s\n", env.Root, env.APIURL, env.SystemID, release)
 
 		if ops, warnings, err := env.workspaceOps(); err == nil {
 			printGapWarnings(warnings)
@@ -398,6 +637,7 @@ var factoryReleaseClearCmd = &cobra.Command{
 
 var factorySyncDryRun bool
 var factorySyncJSON bool
+var factorySyncNoDocs bool
 
 var (
 	factorySyncIfQuiescent bool
@@ -428,6 +668,13 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		return err
 	}
 	printGapWarnings(warnings)
+
+	// --no-docs drops the workspace-document ops and sends only the process
+	// state — requirements, epics, gates, evidence, sessions (see noDocsFilter).
+	if kept, dropped := noDocsFilter(ops, factorySyncNoDocs); dropped > 0 {
+		printInfo("--no-docs: skipping %d document op(s); syncing process state only", dropped)
+		ops = kept
+	}
 	// --json owns stdout: a prose banner ahead of the batch makes it unparseable
 	// by the very tools the flag exists for.
 	if dryRun && factorySyncJSON {
@@ -443,7 +690,7 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 	if env.CurrentRelease == "" {
 		// D2 doctrine: never a silent skip — unscoped sync proceeds (it never
 		// un-stamps anything) but says so loudly (REQ-CROSS-017).
-		printWarning("no current release — syncing unscoped; set one with 'modernpath factory release use <slug>' (registry: process/releases.md)")
+		printWarning("%s", releaseWarning(env.Root))
 		printInfo("factory sync: %d ops (schema v%d)", len(ops), opschema.SchemaVersion)
 	} else {
 		printInfo("factory sync: %d ops (schema v%d, release %s)", len(ops), opschema.SchemaVersion, env.CurrentRelease)
@@ -465,27 +712,118 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		return nil
 	}
 
-	batchBody := map[string]any{
-		"schema_version": opschema.SchemaVersion,
-		"system_id":      env.SystemID,
-		"ops":            ops,
+	// A corpus is not a request. A reverse-engineered estate produces hundreds
+	// of ops, and one POST carrying all of them exceeds the gateway's window:
+	// 935 ops answered 504 three times on a real workspace, and 1191 did the
+	// same on another. The batch never reached evaluation, so nothing synced
+	// and the size of a workspace silently became a limit on whether it could
+	// sync at all.
+	//
+	// Chunks go in order, because later ops reference earlier ones. Each chunk
+	// is its own transaction server-side and the shadow makes a replay a no-op,
+	// so a failure part-way leaves the earlier chunks landed rather than
+	// half-applied — and re-running finishes the job. The size is tunable with
+	// MODERNPATH_SYNC_CHUNK_SIZE: a platform edge with a tight per-request
+	// timeout can 504 on the heaviest 200-op chunk of a large first sync.
+	chunkSize := syncChunkSize()
+
+	newBatch := func(chunk []map[string]any) map[string]any {
+		body := map[string]any{
+			"schema_version": opschema.SchemaVersion,
+			"system_id":      env.SystemID,
+			"ops":            chunk,
+		}
+		if env.CurrentRelease != "" {
+			body["release"] = env.CurrentRelease
+		}
+		return body
 	}
-	if env.CurrentRelease != "" {
-		batchBody["release"] = env.CurrentRelease
+
+	chunks := make([][]map[string]any, 0, (len(ops)+chunkSize-1)/chunkSize)
+	for start := 0; start < len(ops); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ops) {
+			end = len(ops)
+		}
+		chunks = append(chunks, ops[start:end])
 	}
-	status, body, err := env.call("POST", "/api/v1/sync/batch", batchBody)
-	if err != nil {
-		return err
+	if len(chunks) == 0 {
+		chunks = append(chunks, nil)
+	}
+	if len(chunks) > 1 {
+		printInfo("sending in %d chunks of up to %d ops", len(chunks), chunkSize)
+	}
+
+	var (
+		status      int
+		body        map[string]any
+		mergedCount = map[string]int{}
+		landed      int
+	)
+	for index, chunk := range chunks {
+		batchBody := newBatch(chunk)
+		status, body, err = env.postSyncBatch(batchBody)
+		if err != nil {
+			// Say which chunk, and that the earlier ones are already in the
+			// store — otherwise a re-run looks like it might double-apply.
+			if index > 0 {
+				printWarning("chunk %d/%d failed; %d op(s) already landed — re-running syncs the rest",
+					index+1, len(chunks), landed)
+			}
+			return err
+		}
+		if status != 200 {
+			// A 5xx that survived retries (or any non-422 refusal) ends the run;
+			// a 422 falls through to the unknown-op recovery below. Either way,
+			// say how far it got: the earlier chunks are already committed
+			// server-side, so a re-run resumes rather than re-applies.
+			if status != 422 && index > 0 {
+				printWarning("chunk %d/%d failed (server %d); %d op(s) already landed — re-running syncs the rest",
+					index+1, len(chunks), status, landed)
+			}
+			// Fall through to the shared handling below with this chunk's
+			// body, so a refusal reads the same whether or not it chunked.
+			ops = chunk
+			break
+		}
+		if results, ok := dataOf(body)["results"].([]any); ok {
+			for _, r := range results {
+				m, _ := r.(map[string]any)
+				mergedCount[str(m, "result")]++
+			}
+		}
+		landed += len(chunk)
+	}
+	batchBody := newBatch(ops)
+	// REQ-CROSS-089: the server halts the batch on the first op type it does not
+	// recognise, so a CLI newer than the server does not sync less — it syncs
+	// NOTHING, silently, because the hooks are fire-and-forget. Retry once
+	// without that op kind so the rest of the workspace still lands, and say
+	// plainly what was left behind.
+	if status == 422 {
+		if kind := unknownOpType(body); kind != "" {
+			kept, dropped := dropOpsOfType(ops, kind)
+			fmt.Printf("⚠ this server does not understand %s yet — syncing the other %d ops and leaving %d behind.\n",
+				kind, len(kept), dropped)
+			fmt.Printf("  They will land once the server is upgraded; nothing is lost locally.\n")
+			batchBody["ops"] = kept
+			status, body, err = env.postSyncBatch(batchBody)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if status != 200 {
 		return fmt.Errorf("server %d: %v", status, body["error"])
 	}
 
-	counts := map[string]int{}
-	if results, ok := dataOf(body)["results"].([]any); ok {
-		for _, r := range results {
-			m, _ := r.(map[string]any)
-			counts[str(m, "result")]++
+	counts := mergedCount
+	if len(counts) == 0 {
+		if results, ok := dataOf(body)["results"].([]any); ok {
+			for _, r := range results {
+				m, _ := r.(map[string]any)
+				counts[str(m, "result")]++
+			}
 		}
 	}
 	parts := make([]string, 0, len(counts))
@@ -493,7 +831,24 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		parts = append(parts, fmt.Sprintf("%d %s", v, k))
 	}
 	sort.Strings(parts)
-	printSuccess("ok: %s", strings.Join(parts, ", "))
+	// REQ-CROSS-136: a conflict is the server REFUSING this change because the row
+	// was edited on the platform. Printing it under a green "ok:" invites the
+	// reader to skim past a refusal, so say it plainly instead.
+	if syncHadConflicts(counts) {
+		printWarning("synced with refusals: %s", strings.Join(parts, ", "))
+		fmt.Printf("  %d row(s) were edited on the platform and kept — this workspace's version was not applied.\n", counts["conflict"])
+		fmt.Printf("  Reconcile by hand: the server's copy wins until the workspace matches it.\n")
+	} else {
+		printSuccess("ok: %s", strings.Join(parts, ", "))
+	}
+
+	// Both lanes stamp, because both landed the batch. This used to be written
+	// only by the hook lane, so `modernpath status` told a workspace without
+	// sync hooks that its state had never synced — and told it to run the very
+	// command that was, in fact, syncing it (REQ-CROSS-117).
+	if err := recordSyncSucceeded(env.Root); err != nil {
+		printWarning("sync landed, but its status stamp could not be written: %v\n  'modernpath status' will still report the previous state sync, and hook debounce will misjudge\n", err)
+	}
 
 	// idempotent server-side projections (board history + approvals)
 	_, _, _ = env.call("POST", "/api/v1/sync/project", map[string]any{"system_id": env.SystemID})
@@ -512,6 +867,10 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		if session, ok := dataOf(hbBody)["session"].(map[string]any); ok {
 			printInfo("session: %s (%s)", str(dataOf(hbBody), "result"), str(session, "current_ref"))
 		}
+		// REQ-PLN-135 §135.4: append the branch/commit signals, learn the current
+		// focus from the heartbeat echo, and post a conclusion inline if the rule
+		// fires. Off the hook's latency budget — sync already reached the server.
+		recordFocusSignalsFromSync(env, hbBody)
 	}
 	return nil
 }
@@ -538,7 +897,8 @@ var factoryGatesCmd = &cobra.Command{
 			printSuccess("no open gates — the queue is clear")
 			return nil
 		}
-		for _, g := range gates {
+		shown := filterGatesByKind(gates, gatesKind)
+		for _, g := range shown {
 			m, _ := g.(map[string]any)
 			fmt.Printf("\n%s  [%s]  %s\n", str(m, "external_id"), str(m, "kind"), str(m, "title"))
 			if rec := str(m, "recommendation"); rec != "" {
@@ -551,12 +911,80 @@ var factoryGatesCmd = &cobra.Command{
 				}
 			}
 		}
-		fmt.Printf("\n%d open — answer with: modernpath factory answer <id> --text \"…\" [--options k1,k2]\n", len(gates))
+		fmt.Print(gateQueueFooter(len(shown), gateKindBreakdown(gates), gatesKind))
 		return nil
 	},
 }
 
+// kindCount is one kind of gate and how many of it are open.
+type kindCount struct {
+	kind string
+	n    int
+}
+
+// gateKindBreakdown counts the queue by kind, largest first, ties by name so the
+// order is stable between runs.
+func gateKindBreakdown(gates []any) []kindCount {
+	n := map[string]int{}
+	for _, g := range gates {
+		m, _ := g.(map[string]any)
+		n[str(m, "kind")]++
+	}
+	out := make([]kindCount, 0, len(n))
+	for k, c := range n {
+		out = append(out, kindCount{kind: k, n: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].n != out[j].n {
+			return out[i].n > out[j].n
+		}
+		return out[i].kind < out[j].kind
+	})
+	return out
+}
+
+func filterGatesByKind(gates []any, kind string) []any {
+	if kind == "" {
+		return gates
+	}
+	out := []any{}
+	for _, g := range gates {
+		m, _ := g.(map[string]any)
+		if str(m, "kind") == kind {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// gateQueueFooter closes the listing. A bare total misleads: a queue of 148 is
+// read as an approval backlog when 0 of it is approvals and the rest are
+// questions and product decisions — different work at a different cadence. The
+// kinds are named so the number means something, and a filtered view still
+// reports the unfiltered total so narrowing cannot hide the queue.
+func gateQueueFooter(shown int, breakdown []kindCount, filter string) string {
+	total := 0
+	parts := make([]string, 0, len(breakdown))
+	for _, kc := range breakdown {
+		total += kc.n
+		parts = append(parts, fmt.Sprintf("%d %s", kc.n, kc.kind))
+	}
+	answer := "answer with: modernpath factory answer <id> --text \"…\" [--options k1,k2]"
+
+	if filter == "" {
+		return fmt.Sprintf("\n%d open (%s) — %s\n", total, strings.Join(parts, " · "), answer)
+	}
+	// Not "the queue is clear": there is a queue, it just holds nothing of the
+	// kind that was asked for. Reporting it as clear would be this row's own
+	// defect one level down.
+	if shown == 0 {
+		return fmt.Sprintf("\nno open %s — %d open of other kinds (%s)\n", filter, total, strings.Join(parts, " · "))
+	}
+	return fmt.Sprintf("\n%d %s of %d open (%s) — %s\n", shown, filter, total, strings.Join(parts, " · "), answer)
+}
+
 var (
+	gatesKind     string
 	answerText    string
 	answerOptions string
 	answerSource  string
@@ -648,8 +1076,8 @@ func factoryPullRun(env *factoryEnv, apply bool) error {
 		return nil
 	}
 
-	jsonlPath := filepath.Join(env.Root, "mission-control", "answers.jsonl")
-	mdPath := filepath.Join(env.Root, "mission-control", "ANSWERS.md")
+	jsonlPath := filepath.Join(env.Root, "answers.jsonl")
+	mdPath := filepath.Join(env.Root, "ANSWERS.md")
 
 	for _, it := range intents {
 		m, _ := it.(map[string]any)
@@ -673,6 +1101,15 @@ func factoryPullRun(env *factoryEnv, apply bool) error {
 				return fmt.Errorf("spec ack failed for %s: %d %v (%v)", externalID, aStatus, aBody["error"], err)
 			}
 			printSuccess("pulled server spec edit → %s (marker reset to SPEC-DRAFT)", externalID)
+			continue
+		}
+
+		if str(m, "kind") == "rdd_pending_intent" {
+			application, err := applyRDDIntent(env, m, "")
+			if err != nil {
+				return err
+			}
+			printSuccess("applied %s (%s)", externalID, str(application, "application_revision"))
 			continue
 		}
 
@@ -850,7 +1287,7 @@ var (
 )
 
 var factoryEvidenceCmd = &cobra.Command{
-	Use:   "evidence report",
+	Use:   "evidence",
 	Short: "Post a test/CI run as evidence (sha-pinned; feeds Done-decays)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
@@ -863,7 +1300,7 @@ var factoryEvidenceCmd = &cobra.Command{
 			case strings.Contains(id, "#AC"):
 				return "criterion"
 			case strings.HasPrefix(id, "EPIC-"):
-				return "initiative"
+				return "epic"
 			default:
 				return "requirement"
 			}
@@ -943,6 +1380,7 @@ var factoryDriftCmd = &cobra.Command{
 
 		head := gitOut(env.Root, "rev-parse", "--short", "HEAD")
 		drifted := 0
+		reportFailures := 0
 
 		targets, _ := dataOf(body)["targets"].([]any)
 		for _, t := range targets {
@@ -996,12 +1434,17 @@ var factoryDriftCmd = &cobra.Command{
 				if len(matched) > 20 {
 					matched = matched[:20]
 				}
-				_, _, _ = env.call("POST", "/api/v1/sync/evidence/drift", map[string]any{
-					"system_id": env.SystemID, "target_external_id": str(m, "target_external_id"),
-					"changed": matched, "head": head, "since": str(m, "sha"),
-				})
-				printInfo("  -> drift_detected reported (state stale until re-verified)")
+				if reportErr := reportDriftTarget(env, str(m, "target_external_id"), matched, head, str(m, "sha")); reportErr != nil {
+					printError("  -> drift report failed: %v\n", reportErr)
+					reportFailures++
+				} else {
+					printInfo("  -> drift_detected reported (state stale until re-verified)")
+				}
 			}
+		}
+
+		if reportFailures > 0 {
+			return fmt.Errorf("%d drift report(s) failed — server state unchanged for those targets", reportFailures)
 		}
 
 		if drifted == 0 {
@@ -1072,6 +1515,9 @@ func init() {
 
 	factorySyncCmd.Flags().BoolVar(&factorySyncDryRun, "dry-run", false, "print the ops without sending")
 	factorySyncCmd.Flags().BoolVar(&factorySyncJSON, "json", false, "with --dry-run: emit the full op batch as JSON")
+	factorySyncCmd.Flags().BoolVar(&factorySyncNoDocs, "no-docs", false, "skip workspace-document ops (upsert_document); sync process state only")
+
+	factoryGatesCmd.Flags().StringVar(&gatesKind, "kind", "", "show only this kind (approval_request, decision, question, roadblock, …)")
 
 	factoryAnswerCmd.Flags().StringVar(&answerText, "text", "", "the answer, recorded verbatim as the USER: decision")
 	factoryAnswerCmd.Flags().StringVar(&answerOptions, "options", "", "chosen option keys, comma-separated")
@@ -1086,11 +1532,13 @@ func init() {
 	factoryEvidenceCmd.Flags().StringVar(&evidenceFail, "fail", "", "failing target ids, comma-separated")
 	factoryEvidenceCmd.Flags().StringVar(&evidenceSkip, "skip", "", "skipped target ids, comma-separated")
 
+	// Q-ARCH-016 (USER:2026-08-18): --report was advertised in drift's own
+	// output but never registered; the drift-report POST was unreachable.
+	factoryDriftCmd.Flags().BoolVar(&driftReport, "report", false,
+		"POST the drift facts to the server (marks affected evidence stale until re-verified)")
+
 	factoryWatchCmd.Flags().IntVar(&watchInterval, "interval", 120, "seconds between cycles")
 	factoryWatchCmd.Flags().IntVar(&watchCycles, "cycles", 0, "stop after N cycles (0 = forever)")
-
-	factoryCmd.PersistentFlags().BoolVar(&factoryLegacyExtractor, "legacy-extractor", false,
-		"shell to the workspace's node op-builder (mission-control/cli/ops-dump.js) instead of the bundled parsers")
 
 	factoryReleaseCmd.AddCommand(factoryReleaseUseCmd, factoryReleaseShowCmd, factoryReleaseClearCmd)
 
@@ -1105,4 +1553,76 @@ func init() {
 		factoryManifestCmd, factoryReleaseCmd, factoryImageCmd)
 	factoryImageCmd.Flags().StringVar(&imagePurpose, "purpose", "", "context tag stored with the image (e.g. decision-brief)")
 	rootCmd.AddCommand(factoryCmd)
+}
+
+// unknownOpType extracts the op kind from the server's 422 for an op type it
+// does not implement, and returns "" for every other failure — an ordinary
+// validation error must NOT be worked around by dropping ops.
+func unknownOpType(body map[string]any) string {
+	errObj, _ := body["error"].(map[string]any)
+	details, _ := errObj["details"].(map[string]any)
+	msgs, _ := details["type"].([]any)
+	for _, m := range msgs {
+		s, _ := m.(string)
+		const prefix = "unknown op type "
+		if strings.HasPrefix(s, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(s, prefix))
+		}
+	}
+	return ""
+}
+
+// dropOpsOfType removes one op kind, preserving the order of everything else.
+func dropOpsOfType(ops []map[string]any, kind string) ([]map[string]any, int) {
+	kept := make([]map[string]any, 0, len(ops))
+	dropped := 0
+	for _, op := range ops {
+		if str(op, "type") == kind {
+			dropped++
+			continue
+		}
+		kept = append(kept, op)
+	}
+	return kept, dropped
+}
+
+// noDocsFilter applies the `--no-docs` sync option. When on it removes the
+// workspace-document ops — type `upsert_document` — and returns the kept ops
+// plus the count removed; when off it returns the ops unchanged with a zero
+// count. The process-state ops (requirements, epics, gates, evidence, sessions)
+// never reference a document op, so dropping documents leaves a coherent batch.
+// Extracted so the exact op type `--no-docs` drops is asserted in one place:
+// core embeds an explanatory document synchronously and 422s the whole batch
+// when its embedding provider is unavailable (core/sync.ex), and this is the
+// escape hatch that lands the state anyway, to be backfilled by a later
+// docs-included sync once the provider works.
+func noDocsFilter(ops []map[string]any, noDocs bool) ([]map[string]any, int) {
+	if !noDocs {
+		return ops, 0
+	}
+	return dropOpsOfType(ops, "upsert_document")
+}
+
+// syncHadConflicts reports whether a batch contained refusals — rows the server
+// declined to overwrite because a human edited them there.
+func syncHadConflicts(counts map[string]int) bool {
+	return counts["conflict"] > 0
+}
+
+// reportDriftTarget posts one target's drift facts. "Reported" must mean the
+// server recorded it: a discarded POST result printed success over network
+// failures and 4xx/5xx (external review, RUN:2026-08-19); the second round
+// asked for the branches to be pinned by tests (factory_drift_report_test.go).
+func reportDriftTarget(env *factoryEnv, targetID string, changed []string, head, since string) error {
+	status, _, err := env.call("POST", "/api/v1/sync/evidence/drift", map[string]any{
+		"system_id": env.SystemID, "target_external_id": targetID,
+		"changed": changed, "head": head, "since": since,
+	})
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("rejected: HTTP %d", status)
+	}
+	return nil
 }

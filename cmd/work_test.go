@@ -5,25 +5,25 @@ import (
 	"testing"
 )
 
-func TestWorkInitiativeDisplayTitle(t *testing.T) {
+func TestWorkEpicDisplayTitle(t *testing.T) {
 	cases := []struct {
 		name  string
-		input workInitiative
+		input workEpic
 		want  string
 	}{
 		{
 			name:  "uses title from API",
-			input: workInitiative{ID: 1, Title: "OAuth login"},
+			input: workEpic{ID: 1, Title: "OAuth login"},
 			want:  "OAuth login",
 		},
 		{
 			name:  "falls back to legacy name field",
-			input: workInitiative{ID: 2, Name: "Legacy epic"},
+			input: workEpic{ID: 2, Name: "Legacy epic"},
 			want:  "Legacy epic",
 		},
 		{
 			name:  "prefers title when both present",
-			input: workInitiative{ID: 3, Title: "Current title", Name: "Old name"},
+			input: workEpic{ID: 3, Title: "Current title", Name: "Old name"},
 			want:  "Current title",
 		},
 	}
@@ -37,7 +37,7 @@ func TestWorkInitiativeDisplayTitle(t *testing.T) {
 	}
 }
 
-func TestWorkInitiativeListJSON(t *testing.T) {
+func TestWorkEpicListJSON(t *testing.T) {
 	payload := `{
 		"data": [
 			{
@@ -50,7 +50,7 @@ func TestWorkInitiativeListJSON(t *testing.T) {
 	}`
 
 	var result struct {
-		Data []workInitiative `json:"data"`
+		Data []workEpic `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("unmarshal: %v", err)

@@ -1,0 +1,8 @@
+{
+  "system_id": 243,
+  "intent_external_id": "INTENT-CONFIRM-CAND-abc123",
+  "process_revision": "0123456789abcdef0123456789abcdef01234567",
+  "content_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evaluated_scope_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "idempotency_key": "sha256:5c7eb25a3a9f80f74b8c9cfc9c1471e1cee508242f69ad423dd6426d279f8ec8"
+}

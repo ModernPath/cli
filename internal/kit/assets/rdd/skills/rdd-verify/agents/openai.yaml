@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Verify"
+  short_description: "Verify confirmed as-built requirements clause by clause"
+  default_prompt: "Use $rdd-verify to turn confirmed PENDING_VERIFICATION requirements into current, direct verification evidence."

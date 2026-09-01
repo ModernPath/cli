@@ -238,15 +238,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(body, &errResp) == nil && errResp.Message != "" {
-			printError("Scan failed: %s\n", errResp.Message)
-		} else {
-			printError("Scan failed: HTTP %d\n", resp.StatusCode)
-		}
+		printError("Scan failed: %s\n", scanFailureReason(resp.StatusCode, body))
 		return fmt.Errorf("scan failed")
 	}
 
@@ -635,4 +627,27 @@ func listAvailableAgents(bold *color.Color) error {
 	fmt.Println()
 
 	return nil
+}
+
+// scanFailureReason names a non-200 scan answer for the user. The server's
+// reason rides "message" or "error" ({"error":"Request blocked by WAF"} was
+// shown as a bare "HTTP 403" — REQ-CROSS-208/T5, RUN:2026-08-18); a bare
+// status code is the last resort, not the default.
+func scanFailureReason(status int, body []byte) string {
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+
+	if json.Unmarshal(body, &errResp) == nil {
+		if errResp.Message != "" {
+			return errResp.Message
+		}
+
+		if errResp.Error != "" {
+			return errResp.Error
+		}
+	}
+
+	return fmt.Sprintf("HTTP %d", status)
 }

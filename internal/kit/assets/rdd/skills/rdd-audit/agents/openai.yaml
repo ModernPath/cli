@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Audit"
+  short_description: "Verify citations, inventories, and instruments"
+  default_prompt: "Use $rdd-audit to verify this document or measurement against the code."

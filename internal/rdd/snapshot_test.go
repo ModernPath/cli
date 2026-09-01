@@ -181,3 +181,37 @@ func TestSnapshotWarnsOnImplementationWithoutSpecApproval(t *testing.T) {
 		t.Fatalf("in-progress epic without spec approval must warn loudly, got %v", warnings)
 	}
 }
+
+// REQ-CROSS-114: a record that grants its specification approval in the
+// template's table while its own status marker still says SPEC-DRAFT
+// contradicts itself. The conservative reading syncs — and the contradiction is
+// reported, because the failure this row fixes was a silent one.
+func TestSnapshotWarnsWhenTheApprovalTableContradictsTheMarker(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "epics/EPIC-W-002-w/specs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worklist := strings.Join([]string{
+		"| Epic | Epic record | UR | SCN | SR | Tasks | Upper | Lower | Overall status | Human approval | Notes |",
+		"|---|---|---|---|---|---|---|---|---|---|---|",
+		"| EPIC-W-002 | [record](epics/EPIC-W-002-w/EPIC.md) | u | s | r | t | — | — | PROPOSED | — | n |",
+		"",
+	}, "\n")
+	os.WriteFile(filepath.Join(ws, "WORKLIST.md"), []byte(worklist), 0o644)
+	record := "# EPIC-W-002 — Drafting\n\n## Specification status\n\nSPEC-DRAFT — still being written\n\n" +
+		"## Specification approval\n\n| Gate | Approver | Role | Source | Decision | Conditions |\n|---|---|---|---|---|---|\n" +
+		"| SPEC-APPROVE-EPIC-W-002 | Mattias | workspace owner | `USER:2026-08-13` | approved | — |\n"
+	os.WriteFile(filepath.Join(ws, "epics", "EPIC-W-002-w", "EPIC.md"), []byte(record), 0o644)
+	os.WriteFile(filepath.Join(ws, "epics", "EPIC-W-002-w", "specs", "requirements.md"), []byte("# R"), 0o644)
+
+	_, warnings := Snapshot(ws, manifest.Default())
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "EPIC-W-002") && strings.Contains(w, "granted specification approval") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a contradicted specification approval must be reported, got %v", warnings)
+	}
+}

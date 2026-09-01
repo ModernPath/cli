@@ -1,0 +1,4 @@
+interface:
+  display_name: "RDD Plan"
+  short_description: "Plan a controlled requirement trace"
+  default_prompt: "Use $rdd-plan to prepare this requirement for entry review."
