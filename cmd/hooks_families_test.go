@@ -106,7 +106,7 @@ func TestUnboundInstallExplainsInsteadOfFailingWhenNothingApplies(t *testing.T) 
 	}
 
 	text := out()
-	for _, want := range []string{"No hooks were installed", "Claude Code and Codex", "hooks install --claude", "--codex", "modernpath init"} {
+	for _, want := range []string{"No hooks were installed", "Claude Code, Codex and Pi", "hooks install --claude", "--codex", "--pi", "modernpath init"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the exit-0 path must still say what happened and what to do — missing %q in:\n%s", want, text)
 		}

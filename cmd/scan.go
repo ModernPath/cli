@@ -17,12 +17,12 @@ import (
 )
 
 var (
-	scanMode     string
-	scanStaged   bool
-	scanBase     string
-	scanVerbose  bool
-	scanSeverity string
-	scanAgents   []string
+	scanMode       string
+	scanStaged     bool
+	scanBase       string
+	scanVerbose    bool
+	scanSeverity   string
+	scanAgents     []string
 	scanListAgents bool
 )
 
@@ -64,7 +64,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanBase, "base", "", "Base branch/commit to compare against (implies --mode=changes)")
 	scanCmd.Flags().BoolVarP(&scanVerbose, "verbose", "v", false, "Show detailed findings")
 	scanCmd.Flags().StringVar(&scanSeverity, "severity", "", "Filter by minimum severity: critical, high, medium, low")
-	
+
 	rootCmd.AddCommand(scanCmd)
 }
 
@@ -74,9 +74,9 @@ type ScanResponse struct {
 	Data    struct {
 		SystemID   int      `json:"system_id"`
 		SystemName string   `json:"system_name"`
-		Mode             string   `json:"mode"`
-		AgentsUsed       []string `json:"agents_used"`
-		VibeDept         *struct {
+		Mode       string   `json:"mode"`
+		AgentsUsed []string `json:"agents_used"`
+		VibeDept   *struct {
 			Score                float64 `json:"score"`
 			Grade                string  `json:"grade"`
 			SecurityScore        float64 `json:"security_score"`
@@ -201,7 +201,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 
 		files, _ := getScanChangedFiles(mode)
-		
+
 		fmt.Println()
 		bold.Printf("Changed Files (%d)\n", len(files))
 		fmt.Println("───────────────────────────────────────────────────────────")

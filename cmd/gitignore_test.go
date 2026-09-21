@@ -29,6 +29,7 @@ func TestAddToGitignoreKeepsProcessPackageVersioned(t *testing.T) {
 		"/.modernpath/*",
 		"!/.modernpath/rdd/",
 		"!/.modernpath/rdd/**",
+		"!/.modernpath/cli-reference.md",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("updated .gitignore is missing %q:\n%s", want, text)

@@ -58,6 +58,8 @@ external blocker when progress cannot continue.
 ## Continue honestly
 
 - Treat a focused skill's exit as a handoff, not completion of this skill.
+- A human gate answer inside the loop is applied and reported; the loop
+  resumes on the human's word, not on the answer itself.
 - Do not bypass a failed trace gate, a `DERIVED` hold, candidate relation,
   material finding, stale evidence, missing delivery, or failed reconciliation.
 - Keep unchanged approved items at their strongest supported state; re-enter

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/modernpath/cli/internal/browser"
 	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -60,7 +61,7 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	printInfo("Opening browser...\n")
-	if err := openBrowser(installURL); err != nil {
+	if err := browser.Open(installURL); err != nil {
 		printWarning("Could not open browser automatically.\n")
 		fmt.Printf("Please open this URL manually:\n%s\n", installURL)
 		return nil

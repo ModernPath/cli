@@ -27,6 +27,11 @@ order.
 5. For feedback, determine whether one standalone or UR-linked SR can address
    it without changing user outcome, acceptance, or a cross-cutting decision.
    Otherwise route it to epic-scoped planning.
+   A delivered item found defective, or whose decision was reversed, is
+   routed to an attributable demotion of that item (`PROCESS.md`
+   §Attributable demotions) — to `IN_PROGRESS` for a defect, to `PROPOSED`
+   for a reversed decision — with its `USER:` source and the linked defect or
+   decision, never to a duplicate requirement or a hand-edited status.
 6. Re-evaluate stale gates and evidence, then reconcile authoritative records,
    release scope, work selection, and derived views. Never promote to `TODO`
    without the strict entry gate.

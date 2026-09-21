@@ -1,6 +1,7 @@
 package kit
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/modernpath/cli/internal/storeback"
 )
 
 // The kit ships a released req-driven-dev snapshot and the agent-channel
@@ -16,6 +19,27 @@ import (
 //
 //go:embed assets
 var assets embed.FS
+
+// ledgerSkillAsset is the one tool-owned file whose subject the flip retires:
+// the ledger skill documents tasks/*-REQUIREMENTS.md, and its trigger is
+// "changing a requirement's status". On a store-backed workspace those files
+// are retired by declaration (process/store-backed.md), so installing the skill
+// there hands every later session a procedure whose first step recreates a
+// retired file — which the dual-authority guard then flags.
+const ledgerSkillAsset = "assets/skills/rdd-ledger/SKILL.md"
+
+// LedgerSkillTarget is where the ledger skill installs while the workspace is
+// file-backed. It is a tracked file in no retired family, so the flip commit
+// names it beside the families (cmd/migrate.go prints it) — otherwise every
+// clone after the flip carries it and Check reports it as drift.
+const LedgerSkillTarget = ".claude/skills/rdd-ledger/SKILL.md"
+
+// Withheld reports whether an embedded asset is deliberately not installed at
+// root. Only the ledger skill qualifies, and only under the store-backed
+// marker: there its absence is the configuration and its presence is drift.
+func Withheld(root, asset string) bool {
+	return strings.TrimPrefix(asset, "./") == ledgerSkillAsset && storeback.Active(root)
+}
 
 // installTargets maps non-process assets onto their paths in the client's
 // repository. The process snapshot under assets/rdd is mapped recursively by
@@ -30,12 +54,20 @@ var installTargets = map[string]string{
 	// audit-citations.mjs at the canonical .modernpath/rdd path), so the
 	// package claims their .claude/skills paths too. The two ModernPath
 	// tooling skills below are not process and remain current.
-	// rdd-ledger stays current as the project-local compatibility adapter for
-	// the tasks/ ledger format until the F6 ledger->server import; 13 ledger
-	// headers root themselves in it.
-	"assets/skills/rdd-ledger/SKILL.md":          ".claude/skills/rdd-ledger/SKILL.md",
+	// rdd-ledger is the project-local compatibility adapter for the tasks/
+	// ledger format; 13 ledger headers root themselves in it. It is installed
+	// only while the workspace is file-backed — see Withheld.
+	ledgerSkillAsset: LedgerSkillTarget,
 	"assets/skills/mp-knowledge-search/SKILL.md": ".claude/skills/mp-knowledge-search/SKILL.md",
-	"assets/hooks/rdd-gate.sh":                   ".claude/hooks/rdd-gate.sh",
+	// mp-process-cli carries the store-backed verb sequences, the selection
+	// and fingerprint models and the refusal glossary. It installs in both
+	// modes — its store-backed sections are marked — so it is never withheld.
+	"assets/skills/mp-process-cli/SKILL.md": ".claude/skills/mp-process-cli/SKILL.md",
+	"assets/hooks/rdd-gate.sh":              ".claude/hooks/rdd-gate.sh",
+	// REQ-CROSS-409 (EPIC-CLI-020): the delegated cold review's agent
+	// definition — Read, Grep, Glob, no shell, the review rules. Installed in
+	// both modes; an edited or missing copy is drift like a skill's.
+	"assets/agents/rdd-cold-reviewer.md": ".claude/agents/rdd-cold-reviewer.md",
 }
 
 // legacyInstallTargets records the old Claude-specific location of assets
@@ -130,10 +162,81 @@ var retiredInstallTargets = []string{
 // project-specific non-negotiables this kit does not contain — and the
 // installer would have deleted it. These are merged into a marked block
 // instead: the kit owns what is between its markers and nothing else.
-var mergeTargets = map[string]string{
-	"assets/CLAUDE.md":               "CLAUDE.md",
-	"assets/agents-block.md":         "AGENTS.md",
-	"assets/copilot-instructions.md": ".github/copilot-instructions.md",
+//
+// The order is precedence for when two targets are one file (see MergeAliases):
+// AGENTS.md comes first because its block is plain-text pointers every agent
+// follows, while the CLAUDE.md block is @-imports only Claude Code resolves.
+var mergeTargets = []struct{ asset, target string }{
+	{"assets/agents-block.md", "AGENTS.md"},
+	{"assets/CLAUDE.md", "CLAUDE.md"},
+	{"assets/copilot-instructions.md", ".github/copilot-instructions.md"},
+}
+
+// MergeAliases maps each merge target that resolves to the same file as a
+// higher-precedence one onto that target. RUN:2026-09-11: with CLAUDE.md
+// symlinked to AGENTS.md, install merged both blocks into the one file under the
+// same markers, in map order — whichever landed last replaced the other, and
+// `install --check` reported the loser's block as drift on every run. An
+// aliased target carries its owner's block and is neither written nor checked.
+func MergeAliases(root string) (map[string]string, error) {
+	aliases := map[string]string{}
+	owners := map[string]string{}
+	for _, m := range mergeTargets {
+		real, err := resolveTarget(root, m.target)
+		if err != nil {
+			return nil, err
+		}
+		if owner, ok := owners[real]; ok {
+			aliases[m.target] = owner
+			continue
+		}
+		owners[real] = m.target
+	}
+	return aliases, nil
+}
+
+// resolveTarget returns the file a target's writes land in. A symlink whose
+// destination does not exist yet still resolves to that destination, because
+// WriteFile will create it there.
+func resolveTarget(root, target string) (string, error) {
+	p := filepath.Join(root, target)
+	for range 40 {
+		real, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			return real, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("resolve %s: %w", target, err)
+		}
+		info, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			// Nothing at p. Resolve its directory so a missing file compares
+			// equal to the same file reached through a link.
+			dir, err := filepath.EvalSymlinks(filepath.Dir(p))
+			if os.IsNotExist(err) {
+				return filepath.Clean(p), nil
+			}
+			if err != nil {
+				return "", fmt.Errorf("resolve %s: %w", target, err)
+			}
+			return filepath.Join(dir, filepath.Base(p)), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", target, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return "", fmt.Errorf("resolve %s: a directory on its path is missing", target)
+		}
+		link, err := os.Readlink(p)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", target, err)
+		}
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(p), link)
+		}
+		p = link
+	}
+	return "", fmt.Errorf("resolve %s: too many levels of symbolic links", target)
 }
 
 // titleFor gives a created file its heading, so a fresh repository still gets a
@@ -146,13 +249,24 @@ var titleFor = map[string]string{
 
 // Result describes what an install did, so the command can report honestly
 // rather than claiming more than it changed.
+// Generated is a tool-owned file the caller renders at install time from
+// something the kit cannot see — the CLI reference is rendered from the
+// binary's own command tree in package cmd. Install writes it beside the
+// embedded assets and Check compares it the same way, so a stale copy is
+// drift exactly like an edited process file.
+type Generated struct {
+	Target string // repository-relative path
+	Body   []byte
+}
+
 type Result struct {
-	Written       []string // tool-owned files written or refreshed
-	Merged        []string // pre-existing client files whose managed block was refreshed
-	Created       []string // client-ownable files that did not exist and were created
-	Removed       []string // retired tool-owned files removed from legacy locations
-	AgentsCreated bool     // true when AGENTS.md did not exist and was created
-	AgentsMerged  bool     // true when an existing AGENTS.md had its block refreshed
+	Written       []string          // tool-owned files written or refreshed
+	Merged        []string          // pre-existing client files whose managed block was refreshed
+	Created       []string          // client-ownable files that did not exist and were created
+	Removed       []string          // retired tool-owned files removed from legacy locations
+	Aliased       map[string]string // merge targets that are another target's file, onto that target
+	AgentsCreated bool              // true when AGENTS.md did not exist and was created
+	AgentsMerged  bool              // true when an existing AGENTS.md had its block refreshed
 }
 
 // Install writes the kit into root and merges the managed block into the
@@ -162,16 +276,25 @@ type Result struct {
 // failure. A half-installed repository whose AGENTS.md was mangled is far worse
 // than one that was never touched, and damaged markers are exactly the case
 // where the installer cannot tell which bytes belong to the client.
-func Install(root string) (Result, error) {
+func Install(root string, generated ...Generated) (Result, error) {
 	var res Result
 
 	// Plan every merge BEFORE writing anything. A half-installed repository
 	// whose instructions were mangled is far worse than one never touched, and
 	// damaged markers are exactly the case where the installer cannot tell
 	// which bytes belong to the client.
+	aliases, err := MergeAliases(root)
+	if err != nil {
+		return res, err
+	}
+	res.Aliased = aliases
 	planned := map[string][]byte{}
 	createdTargets := map[string]bool{}
-	for asset, target := range mergeTargets {
+	for _, m := range mergeTargets {
+		asset, target := m.asset, m.target
+		if _, aliased := aliases[target]; aliased {
+			continue
+		}
 		block, err := assets.ReadFile(asset)
 		if err != nil {
 			return res, fmt.Errorf("read embedded %s: %w", asset, err)
@@ -212,6 +335,24 @@ func Install(root string) (Result, error) {
 		if len(targets) == 0 {
 			continue
 		}
+		if Withheld(root, asset) {
+			// A copy left by an install made before the flip is retired the
+			// same way a superseded manual is: removed, reported, never rewritten.
+			for _, target := range targets {
+				err := os.Remove(filepath.Join(root, target))
+				switch {
+				case err == nil:
+					res.Removed = append(res.Removed, target)
+				case os.IsNotExist(err):
+				default:
+					return res, fmt.Errorf("remove withheld %s: %w", target, err)
+				}
+				if err := pruneEmptyParents(root, target); err != nil {
+					return res, fmt.Errorf("remove empty directories for withheld %s: %w", target, err)
+				}
+			}
+			continue
+		}
 		body, err := assets.ReadFile(asset)
 		if err != nil {
 			return res, fmt.Errorf("read embedded %s: %w", asset, err)
@@ -235,6 +376,17 @@ func Install(root string) (Result, error) {
 			}
 			res.Written = append(res.Written, target)
 		}
+	}
+
+	for _, g := range generated {
+		dest := filepath.Join(root, g.Target)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return res, fmt.Errorf("create %s: %w", filepath.Dir(g.Target), err)
+		}
+		if err := os.WriteFile(dest, g.Body, 0o644); err != nil {
+			return res, fmt.Errorf("write %s: %w", g.Target, err)
+		}
+		res.Written = append(res.Written, g.Target)
 	}
 
 	for target, body := range planned {
@@ -370,8 +522,8 @@ func RetiredTargets() ([]string, error) {
 			delete(targets, target)
 		}
 	}
-	for _, target := range mergeTargets {
-		delete(targets, target)
+	for _, m := range mergeTargets {
+		delete(targets, m.target)
 	}
 	out := make([]string, 0, len(targets))
 	for target := range targets {
@@ -385,8 +537,8 @@ func RetiredTargets() ([]string, error) {
 // than replaced. Sorted, repository-relative.
 func MergeTargets() []string {
 	out := make([]string, 0, len(mergeTargets))
-	for _, t := range mergeTargets {
-		out = append(out, t)
+	for _, m := range mergeTargets {
+		out = append(out, m.target)
 	}
 	sort.Strings(out)
 	return out
@@ -415,8 +567,18 @@ func ListAssets() ([]string, error) {
 //
 // Check compares only the kit-namespaced files. Files a client co-owns are
 // deliberately excluded: their content is supposed to differ.
-func Check(root string) ([]string, error) {
+func Check(root string, generated ...Generated) ([]string, error) {
 	var drift []string
+	for _, g := range generated {
+		got, err := os.ReadFile(filepath.Join(root, g.Target))
+		if os.IsNotExist(err) || (err == nil && !bytes.Equal(got, g.Body)) {
+			drift = append(drift, g.Target+" (generated from this build)")
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", g.Target, err)
+		}
+	}
 	assetPaths, err := ListAssets()
 	if err != nil {
 		return nil, fmt.Errorf("list embedded assets: %w", err)
@@ -430,6 +592,14 @@ func Check(root string) ([]string, error) {
 			targets = append(targets, target)
 		}
 		if len(targets) == 0 {
+			continue
+		}
+		if Withheld(root, asset) {
+			for _, target := range targets {
+				if _, err := os.Stat(filepath.Join(root, target)); err == nil {
+					drift = append(drift, target+" (withheld: this workspace is store-backed and its subject is retired)")
+				}
+			}
 			continue
 		}
 		want, err := assets.ReadFile(asset)
@@ -451,8 +621,17 @@ func Check(root string) ([]string, error) {
 	// reverted by the next install, and a CLI release that changes only the
 	// adapter blocks would otherwise produce no drift signal at all. Only the
 	// marker-delimited region is compared — the rest of these files belongs to
-	// the client and is supposed to differ.
-	for asset, target := range mergeTargets {
+	// the client and is supposed to differ. An aliased target is its owner's
+	// file, so its owner's block is the one checked.
+	aliases, err := MergeAliases(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range mergeTargets {
+		asset, target := m.asset, m.target
+		if _, aliased := aliases[target]; aliased {
+			continue
+		}
 		block, err := assets.ReadFile(asset)
 		if err != nil {
 			return nil, fmt.Errorf("read embedded %s: %w", asset, err)

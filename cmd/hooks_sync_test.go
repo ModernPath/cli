@@ -129,7 +129,7 @@ func TestSyncHookDependsOnNoRepoFile(t *testing.T) {
 	if strings.Contains(cmd, ".claude/hooks") || strings.Contains(cmd, syncHookScriptName) {
 		t.Fatalf("hook must not depend on a repo file: %s", cmd)
 	}
-	if !strings.Contains(cmd, "command -v modernpath") {
+	if !strings.Contains(cmd, "command -v") {
 		t.Fatalf("hook must no-op when the CLI is absent: %s", cmd)
 	}
 	if !strings.Contains(cmd, "exit 0") {

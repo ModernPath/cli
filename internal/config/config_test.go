@@ -314,8 +314,13 @@ func TestWriteAuthKeepsAnExistingIgnoreFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != own {
+	// REQ-CROSS-387/389: the user's lines are kept in place; only the CLI's
+	// own local-state entries are appended once.
+	if !strings.HasPrefix(string(data), own) {
 		t.Fatalf("the user's ignore file was rewritten: %q", data)
+	}
+	if string(data) != own+"cli-history.log\ncli-notices.json\n" {
+		t.Fatalf("want the two local entries appended once after the user's lines, got %q", data)
 	}
 }
 

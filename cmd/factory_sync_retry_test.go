@@ -28,6 +28,11 @@ func TestPostSyncBatchRetriesOn5xxThenSucceeds(t *testing.T) {
 
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if hits.Add(1) <= 2 { // first two attempts time out at the gateway
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
@@ -57,6 +62,11 @@ func TestPostSyncBatchGivesUpAfterMaxAttempts(t *testing.T) {
 
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		hits.Add(1)
 		w.WriteHeader(http.StatusGatewayTimeout)
 	}))
@@ -83,6 +93,11 @@ func TestPostSyncBatchDoesNotRetry422(t *testing.T) {
 
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		hits.Add(1)
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		w.Write([]byte(`{"error":"unknown op"}`))
@@ -110,6 +125,11 @@ func TestPostSyncBatchDoesNotRetry401(t *testing.T) {
 
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		hits.Add(1)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))

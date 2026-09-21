@@ -17,6 +17,11 @@ func TestFocusInferPostsInferredConclusion(t *testing.T) {
 	var gotBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/focus" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

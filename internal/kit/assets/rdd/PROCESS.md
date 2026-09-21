@@ -51,7 +51,10 @@ be established from authoritative records, code, tests, or runtime evidence.
 | `EPIC:<path>#<section>` | Existing Epic record |
 
 Missing support is an open question. Conflicting support remains a conflict
-until a human resolves it. Code proves existing behavior, not intended behavior.
+until a human resolves it. Code proves existing behavior, not intended
+behavior. Repository state — branches, diffs, change lists, and version
+control's own review queues — proves what the repository contains, not what
+the loop holds; it is never a source for selection, status, or priority.
 Here, **material** means capable of changing correctness, security, data
 integrity, a public contract, trace completeness, acceptance, or testability.
 
@@ -200,6 +203,14 @@ meaning and may appear only as a trailing parenthetical breadcrumb. Prefer
 concrete user-visible outcomes to process, code, or architecture shorthand, and
 name any agent choices the answer will also ratify in those same plain terms.
 
+The same rule binds every question an agent puts to a human inside the loop,
+not only a gate brief: each option states what it changes for the product, the
+records, and the work ahead, in the same plain terms, and an identifier is at
+most a trailing breadcrumb. A human's answer — to a gate or to a question — is
+a decision about that gate or question, never an instruction to enter the next
+phase: the agent applies it, reports what moved, and waits for the human's
+word before any further phase, in the complete loop as in a focused pass.
+
 ### Automatic transitions
 
 An agent or deterministic check may apply these only from a current trace-gate
@@ -220,6 +231,35 @@ Applying `DEFERRED` records a postponement decision and requires an
 attributable human source. No automated transition creates or substitutes for
 a human answer.
 
+### Attributable demotions
+
+Delivered work is not final. An item that reached `IN_REVIEW` or `DONE` re-enters
+the loop through an attributable demotion — a recorded transition with an
+actor, a basis, a `USER:` source, and the decision or defect it rests on —
+never through a duplicate requirement, a hand-edited status, or a synthetic
+failure. The basis chooses the destination:
+
+| Demotion | Basis | What it requires and what follows |
+|---|---|---|
+| Requirement or Epic `IN_REVIEW/DONE -> PROPOSED` | Reversed decision: the approved scope, acceptance, or a decision it rests on no longer holds | The reversing decision linked; entry approval is stale and a new entry packet, cold review, and human entry gate precede `TODO` again |
+| Requirement or Epic `IN_REVIEW/DONE -> IN_PROGRESS` | Defect: the delivered behavior is wrong against the approved requirement | The invalidated evidence named; red-first evidence is re-established for the defect; `IN_REVIEW` returns through the lower or upper trace and `DONE` only through a successor human completion gate |
+| Requirement or Epic `-> OBSOLETE` | Superseded or retired | The replacement or the retiring decision linked (the supersession rule above) |
+
+A demotion is recorded as a human gate of purpose `demotion` whose transition
+names the destination, whose exact scope names the demoted items, and whose
+sources carry the basis. Like a candidate-confirmation gate it names no
+prerequisite trace — the facts it rests on are the human's decision and the
+named defect, not a fingerprint check — and applying it reconciles the graph
+like any other answer. Demoting a member reopens its Epic to the weakest
+member state.
+Siblings the demotion does not touch keep their state: their evidence stays
+`CURRENT` when it is current at the present revision, and the Epic's next
+completion re-validates it there rather than requiring it to be posted again.
+Red-first binds the evidence that first proves a clause; a re-validation of
+evidence that already passed — a sibling at the Epic's next completion, a UR's
+upper validation at delivery — is not a new build and needs no new expected
+failure.
+
 ## Work scope
 
 | Scope | Use when | Required relations |
@@ -238,7 +278,12 @@ review, in that order. A changed fingerprint or failed result returns work to
 the earliest affected pass; a downstream pass cannot repair an upstream gap.
 Packet depth is proportional to the selected scope — a single-SR packet may
 satisfy an item in a sentence where an Epic needs pages — but no packet item
-may be omitted.
+may be omitted. Depth is also bounded: a single-requirement packet is at most
+one page. Reconnaissance that needs more than that page is evidence that the
+scope is wrong, not that the packet should grow — split or replan the scope.
+The bound is a limit, not a preference: every line a packet carries beyond
+what a builder or a gate acts on is a line a review attacks instead of the
+change.
 
 ### Entry packet
 
@@ -271,9 +316,32 @@ in-scope deferred correctness, security, data-loss, contract, traceability, or
 testability findings fail the cold-review trace gate. Technical review cannot
 grant entry approval.
 
+The review audits the change, not the document. A finding about the packet's
+own wording, counts, or citations that would alter none of the code, the
+tests, the interfaces, or the risks is a note and never blocks; a traceability
+finding is material only when a builder or a gate would act on the wrong
+citation. The independent context is a recorded fact of the verdict — the
+context the verdict was recorded from — not a claim in its text: a verdict
+recorded from the authoring context is not a cold review. A closure carried
+from an earlier round is a claim to re-verify, not a fact. A finding that
+would change a human decision returns to that human as a question; it is never
+resolved by editing the packet.
+
+Cold review converges or stops. At most two rounds run on one change. When a
+second round's new blocking findings are about the packet rather than the
+change, the packet is cut to what the change needs and review proceeds. A
+third round does not start: the work stops and what is known is handed to a
+human.
+
 Entry review evaluates the complete packet at its exact fingerprint. Only a
 current entry trace `PASS` may open the human entry gate. Do not create or
-change tests or implementation until every selected item is `TODO`.
+change tests or implementation until every selected item is `TODO`, with one
+exception — the defect lane. When a defect is already diagnosed and the change
+is bounded, the failing test may be written first, on a branch and before
+entry, and cited in the packet as a `RUN:` source: it is the reconnaissance,
+and it gives the review something executable instead of prose about whether a
+planned test would fail. The red test does not replace the SR's own lower
+RED, which is re-established after entry, and it authorizes no implementation.
 
 ## Development loop
 
@@ -288,7 +356,7 @@ focused skill alone only when the requested scope explicitly ends at that pass.
 
 | Phase | Skill | Required exit |
 |---|---|---|
-| Enter session | `rdd-start` | Store binding and single active release verified from the store; answered gates reconciled; frozen scope routed to its earliest unmet phase |
+| Enter session | `rdd-start` | Store binding and single active release verified from the store; answered gates reconciled; frozen scope routed to its earliest unmet phase, or an orientation request answered from the current pending-decision projection |
 | Source/classify | `rdd-discover` | Authoritative input or an exact confirmation gate; no unconfirmed requirement proceeds |
 | Plan/reconnaissance | `rdd-plan` | Entry-packet items 1–6 and the human brief at a named revision |
 | Cold review | `rdd-cold-review` | Current cold-review trace verdict and finding dispositions |
@@ -356,6 +424,22 @@ The full loop terminates only when the selected scope is `DONE` or `OBSOLETE`.
 An unanswered human gate, `BLOCKED`, `DEFERRED`, `TODO`, or `IN_REVIEW` state is
 an explicit incomplete handoff, not completion.
 
+### Delegated passes
+
+A pass may be delegated to another context — a cold review, a verification
+sweep, one reconnaissance surface. A delegated pass establishes facts and
+returns them: findings, a verdict, citations. It writes nothing to the process
+store; the orchestrating session records what the pass returned, under its own
+actor attribution. The independence of a cold review is a property of the
+context the verdict is recorded from, not of which process runs the recording,
+so recording from the orchestrating session does not compromise it.
+
+A delegated pass that is refused by its environment — a permission denial, an
+authentication failure, a store refusal — stops and returns the refusal
+verbatim as its report. A refusal is a decision by the environment's owner,
+not an obstacle: the pass never reformulates, splits, or re-issues the refused
+call, and an instruction to finish the task does not override this.
+
 ## Evidence and completion
 
 A test result is immutable. Rerunning creates a new result.
@@ -400,6 +484,10 @@ work back to planning.
 A completion human gate may open only when named items are `IN_REVIEW`, code is
 delivered, evidence is current at the delivered revision, state is reconciled,
 candidate relations are excluded, and gaps/deferrals/decisions are disclosed.
+The delivered revision is the one the authorized integration path produced,
+not the branch head that fed it. A member-scoped trace from an earlier round
+that is `STALE` still counts against its Epic — an Epic-scoped pass does not
+stand in for it — until it is re-evaluated at the current fingerprint.
 
 | Item | `DONE` predicate after human acceptance |
 |---|---|
@@ -427,6 +515,20 @@ A repository is one or the other, never both at once. Every serialized file
 carries its snapshot header — `Snapshot at` and `Source store/revision` — so
 currency is checkable per file.
 
+A project names one sanctioned tool as its interface to the store — its write
+channels, its reads, its projections — and a channel for surfacing what that
+tool lacks. When a task needs something the tool does not expose — a session
+or authentication fact, an untruncated value, any read — that is a tooling
+gap to surface through that channel, never a variance to absorb. Reaching past
+the tool — reading its credential or configuration files, calling its
+transport by hand, editing store files — is the anti-pattern, with the same
+standing as every other rule here. A read-only workaround that unblocks the
+session is acceptable when the gap is surfaced in the same session. A
+workaround that writes to the store by hand is a stop: it bypasses server-side
+legality and actor attribution, which are safety properties, not conveniences.
+An agent's persistent notes never carry such a workaround as knowledge: the
+gap is filed, and the note is retired when the surface lands.
+
 ```text
 file-state/
   EPICS.md
@@ -443,10 +545,24 @@ selections, and selection history. `BACKLOG.md` stores unrouted triage items
 and gap records. Derived queues and progress views — including the pending
 human-decision projection — are regenerated, not backed up separately.
 
+Backlog, gap, and tooling-gap records are records of the store like every
+other: they are created, routed, and closed there, and their state is read
+from there. A plan, a handover, or an agent's notes may summarize them and is
+a projection at best — it never carries a disposition the store does not, and
+a disagreement between the two is resolved by reading the store, not the
+note. A discovery that lives only in a note is not yet a record.
+
+That projection is never lifecycle authority, and it is the session's answer
+to what to work on next: it is read from the store, dated against the store
+revision, and presented — ranked by what a single human answer releases. A
+projection delivered into a session ahead of the request is that same answer
+arriving early, not background context.
+
 | Concern | Authority |
 |---|---|
 | Product/domain/architecture/contracts | Product documents and schemas |
 | Epic, requirement, relation, gate, decision, release, and work-selection state | Authoritative process store |
+| Backlog, gap, and tooling-gap records and their dispositions | Authoritative process store |
 | Code, test cases, and results | Implementation repository plus exact evidence references |
 | Aggregate progress and human queues | Generated projections; never lifecycle authority |
 
@@ -489,6 +605,7 @@ human decisions.
 | Capability/specification gap | Gap linked to affected traces |
 | Unclear ownership/cross-cutting concern | Triage backlog |
 | Contradicted or removed behavior | Conflict or `OBSOLETE` with replacement |
+| Delivered item found defective, or its decision reversed | Attributable demotion of the existing item (§Attributable demotions); never a duplicate requirement |
 
 A project's release registry holds exactly one active release, and release
 selection requires a `USER:` source. Drift between repository records and the

@@ -158,6 +158,30 @@ func runCoverage(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	// GAP-013: a store-backed workspace has no local ledgers BY DECLARATION —
+	// coverage is measured in the server store. Stand down like `modernpath
+	// check` (cmd/check.go) instead of failing on the empty input set. Narrow:
+	// only when there are no records AND the marker is present.
+	if !hasProcessRecords(root) && storeBackedWorkspace(root) {
+		const reason = "store-backed workspace (process/store-backed.md): requirement→code coverage is measured in the server store, not from local ledgers"
+		if coverageJSON {
+			// --json owns stdout (REQ-CROSS-121): a stand-down is a document too,
+			// or the caller that was told to read summary.citations gets prose.
+			out, err := json.MarshalIndent(map[string]any{
+				"store_backed": true,
+				"marker":       "process/store-backed.md",
+				"reason":       reason,
+			}, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+		printSuccess(reason)
+		return nil
+	}
+
 	rep, err := covreport.BuildReport(root)
 	if err != nil {
 		return err

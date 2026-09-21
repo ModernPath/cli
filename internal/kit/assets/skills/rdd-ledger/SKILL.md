@@ -1,11 +1,12 @@
 ---
 name: rdd-ledger
-description: The requirements ledger format — dashboard table, detail blocks, status vocabulary, the three-place status hygiene rule and how to verify it. Use when creating or editing a tasks/<CTX>-REQUIREMENTS.md file, changing a requirement's status, or checking whether the ledgers are internally consistent.
+description: The requirements ledger format — dashboard table, detail blocks, status vocabulary, the three-place status hygiene rule and how to verify it. Use in a file-backed workspace when creating or editing a tasks/<CTX>-REQUIREMENTS.md file, changing a requirement's status, or checking whether the ledgers are internally consistent. Not for a store-backed workspace (process/store-backed.md present) — there the ledgers are retired, state is read with modernpath working-set pull and written with modernpath author, and this skill is withheld by the installer.
 ---
 
 # The requirements ledger
 
-<!-- TOOL-OWNED. Installed by `modernpath install`. -->
+<!-- TOOL-OWNED. Installed by `modernpath install` on a file-backed workspace only:
+     under process/store-backed.md the ledgers are retired and the skill is withheld. -->
 
 One ledger per bounded context, at `tasks/<CTX>-REQUIREMENTS.md`. It opens with
 a dashboard table — the at-a-glance completeness view — and continues with detail

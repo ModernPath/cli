@@ -65,6 +65,9 @@ func TestMigrateFlipVerifiesActivatesAndWritesMarker(t *testing.T) {
 		"retired: process/gap-register.md",
 		"retired: process/08-open-questions.md",
 		"retired: epics/**",
+		// SR-CROSS-329: the release registry is frozen into the marker's retired
+		// list once the store serves the active-release selection (REQ-CROSS-328).
+		"retired: process/releases.md",
 		"USER:fixture-gate-answer (gate APPROVE-EPIC-CLI-003)",
 	} {
 		if !strings.Contains(string(marker), want) {
@@ -304,5 +307,29 @@ func TestCheckRecognizesStoreBackedWorkspace(t *testing.T) {
 	}
 	if !storeBackedWorkspace(root) {
 		t.Fatal("the marker must make the workspace read as store-backed")
+	}
+}
+
+// The ledger skill is withheld by the installer under the marker, but it is a
+// tracked file in none of the retired families, so nothing removes it from
+// the repository at the flip: every fresh clone after the flip commit would
+// carry it and `install --check` would report it as drift until someone ran
+// `install` and committed the deletion by hand. The flip's own instructions
+// name it beside the retired families.
+func TestMigrateFlipNamesTheWithheldSkillInTheFlipCommit(t *testing.T) {
+	st := &migrateStore{hashes: map[string]string{}}
+	srv := serveMigrateStore(t, st)
+	env := wsEnv(t, srv)
+	migrateCorpus(t, env.Root)
+
+	var err error
+	out := captureOut(t, func() {
+		err = migrateFlip(env, migrateFlipDeclaration(st, env, "APPROVE-EPIC-CLI-003"), "fp1", "approved")
+	})
+	if err != nil {
+		t.Fatalf("flip failed: %v", err)
+	}
+	if !strings.Contains(out, "git rm") || !strings.Contains(out, ".claude/skills/rdd-ledger/SKILL.md") {
+		t.Fatalf("the flip commit instructions must name the withheld ledger skill beside the retired families:\n%s", out)
 	}
 }

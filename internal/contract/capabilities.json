@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "capabilities": {
+    "author.advance": ["advance_gate_ref"],
+    "author.backlog": ["backlog_record"],
+    "author.evaluate_trace": ["review_context", "trace_pin_default"],
+    "author.gate": ["entry_gate_members"],
+    "author.update": ["edit_fingerprint"],
+    "batch": ["batch_multi_status"],
+    "evidence": ["evidence_revision"],
+    "gate.answer": ["governed_answer_review"],
+    "work_selection": ["selection_piece"]
+  }
+}

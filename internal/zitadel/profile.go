@@ -71,3 +71,18 @@ func SelectProfile(test bool) Profile {
 	}
 	return ProdProfile
 }
+
+// ProfileForAPIURL returns the baked-in profile whose APIURL is apiURL, so a
+// caller holding only a workspace's configured host (what `modernpath env
+// --set=<env>` writes) can find the issuer that goes with it. ok is false for
+// every other host — local, the legacy beta server, a custom URL — because the
+// CLI has no issuer to run a device flow against there; those hosts take a
+// pasted token instead.
+func ProfileForAPIURL(apiURL string) (Profile, bool) {
+	for _, p := range []Profile{ProdProfile, TestProfile} {
+		if apiURL == p.APIURL {
+			return p, true
+		}
+	}
+	return Profile{}, false
+}

@@ -679,6 +679,15 @@ func BuildRequirementOpWithExemption(req Req, exempt bool) Op {
 // ids minted parents no corpus record declares.
 var urTokenRe = regexp.MustCompile(`\bUR-[A-Z][A-Z0-9]*-\d+[a-z]?\b`)
 
+// urMemberTokenRe widens urTokenRe for the epic UR-MEMBERSHIP reader only. A
+// membership cell legitimately names display-id members (UR-1-0, the fallback
+// for a reverse-engineered UR) and two-segment ones (UR-44) that urTokenRe's
+// letter-context, two-segment shape rejects. The required numeric tail, plus
+// the caller stripping parentheticals first (as the SR-membership reader does),
+// keeps provenance prose from minting phantom members. urTokenRe stays strict
+// for firstURRef and the fidelity counters, which read prose-bearing cells.
+var urMemberTokenRe = regexp.MustCompile(`\bUR-(?:[A-Za-z0-9]+-)*\d+[a-z]?\b`)
+
 // firstURRef normalizes a UR cell or detail-line value to the single parent id
 // the payload can carry: backticks off, whitespace trimmed, a ` · ` list
 // folded to its first entry (SR-SY-1402), and only a UR-shaped token counts
@@ -880,6 +889,15 @@ var (
 	// never leak into epic membership.
 	membershipSectionRe = regexp.MustCompile(`(?m)^##[ \t]+(?:Requirements in this epic|Requirements realized|Linked requirements|Requirements)[ \t]*\r?\n`)
 	membershipNextH2Re  = regexp.MustCompile(`(?m)^##[ \t]+`)
+	// The newer RDD-shaped records declare membership as a TABLE under
+	// `## System requirements`, `## System requirements and tasks` or
+	// `## Members`. The discriminator is the ROW, not the heading: those same
+	// headings also carry prose that merely cites ids (see the mixed-headings
+	// exclusion), and the tables' own leading column is a display/task id —
+	// 343 such tokens across 109 records, none naming a requirement record.
+	// Reading data rows and taking each row's subject cell excludes both.
+	membershipTableSectionRe = regexp.MustCompile(`(?m)^##[ \t]+(?:System requirements and tasks|System requirements|Members)[ \t]*\r?\n`)
+	membershipWholeCellReqRe = regexp.MustCompile(`^REQ-[A-Z][A-Z0-9]*-\d+[a-z]?$`)
 	// A fifth shape: a top-of-record metadata line — `**Requirements:**`
 	// alongside the record's `**Release:**`/`**Specification:**` banner, or
 	// `**Realizes:**` elsewhere in the body — is the same declaration as the
@@ -890,7 +908,22 @@ var (
 	membershipRealizesRe = regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]*)?\*\*(?:Realizes|Requirements):\*\*[ \t]*(.*)$`)
 	membershipParenRe    = regexp.MustCompile(`\([^()\n]*\)`)
 	membershipReassignRe = regexp.MustCompile(`\bREQ-[A-Z][A-Z0-9]*-\d+[ \t]+is[ \t]+EPIC-[A-Z0-9][A-Z0-9-]*\b`)
-	membershipTokenRe    = regexp.MustCompile(`REQ-([A-Z][A-Z0-9]*)-(\d+)(?:[ \t]*(\.\.|…)[ \t]*(?:REQ-([A-Z][A-Z0-9]*)-)?(\d+)|/(\d+))?`)
+	// Epic membership members: REQ- (generic) or SR- display ids, matched as
+	// opaque tokens and carried VERBATIM so a display id keeps its revision
+	// (SR-16-1 is not SR-16 — the old REQ-only, re-parsing tokenizer both
+	// dropped SR-prefixed members and mangled 3-segment display ids). An
+	// explicit a..b / a…b range, or an a/b pair, on the trailing number expands
+	// under the shared stem. The (?:REQ|SR)- anchor plus a required numeric tail
+	// keep capitalized prose inside a membership section from minting phantom
+	// members; UR members travel the separate user-requirement path.
+	memberTokenRe   = regexp.MustCompile(`((?:REQ|SR)-(?:[A-Za-z0-9]+-)*\d+[a-z]?)(?:[ \t]*(?:\.\.|…)[ \t]*((?:REQ|SR)-(?:[A-Za-z0-9]+-)*)?(\d+)|/(\d+))?`)
+	memberTailNumRe = regexp.MustCompile(`(\d+)[a-z]?$`)
+	// reqOnlyMemberTokenRe is memberTokenRe restricted to REQ- ids, for the
+	// acceptance-scenario realizes reader: an SR-only or bare-token row there is
+	// a counted non-edge, not a member (an SR id names no scenario-realizes
+	// target). Keeping it REQ-only preserves that relation's vocabulary while
+	// epic membership widens to SR- kinds.
+	reqOnlyMemberTokenRe = regexp.MustCompile(`(REQ-(?:[A-Za-z0-9]+-)*\d+[a-z]?)(?:[ \t]*(?:\.\.|…)[ \t]*(REQ-(?:[A-Za-z0-9]+-)*)?(\d+)|/(\d+))?`)
 	// The completion approval's heading, in the three shapes the corpus and the
 	// installed template use. Alternation rather than a tolerated prefix on
 	// purpose: `## Specification approval` is a DIFFERENT gate living one
@@ -1230,7 +1263,7 @@ func requirementMembershipOf(text string) requirementMembership {
 		}
 	}
 	add := func(source string) {
-		addRequirementMembershipTokens(source, seen, &result.IDs)
+		addMembershipTokens(source, seen, &result.IDs, memberTokenRe)
 	}
 
 	for _, loc := range membershipSectionRe.FindAllStringIndex(text, -1) {
@@ -1241,6 +1274,17 @@ func requirementMembershipOf(text string) requirementMembership {
 		}
 		add(body)
 	}
+	for _, loc := range membershipTableSectionRe.FindAllStringIndex(text, -1) {
+		body := text[loc[1]:]
+		if end := membershipNextH2Re.FindStringIndex(body); end != nil {
+			body = body[:end[0]]
+		}
+		// Only a section that actually yields a member row is a declaration, so
+		// a prose-only section stays unrecognized exactly as before.
+		if addMembershipTableRows(body, seen, &result.IDs) {
+			mark(loc[0])
+		}
+	}
 	for _, loc := range membershipRealizesRe.FindAllStringSubmatchIndex(text, -1) {
 		mark(loc[0])
 		add(text[loc[2]:loc[3]])
@@ -1248,7 +1292,44 @@ func requirementMembershipOf(text string) requirementMembership {
 	return result
 }
 
-func addRequirementMembershipTokens(source string, seen map[string]bool, ids *[]string) {
+// addMembershipTableRows takes one member per data row — the first cell whose
+// WHOLE content is a REQ- id — and reports whether any row yielded.
+//
+// Whole-cell, not "first id in the row", because these tables carry prose cells
+// that cite requirements they do not declare: an evidence cell reading
+// "5 REQ-SYS-005 tests" is a citation, and harvesting it makes the epic a member
+// of a requirement it only mentions. Scanning cells left to right also steps over
+// a leading display/task id column (SR-AF-001, SR-CLI-0081) without matching it.
+// A header or separator row has no such cell and is skipped.
+func addMembershipTableRows(body string, seen map[string]bool, out *[]string) bool {
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		for _, cell := range strings.Split(strings.Trim(trimmed, "|"), "|") {
+			cell = strings.TrimSpace(cell)
+			if !membershipWholeCellReqRe.MatchString(cell) {
+				continue
+			}
+			if !seen[cell] {
+				seen[cell] = true
+				*out = append(*out, cell)
+				found = true
+			}
+			break
+		}
+	}
+	return found
+}
+
+// addMembershipTokens harvests declared member ids from an already-scoped
+// declaration string. `re` selects the vocabulary: memberTokenRe (REQ- and SR-
+// kinds) for epic membership, reqOnlyMemberTokenRe (REQ- only) for the
+// acceptance-scenario realizes reader, which deliberately treats an SR-only or
+// bare-token row as a counted non-edge rather than a member.
+func addMembershipTokens(source string, seen map[string]bool, ids *[]string, re *regexp.Regexp) {
 	// Parenthetical annotations are commentary, not membership. Repeat so
 	// separate annotations on the same declaration all disappear.
 	for membershipParenRe.MatchString(source) {
@@ -1262,48 +1343,55 @@ func addRequirementMembershipTokens(source string, seen map[string]bool, ids *[]
 		}
 	}
 
-	for _, match := range membershipTokenRe.FindAllStringSubmatch(source, -1) {
-		prefix, firstDigits := match[1], match[2]
-		first, err := strconv.Atoi(firstDigits)
+	for _, match := range re.FindAllStringSubmatch(source, -1) {
+		id := match[1]
+		// Carried verbatim — never re-parsed into prefix+number, so a display
+		// id (SR-16-1) keeps its revision and an SR-/REQ- member keeps its kind.
+		add(id)
+
+		tail := memberTailNumRe.FindStringSubmatch(id)
+		if tail == nil {
+			continue
+		}
+		stem := id[:len(id)-len(tail[0])] // everything up to the trailing number
+		first, err := strconv.Atoi(tail[1])
 		if err != nil {
 			continue
 		}
-		add(requirementMembershipID(prefix, first, len(firstDigits)))
+		pad := func(n, width int) string { return fmt.Sprintf("%s%0*d", stem, width, n) }
 
-		if match[6] != "" {
-			if alternate, err := strconv.Atoi(match[6]); err == nil {
-				add(requirementMembershipID(prefix, alternate, len(match[6])))
+		endPrefix, endDigits, alternate := match[2], match[3], match[4]
+		if alternate != "" { // an a/b sibling under the same stem
+			if n, err := strconv.Atoi(alternate); err == nil {
+				add(pad(n, len(alternate)))
 			}
 			continue
 		}
-		if match[3] == "" || match[5] == "" {
+		if endDigits == "" { // no range
 			continue
 		}
-		last, err := strconv.Atoi(match[5])
+		last, err := strconv.Atoi(endDigits)
 		if err != nil {
 			continue
 		}
-		endPrefix := match[4]
-		if endPrefix != "" && endPrefix != prefix {
-			add(requirementMembershipID(endPrefix, last, len(match[5])))
+		if endPrefix != "" && endPrefix != stem {
+			// A range whose end names another prefix is two ids, not a run under
+			// the first: REQ-CROSS-001..REQ-UI-005 declares exactly those two.
+			add(fmt.Sprintf("%s%0*d", endPrefix, len(endDigits), last))
 			continue
 		}
 		if last < first {
-			add(requirementMembershipID(prefix, last, len(match[5])))
+			add(pad(last, len(endDigits)))
 			continue
 		}
-		width := len(firstDigits)
-		if len(match[5]) > width {
-			width = len(match[5])
+		width := len(tail[1])
+		if len(endDigits) > width {
+			width = len(endDigits)
 		}
 		for n := first + 1; n <= last; n++ {
-			add(requirementMembershipID(prefix, n, width))
+			add(pad(n, width))
 		}
 	}
-}
-
-func requirementMembershipID(prefix string, number, width int) string {
-	return fmt.Sprintf("REQ-%s-%0*d", prefix, width, number)
 }
 
 func requirementIDsOf(text string) []string {
@@ -2330,7 +2418,11 @@ func BuildEpicOp(epic Epic, recordText string) Op {
 		for _, ur := range ParseEpicUserRequirements(recordText) {
 			addUR(ur.ID)
 		}
-		for _, id := range urTokenRe.FindAllString(epic.URCell, -1) {
+		cell := epic.URCell
+		for membershipParenRe.MatchString(cell) {
+			cell = membershipParenRe.ReplaceAllString(cell, " ")
+		}
+		for _, id := range urMemberTokenRe.FindAllString(cell, -1) {
 			addUR(id)
 		}
 		if len(ids) > 0 {
@@ -2835,6 +2927,14 @@ func BuildApprovalGateOp(epic Epic, recordText string) (Op, bool) {
 		"recommendation": "The record’s evidence map is the review pack — read it, then approve, request changes, or defer.",
 	}
 	addGateHolds(payload, requirementIDsOfSection(recordText), "awaiting the "+epic.ID+" gate")
+	// The holds name the epic's REQUIREMENTS, which is what makes those rows
+	// read "awaiting the <epic> gate". They do not name the epic, and
+	// `Core.Planning.EpicDetail` selects an epic's gates by
+	// `epic.code in exact_scope or id in held_gate_ids` — so without this the
+	// gate is invisible on the page of the epic it approves. Same line
+	// BuildWorklistAcceptanceGate carries; BuildSpecApprovalGateOp reaches the
+	// same place with an epic-typed hold.
+	payload["exact_scope"] = []any{epic.ID}
 
 	if approvalLine != "" {
 		tag := approvalTagOf(approvalLine)

@@ -18,6 +18,11 @@ func TestFocusDeclarePostsUppercasedRefAsCli(t *testing.T) {
 	var gotBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/focus" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -56,6 +61,11 @@ func TestFocusDeclarePostsUppercasedRefAsCli(t *testing.T) {
 
 func TestFocusDeclareUnresolvedFlagsNotInLedger(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"data":{"focus":{"ref_external_id":"REQ-PLN-999","title":null,"resolved":false,"set_by":"declared","source":"cli"},"previous":null}}`)
 	}))
@@ -75,6 +85,11 @@ func TestFocusDeclareUnresolvedFlagsNotInLedger(t *testing.T) {
 
 func TestFocusDeclareRefusalCarriesServerMessageNotSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = io.WriteString(w, `{"error":{"message":"\"nope\" is not a work reference — use REQ-<CTX>-NNN or EPIC-<AREA>-NNN"}}`)
 	}))
@@ -100,6 +115,11 @@ func TestFocusClearSendsDelete(t *testing.T) {
 	var gotMethod, gotQuery string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		gotMethod = r.Method
 		gotQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
@@ -127,6 +147,11 @@ func TestFocusDropSendsDeleteWithRef(t *testing.T) {
 	var gotMethod, gotQuery string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		gotMethod = r.Method
 		gotQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
@@ -153,6 +178,11 @@ func TestFocusDropSendsDeleteWithRef(t *testing.T) {
 
 func TestFocusListGetsAndFormatsPerPerson(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// REQ-CROSS-390: this fake predates the contract read (an older server).
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if r.Method != http.MethodGet {
 			t.Fatalf("method = %s, want GET", r.Method)
 		}

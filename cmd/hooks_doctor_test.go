@@ -633,3 +633,21 @@ func TestAnUnresolvablePathDoesNotClaimADifference(t *testing.T) {
 		return // treating an absent winner as "not us" is fine
 	}
 }
+
+// The stamp shapes install-local.sh has written over time, and the release
+// shape, all read the same way: the commit is what follows "+", up to the
+// build's own suffixes.
+func TestBuildCommitOfReadsEveryStampShape(t *testing.T) {
+	for stamp, want := range map[string]string{
+		"0.5.0+7b7b427 (2026-08-13T12:29Z)":          "7b7b427",
+		"0.7.0-dev+aa162f51f (2026-09-19T13:14Z)":    "aa162f51f",
+		"0.7.0-dev+aa162f51f.dirty (2026-09-19T13Z)": "aa162f51f",
+		"0.7.0-dev": "",
+		"0.6.0":     "",
+		"dev":       "",
+	} {
+		if got := buildCommitOf(stamp); got != want {
+			t.Errorf("buildCommitOf(%q) = %q, want %q", stamp, got, want)
+		}
+	}
+}

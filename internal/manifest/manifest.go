@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/modernpath/cli/internal/storeback"
 )
 
 // Doc types. Mandated types (D2) are what the factory needs to function;
@@ -151,6 +153,13 @@ func (m *Manifest) Validate() error {
 // returns the types that match no files at all — the loud-report input.
 // A doc type absent from the manifest entirely is also missing.
 func (m *Manifest) MissingMandated(root string) []string {
+	// GAP-013: a store-backed workspace declares its process state lives in the
+	// server store, so an absent mandated corpus is the configuration, not a
+	// gap. Yield to the marker before resolving globs — this reports nothing and
+	// touches no glob, so the importer's corpus reads via Resolve are unchanged.
+	if storeback.Active(root) {
+		return nil
+	}
 	var missing []string
 	for _, docType := range MandatedTypes {
 		spec, declared := m.Documents[docType]

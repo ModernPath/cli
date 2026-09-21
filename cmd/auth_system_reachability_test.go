@@ -1,10 +1,12 @@
 package cmd
 
 // REQ-CROSS-282 — the CLI validates the configured system_id against the
-// authenticated credential's own reachable-systems list, across all three
-// auth variants (token, SSO, browser). See tasks/CROSS-REQUIREMENTS.md for
-// the full entry packet — Statement, acceptance criteria, change boundary,
-// and this file's RED strategy.
+// authenticated credential's own reachable-systems list, across both auth
+// variants (pasted token, ZITADEL device flow). The third variant this file
+// covered — the core-proxied browser device flow — went with core-as-issuer
+// (USER:2026-09-01). See tasks/CROSS-REQUIREMENTS.md for the full entry
+// packet — Statement, acceptance criteria, change boundary, and this file's
+// RED strategy.
 
 import (
 	"bytes"
@@ -35,14 +37,6 @@ func captureWarnings(t *testing.T, fn func()) string {
 	defer func() { color.Error = orig }()
 	fn()
 	return buf.String()
-}
-
-// stubOpenBrowser swaps openBrowserFn, mirroring stubZitadelLogin
-// (auth_sso_test.go) exactly.
-func stubOpenBrowser(fn func(string) error) func() {
-	orig := openBrowserFn
-	openBrowserFn = fn
-	return func() { openBrowserFn = orig }
 }
 
 // stubListSystemsFn swaps listSystemsFn (system_reachability.go) — needed
@@ -82,46 +76,6 @@ func systemsServer(t *testing.T, systemIDs ...int) (*httptest.Server, *atomic.In
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &hits
-}
-
-// browserAuthServer answers a full device-flow success on the first poll —
-// expires_in:2 keeps the poll loop's one unavoidable, unstubbed 2s sleep
-// (auth.go's time.Sleep) to exactly one iteration — and answers
-// GET /api/systems per systemsStatus/systemIDs, counting hits on that path.
-func browserAuthServer(t *testing.T, systemsStatus int, systemIDs ...int) (*httptest.Server, *atomic.Int32) {
-	t.Helper()
-	var systemsHits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/cli/initiate":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"device_code": "dc-1", "user_code": "AB-CD",
-				"verification_url": "http://example.invalid/verify", "expires_in": 2,
-			})
-		case "/api/v1/auth/cli/poll":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token": "AT-BROWSER", "refresh_token": "RT-BROWSER",
-			})
-		case "/api/systems":
-			systemsHits.Add(1)
-			if systemsStatus != http.StatusOK {
-				w.WriteHeader(systemsStatus)
-				return
-			}
-			systems := make([]map[string]any, len(systemIDs))
-			for i, id := range systemIDs {
-				systems[i] = map[string]any{"id": id, "name": fmt.Sprintf("system-%d", id), "slug": fmt.Sprintf("sys-%d", id)}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(systems)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv, &systemsHits
 }
 
 // ---------------------------------------------------------------- token path
@@ -200,7 +154,7 @@ func TestTokenAuthStillSavesCredentialsWhenTheConfiguredSystemIsUnreachable(t *t
 
 func TestSSOAuthWarnsWhenTheConfiguredSystemIsUnreachable(t *testing.T) {
 	writeSystemIDConfig(t, 999)
-	defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer) (*zitadel.Token, error) {
+	defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer, _ zitadel.Options) (*zitadel.Token, error) {
 		return &zitadel.Token{AccessToken: "AT-SSO", RefreshToken: "RT-SSO"}, nil
 	})()
 	defer stubListSystemsFn(func(apiURL, token string) ([]api.System, error) {
@@ -223,7 +177,7 @@ func TestSSOAuthWarnsWhenTheConfiguredSystemIsUnreachable(t *testing.T) {
 
 func TestSSOAuthStaysSilentWhenTheConfiguredSystemIsReachable(t *testing.T) {
 	writeSystemIDConfig(t, 7)
-	defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer) (*zitadel.Token, error) {
+	defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer, _ zitadel.Options) (*zitadel.Token, error) {
 		return &zitadel.Token{AccessToken: "AT-SSO", RefreshToken: "RT-SSO"}, nil
 	})()
 	defer stubListSystemsFn(func(apiURL, token string) ([]api.System, error) {
@@ -242,7 +196,7 @@ func TestSSOAuthStaysSilentWhenTheConfiguredSystemIsReachable(t *testing.T) {
 
 func TestSSOAuthStaysSilentWhenTheReachabilityCallErrors(t *testing.T) {
 	writeSystemIDConfig(t, 999)
-	defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer) (*zitadel.Token, error) {
+	defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer, _ zitadel.Options) (*zitadel.Token, error) {
 		return &zitadel.Token{AccessToken: "AT-SSO", RefreshToken: "RT-SSO"}, nil
 	})()
 	var listCalled bool
@@ -264,68 +218,14 @@ func TestSSOAuthStaysSilentWhenTheReachabilityCallErrors(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------- browser path
+// ------------------------------------------------------------- fresh init x2
 
-func TestBrowserAuthWarnsWhenTheConfiguredSystemIsUnreachable(t *testing.T) {
-	writeSystemIDConfig(t, 999)
-	srv, _ := browserAuthServer(t, http.StatusOK, 7, 8)
-	defer stubOpenBrowser(func(string) error { return nil })()
-
-	warnings := captureWarnings(t, func() {
-		if err := authenticateWithBrowser(srv.URL); err != nil {
-			t.Fatalf("authenticateWithBrowser: %v", err)
-		}
-	})
-	if !strings.Contains(warnings, "999") {
-		t.Fatalf("warning must name the configured system 999, got %q", warnings)
-	}
-	auth, err := config.ReadAuth()
-	if err != nil || auth.Token != "AT-BROWSER" {
-		t.Fatalf("credentials must still be saved on a system mismatch: auth=%+v err=%v", auth, err)
-	}
-}
-
-func TestBrowserAuthStaysSilentWhenTheConfiguredSystemIsReachable(t *testing.T) {
-	writeSystemIDConfig(t, 7)
-	srv, _ := browserAuthServer(t, http.StatusOK, 7)
-	defer stubOpenBrowser(func(string) error { return nil })()
-
-	warnings := captureWarnings(t, func() {
-		if err := authenticateWithBrowser(srv.URL); err != nil {
-			t.Fatalf("authenticateWithBrowser: %v", err)
-		}
-	})
-	if warnings != "" {
-		t.Fatalf("a reachable configured system must print no warning, got %q", warnings)
-	}
-}
-
-func TestBrowserAuthStaysSilentWhenTheReachabilityCallErrors(t *testing.T) {
-	writeSystemIDConfig(t, 999)
-	srv, hits := browserAuthServer(t, http.StatusInternalServerError)
-	defer stubOpenBrowser(func(string) error { return nil })()
-
-	warnings := captureWarnings(t, func() {
-		if err := authenticateWithBrowser(srv.URL); err != nil {
-			t.Fatalf("authenticateWithBrowser: %v", err)
-		}
-	})
-	if warnings != "" {
-		t.Fatalf("a check that itself errors must fail open — print nothing, got %q", warnings)
-	}
-	if hits.Load() == 0 {
-		t.Fatal("the reachability call must actually have been attempted")
-	}
-}
-
-// ------------------------------------------------------------- fresh init x3
-
-// TestFreshInitHasNothingToValidate: SystemID == 0 across all three auth
+// TestFreshInitHasNothingToValidate: SystemID == 0 across both auth
 // variants — nothing to check yet, no call, no warning.
 func TestFreshInitHasNothingToValidate(t *testing.T) {
 	t.Run("SSO", func(t *testing.T) {
 		t.Chdir(t.TempDir())
-		defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer) (*zitadel.Token, error) {
+		defer stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer, _ zitadel.Options) (*zitadel.Token, error) {
 			return &zitadel.Token{AccessToken: "AT", RefreshToken: "RT"}, nil
 		})()
 		defer stubListSystemsFn(func(apiURL, token string) ([]api.System, error) {
@@ -335,23 +235,6 @@ func TestFreshInitHasNothingToValidate(t *testing.T) {
 
 		if err := authenticateWithSSO(true); err != nil {
 			t.Fatalf("authenticateWithSSO: %v", err)
-		}
-	})
-
-	t.Run("Browser", func(t *testing.T) {
-		t.Chdir(t.TempDir())
-		defer stubListSystemsFn(func(apiURL, token string) ([]api.System, error) {
-			t.Fatal("a fresh, unbound workspace must not check reachability at all")
-			return nil, nil
-		})()
-		srv, hits := browserAuthServer(t, http.StatusOK, 7)
-		defer stubOpenBrowser(func(string) error { return nil })()
-
-		if err := authenticateWithBrowser(srv.URL); err != nil {
-			t.Fatalf("authenticateWithBrowser: %v", err)
-		}
-		if hits.Load() != 0 {
-			t.Fatalf("a fresh, unbound workspace must not call /api/systems, got %d hits", hits.Load())
 		}
 	})
 

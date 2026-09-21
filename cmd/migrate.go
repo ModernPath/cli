@@ -12,6 +12,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/modernpath/cli/internal/kit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/modernpath/cli/internal/manifest"
 	"github.com/modernpath/cli/internal/opschema"
 	"github.com/modernpath/cli/internal/rdd"
+	"github.com/modernpath/cli/internal/storeback"
 	"github.com/spf13/cobra"
 )
 
@@ -34,14 +36,20 @@ var (
 	// corpus instead of meeting the server's answered-gate freeze
 	// (REQ-CROSS-257).
 	migrateRunFromEmpty bool
+	// migrateNoDocs drops the workspace-document ops from the import (parity with
+	// factory sync --no-docs, B11a), so a store whose embedding provider rejects
+	// documents can still take the process state. Opt-in; off by default.
+	migrateNoDocs bool
 )
 
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
-	Short: "One-time ledger→server migration (EPIC-CLI-003)",
+	Short: "One-time ledger→server migration",
 	Long: `The ledger→server import: measure fidelity, run the import, flip authority.
 
   report   dry-run fidelity report over the tracked corpus (writes nothing)
+  run      the import itself, then proven idempotent and readable back
+  flip     prepare the authority flip from an answered completion gate
 
 The tracked ledgers stay authoritative until the import is done, verified,
 and the flip is accepted at its own human gate.`,
@@ -125,6 +133,8 @@ func init() {
 		"file of accepted residue keys, the same one the report takes — the import refuses on any blocking loss it does not cover")
 	migrateRunCmd.Flags().BoolVar(&migrateRunFromEmpty, "from-empty", false,
 		"the final import to a flip target: refuse before writing unless the store holds no process rows for this system")
+	migrateRunCmd.Flags().BoolVar(&migrateNoDocs, "no-docs", false,
+		"skip workspace-document ops (upsert_document); import process state only")
 	migrateFlipCmd.Flags().StringVar(&migrateRunAcceptPath, "accept", "",
 		"file of accepted residue keys, for the flip's re-verification import")
 	migrateFlipCmd.Flags().StringVar(&migrateFlipGate, "gate", "",
@@ -133,7 +143,15 @@ func init() {
 		"the gate's current content-shadow identity (required)")
 	migrateFlipCmd.Flags().StringVar(&migrateFlipAnswer, "gate-answer", "",
 		"the gate's stored answer, echoed verbatim (required) — a declaration rides only the answer actually given")
-	migrateCmd.AddCommand(migrateReportCmd, migrateRunCmd, migrateFlipCmd)
+	migrateFlipCmd.Flags().BoolVar(&migrateNoDocs, "no-docs", false,
+		"skip workspace-document ops (upsert_document); import process state only (flip delegates to migrate run)")
+	migrateClearCmd.Flags().StringVar(&migrateClearGate, "gate", "",
+		"the ANSWERED store_backed_clearing gate's external id (required)")
+	migrateClearCmd.Flags().StringVar(&migrateClearFingerprint, "gate-fingerprint", "",
+		"the gate's current content-shadow identity (required)")
+	migrateClearCmd.Flags().StringVar(&migrateClearAnswer, "gate-answer", "",
+		"the gate's stored answer, echoed verbatim (required)")
+	migrateCmd.AddCommand(migrateReportCmd, migrateRunCmd, migrateFlipCmd, migrateClearCmd)
 	rootCmd.AddCommand(migrateCmd)
 }
 
@@ -173,6 +191,10 @@ func migrateRun(env *factoryEnv) error {
 	ops, warnings, err := env.workspaceOps()
 	if err != nil {
 		return err
+	}
+	if kept, dropped := noDocsFilter(ops, migrateNoDocs); dropped > 0 {
+		printWarning("--no-docs: skipping %d document op(s); importing process state only", dropped)
+		ops = kept
 	}
 	for _, w := range warnings {
 		printWarning("%s", w)
@@ -281,7 +303,7 @@ func migrateRun(env *factoryEnv) error {
 		return err
 	}
 	if sbStatus != 200 {
-		return fmt.Errorf("migrate run applied, but the store-backed seed was refused (server %d: %v)", sbStatus, sbBody["error"])
+		return fmt.Errorf("migrate run applied, but the store-backed seed was refused (%v)", serverRefusal("", sbStatus, sbBody))
 	}
 	printSuccess("store-backed declaration seeded (activation is the flip's act)")
 
@@ -336,7 +358,7 @@ func migrateRun(env *factoryEnv) error {
 			return err
 		}
 		if hStatus != 200 {
-			return fmt.Errorf("historical evidence run %s refused (server %d: %v)", id, hStatus, hBody["error"])
+			return fmt.Errorf("historical evidence run %s refused (%v)", id, serverRefusal("", hStatus, hBody))
 		}
 		histPosted++
 	}
@@ -389,7 +411,7 @@ func migrateRun(env *factoryEnv) error {
 		return err
 	}
 	if status != 200 {
-		return fmt.Errorf("migrate run applied, but its run record was refused (server %d: %v)", status, body["error"])
+		return fmt.Errorf("migrate run applied, but its run record was refused (%v)", serverRefusal("", status, body))
 	}
 	printSuccess("run recorded: MIGRATE-RUN-%s", sha)
 
@@ -537,43 +559,85 @@ func migrateSecondWriterHint(env *factoryEnv, ops []map[string]any, changedIDs [
 		repeat, hookLogPath(env.Root))
 }
 
-// migrateSyncPass posts one batch and returns the per-result counts. A
-// conflict is the server refusing a row — the import fails naming it rather
-// than absorbing the refusal (§224.4).
+// migrateSyncPass posts the ops in order and returns the per-result counts,
+// aggregated across chunks. The stream is chunked exactly as `factory sync`
+// chunks it — MODERNPATH_SYNC_CHUNK_SIZE ops per POST (default 200) — because a
+// full-corpus import is thousands of ops, and one POST carrying all of them
+// exceeds a platform edge's per-request window: a full corpus answered 504 on
+// the whole batch against test-plat with nothing landed, the same failure
+// factory.go records for the mirror path. Each chunk is its own server-side
+// transaction and the content shadow makes a replay a no-op, so a failure
+// part-way leaves the earlier chunks landed and re-running finishes the job —
+// which the idempotent two-pass import already tolerates. postSyncBatch retries
+// a transient 5xx per chunk. A conflict is the server refusing a row: the
+// import fails naming it rather than absorbing the refusal (§224.4).
 func migrateSyncPass(env *factoryEnv, ops []map[string]any) (map[string]int, []string, error) {
-	var changed []string
-	batch := map[string]any{
-		"schema_version": opschema.SchemaVersion,
-		"system_id":      env.SystemID,
-		"ops":            ops,
+	chunkSize := syncChunkSize()
+	chunks := chunkOps(ops, chunkSize)
+	if len(chunks) == 0 {
+		// Parity with factory sync: an empty stream still makes one POST rather
+		// than none, so the pass always gets a server round-trip.
+		chunks = append(chunks, nil)
 	}
-	if env.CurrentRelease != "" {
-		batch["release"] = env.CurrentRelease
-	}
-	status, body, err := env.call("POST", "/api/v1/sync/batch", batch)
-	if err != nil {
-		return nil, nil, err
-	}
-	if status != 200 {
-		return nil, nil, fmt.Errorf("server %d: %v", status, body["error"])
+	if len(chunks) > 1 {
+		printInfo("sending in %d chunks of up to %d ops", len(chunks), chunkSize)
 	}
 	counts := map[string]int{}
-	var conflicts []string
-	if results, ok := dataOf(body)["results"].([]any); ok {
-		for _, r := range results {
-			m, _ := r.(map[string]any)
-			counts[str(m, "result")]++
-			switch str(m, "result") {
-			case "conflict":
-				conflicts = append(conflicts, str(m, "external_id"))
-			case "created", "updated":
-				changed = append(changed, str(m, "external_id"))
+	var changed, conflicts []string
+	landed := 0
+	for index, chunk := range chunks {
+		batch := map[string]any{
+			"schema_version": opschema.SchemaVersion,
+			"system_id":      env.SystemID,
+			"ops":            chunk,
+		}
+		if env.CurrentRelease != "" {
+			batch["release"] = env.CurrentRelease
+		}
+		status, body, err := env.postSyncBatch(batch)
+		if err != nil {
+			if index > 0 {
+				printWarning("chunk %d/%d failed; %d op(s) already landed — re-running syncs the rest",
+					index+1, len(chunks), landed)
+			}
+			return nil, nil, err
+		}
+		if status != 200 && status != 207 {
+			if index > 0 {
+				printWarning("chunk %d/%d failed (server %d); %d op(s) already landed — re-running syncs the rest",
+					index+1, len(chunks), status, landed)
+			}
+			return nil, nil, serverRefusal("", status, body)
+		}
+		// REQ-CROSS-386: a 207 chunk landed with reported failures — name them
+		// and stop, the earlier chunks are committed and a re-run resumes.
+		if status == 207 {
+			if rerr := reportSyncOutcome(status, body); rerr != nil {
+				return nil, nil, rerr
 			}
 		}
-	}
-	if len(conflicts) > 0 {
-		return nil, nil, fmt.Errorf("migrate run: the store refused %d row(s) as conflicts (server-edited, kept): %s",
-			len(conflicts), strings.Join(conflicts, ", "))
+		if results, ok := dataOf(body)["results"].([]any); ok {
+			for _, r := range results {
+				m, _ := r.(map[string]any)
+				counts[str(m, "result")]++
+				switch str(m, "result") {
+				case "conflict":
+					conflicts = append(conflicts, str(m, "external_id"))
+				case "created", "updated":
+					changed = append(changed, str(m, "external_id"))
+				}
+			}
+		}
+		if len(conflicts) > 0 {
+			// A conflict is the server refusing a row (server-edited, kept). Stop
+			// at the first chunk that hits one rather than posting the rest: the
+			// earlier chunks are committed and a re-run resumes, but nothing past
+			// the conflict is applied (§224.4). Every op reaching `landed` was a
+			// clean 200, so the "already landed" hint stays accurate.
+			return nil, nil, fmt.Errorf("migrate run: the store refused %d row(s) as conflicts (server-edited, kept): %s",
+				len(conflicts), strings.Join(conflicts, ", "))
+		}
+		landed += len(chunk)
 	}
 	return counts, changed, nil
 }
@@ -1755,15 +1819,9 @@ func authorPost(env *factoryEnv, body map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	if status != 200 {
-		if errBody, ok := resp["error"].(map[string]any); ok {
-			if details := errBody["details"]; details != nil {
-				return nil, fmt.Errorf("author refused (server %d): %v", status, details)
-			}
-			if reason := errBody["reason"]; reason != nil {
-				return nil, fmt.Errorf("author refused (server %d): %v", status, reason)
-			}
-		}
-		return nil, fmt.Errorf("server %d: %v", status, resp["error"])
+		// REQ-CROSS-372: details as sorted field lines, reason/message verbatim,
+		// an undecodable body raw — one renderer for every refusal shape.
+		return nil, serverRefusal("author refused", status, resp)
 	}
 	return dataOf(resp), nil
 }
@@ -1775,18 +1833,44 @@ func authorCreate(env *factoryEnv, kind, externalID string, fields map[string]an
 	for k, v := range fields {
 		record[k] = v
 	}
-	data, err := authorPost(env, map[string]any{"action": "create", "record": record})
+	payload := map[string]any{"action": "create", "record": record}
+	// REQ-CROSS-367 (EPIC-CROSS-002): a birth joins its release. Send the
+	// workspace current_release so the server can resolve the target release
+	// (precedence rung 2: parent -> current_release -> open delivery target ->
+	// base). Omitted when unset, so the server falls through to the open target
+	// rather than being handed an empty slug.
+	if env.CurrentRelease != "" {
+		payload["current_release"] = env.CurrentRelease
+	}
+	data, err := authorPost(env, payload)
 	if err != nil {
 		return err
 	}
 	if row, ok := data[kind].(map[string]any); ok {
 		printSuccess("authored %s %s (%s)", kind, str(row, "external_id"),
-			firstNonEmpty(str(row, "work_status"), str(row, "process_status"), str(row, "state")))
-		// A gate's content-shadow fingerprint is its reference identity:
-		// advance and the store-backed declaration verify against it, and it
-		// is not recomputable client-side. GET /sync/gates also serves it.
+			firstNonEmpty(str(row, "work_status"), str(row, "process_status"), str(row, "state"), str(row, "disposition")))
+		// The content-shadow fingerprint is the record's reference identity, not
+		// recomputable client-side. A gate verifies against it on advance and the
+		// store-backed declaration (--gate-fingerprint); a requirement's is the
+		// value the next edit guards on (--expected-fingerprint). Serve the right
+		// hint per kind (REQ-CROSS-304: requirement responses now carry the fp).
+		// REQ-CROSS-371: a gate names what it moves — print the served exact_scope so
+		// an epic approval's member list is visible to the person who opened it.
+		if kind == "gate" {
+			if scope, ok := row["exact_scope"].([]any); ok && len(scope) > 0 {
+				parts := make([]string, 0, len(scope))
+				for _, s := range scope {
+					parts = append(parts, fmt.Sprint(s))
+				}
+				printInfo("scope: %s", strings.Join(parts, ", "))
+			}
+		}
 		if fp := str(row, "fingerprint"); fp != "" {
-			printInfo("fingerprint: %s (pass as --gate-fingerprint when referencing this gate)", fp)
+			if kind == "gate" {
+				printInfo("fingerprint: %s (pass as --gate-fingerprint when referencing this gate)", fp)
+			} else {
+				printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
+			}
 		}
 	}
 	return nil
@@ -1799,6 +1883,36 @@ func authorTrace(env *factoryEnv, externalID string, fields map[string]any) erro
 	record := map[string]any{"kind": "gate", "external_id": externalID}
 	for k, v := range fields {
 		record[k] = v
+	}
+	// REQ-CROSS-365: `author trace --scope` accepts both the bare external id
+	// (`REQ-CROSS-358`) and the `kind:ext` form (`single_sr:REQ-CROSS-358`).
+	// Normalize each token to its bare id so the stored exact_scope matches the
+	// bare ids the server keys on (phase_facts.ex) and reviewContextForScope
+	// resolves the review context off the working-set dir name (the bare id) — a
+	// kind:ext token would match neither. Normalizing here, before both the post
+	// and the context lookup below, fixes both.
+	exactScope := fields["exact_scope"]
+	if norm, ok := normalizeScopeTokens(exactScope); ok {
+		exactScope = norm
+		record["exact_scope"] = norm
+	}
+	// REQ-CROSS-315 (#8): a cold-review verdict must carry the review-context id it
+	// was recorded under, or PhaseFacts.cold_review reads independence off a nil
+	// context — the verdict is never independent, cold_review is never satisfied,
+	// and the entry route stays shut. Mirror `process findings add`: read the
+	// context the reviewed scope was pulled under (`--for-review` stamps it),
+	// unless the caller supplied one explicitly.
+	if str(record, "purpose") == "cold-review" && record["review_context_id"] == nil {
+		if ctx := reviewContextForScope(env, exactScope); ctx != "" {
+			record["review_context_id"] = ctx
+		}
+	}
+	// REQ-CROSS-364: a cold-review trace with no resolved review context can never
+	// satisfy cold_review and, because traces are immutable, can never be removed.
+	// Fail fast with a clear message instead of posting the dead row (the server
+	// enforces the same backstop). Scoped to cold-review.
+	if str(record, "purpose") == "cold-review" && str(record, "review_context_id") == "" {
+		return fmt.Errorf("a cold-review trace needs a review context, but none is stamped for scope %v — pull the reviewed scope with `working-set pull --for-review` before recording the verdict", record["exact_scope"])
 	}
 	data, err := authorPost(env, map[string]any{"action": "evaluate_trace", "record": record})
 	if err != nil {
@@ -1848,6 +1962,93 @@ func authorAdvance(env *factoryEnv, kind, externalID, to, expected, gateRef, gat
 		// one of the 414 imported gates that carry no transition at all.
 		if basis := str(data, "transition_basis"); basis != "" {
 			printInfo("transition basis: %s\n", basis)
+		}
+		// REQ-CROSS-419 (EPIC-CLI-022): a demotion gate moves the dependents
+		// that follow as internal writes; the response says which, so the
+		// operator sees the whole consequence of the one answer.
+		if followed, _ := data["followed_transitions"].([]any); len(followed) > 0 {
+			for _, f := range followed {
+				m, _ := f.(map[string]any)
+				printInfo("followed: %s %s → %s (%s)", str(m, "external_id"), str(m, "from"), str(m, "to"), str(m, "type"))
+			}
+		}
+	}
+	return nil
+}
+
+// authorUpdate posts one content edit to an existing requirement
+// (REQ-CROSS-304/305/309, EPIC-CLI-007). The expected_fingerprint rides so a
+// stale edit conflicts rather than overwriting; the caller sends only the
+// fields it set, so an omitted flag preserves the server-side value.
+func authorUpdate(env *factoryEnv, kind, externalID string, fields map[string]any) error {
+	record := map[string]any{"kind": kind, "external_id": externalID}
+	for k, v := range fields {
+		record[k] = v
+	}
+	data, err := authorPost(env, map[string]any{"action": "update", "record": record})
+	if err != nil {
+		return err
+	}
+	// The response nests the edited record under its kind ("requirement" or "epic").
+	if row, ok := data[kind].(map[string]any); ok {
+		printSuccess("updated %s %s (%s)", kind, str(row, "external_id"),
+			firstNonEmpty(str(row, "work_status"), str(row, "process_status")))
+		// The edit yields a fresh content fingerprint; the next edit guards
+		// against it, so print it the way authorCreate prints a gate's.
+		if fp := str(row, "fingerprint"); fp != "" {
+			printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
+		}
+	}
+	return nil
+}
+
+// authorRelate declares a UR<->SR relation from the SR side (REQ-CROSS-306,
+// EPIC-CLI-007): the parent user-requirement external ids ride as
+// parent_external_ids and the expected_fingerprint guards a stale target. The
+// server refuses a UR-side target — the relation lives on the SR.
+func authorRelate(env *factoryEnv, externalID string, fields map[string]any) error {
+	record := map[string]any{"kind": "requirement", "external_id": externalID}
+	for k, v := range fields {
+		record[k] = v
+	}
+	data, err := authorPost(env, map[string]any{"action": "relate", "record": record})
+	if err != nil {
+		return err
+	}
+	if row, ok := data["requirement"].(map[string]any); ok {
+		printSuccess("related requirement %s (%s)", str(row, "external_id"),
+			firstNonEmpty(str(row, "work_status"), str(row, "process_status")))
+		// A relate bumps the SR's content fingerprint; the server serves the
+		// new one (author_json) exactly as an update does. Print it so the next
+		// fingerprint-guarded edit chains without a side-channel read.
+		if fp := str(row, "fingerprint"); fp != "" {
+			printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
+		}
+	}
+	return nil
+}
+
+// authorMember authors EPIC MEMBERSHIP (REQ-CROSS-306, EPIC-CLI-007): the epic
+// is the target (kind:"epic"), member_external_ids names the members, and mode
+// is declare|withdraw. It rides the same action:"relate" the UR<->SR path uses;
+// the record's kind is what routes it to the server's epic-membership clause.
+func authorMember(env *factoryEnv, externalID string, fields map[string]any) error {
+	record := map[string]any{"kind": "epic", "external_id": externalID}
+	for k, v := range fields {
+		record[k] = v
+	}
+	data, err := authorPost(env, map[string]any{"action": "relate", "record": record})
+	if err != nil {
+		return err
+	}
+	if row, ok := data["epic"].(map[string]any); ok {
+		printSuccess("epic %s membership updated (%s)", str(row, "external_id"),
+			firstNonEmpty(str(row, "process_status"), str(row, "work_status")))
+		// REQ-CROSS-310 (SR-CLI-0081): membership moves the epic's content
+		// fingerprint; print it so the next fingerprint-guarded edit chains
+		// without a side-channel read, exactly as update/relate do.
+		if fp := str(row, "fingerprint"); fp != "" {
+			printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
 		}
 	}
 	return nil
@@ -1966,29 +2167,17 @@ func migrateFlip(env *factoryEnv, gateRef, gateFingerprint, gateAnswer string) e
 			status, migrateRefusalDetail(body), env.SystemID)
 	}
 
-	// The tracked marker: the frozen retired list + the acceptance source.
-	var b strings.Builder
-	b.WriteString("# Store-backed declaration\n\n")
-	b.WriteString("This workspace's process store is the server. The files below are\n")
-	b.WriteString("retired: read state via `modernpath working-set pull` and `your-move`,\n")
-	b.WriteString("write via `modernpath author`. The dual-authority guard\n")
-	b.WriteString("(scripts/check-store-backed.sh) gates on this list.\n\n")
+	// The tracked marker: the frozen retired list + the acceptance source —
+	// the writer is shared with `install --store-backed` (REQ-CROSS-406), so a
+	// system that never had ledgers gets the same shape with no retired lines.
 	acceptedTag, _ := dataOf(body)["source_tag"].(string)
-	fmt.Fprintf(&b, "- **Accepted:** %s (gate %s)\n", acceptedTag, gateRef)
-	fmt.Fprintf(&b, "- **Server:** %s · system %d\n\n", env.APIURL, env.SystemID)
-	for _, p := range retiredPathFamilies {
-		fmt.Fprintf(&b, "retired: %s\n", p)
-	}
-	markerPath := filepath.Join(env.Root, "process", "store-backed.md")
-	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(markerPath, []byte(b.String()), 0o644); err != nil {
+	if err := writeStoreBackedMarker(env.Root, env.APIURL, acceptedTag, gateRef, env.SystemID, retiredPathFamilies); err != nil {
 		return err
 	}
 	printSuccess("store-backed declaration active; marker written: process/store-backed.md")
 	fmt.Println("\nThe flip commit is yours to make on the completion gate's answer:")
-	fmt.Println("  git rm -r " + strings.Join(retiredPathFamilies, " "))
+	fmt.Println("  git rm -r " + strings.Join(retiredPathFamilies, " ") + " " + kit.LedgerSkillTarget)
+	fmt.Println("  (the ledger skill documents a retired file; the installer withholds it under the marker)")
 	fmt.Println("  git add process/store-backed.md && commit — one reviewable flip commit.")
 	return nil
 }
@@ -2026,6 +2215,13 @@ func migrateReverify(env *factoryEnv) error {
 	ops, warnings, err := env.workspaceOps()
 	if err != nil {
 		return err
+	}
+	// The same escape hatch the fresh path honours: a store populated with
+	// --no-docs holds no documents, so re-verifying their ids would refuse a
+	// flip whose import did exactly what it was told.
+	if kept, dropped := noDocsFilter(ops, migrateNoDocs); dropped > 0 {
+		printWarning("--no-docs: skipping %d document op(s); re-verifying process state only", dropped)
+		ops = kept
 	}
 	for _, w := range warnings {
 		printWarning("%s", w)
@@ -2069,10 +2265,67 @@ func migrateReverify(env *factoryEnv) error {
 	return nil
 }
 
+var (
+	migrateClearGate        string
+	migrateClearFingerprint string
+	migrateClearAnswer      string
+)
+
+var migrateClearCmd = &cobra.Command{
+	Use:   "clear",
+	Args:  cobra.NoArgs,
+	Short: "Clear an active store-backed declaration on an ANSWERED gate (reopens the bulk sync channel)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env, err := factoryEnvLoad()
+		if err != nil {
+			return err
+		}
+		return migrateClear(env, migrateClearGate, migrateClearFingerprint, migrateClearAnswer)
+	},
+}
+
+// migrateClear posts the store-backed clearing transition (REQ-CROSS-259,
+// UNFLIP-259): state "cleared" on an ANSWERED store_backed_clearing gate — the
+// only legal exit from an active declaration, reopening the bulk channel.
+// Unlike flip it runs NO re-verification import and sends no corpus_revision:
+// clearing is the exit FROM active, and while active the write channels are
+// closed anyway, so there is nothing to re-verify. It writes nothing to the
+// tree — restoring the retired files and removing the marker is the operator's
+// own reviewable commit, symmetric to the flip's git rm.
+func migrateClear(env *factoryEnv, gateRef, gateFingerprint, gateAnswer string) error {
+	if gateRef == "" || gateFingerprint == "" {
+		return fmt.Errorf("migrate clear: clearing is applied only from a human ANSWERED gate — pass --gate <gate id> --gate-fingerprint <its current identity>")
+	}
+	if gateAnswer == "" {
+		return fmt.Errorf("migrate clear: the clearing rides the answer the gate actually carries — pass --gate-answer <the gate's stored answer, verbatim>")
+	}
+	status, body, err := env.call("POST", "/api/v1/sync/store-backed", map[string]any{
+		"system_id":        env.SystemID,
+		"state":            "cleared",
+		"gate_ref":         gateRef,
+		"gate_fingerprint": gateFingerprint,
+		"gate_answer":      gateAnswer,
+		"actor":            map[string]any{"kind": "human"},
+	})
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("store-backed clearing refused (server %d): %v — a clearing gate is human-class, an approval_request, purposed store_backed_clearing, scoped to system:%d, and answered with the approving option; --gate-answer must echo its stored answer and --gate-fingerprint its current identity",
+			status, migrateRefusalDetail(body), env.SystemID)
+	}
+	suffix := ""
+	if tag, _ := dataOf(body)["source_tag"].(string); tag != "" {
+		suffix = ", " + tag
+	}
+	printSuccess("store-backed declaration cleared (gate %s%s) — the bulk sync channel is open again", gateRef, suffix)
+	printInfo("this wrote nothing to the tree: restoring the retired files and removing process/store-backed.md is your own reviewable clear commit")
+	return nil
+}
+
 // storeBackedWorkspace reports whether the workspace carries the flip's
 // tracked declaration marker (REQ-CROSS-225 §225.4): an absent ledger is
 // then the declared configuration, never an error.
 func storeBackedWorkspace(root string) bool {
-	_, err := os.Stat(filepath.Join(root, "process", "store-backed.md"))
-	return err == nil
+	return storeback.Active(root)
 }

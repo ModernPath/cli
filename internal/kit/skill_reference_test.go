@@ -184,8 +184,8 @@ func TestNoRetiredTargetIsALiveTarget(t *testing.T) {
 			live[target] = true
 		}
 	}
-	for _, target := range mergeTargets {
-		live[target] = true
+	for _, m := range mergeTargets {
+		live[m.target] = true
 	}
 
 	// The raw retired list must overlap live targets — that collision is the
@@ -228,9 +228,9 @@ func TestEveryInstallTargetAssetExists(t *testing.T) {
 			t.Errorf("legacyInstallTargets maps %s, which is not in the embedded tree: %v", asset, err)
 		}
 	}
-	for asset := range mergeTargets {
-		if _, err := assets.ReadFile(asset); err != nil {
-			t.Errorf("mergeTargets maps %s, which is not in the embedded tree: %v", asset, err)
+	for _, m := range mergeTargets {
+		if _, err := assets.ReadFile(m.asset); err != nil {
+			t.Errorf("mergeTargets maps %s, which is not in the embedded tree: %v", m.asset, err)
 		}
 	}
 }

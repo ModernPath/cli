@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -220,15 +221,18 @@ func init() {
 }
 
 func runDocsSync(cmd *cobra.Command, args []string) error {
+	// REQ-CROSS-405: the binding and credential statements come first, and a
+	// refusal here sends nothing.
+	env, err := apiClientCredentialLoad()
+	if err != nil {
+		printError("%v\n", err)
+		return err
+	}
+
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
-	}
-
-	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
 	}
 
 	archName := cfg.SystemName
@@ -238,11 +242,16 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 
 	printInfo("Syncing documentation for %s from %s...\n", archName, cfg.APIURL)
 
-	// Create API client (same as init command)
-	client := api.NewClient(cfg.APIURL, "")
+	client := api.NewClient(env.APIURL, env.token)
 
 	// Health check
 	if err := client.HealthCheck(); err != nil {
+		// A reachable server that rejects the credential answers 401 here on a
+		// fail-closed platform host; render that as the credential statement,
+		// not a bare status line (REQ-CROSS-405).
+		if errors.Is(err, api.ErrUnauthorized) {
+			err = env.credentialRejected()
+		}
 		printError("Cannot connect to ModernPath: %v\n", err)
 		return err
 	}
@@ -252,6 +261,9 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 
 	zipData, err := downloadExportWithStatus(client, cfg.SystemID)
 	if err != nil {
+		if errors.Is(err, api.ErrUnauthorized) {
+			err = env.credentialRejected()
+		}
 		printError("Failed to download: %v\n", err)
 		return err
 	}

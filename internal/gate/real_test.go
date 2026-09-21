@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/modernpath/cli/internal/storeback"
 )
 
 // REQ-CROSS-030: the process gates, exercised against real ledgers rather than
@@ -16,6 +18,9 @@ func TestRealWorkspaceLedgers(t *testing.T) {
 	root := os.Getenv("MP_GATE_ROOT")
 	if root == "" {
 		t.Skip("set MP_GATE_ROOT to check a real workspace")
+	}
+	if storeback.Active(root) {
+		t.Skip("store-backed workspace (process/store-backed.md): ledger gates measure the server store, not local files")
 	}
 	found, err := CheckLedgers(root)
 	if err != nil {
@@ -35,6 +40,9 @@ func TestRealWorkspaceApprovals(t *testing.T) {
 	root := os.Getenv("MP_GATE_ROOT")
 	if root == "" {
 		t.Skip("set MP_GATE_ROOT")
+	}
+	if storeback.Active(root) {
+		t.Skip("store-backed workspace (process/store-backed.md): approval gates measure the server store, not local files")
 	}
 	found, err := CheckApprovals(root)
 	if err != nil {

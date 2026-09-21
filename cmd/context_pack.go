@@ -33,7 +33,7 @@ var contextPackJSON bool
 
 func init() {
 	contextCmd.Flags().BoolVar(&contextPackJSON, "json", false,
-		"REQ-id mode: emit the context pack as JSON")
+		"With a requirement id as the argument: emit its context pack as JSON instead of text")
 
 	orig := contextCmd.RunE // runContext — captured before the wrap
 	contextCmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -656,7 +656,7 @@ func serverFromWorkspace() serverPackFn {
 			return packServer{Available: false, Reason: err.Error()}
 		}
 		if status != 200 {
-			return packServer{Available: false, Reason: fmt.Sprintf("server %d on /api/v1/sync/requirements: %v", status, body["error"])}
+			return packServer{Available: false, Reason: serverRefusal("/api/v1/sync/requirements", status, body).Error()}
 		}
 
 		out := packServer{Available: true}

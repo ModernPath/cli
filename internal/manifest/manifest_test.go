@@ -80,6 +80,18 @@ func TestValidateRejectsUnknownAndMismatchedFormats(t *testing.T) {
 	}
 }
 
+// GAP-013: a store-backed workspace declares its mandated corpus retired, so
+// MissingMandated must report nothing (yield to the marker) rather than name
+// all three types as absent.
+func TestMissingMandatedYieldsToStoreBackedMarker(t *testing.T) {
+	root := scaffold(t, map[string]string{
+		"process/store-backed.md": "# Store-backed\nretired: tasks/*-REQUIREMENTS.md\n",
+	})
+	if missing := Default().MissingMandated(root); len(missing) != 0 {
+		t.Fatalf("MissingMandated on a store-backed workspace: got %v; want none (yield to the marker)", missing)
+	}
+}
+
 func TestMissingMandatedIsLoudNotSilent(t *testing.T) {
 	// a repo with only a worklist: requirements + epics are mandated gaps
 	root := scaffold(t, map[string]string{"WORKLIST.md": "| Epic |\n"})

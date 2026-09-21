@@ -30,16 +30,21 @@ import { join } from "node:path";
 // An extension missing here is not reported as unresolved — it is not seen at
 // all. On a .NET estate this printed "10/10 citations resolve" while silently
 // skipping 710 of 720, which reads as a pass. Longest-first still holds.
-const EXT = "exs|tsx|yaml|proto|json|ex|go|js|ts|yml|sh|py|rb|rs|java|kt|toml|sql|cs|vb|fs|php|swift|scala|erl";
+const EXT = "heex|leex|eex|exs|tsx|yaml|proto|json|ex|go|js|ts|yml|sh|py|rb|rs|java|kt|toml|sql|cs|vb|fs|php|swift|scala|erl";
 
 // Longest extensions first, and a boundary after — `.ex` must not match inside
 // `.exs`, nor `.ts` inside `.tsx`. This is the first of the three failures.
+// The boundary also refuses a dot followed by more name: the path is matched
+// lazily, so `CODE:rel/env.sh.eex:45` used to stop at `env.sh` — a known
+// extension followed by `.` — and report a correct citation as "no such file"
+// while the `:45` fell off the match. A double extension is one file
+// (`.sh.eex`, `.html.heex`); a trailing sentence period is still prose.
 // `CODE: path` with a space is a rare deviation (2 instances in one corpus,
 // RUN:2026-08-14) — tolerated so the citation is CHECKED rather than skipped.
 // A citation may end at a NAME instead of a line — a test
 // identifier survives edits to the file, a line number does not. Group 4 is
 // that name; unchecked, `file.go:TestGoneForever` passed on file existence.
-const PREFIXED = new RegExp(`CODE: ?([A-Za-z0-9_./\\[\\]\\-]+?\\.(?:${EXT}))(?![A-Za-z0-9])(?::(?:((?:\\d+(?:-\\d+)?)(?:,\\d+(?:-\\d+)?)*)|([A-Za-z_][A-Za-z0-9_]{2,})))?`, "g");
+const PREFIXED = new RegExp(`CODE: ?([A-Za-z0-9_./\\[\\]\\-]+?\\.(?:${EXT}))(?!\\.?[A-Za-z0-9])(?::(?:((?:\\d+(?:-\\d+)?)(?:,\\d+(?:-\\d+)?)*)|([A-Za-z_][A-Za-z0-9_]{2,})))?`, "g");
 // The full grammar, not the first two parts: a citation may list lines and
 // ranges — file:N, file:N-M, file:N,M, file:N-M,P. A pattern holding only two
 // groups matches every one of them and silently skips the rest; 188 citations
@@ -61,9 +66,22 @@ const ELIDED = /(?:CODE:|`)(?:[A-Za-z0-9_.\\[\\]\-]+\/)*\.\.\.\/[A-Za-z0-9_.\/\\
 // C8: a row naming a gap is not a citation. "there is no test_draft_service.py"
 // is the most useful thing a derivation pass produces, and an audit that counts
 // it as broken teaches the next pass to stop naming what is missing.
-const ABSENCE = /\b(no|not|missing|absent|never|does not exist|there is no|without)\b[^.]{0,60}$/i;
+// Bare `not`/`never` are NOT in this list: alone they carry no absence meaning
+// ("the handler is not used anymore; its logic moved to `CODE:new.go:900`"), yet
+// inside the 60-char window they excused any failing citation trailing an
+// unrelated negation — hiding real rot behind a stray "is not". Every word kept
+// names absence directly; a deliberate gap still reads "no"/"there is no"/etc.
+const ABSENCE = /\b(no|missing|absent|does not exist|there is no|without)\b[^.]{0,60}$/i;
 
 const roots = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+// A vacuity floor the CALLER sets, because only the caller knows its corpus. A
+// generic run stays generic (default 0); a gate over a corpus that always
+// carries citations passes --min=N, so a scan that silently matched almost
+// nothing — the ".NET estate printed 10/10 while skipping 710" failure in its
+// residual form, where the count itself is the tell — exits non-zero instead of
+// reading as a clean pass.
+const minArg = process.argv.find((a) => a.startsWith("--min="));
+const minCitations = minArg ? Math.max(0, parseInt(minArg.slice(6), 10) || 0) : 0;
 const targets = roots.length ? roots : ["docs", ...(existsSync("ARCHITECTURE.md") ? ["ARCHITECTURE.md"] : [])];
 
 // Refuse to audit the prompts. Teaching material deliberately
@@ -275,6 +293,7 @@ function check(doc, text, m) {
 }
 
 const total = ok + broken.length;
+const belowFloor = minCitations > 0 && total < minCitations;
 console.log(`${ok}/${total} citations resolve across ${docs.length} documents` +
   (gaps ? `  (+${gaps} named gaps excused — a cited path stated as absent)` : ""));
 
@@ -286,6 +305,10 @@ if (broken.length) {
   console.log(`\n${broken.length} broken:`);
   for (const b of broken) console.log(`  ${b.doc}:${b.lineNo}  ${b.path}  — ${b.why}`);
 }
-if (!elided.length && !broken.length) console.log("no elided paths");
+if (belowFloor) {
+  console.log(`\nvacuity floor: ${total} citation(s) checked, below the required --min ${minCitations} —` +
+    " too little matched to be a real audit (a broken scan otherwise reads as a clean pass)");
+}
+if (!elided.length && !broken.length && !belowFloor) console.log("no elided paths");
 
-process.exit(broken.length || elided.length ? 1 : 0);
+process.exit(broken.length || elided.length || belowFloor ? 1 : 0);

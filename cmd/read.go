@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -104,7 +104,7 @@ type DocReadResponse struct {
 		Summary string `json:"summary,omitempty"`
 		Tier    string `json:"tier,omitempty"`
 		Angle   string `json:"angle,omitempty"`
-		
+
 		// List/search results
 		Documents []struct {
 			ID      string `json:"id"`
@@ -117,15 +117,17 @@ type DocReadResponse struct {
 }
 
 func runReadFile(cmd *cobra.Command, args []string) error {
+	// REQ-CROSS-405: binding and credential statements before any request.
+	env, err := apiClientCredentialLoad()
+	if err != nil {
+		printError("%v\n", err)
+		return err
+	}
+
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
-	}
-
-	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
 	}
 
 	filePath := args[0]
@@ -139,7 +141,7 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 	params := url.Values{}
 	params.Set("system_id", strconv.Itoa(cfg.SystemID))
 	params.Set("file_path", filePath)
-	
+
 	if readStartLine > 0 {
 		params.Set("start_line", strconv.Itoa(readStartLine))
 	}
@@ -150,7 +152,7 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 	requestURL := fmt.Sprintf("%s/api/files/read?%s", baseURL, params.Encode())
 
 	// Make authenticated request
-	client := newReadAPIClient(cfg)
+	client := newReadAPIClient(cfg, env.token)
 	resp, err := client.Get(requestURL)
 	if err != nil {
 		printError("Failed to connect to API: %v\n", err)
@@ -164,6 +166,11 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		err := env.credentialRejected()
+		printError("%v\n", err)
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		var errResp struct {
 			Error string `json:"error"`
@@ -193,7 +200,7 @@ func displayFileContent(resp *FileReadResponse) {
 	// Header
 	bold := color.New(color.Bold)
 	gray := color.New(color.FgHiBlack)
-	
+
 	fmt.Println()
 	bold.Printf("📄 %s\n", d.FilePath)
 	gray.Printf("   Language: %s | Total lines: %d", d.Language, d.TotalLines)
@@ -221,15 +228,17 @@ func displayFileContent(resp *FileReadResponse) {
 }
 
 func runReadDoc(cmd *cobra.Command, args []string) error {
+	// REQ-CROSS-405: binding and credential statements before any request.
+	env, err := apiClientCredentialLoad()
+	if err != nil {
+		printError("%v\n", err)
+		return err
+	}
+
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
-	}
-
-	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
 	}
 
 	// Build request URL
@@ -264,7 +273,7 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 	requestURL := fmt.Sprintf("%s/api/docs/read?%s", baseURL, params.Encode())
 
 	// Make authenticated request
-	client := newReadAPIClient(cfg)
+	client := newReadAPIClient(cfg, env.token)
 	resp, err := client.Get(requestURL)
 	if err != nil {
 		printError("Failed to connect to API: %v\n", err)
@@ -278,6 +287,11 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		err := env.credentialRejected()
+		printError("%v\n", err)
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		var errResp struct {
 			Error string `json:"error"`
@@ -320,9 +334,9 @@ func displayDocList(resp *DocReadResponse) {
 	for _, doc := range docs {
 		tierColor := color.New(color.FgCyan)
 		tierColor.Printf("[%s/%s] ", doc.Tier, doc.Angle)
-		
+
 		bold.Printf("%s\n", doc.Title)
-		
+
 		if doc.Summary != "" {
 			gray := color.New(color.FgHiBlack)
 			summary := doc.Summary
@@ -331,7 +345,7 @@ func displayDocList(resp *DocReadResponse) {
 			}
 			gray.Printf("  %s\n", summary)
 		}
-		
+
 		gray := color.New(color.FgHiBlack)
 		gray.Printf("  ID: %s\n", doc.ID)
 		fmt.Println()
@@ -350,28 +364,23 @@ func displayDocContent(resp *DocReadResponse) {
 	bold.Printf("%s\n", d.Title)
 	gray.Printf("ID: %s\n", d.ID)
 	fmt.Println("═════════════════════════════════════════════════════════════════")
-	
+
 	if d.Summary != "" {
 		fmt.Println()
 		gray.Printf("Summary: %s\n", d.Summary)
 	}
-	
+
 	fmt.Println()
 	fmt.Println(d.Content)
 	fmt.Println()
 }
 
-// newReadAPIClient creates an authenticated HTTP client for read operations
-func newReadAPIClient(cfg *config.Config) *authenticatedClient {
+// newReadAPIClient creates an HTTP client for read operations carrying the
+// bearer the credential pre-check established.
+func newReadAPIClient(cfg *config.Config, token string) *authenticatedClient {
 	baseURL := cfg.APIURL
 	if baseURL == "" {
 		baseURL = config.DefaultAPIURL
-	}
-
-	token := ""
-	auth, _ := config.ReadAuth()
-	if auth != nil {
-		token = auth.Token
 	}
 
 	return &authenticatedClient{

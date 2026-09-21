@@ -14,6 +14,12 @@ import (
 func codexTestAgent(t *testing.T) agentConfig {
 	t.Helper()
 	root := t.TempDir()
+	// The installer reads the store-backed marker from the process cwd
+	// (storeBackedFromCwd walks up from it), so a test run inside a flipped
+	// workspace saw the enclosing repository's marker, retired the sync
+	// family, and failed three assertions that pass anywhere else. Pin the
+	// cwd to the fixture so the tests describe the fixture, not the host.
+	t.Chdir(root)
 	dir := filepath.Join(root, ".codex")
 	if err := os.MkdirAll(filepath.Join(dir, "hooks"), 0o755); err != nil {
 		t.Fatal(err)

@@ -6,17 +6,14 @@ package cmd
 // touches its own). Claude Code only; Codex's acceptance of additionalContext on
 // SessionStart is unverified, so it is reported deferred, not silently skipped.
 
-import (
-	"encoding/json"
-	"os"
-)
+import "os"
 
 const briefHookMarker = "your-move --hook"
 
 var claudeBriefEvents = []string{"SessionStart"}
 
 func briefHookCommand() string {
-	return "command -v modernpath >/dev/null 2>&1 && modernpath your-move --hook SessionStart 2>/dev/null || printf '{}'"
+	return hookCommand("your-move --hook SessionStart", "printf '{}'")
 }
 
 // installBriefFamilyClaude merges one SessionStart entry into
@@ -36,7 +33,6 @@ func installBriefFamilyClaude(agent agentConfig) error {
 	}
 
 	existing, _ := hooks["SessionStart"].([]interface{})
-	kept := dropEntriesWithMarkers(existing, briefHookMarker)
 	entry := map[string]interface{}{
 		"hooks": []interface{}{
 			map[string]interface{}{
@@ -46,14 +42,9 @@ func installBriefFamilyClaude(agent agentConfig) error {
 			},
 		},
 	}
-	hooks["SessionStart"] = append(kept, entry)
+	hooks["SessionStart"] = replaceOwnedEntry(existing, entry, briefHookMarker)
 	settings["hooks"] = hooks
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(agent.configPath, data, 0o644)
+	return writeSettingsFile(agent.configPath, settings)
 }
 
 func uninstallBriefFamilyClaude(agent agentConfig) (bool, error) {
@@ -61,6 +52,9 @@ func uninstallBriefFamilyClaude(agent agentConfig) (bool, error) {
 }
 
 func briefFamilyState(agent agentConfig) hookFamilyState {
+	if agent.name == "Pi" {
+		return piExtensionState(agent, briefHookMarker)
+	}
 	return familyConfigState(agent, claudeBriefEvents, []string{briefHookMarker}, nil)
 }
 

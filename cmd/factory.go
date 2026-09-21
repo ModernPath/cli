@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -65,6 +66,19 @@ type factoryEnv struct {
 	// minutes server-side, and an abandoned batch keeps running without the
 	// client.
 	callTimeout time.Duration
+	// storeRevision is the last x-modernpath-store-revision the server sent
+	// (REQ-CROSS-348).
+	storeRevision string
+	// tokenExpiry is the stored credential's known expiry, zero when none is
+	// known, so a 401 can say whether the token had already expired
+	// (REQ-CROSS-389).
+	tokenExpiry time.Time
+	// contractVersion is the sync contract version the server advertised on
+	// this process's responses (REQ-CROSS-390); "" until served. contract is
+	// the advertisement, fetched once per process before the first write.
+	contractVersion string
+	contract        *serverContract
+	warned          map[string]bool
 }
 
 // credentialError marks a failure that re-running the failing command cannot
@@ -87,6 +101,13 @@ func (e credentialError) Unwrap() error { return e.err }
 // possibilities rather than asserting the common one.
 func (e *factoryEnv) credentialRejected() error {
 	repair := authRepairCommand(e.APIURL)
+	if !e.tokenExpiry.IsZero() && !e.tokenExpiry.After(time.Now()) {
+		// The one cause the client can know for certain (REQ-CROSS-389).
+		return credentialError{
+			err:    fmt.Errorf("server rejected the session token (expired at %s) — run '%s' to sign in again", e.tokenExpiry.UTC().Format(time.RFC3339), repair),
+			repair: repair,
+		}
+	}
 	return credentialError{
 		err:    fmt.Errorf("server rejected the session token — expired, revoked, or issued for a different server; run '%s' to sign in again", repair),
 		repair: repair,
@@ -132,7 +153,13 @@ func factoryBindingLoad() (*factoryEnv, error) {
 	return env, nil
 }
 
-func factoryEnvLoad() (*factoryEnv, error) {
+// factoryCredentialLoad is the binding plus the three credential statements —
+// no binding, no or unreadable bearer, expired token — and nothing sent. The
+// factory verbs add the reachability probe (factoryEnvLoad); the api-client
+// verbs (`docs sync`, `search`, `ask`, `read-doc`, `read-file`) stop here
+// (REQ-CROSS-405): the same refusals, the same repair command, before any
+// request.
+func factoryCredentialLoad() (*factoryEnv, error) {
 	env, err := factoryBindingLoad()
 	if err != nil {
 		return nil, err
@@ -153,7 +180,37 @@ func factoryEnvLoad() (*factoryEnv, error) {
 			repair: repair,
 		}
 	}
+	// REQ-CROSS-389: refresh, warn or refuse on the credential's own expiry
+	// before anything leaves the process — the reachability probe included.
+	auth, err = ensureFreshCredential(env, auth, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	env.token = auth.Token
+	env.tokenExpiry = storedExpiry(auth)
+	return env, nil
+}
+
+// apiClientCredentialLoad is factoryCredentialLoad for the api-client verbs
+// (`docs sync`, `search`, `ask`, `read-doc`, `read-file`): the same
+// credential statements, but an unbound workspace is told to run `init` —
+// the on-ramp — rather than a `factory connect` with a system id a fresh
+// checkout does not have (PR #487 review, finding 8).
+func apiClientCredentialLoad() (*factoryEnv, error) {
+	if cfgDir, err := config.FindConfigDir(); err != nil || cfgDir == "" {
+		return nil, fmt.Errorf("no system is bound here — run 'modernpath init' in the repository root (or 'modernpath factory connect --system <id>' for a system you already know)")
+	}
+	if cfg, err := config.ReadConfig(); err == nil && cfg.SystemID == 0 {
+		return nil, fmt.Errorf("no system is bound in %s/config.json — run 'modernpath init' (or 'modernpath factory connect --system <id>' for a system you already know)", config.ConfigDir)
+	}
+	return factoryCredentialLoad()
+}
+
+func factoryEnvLoad() (*factoryEnv, error) {
+	env, err := factoryCredentialLoad()
+	if err != nil {
+		return nil, err
+	}
 
 	// REQ-CROSS-282: refuse before any caller's env.call — factoryEnvLoad is
 	// the single chokepoint every credentialed factory subcommand goes
@@ -174,10 +231,36 @@ func factoryEnvLoad() (*factoryEnv, error) {
 // registry, because creating one is a human product decision the CLI must not
 // make (REQ-CROSS-177). A fresh derived workspace is base work by design.
 func releaseWarning(root string) string {
+	// SR-CROSS-328: store-backed, process/releases.md is retired (REQ-CROSS-329),
+	// so its absence is the declared configuration — not a missing registry.
+	// The active release and its USER: source live in the store; point the
+	// reader there rather than at a file the flip deleted.
+	if storeBackedWorkspace(root) {
+		return "no current release stamped for sync — this work lands in the system's base release; the active release and its USER: source live in the store (read: 'modernpath working-set pull selection' / 'modernpath factory status'), not in a registry file"
+	}
 	if _, err := os.Stat(filepath.Join(root, "process", "releases.md")); err != nil {
 		return "no release registry — this work lands in the system's base release, where the Ledger will show it (REQ-CROSS-283); when this project adopts releases, create process/releases.md and select one with 'modernpath factory release use <slug>'"
 	}
 	return "no current release — this work lands in the base release; set a delivery release with 'modernpath factory release use <slug>' (registry: process/releases.md)"
+}
+
+// storeBackedFromCwd resolves the workspace root the way factoryEnvLoad does —
+// by walking up to the .modernpath dir (config.FindConfigDir) — and reports
+// whether that root carries the store-backed marker. It therefore matches the
+// command's actual workspace even when the CLI is invoked from a subdirectory,
+// where a bare os.Getwd() stat would miss the marker and wrongly fall through
+// to a file-derived sync. It is a pure filesystem walk with no network, so the
+// credential-free hook path uses it too; it falls back to cwd when no
+// .modernpath is found.
+func storeBackedFromCwd() (root string, active bool) {
+	if cfgDir, err := config.FindConfigDir(); err == nil && cfgDir != "" {
+		root = filepath.Dir(cfgDir)
+		return root, storeBackedWorkspace(root)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return wd, storeBackedWorkspace(wd)
+	}
+	return "", false
 }
 
 // REQ-CROSS-176: when a server call is slow enough to look like a hang, say
@@ -201,6 +284,10 @@ var (
 )
 
 func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]any, error) {
+	// REQ-CROSS-390: a write this build cannot mean is refused before it leaves.
+	if err := e.checkWrite(method, apiPath, payload); err != nil {
+		return 0, nil, err
+	}
 	var body *bytes.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -240,8 +327,37 @@ func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]
 	}
 	defer resp.Body.Close()
 
+	// REQ-CROSS-372: keep an undecodable body (a proxy or gateway error page)
+	// as the refusal text instead of dropping it — every `server %d` formatter
+	// then prints what the server sent, never <nil>.
+	raw, _ := io.ReadAll(resp.Body)
 	var decoded map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&decoded)
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded == nil {
+		if text := strings.TrimSpace(string(raw)); text != "" && resp.StatusCode >= 300 {
+			decoded = map[string]any{"error": map[string]any{"reason": text}}
+		} else if resp.StatusCode >= 300 {
+			// REQ-CROSS-380: a bodyless refusal still has a status and a
+			// reference; never leave the formatters a nil to print.
+			decoded = map[string]any{"error": map[string]any{"reason": "no body"}}
+		}
+	}
+	// REQ-CROSS-380: the reference rides the body so every formatter — all of
+	// them route through serverRefusal — can cite it.
+	if decoded != nil && resp.StatusCode >= 300 {
+		if ref := resp.Header.Get("x-request-id"); ref != "" {
+			if _, has := decoded["request_id"]; !has {
+				decoded["request_id"] = ref
+			}
+		}
+	}
+
+	// REQ-CROSS-348: the store names its revision on every response; keep the
+	// last one seen so a snapshot header can record the store it came from.
+	if rev := resp.Header.Get("x-modernpath-store-revision"); rev != "" {
+		e.storeRevision = rev
+	}
+	// REQ-CROSS-390: the served contract version, warned about once when newer.
+	e.noteServedContract(resp.Header.Get("x-modernpath-contract"))
 
 	// Reported here rather than at each call site: all eight `server %d`
 	// formatters check err first, so one point covers every factory command.
@@ -249,6 +365,154 @@ func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]
 		return resp.StatusCode, decoded, e.credentialRejected()
 	}
 	return resp.StatusCode, decoded, nil
+}
+
+// reportSyncOutcome — REQ-CROSS-386 (EPIC-CLI-018): render a batch outcome.
+// 200: the ok/conflict summary. 207: the same summary plus one line per
+// failed, skipped or deferred op with the server's reason; a failed or skipped
+// op exits non-zero naming the retry, a deferred document alone is a warning
+// (the row is kept for the embedding backfill and a later sync retries it).
+func reportSyncOutcome(status int, body map[string]any) error {
+	results, _ := dataOf(body)["results"].([]any)
+	counts := map[string]int{}
+	var failed, skipped, deferred []map[string]any
+	for _, r := range results {
+		m, _ := r.(map[string]any)
+		counts[str(m, "result")]++
+		switch str(m, "result") {
+		case "failed":
+			failed = append(failed, m)
+		case "skipped":
+			skipped = append(skipped, m)
+		case "deferred":
+			deferred = append(deferred, m)
+		}
+	}
+	parts := make([]string, 0, len(counts))
+	for k, v := range counts {
+		parts = append(parts, fmt.Sprintf("%d %s", v, k))
+	}
+	sort.Strings(parts)
+	summary := strings.Join(parts, ", ")
+	switch {
+	// REQ-CROSS-136: a conflict is the server REFUSING this change because the
+	// row was edited on the platform. Printing it under a green "ok:" invites
+	// the reader to skim past a refusal, so say it plainly instead.
+	case syncHadConflicts(counts):
+		printWarning("synced with refusals: %s", summary)
+		fmt.Printf("  %d row(s) were edited on the platform and kept — this workspace's version was not applied.\n", counts["conflict"])
+		fmt.Printf("  Reconcile by hand: the server's copy wins until the workspace matches it.\n")
+	case status == 207 || len(failed)+len(skipped)+len(deferred) > 0:
+		printWarning("synced partially (server %d): %s", status, summary)
+	default:
+		printSuccess("ok: %s", summary)
+	}
+	for _, m := range failed {
+		fmt.Printf("  failed   op %v %s (%s): %s\n", m["op_index"], str(m, "external_id"), str(m, "type"), str(m, "reason"))
+	}
+	for _, m := range skipped {
+		fmt.Printf("  skipped  op %v %s: %s\n", m["op_index"], str(m, "external_id"), str(m, "reason"))
+	}
+	for _, m := range deferred {
+		fmt.Printf("  deferred op %v %s: %s\n", m["op_index"], str(m, "external_id"), str(m, "reason"))
+	}
+	if len(failed)+len(skipped) > 0 {
+		return fmt.Errorf("%d op(s) failed and %d skipped — fix the cause and run `factory sync` again; the other ops landed and nothing is lost locally", len(failed), len(skipped))
+	}
+	if len(deferred) > 0 {
+		fmt.Printf("  %d document(s) deferred — run `factory sync` again once the embedding provider recovers; the backfill re-embeds what landed.\n", len(deferred))
+	}
+	return nil
+}
+
+// syncChunksOutcome is what a chunked sync run produced: every chunk's rows
+// (the retried chunk's included), whether any chunk answered 207, how many
+// ops the server accepted, and the last status/body for a refusal.
+type syncChunksOutcome struct {
+	results []any
+	partial bool
+	landed  int
+	status  int
+	body    map[string]any
+}
+
+// postSyncChunks sends the chunks in order. Chunks go in order, because later
+// ops reference earlier ones; each is its own transaction server-side and the
+// shadow makes a replay a no-op, so a failure part-way leaves the earlier
+// chunks landed and re-running finishes the job.
+//
+// REQ-CROSS-089: a server that halts on an op type it does not recognise
+// would otherwise make a newer CLI sync NOTHING; the kind is dropped from this
+// and every later chunk, the chunk is re-posted, and the run continues.
+// REQ-CROSS-386 (PR #458 review): the retry happens inside the loop so its
+// rows — a 207's failed and skipped ops among them — reach the report
+// whichever chunk it was, and the chunks after it are still sent.
+func postSyncChunks(env *factoryEnv, chunks [][]map[string]any, newBatch func([]map[string]any) map[string]any) (syncChunksOutcome, error) {
+	var out syncChunksOutcome
+	dropped := map[string]bool{}
+	for index := 0; index < len(chunks); index++ {
+		chunk := chunks[index]
+		if len(dropped) > 0 {
+			chunk = dropKinds(chunk, dropped)
+		}
+		status, body, err := env.postSyncBatch(newBatch(chunk))
+		if err != nil {
+			// Say which chunk, and that the earlier ones are already in the
+			// store — otherwise a re-run looks like it might double-apply.
+			if index > 0 {
+				printWarning("chunk %d/%d failed; %d op(s) already landed — re-running syncs the rest",
+					index+1, len(chunks), out.landed)
+			}
+			return out, err
+		}
+		if status == 422 {
+			if kind := unknownOpType(body); kind != "" && !dropped[kind] {
+				dropped[kind] = true
+				kept, n := dropOpsOfType(chunk, kind)
+				fmt.Printf("⚠ this server does not understand %s yet — syncing the other ops and leaving %d behind in this chunk (and any later one).\n", kind, n)
+				fmt.Printf("  They will land once the server is upgraded; nothing is lost locally.\n")
+				status, body, err = env.postSyncBatch(newBatch(kept))
+				if err != nil {
+					return out, err
+				}
+				chunk = kept
+			}
+		}
+		out.status, out.body = status, body
+		// A 207 is a landed chunk with reported failures, not a refusal.
+		if status != 200 && status != 207 {
+			if status != 422 && index > 0 {
+				printWarning("chunk %d/%d failed (server %d); %d op(s) already landed — re-running syncs the rest",
+					index+1, len(chunks), status, out.landed)
+			}
+			return out, nil
+		}
+		results, _ := dataOf(body)["results"].([]any)
+		out.results = append(out.results, results...)
+		if status == 207 {
+			out.partial = true
+		}
+		for _, r := range results {
+			m, _ := r.(map[string]any)
+			switch str(m, "result") {
+			case "failed", "skipped":
+			default:
+				out.landed++
+			}
+		}
+	}
+	return out, nil
+}
+
+// dropKinds removes every op of the dropped kinds from a chunk.
+func dropKinds(chunk []map[string]any, dropped map[string]bool) []map[string]any {
+	kept := make([]map[string]any, 0, len(chunk))
+	for _, op := range chunk {
+		if !dropped[str(op, "type")] {
+			kept = append(kept, op)
+		}
+	}
+	return kept
 }
 
 // postSyncBatch POSTs one batch to /api/v1/sync/batch, retrying a 5xx or a
@@ -301,6 +565,25 @@ func syncChunkSize() int {
 		return syncChunkSizeDefault
 	}
 	return n
+}
+
+// chunkOps splits ops into consecutive slices of at most size, preserving
+// order — later ops reference earlier ones, so a chunk boundary must never
+// reorder. size is expected from syncChunkSize() (always ≥ 1); a non-positive
+// size is treated defensively as "one chunk".
+func chunkOps(ops []map[string]any, size int) [][]map[string]any {
+	if size < 1 {
+		return [][]map[string]any{ops}
+	}
+	chunks := make([][]map[string]any, 0, (len(ops)+size-1)/size)
+	for start := 0; start < len(ops); start += size {
+		end := start + size
+		if end > len(ops) {
+			end = len(ops)
+		}
+		chunks = append(chunks, ops[start:end])
+	}
+	return chunks
 }
 
 // workspaceOps builds the sync op batch from the CLI-bundled parsers, driven
@@ -539,8 +822,23 @@ func serverSystemLookup() systemLookup {
 
 var factoryStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show the local binding and pending op count",
+	Short: "Show the local binding, what the server serves, and the pending op count",
+	Long: `Show the workspace binding, the active release, the pending op count, the
+pieces you hold, and one server line: the store revision the bound server is
+serving and the sync contract version it advertises (or why it could not be
+read). The server line is a single read bounded at 2 s and writes nothing —
+after a merge it tells you whether production serves it.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// REQ-CROSS-391: print the binding through the renderer `status` uses
+		// before refusing, so an unbound workspace reads the same in both.
+		if cfgDir, err := config.FindConfigDir(); err == nil && cfgDir != "" {
+			if cfg, err := config.ReadConfig(); err == nil {
+				auth, _ := config.ReadAuth()
+				for _, line := range bindingLines(cfg, auth) {
+					fmt.Println(line)
+				}
+			}
+		}
 		env, err := factoryBindingLoad()
 		if err != nil {
 			return err
@@ -549,7 +847,8 @@ var factoryStatusCmd = &cobra.Command{
 		if release == "" {
 			release = "(none — sync runs unscoped; set one with 'factory release use <slug>')"
 		}
-		fmt.Printf("workspace: %s\nserver:    %s\nsystem:    %d\nrelease:   %s\n", env.Root, env.APIURL, env.SystemID, release)
+		fmt.Printf("workspace: %s\nrelease:   %s\n", env.Root, release)
+		fmt.Printf("server:    %s\n", serverLine(env))
 
 		if ops, warnings, err := env.workspaceOps(); err == nil {
 			printGapWarnings(warnings)
@@ -562,19 +861,116 @@ var factoryStatusCmd = &cobra.Command{
 				fmt.Println("manifest:  defaults (modernpath-v1 layout; write one with 'factory manifest init')")
 			}
 		}
+		printHeldPieces(env)
 		return nil
 	},
+}
+
+// serverLineTimeout bounds the server line's one read: an offline status must
+// answer "not reachable" in seconds, not wait out the 120 s call default.
+const serverLineTimeout = 2 * time.Second
+
+// serverLine — REQ-CROSS-417 (EPIC-CLI-021): what the bound server is serving,
+// for `factory status` and `status`: the store revision from the
+// x-modernpath-store-revision header (REQ-CROSS-348, the deploy revision of
+// the serving core) and the contract version from GET /api/v1/sync/contract
+// (REQ-CROSS-390). One read, no write, so after a merge a session can compare
+// the served revision with the merge commit (BACKLOG-TOOL-1). Best-effort like
+// printHeldPieces: unsigned, unreachable and unserved each say so.
+func serverLine(env *factoryEnv) string {
+	if strings.TrimSpace(env.token) == "" {
+		auth, err := config.ReadAuth()
+		if err != nil || strings.TrimSpace(auth.Token) == "" {
+			return "not signed in — `modernpath auth login`, then status names the server revision"
+		}
+		env.token = auth.Token
+	}
+	saved := env.callTimeout
+	env.callTimeout = serverLineTimeout
+	defer func() { env.callTimeout = saved }()
+
+	status, body, err := env.call("GET", "/api/v1/sync/contract", nil)
+	if err != nil {
+		return fmt.Sprintf("not reachable (%v)", err)
+	}
+	revision := "store revision not served"
+	if env.storeRevision != "" {
+		revision = "store " + env.storeRevision
+	}
+	served := "contract not advertised"
+	if v, ok := dataOf(body)["version"].(float64); ok && status == http.StatusOK {
+		served = fmt.Sprintf("contract %d", int(v))
+	} else if env.contractVersion != "" {
+		served = "contract " + env.contractVersion
+	}
+	return revision + " · " + served
+}
+
+// printHeldPieces — REQ-CROSS-379 (EPIC-CLI-018): status lists every piece the
+// caller holds. Best-effort by design: status is a binding command that must
+// run without a readable token (TestFactoryStatusDoesNotLoadAuthentication),
+// so a missing or malformed token says so instead of failing the command.
+func printHeldPieces(env *factoryEnv) {
+	auth, err := config.ReadAuth()
+	if err != nil || strings.TrimSpace(auth.Token) == "" {
+		fmt.Println("held:      not signed in — `modernpath auth login`, then status lists the pieces you hold")
+		return
+	}
+	env.token = auth.Token
+	status, body, err := env.call("GET", fmt.Sprintf("/api/v1/sync/work-selection?system_id=%d", env.SystemID), nil)
+	switch {
+	case err != nil:
+		fmt.Printf("held:      unavailable (%v)\n", err)
+	case status != 200:
+		if pieces := stringSlice(body["pieces"]); len(pieces) > 0 {
+			fmt.Printf("held:      %d current pieces — %s (name one with --piece)\n", len(pieces), strings.Join(pieces, ", "))
+		} else {
+			fmt.Printf("held:      unavailable (server %d)\n", status)
+		}
+	default:
+		current, _ := dataOf(body)["current"].(map[string]any)
+		if current == nil {
+			fmt.Println("held:      no current piece")
+		} else {
+			fmt.Printf("held:      %s (phase %s)\n", str(current, "scope_external_id"), str(current, "phase"))
+		}
+		printActiveReleaseSource(env, dataOf(body))
+	}
+}
+
+// printActiveReleaseSource — REQ-CROSS-407: status names the store's active
+// release with the USER: source of its selection gate on this system, or the
+// active-without-gate state and its remedy. Best-effort like the rest of
+// status: a failed gates read says so and never fails the command.
+func printActiveReleaseSource(env *factoryEnv, selection map[string]any) {
+	releases, _ := selection["active_release"].([]any)
+	if len(releases) != 1 {
+		return
+	}
+	rm, _ := releases[0].(map[string]any)
+	slug := str(rm, "slug")
+	gates, err := fetchList(env, fmt.Sprintf("/api/v1/sync/gates?system_id=%d&state=all", env.SystemID), "gates")
+	if err != nil {
+		fmt.Printf("active:    active release %s — selection gate unavailable (%v)\n", slug, err)
+		return
+	}
+	if tag, gate, ok := releaseSelectionGateSource(gates, slug); ok {
+		fmt.Printf("active:    active release %s — %s (gate %s)\n", slug, tag, gate)
+		return
+	}
+	fmt.Printf("active:    active release %s — %s\n", slug, missingReleaseGateLine(slug))
 }
 
 // ---------------------------------------------------------------- release
 
 // factory release use|show|clear — the workspace-level release selector
 // (REQ-CROSS-017). Writes only local config; the server materializes the
-// release (find-or-create by slug) on the first scoped sync. The tracked
-// source of truth is process/releases.md — keep the two in step.
+// release (find-or-create by slug) on the first scoped sync. This is the
+// local sync stamp; the tenant-wide active release lives in the store and is
+// set with `factory release activate` (REQ-CROSS-339) — the two never merge.
 var factoryReleaseCmd = &cobra.Command{
 	Use:   "release",
-	Short: "Select the current release factory sync stamps and scopes to",
+	Short: "Select the current release that factory sync stamps and scopes to",
 }
 
 var factoryReleaseUseCmd = &cobra.Command{
@@ -594,7 +990,7 @@ var factoryReleaseUseCmd = &cobra.Command{
 		if err := config.WriteConfig(cfg); err != nil {
 			return err
 		}
-		printSuccess("current release: %s (.modernpath/config.json — mirror of the active row in process/releases.md)", slug)
+		printSuccess("current release: %s (local sync stamp in .modernpath/config.json; the tenant-wide active release lives in the store — activate one with 'factory release activate <slug>')", slug)
 		return nil
 	},
 }
@@ -633,6 +1029,73 @@ var factoryReleaseClearCmd = &cobra.Command{
 	},
 }
 
+// factory release activate <slug> — REQ-CROSS-339 (EPIC-CLI-010): the
+// attributed, tenant-wide activation verb. Unlike `use`, which only stamps
+// local config the bulk sync consumes, `activate` carries a USER: source
+// through the guarded authoring write (REQ-CROSS-338) that actually sets the
+// release active. The two never merge.
+var (
+	releaseActivateSource string
+	releaseActivatePin    string
+)
+
+var factoryReleaseActivateCmd = &cobra.Command{
+	Use:   "activate <slug>",
+	Short: "Activate a delivery release tenant-wide (attributed; distinct from the local `use` stamp)",
+	Long: `Activate a delivery release tenant-wide with an attributable USER: source.
+
+The activation needs the release PIN of the signed-in person (set in Mission
+Control; pass it with --pin). It records the release-selection gate
+GATE-RELEASE-<slug> on the system it is run from, answered by you with the
+source, so the reads that name the active release find it here. Re-running
+the activation on a system whose release is active but carries no such gate
+records one without changing the release; a gate of that purpose and scope
+that is open or answered otherwise is superseded by the next
+GATE-RELEASE-<slug>-<n>, and the reads take the newest approved one.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		slug := strings.TrimSpace(args[0])
+		if slug == "" {
+			return fmt.Errorf("usage: modernpath factory release activate <slug> --source USER:<date>:<why>")
+		}
+		// Validate the source before touching config or the server: activation is a
+		// human decision, not a local stamp, and must not inherit the agent actor.
+		if !strings.HasPrefix(releaseActivateSource, "USER:") {
+			return fmt.Errorf("--source is required and must be an attributable USER: reference (e.g. USER:2026-09-11:why) — activation is a tenant-wide human decision, distinct from the local 'release use' stamp")
+		}
+		env, err := factoryEnvLoad()
+		if err != nil {
+			return err
+		}
+		return activateRelease(env, slug, releaseActivateSource, releaseActivatePin)
+	},
+}
+
+// activateRelease posts the attributed release_activate authoring action. The
+// USER: source rides the source field explicitly (never the agent actor); the
+// PIN, when supplied, forwards to the server's reused release-PIN guard
+// (REQ-CROSS-338, D-CLI010-ACTIVATION-AUTHORITY).
+func activateRelease(env *factoryEnv, slug, source, pin string) error {
+	body := map[string]any{
+		"action": "release_activate",
+		"slug":   slug,
+		"source": source,
+	}
+	if pin != "" {
+		body["pin"] = pin
+	}
+	data, err := authorPost(env, body)
+	if err != nil {
+		return err
+	}
+	if row, ok := data["release_activation"].(map[string]any); ok {
+		printSuccess("release %s is now %s tenant-wide (attributed: %s)", str(row, "slug"), str(row, "status"), source)
+	} else {
+		printSuccess("release %s activated (attributed: %s)", slug, source)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------- sync
 
 var factorySyncDryRun bool
@@ -654,6 +1117,19 @@ var factorySyncCmd = &cobra.Command{
 			return factorySyncQuiescent(factorySyncTrigger, factorySyncMinInterval)
 		}
 
+		// Store-backed (REQ-CROSS-329): a file-derived sync is meaningless once
+		// the ledgers are retired — the store is authoritative and the bulk
+		// channel is refused. Say where process state is written instead, ahead
+		// of factoryEnvLoad so the notice needs no credentials. A dry run still
+		// falls through to print its (now empty) batch.
+		if !factorySyncDryRun {
+			if _, active := storeBackedFromCwd(); active {
+				printInfo("this workspace is store-backed (process/store-backed.md) — the file ledgers are retired; there is nothing to sync")
+				printInfo("write process state with 'modernpath author' / 'modernpath working-set push'; read it with 'modernpath working-set pull' / 'modernpath factory status'")
+				return nil
+			}
+		}
+
 		env, err := factoryEnvLoad()
 		if err != nil {
 			return err
@@ -671,12 +1147,11 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 
 	// --no-docs drops the workspace-document ops and sends only the process
 	// state — requirements, epics, gates, evidence, sessions (see noDocsFilter).
-	if kept, dropped := noDocsFilter(ops, factorySyncNoDocs); dropped > 0 {
-		printInfo("--no-docs: skipping %d document op(s); syncing process state only", dropped)
-		ops = kept
-	}
+	kept, dropped := noDocsFilter(ops, factorySyncNoDocs)
+	ops = kept
 	// --json owns stdout: a prose banner ahead of the batch makes it unparseable
-	// by the very tools the flag exists for.
+	// by the very tools the flag exists for — so the --no-docs notice waits until
+	// after the --json branch has returned (emitted on the non-JSON path below).
 	if dryRun && factorySyncJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -686,6 +1161,9 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 			"release":        env.CurrentRelease,
 			"ops":            ops,
 		})
+	}
+	if dropped > 0 {
+		printInfo("--no-docs: skipping %d document op(s); syncing process state only", dropped)
 	}
 	if env.CurrentRelease == "" {
 		// D2 doctrine: never a silent skip — unscoped sync proceeds (it never
@@ -739,14 +1217,7 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		return body
 	}
 
-	chunks := make([][]map[string]any, 0, (len(ops)+chunkSize-1)/chunkSize)
-	for start := 0; start < len(ops); start += chunkSize {
-		end := start + chunkSize
-		if end > len(ops) {
-			end = len(ops)
-		}
-		chunks = append(chunks, ops[start:end])
-	}
+	chunks := chunkOps(ops, chunkSize)
 	if len(chunks) == 0 {
 		chunks = append(chunks, nil)
 	}
@@ -754,92 +1225,21 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 		printInfo("sending in %d chunks of up to %d ops", len(chunks), chunkSize)
 	}
 
-	var (
-		status      int
-		body        map[string]any
-		mergedCount = map[string]int{}
-		landed      int
-	)
-	for index, chunk := range chunks {
-		batchBody := newBatch(chunk)
-		status, body, err = env.postSyncBatch(batchBody)
-		if err != nil {
-			// Say which chunk, and that the earlier ones are already in the
-			// store — otherwise a re-run looks like it might double-apply.
-			if index > 0 {
-				printWarning("chunk %d/%d failed; %d op(s) already landed — re-running syncs the rest",
-					index+1, len(chunks), landed)
-			}
-			return err
-		}
-		if status != 200 {
-			// A 5xx that survived retries (or any non-422 refusal) ends the run;
-			// a 422 falls through to the unknown-op recovery below. Either way,
-			// say how far it got: the earlier chunks are already committed
-			// server-side, so a re-run resumes rather than re-applies.
-			if status != 422 && index > 0 {
-				printWarning("chunk %d/%d failed (server %d); %d op(s) already landed — re-running syncs the rest",
-					index+1, len(chunks), status, landed)
-			}
-			// Fall through to the shared handling below with this chunk's
-			// body, so a refusal reads the same whether or not it chunked.
-			ops = chunk
-			break
-		}
-		if results, ok := dataOf(body)["results"].([]any); ok {
-			for _, r := range results {
-				m, _ := r.(map[string]any)
-				mergedCount[str(m, "result")]++
-			}
-		}
-		landed += len(chunk)
+	outcome, err := postSyncChunks(env, chunks, newBatch)
+	if err != nil {
+		return err
 	}
-	batchBody := newBatch(ops)
-	// REQ-CROSS-089: the server halts the batch on the first op type it does not
-	// recognise, so a CLI newer than the server does not sync less — it syncs
-	// NOTHING, silently, because the hooks are fire-and-forget. Retry once
-	// without that op kind so the rest of the workspace still lands, and say
-	// plainly what was left behind.
-	if status == 422 {
-		if kind := unknownOpType(body); kind != "" {
-			kept, dropped := dropOpsOfType(ops, kind)
-			fmt.Printf("⚠ this server does not understand %s yet — syncing the other %d ops and leaving %d behind.\n",
-				kind, len(kept), dropped)
-			fmt.Printf("  They will land once the server is upgraded; nothing is lost locally.\n")
-			batchBody["ops"] = kept
-			status, body, err = env.postSyncBatch(batchBody)
-			if err != nil {
-				return err
-			}
-		}
+	if outcome.status != 200 && outcome.status != 207 {
+		return serverRefusal("", outcome.status, outcome.body)
 	}
-	if status != 200 {
-		return fmt.Errorf("server %d: %v", status, body["error"])
+	finalStatus := 200
+	if outcome.partial {
+		finalStatus = 207
 	}
-
-	counts := mergedCount
-	if len(counts) == 0 {
-		if results, ok := dataOf(body)["results"].([]any); ok {
-			for _, r := range results {
-				m, _ := r.(map[string]any)
-				counts[str(m, "result")]++
-			}
-		}
-	}
-	parts := make([]string, 0, len(counts))
-	for k, v := range counts {
-		parts = append(parts, fmt.Sprintf("%d %s", v, k))
-	}
-	sort.Strings(parts)
-	// REQ-CROSS-136: a conflict is the server REFUSING this change because the row
-	// was edited on the platform. Printing it under a green "ok:" invites the
-	// reader to skim past a refusal, so say it plainly instead.
-	if syncHadConflicts(counts) {
-		printWarning("synced with refusals: %s", strings.Join(parts, ", "))
-		fmt.Printf("  %d row(s) were edited on the platform and kept — this workspace's version was not applied.\n", counts["conflict"])
-		fmt.Printf("  Reconcile by hand: the server's copy wins until the workspace matches it.\n")
-	} else {
-		printSuccess("ok: %s", strings.Join(parts, ", "))
+	// One report renders the outcome (REQ-CROSS-386); a failed or skipped op
+	// ends the run non-zero before the success stamp below.
+	if err := reportSyncOutcome(finalStatus, map[string]any{"data": map[string]any{"results": outcome.results}}); err != nil {
+		return err
 	}
 
 	// Both lanes stamp, because both landed the batch. This used to be written
@@ -878,42 +1278,290 @@ func factorySyncRun(env *factoryEnv, dryRun bool) error {
 // ---------------------------------------------------------------- gates / answer
 
 var factoryGatesCmd = &cobra.Command{
-	Use:   "gates",
-	Short: "The open decision queue (questions, decisions, approvals)",
+	Use:   "gates [external_id]",
+	Short: "The open decision queue; a gate by id, or gate history with --state",
+	Long: `Without arguments, the open decision queue (questions, decisions, approvals).
+
+With an external_id, show that one gate — its state and, when it carries an
+answer, the answer, chosen options, USER: source, answerer and applied state —
+so "did my approval land?" is answerable without reading the event stream. An
+applied answer is stored closed; read it by id or under --state all.
+
+With --state, list gate history: open, answered, dismissed, superseded, or all.
+--json prints the server's gate envelope on stdout and nothing else.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// factoryEnvLoad stays first: a local refusal (e.g. a token without the
+		// project audience) must send nothing, including the reachability check
+		// (TestFactoryGatesRefusesTokenWithoutProjectAudienceBeforeSending).
 		env, err := factoryEnvLoad()
 		if err != nil {
 			return err
 		}
-		status, body, err := env.call("GET", fmt.Sprintf("/api/v1/sync/gates?system_id=%d", env.SystemID), nil)
-		if err != nil {
-			return err
+		id := ""
+		if len(args) == 1 {
+			id = args[0]
 		}
-		if status != 200 {
-			return fmt.Errorf("server %d: %v", status, body["error"])
+		return factoryGatesRun(env, gatesState, gatesKind, gatesJSON, id, os.Stdout, os.Stderr)
+	},
+}
+
+// validGateState reports whether s is one of the server filter's five values.
+// `closed` is deliberately excluded (REQ-CROSS-109 D2): an applied answer is
+// stored closed and is reached through `all` or the by-id read, not this filter.
+func validGateState(s string) bool {
+	switch s {
+	case "open", "answered", "dismissed", "superseded", "all":
+		return true
+	}
+	return false
+}
+
+// factoryGatesRun is the testable seam behind `factory gates`. out carries the
+// rendering (or, under jsonOut, only the JSON envelope); errOut carries warnings,
+// so JSON on stdout stays parseable — the requirements-corpus precedent
+// (REQ-CROSS-324/121). --state is validated here, before any request, so a typo
+// never becomes a call; the server stays the authority and its 422 is surfaced.
+func factoryGatesRun(env *factoryEnv, state, kind string, jsonOut bool, id string, out, errOut io.Writer) error {
+	if id != "" && (state != "" || kind != "") {
+		return fmt.Errorf("--state and --kind apply to the listing, not to a gate by id (--json combines with either form)")
+	}
+	if state != "" && !validGateState(state) {
+		return fmt.Errorf("unknown --state %q — use one of open, answered, dismissed, superseded, all", state)
+	}
+	if id != "" {
+		return factoryGateShow(env, id, jsonOut, out)
+	}
+	return factoryGateList(env, state, kind, jsonOut, out, errOut)
+}
+
+// factoryGateShow reads one gate by id: GET /sync/gates/<id>?system_id=<bound>.
+// The id is path-escaped. Absence — the server's own "no such gate" message —
+// is a non-zero exit naming the id; any other 404 (a server without the route
+// answers Phoenix's {"errors":{"detail":"Not Found"}}) is a server error, never
+// read as absence.
+func factoryGateShow(env *factoryEnv, id string, jsonOut bool, out io.Writer) error {
+	status, body, err := env.call("GET",
+		fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", url.PathEscape(id), env.SystemID), nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return gateShowError(status, body, id)
+	}
+	gate, _ := dataOf(body)["gate"].(map[string]any)
+	if gate == nil {
+		// Symmetry with the list path's nil→[] (a malformed/renamed 200 envelope):
+		// emit {"gate": {}} rather than {"gate": null} so a consumer's parse holds.
+		gate = map[string]any{}
+	}
+	if jsonOut {
+		return emitJSONEnvelope(out, "gate", gate)
+	}
+	renderGate(out, gate)
+	return nil
+}
+
+// gateShowError concludes absence ONLY from the server's nested "no such gate"
+// message; every other non-200 is reported verbatim as `server <status>: …`.
+func gateShowError(status int, body map[string]any, id string) error {
+	if status == 404 {
+		if em, ok := body["error"].(map[string]any); ok && strings.HasPrefix(str(em, "message"), "no such gate") {
+			return fmt.Errorf("gate %s does not exist", id)
 		}
-		gates, _ := dataOf(body)["gates"].([]any)
-		if len(gates) == 0 {
-			printSuccess("no open gates — the queue is clear")
-			return nil
+	}
+	return fmt.Errorf("server %d: %s", status, gateErrText(body))
+}
+
+// gateErrText pulls a human message out of the error shapes the server and the
+// gateway use: a nested {"error":{"message":…}}, a flat {"error":"…"}, or
+// Phoenix's {"errors":{"detail":…}} for a route it does not have.
+func gateErrText(body map[string]any) string {
+	if em, ok := body["error"].(map[string]any); ok {
+		if m := str(em, "message"); m != "" {
+			return m
 		}
-		shown := filterGatesByKind(gates, gatesKind)
+	}
+	if s, ok := body["error"].(string); ok && s != "" {
+		return s
+	}
+	if em, ok := body["errors"].(map[string]any); ok {
+		if d := str(em, "detail"); d != "" {
+			return d
+		}
+	}
+	return refusalText(body)
+}
+
+func factoryGateList(env *factoryEnv, state, kind string, jsonOut bool, out, errOut io.Writer) error {
+	apiPath := fmt.Sprintf("/api/v1/sync/gates?system_id=%d", env.SystemID)
+	if state != "" {
+		apiPath += "&state=" + url.QueryEscape(state)
+	}
+	status, body, err := env.call("GET", apiPath, nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("server %d: %s", status, gateErrText(body))
+	}
+	gates, _ := dataOf(body)["gates"].([]any)
+	shown := filterGatesByKind(gates, kind)
+	if jsonOut {
+		return emitGatesJSON(out, shown)
+	}
+	// History (answered|dismissed|superseded|all) renders each gate's stored
+	// state; the open queue (default, or explicit --state open) is unchanged.
+	history := state != "" && state != "open"
+	if len(shown) == 0 {
+		switch {
+		case history && state == "all":
+			fmt.Fprint(out, "no gates\n")
+		case history:
+			fmt.Fprintf(out, "no %s gates\n", state)
+		case kind != "" && len(gates) > 0:
+			// A queue that holds gates of other kinds is not clear.
+			fmt.Fprint(out, gateQueueFooter(0, gateKindBreakdown(gates), kind))
+		default:
+			fmt.Fprint(out, "✓ no open gates — the queue is clear\n")
+		}
+		return nil
+	}
+	if history {
 		for _, g := range shown {
 			m, _ := g.(map[string]any)
-			fmt.Printf("\n%s  [%s]  %s\n", str(m, "external_id"), str(m, "kind"), str(m, "title"))
-			if rec := str(m, "recommendation"); rec != "" {
-				fmt.Printf("  recommends: %.120s\n", rec)
-			}
-			if options, ok := m["options"].([]any); ok {
-				for _, o := range options {
-					om, _ := o.(map[string]any)
-					fmt.Printf("  - %s: %.100s\n", str(om, "key"), str(om, "label"))
-				}
+			renderGateHistory(out, m)
+		}
+		if state == "all" {
+			fmt.Fprintf(out, "\n%d gate(s)\n", len(shown))
+		} else {
+			fmt.Fprintf(out, "\n%d %s gate(s)\n", len(shown), state)
+		}
+		return nil
+	}
+	for _, g := range shown {
+		m, _ := g.(map[string]any)
+		fmt.Fprintf(out, "\n%s  [%s]  %s\n", str(m, "external_id"), str(m, "kind"), str(m, "title"))
+		if rec := str(m, "recommendation"); rec != "" {
+			fmt.Fprintf(out, "  recommends: %.120s\n", rec)
+		}
+		if options, ok := m["options"].([]any); ok {
+			for _, o := range options {
+				om, _ := o.(map[string]any)
+				fmt.Fprintf(out, "  - %s: %.100s\n", str(om, "key"), str(om, "label"))
 			}
 		}
-		fmt.Print(gateQueueFooter(len(shown), gateKindBreakdown(gates), gatesKind))
-		return nil
-	},
+	}
+	fmt.Fprint(out, gateQueueFooter(len(shown), gateKindBreakdown(gates), kind))
+	return nil
+}
+
+// renderGate is the by-id detail: state and applied state, then the answer,
+// chosen options, source and answerer when the gate carries them.
+func renderGate(out io.Writer, g map[string]any) {
+	fmt.Fprintf(out, "\n%s  [%s]  %s\n", str(g, "external_id"), str(g, "kind"), str(g, "title"))
+	fmt.Fprintf(out, "  state: %s", str(g, "state"))
+	if a := str(g, "applied_state"); a != "" {
+		fmt.Fprintf(out, "   applied: %s", a)
+	}
+	fmt.Fprintln(out)
+	if ans := str(g, "answer"); ans != "" {
+		fmt.Fprintf(out, "  answer: %s\n", ans)
+	}
+	if keys := gateOptionKeys(g); keys != "" {
+		fmt.Fprintf(out, "  chosen: %s\n", keys)
+	}
+	if src := str(g, "source_tag"); src != "" {
+		fmt.Fprintf(out, "  source: %s\n", src)
+	}
+	if who := gateAnswerer(g); who != "" {
+		if at := str(g, "answered_at"); at != "" {
+			fmt.Fprintf(out, "  answered by %s at %s\n", who, at)
+		} else {
+			fmt.Fprintf(out, "  answered by %s\n", who)
+		}
+	}
+}
+
+// renderGateHistory is one line-group in a --state listing: the gate, its stored
+// state, and — when it carries an answer — its source and answerer.
+func renderGateHistory(out io.Writer, g map[string]any) {
+	fmt.Fprintf(out, "\n%s  [%s]  %s\n", str(g, "external_id"), str(g, "kind"), str(g, "title"))
+	fmt.Fprintf(out, "  state: %s\n", str(g, "state"))
+	if src := str(g, "source_tag"); src != "" {
+		fmt.Fprintf(out, "  source: %s\n", src)
+	}
+	if who := gateAnswerer(g); who != "" {
+		fmt.Fprintf(out, "  answered by %s\n", who)
+	}
+}
+
+// gateAnswerer prefers the resolved name; otherwise the answerer kind with the
+// agent slug, or the numeric user id the server serves when a user resolves to
+// no membership name — never discarding that id down to a bare kind.
+func gateAnswerer(g map[string]any) string {
+	if n := str(g, "answerer_name"); n != "" {
+		return n
+	}
+	kind := str(g, "answerer_kind")
+	if slug := str(g, "answerer_agent_slug"); slug != "" {
+		if kind != "" {
+			return kind + " " + slug
+		}
+		return slug
+	}
+	if id := answererUserID(g); id != "" {
+		return "user #" + id
+	}
+	return kind
+}
+
+// answererUserID formats the numeric answerer_user_id the server serves when a
+// user (e.g. a superuser) resolves to no membership name. A JSON number decodes
+// as float64 without UseNumber, which the string-only str() silently drops, so
+// format it as a base-10 integer — no trailing ".0", no scientific notation for
+// a large id — keeping the identity visible instead of collapsing to "human".
+func answererUserID(g map[string]any) string {
+	switch v := g["answerer_user_id"].(type) {
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case json.Number:
+		return v.String()
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	}
+	return ""
+}
+
+func gateOptionKeys(g map[string]any) string {
+	keys, _ := g["chosen_option_keys"].([]any)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if s, ok := k.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// emitGatesJSON writes {"gates":[…]} to out, an empty list as [] and never null,
+// so a consumer's JSON.parse on stdout cannot throw.
+func emitGatesJSON(out io.Writer, gates []any) error {
+	if gates == nil {
+		gates = []any{}
+	}
+	return emitJSONEnvelope(out, "gates", gates)
+}
+
+func emitJSONEnvelope(out io.Writer, key string, val any) error {
+	blob, err := json.MarshalIndent(map[string]any{key: val}, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(blob))
+	return nil
 }
 
 // kindCount is one kind of gate and how many of it are open.
@@ -985,6 +1633,8 @@ func gateQueueFooter(shown int, breakdown []kindCount, filter string) string {
 
 var (
 	gatesKind     string
+	gatesState    string
+	gatesJSON     bool
 	answerText    string
 	answerOptions string
 	answerSource  string
@@ -999,33 +1649,64 @@ var factoryAnswerCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if answerText == "" {
-			return fmt.Errorf("--text is required — the answer is recorded verbatim as the USER: decision")
-		}
-		payload := map[string]any{"system_id": env.SystemID, "answer": answerText}
-		if answerOptions != "" {
-			payload["chosen_option_keys"] = strings.Split(answerOptions, ",")
-		}
-		if answerSource != "" {
-			payload["source_tag"] = answerSource
-		}
-		status, body, err := env.call("POST", "/api/v1/sync/gates/"+args[0]+"/answer", payload)
-		if err != nil {
-			return err
-		}
-		switch status {
-		case 200:
-			gate, _ := dataOf(body)["gate"].(map[string]any)
-			printSuccess("answered %s (%s): %s", str(gate, "external_id"), str(gate, "source_tag"), str(gate, "answer"))
-		case 409:
-			errMap, _ := body["error"].(map[string]any)
-			winner, _ := errMap["winner"].(map[string]any)
-			return fmt.Errorf("already answered (first-wins) — winner: %q (%s)", str(winner, "answer"), str(winner, "source_tag"))
-		default:
-			return fmt.Errorf("server %d: %v", status, body["error"])
-		}
-		return nil
+		return factoryAnswer(env, args[0], answerText, answerOptions, answerSource)
 	},
+}
+
+// factoryAnswer records a USER: decision on a gate. Extracted from the cobra
+// handler (REQ-CROSS-372) so the refusal rendering is testable against a stub
+// server; behavior unchanged by the extraction.
+func factoryAnswer(env *factoryEnv, externalID, text, options, source string) error {
+	if text == "" {
+		return fmt.Errorf("--text is required — the answer is recorded verbatim as the USER: decision")
+	}
+	payload := map[string]any{"system_id": env.SystemID, "answer": text}
+	if options != "" {
+		payload["chosen_option_keys"] = strings.Split(options, ",")
+	}
+	if source != "" {
+		payload["source_tag"] = source
+	}
+	// An entry/completion gate is "governed": Core.Gates.answer routes it to
+	// answer_reviewed, which refuses unless the answer carries a review
+	// submission proving it is made against the current reviewed state (the
+	// gate's own content_fingerprint + evaluated_scope_fingerprint). No prior
+	// CLI path sent it, so governed gates could only be answered in Mission
+	// Control. Fetch the gate and, when governed, attach that review; a non-
+	// governed gate takes none (the server refuses a review on one).
+	if gs, gb, ge := env.call("GET",
+		fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", externalID, env.SystemID), nil); ge == nil && gs == 200 {
+		if g, ok := dataOf(gb)["gate"].(map[string]any); ok {
+			// REQ-CROSS-372: the server's own signal decides — answer_readiness
+			// .requires_review — with the purpose as the fallback for a server
+			// that predates it (REQ-CROSS-354 later changes the predicate in
+			// one place, on the server).
+			readiness, _ := g["answer_readiness"].(map[string]any)
+			requires, served := readiness["requires_review"].(bool)
+			purpose := str(g, "purpose")
+			if (served && requires) || (!served && (purpose == "entry" || purpose == "completion")) {
+				payload["review"] = map[string]any{
+					"content_fingerprint":         str(g, "content_fingerprint"),
+					"evaluated_scope_fingerprint": str(g, "evaluated_scope_fingerprint"),
+				}
+			}
+		}
+	}
+	status, body, err := env.call("POST", "/api/v1/sync/gates/"+externalID+"/answer", payload)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case 200:
+		gate, _ := dataOf(body)["gate"].(map[string]any)
+		printSuccess("answered %s (%s): %s", str(gate, "external_id"), str(gate, "source_tag"), str(gate, "answer"))
+	default:
+		// REQ-CROSS-372: the server's sentence, verbatim — a first-wins 409 still
+		// carries "already answered (first-wins)" and its winner; any other
+		// refusal keeps the arm the server named instead of being replaced.
+		return serverRefusal("answer refused", status, body)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- pull
@@ -1050,7 +1731,7 @@ func factoryPullRun(env *factoryEnv, apply bool) error {
 		return err
 	}
 	if status != 200 {
-		return fmt.Errorf("server %d: %v", status, body["error"])
+		return serverRefusal("", status, body)
 	}
 	intents, _ := dataOf(body)["intents"].([]any)
 	if len(intents) == 0 {
@@ -1098,7 +1779,7 @@ func factoryPullRun(env *factoryEnv, apply bool) error {
 			aStatus, aBody, err := env.call("POST", "/api/v1/sync/spec-intents/ack",
 				map[string]any{"system_id": env.SystemID, "external_id": externalID})
 			if err != nil || aStatus != 200 {
-				return fmt.Errorf("spec ack failed for %s: %d %v (%v)", externalID, aStatus, aBody["error"], err)
+				return fmt.Errorf("spec ack failed for %s: %v (%v)", externalID, serverRefusal("", aStatus, aBody), err)
 			}
 			printSuccess("pulled server spec edit → %s (marker reset to SPEC-DRAFT)", externalID)
 			continue
@@ -1144,7 +1825,7 @@ func factoryPullRun(env *factoryEnv, apply bool) error {
 		aStatus, aBody, err := env.call("POST", "/api/v1/sync/intents/"+externalID+"/ack",
 			map[string]any{"system_id": env.SystemID, "applied_state": "applied", "job_ref": jobRef})
 		if err != nil || aStatus != 200 {
-			return fmt.Errorf("ack failed for %s: %d %v (%v)", externalID, aStatus, aBody["error"], err)
+			return fmt.Errorf("ack failed for %s: %v (%v)", externalID, serverRefusal("", aStatus, aBody), err)
 		}
 		if jobID != "" {
 			_, _, _ = env.call("POST", "/api/v1/sync/jobs/"+jobID+"/finish", map[string]any{
@@ -1165,9 +1846,9 @@ var imagePurpose string
 var factoryImageCmd = &cobra.Command{
 	Use:   "image <prompt>",
 	Short: "Generate an image via the platform (tenant-stored; prints the URL)",
-	Long: "EPIC-DEC-001 (REQ-AGT-027): generates through the governed image service\n" +
-		"(Nano Banana 2 Lite first) — the backend stores the image in the tenant's\n" +
-		"storage and returns a URL; the CLI never handles bytes.",
+	Long: "Generates the image through the platform's governed image service:\n" +
+		"the backend stores it in the tenant's storage and returns a URL; the CLI\n" +
+		"never handles bytes.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
@@ -1185,7 +1866,7 @@ var factoryImageCmd = &cobra.Command{
 			return err
 		}
 		if status != 200 {
-			return fmt.Errorf("server %d: %v", status, body["error"])
+			return serverRefusal("", status, body)
 		}
 
 		data := dataOf(body)
@@ -1284,72 +1965,145 @@ var (
 	evidencePass   string
 	evidenceFail   string
 	evidenceSkip   string
+	evidenceRole   string
 )
+
+// buildEvidenceResults turns the --pass/--fail/--skip id lists into per-target
+// result maps. When role is non-empty it is stamped on every result: a "RED"
+// result is what Core.RDD.Reconcile.red_recorded? requires to promote an SR
+// (reconcile.ex). Leaving role empty omits the key entirely, so a caller that
+// passes no --role sends exactly the pre-role payload.
+func buildEvidenceResults(pass, fail, skip, role string) []map[string]any {
+	// The server matches the role exactly (reconcile.ex promotes on "RED") and
+	// validates nothing, so a lower-case role posts fine and promotes nothing.
+	role = strings.ToUpper(strings.TrimSpace(role))
+	targetType := func(id string) string {
+		switch {
+		case strings.Contains(id, "#AC"):
+			return "criterion"
+		case strings.HasPrefix(id, "EPIC-"):
+			return "epic"
+		default:
+			return "requirement"
+		}
+	}
+	results := []map[string]any{}
+	for _, pair := range []struct{ ids, result string }{{pass, "pass"}, {fail, "fail"}, {skip, "skip"}} {
+		for _, id := range strings.Split(pair.ids, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				m := map[string]any{"target_external_id": id, "target_type": targetType(id), "result": pair.result}
+				if role != "" {
+					m["role"] = role
+				}
+				results = append(results, m)
+			}
+		}
+	}
+	return results
+}
+
+// evidenceOpts carries the `factory evidence` flags to the runnable body so the
+// command is testable without cobra (REQ-CROSS-378).
+type evidenceOpts struct {
+	kind, log, totals, pass, fail, skip, role, revision string
+}
+
+var evidenceRevision string
 
 var factoryEvidenceCmd = &cobra.Command{
 	Use:   "evidence",
 	Short: "Post a test/CI run as evidence (sha-pinned; feeds Done-decays)",
+	Long: `Post one run as evidence for the items it exercised. --pass, --fail and
+--skip take item ids (requirements and epics). Every result is pinned to the
+repository HEAD at record time, or to --revision <commit> when given.
+
+--role is RED for a red-first run, or empty for a passing one; it is never
+lower or upper — the trace class is decided by the trace, not the evidence.
+The model:
+  1. record RED with --fail <SR> --role RED while HEAD is at the RED commit,
+     or later with --revision <red-commit>
+  2. record the passing run with --pass <SR> after the fix
+Reconcile needs the RED: TODO -> IN_PROGRESS does not happen without a
+recorded RED, and a passing lower trace with no RED before it is reported
+as a FAIL. Currency is role-aware: a RED never shadows a passing result,
+and the server warns at record time about a pass with no RED before it or
+a RED recorded after a pass. An epic needs evidence of its own — without
+it the epic reads :claimed and its completion gate is refused. So does the
+user requirement a completion gate will name (UR-<suffix> for EPIC-<suffix>):
+a run posted on the epic or the SRs does not cover the UR; --pass the UR too,
+or the gate refuses "not yet". Evidence for
+completion is pinned to the delivered (merged) revision, not the branch head.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
 		if err != nil {
 			return err
 		}
-
-		targetType := func(id string) string {
-			switch {
-			case strings.Contains(id, "#AC"):
-				return "criterion"
-			case strings.HasPrefix(id, "EPIC-"):
-				return "epic"
-			default:
-				return "requirement"
-			}
-		}
-
-		results := []map[string]any{}
-		for flagValue, result := range map[string]string{evidencePass: "pass", evidenceFail: "fail", evidenceSkip: "skip"} {
-			for _, id := range strings.Split(flagValue, ",") {
-				if id = strings.TrimSpace(id); id != "" {
-					results = append(results, map[string]any{"target_external_id": id, "target_type": targetType(id), "result": result})
-				}
-			}
-		}
-		if len(results) == 0 {
-			return fmt.Errorf("no targets — give at least --pass or --fail")
-		}
-
-		totals := map[string]any{}
-		for _, pair := range strings.Split(evidenceTotals, ",") {
-			if k, v, found := strings.Cut(pair, "="); found {
-				if n, err := strconv.Atoi(v); err == nil {
-					totals[k] = n
-				}
-			}
-		}
-
-		sha := gitOut(env.Root, "rev-parse", "--short", "HEAD")
-		status, body, err := env.call("POST", "/api/v1/sync/evidence", map[string]any{
-			"system_id":   env.SystemID,
-			"external_id": "RUN-" + time.Now().UTC().Format("2006-01-02T15-04-05Z") + "-" + sha,
-			"kind":        evidenceKind,
-			"sha":         sha,
-			"branch":      gitOut(env.Root, "rev-parse", "--abbrev-ref", "HEAD"),
-			"ran_at":      time.Now().UTC().Format(time.RFC3339),
-			"runner":      map[string]any{"kind": "agent", "agent_slug": "modernpath-cli"},
-			"totals":      totals,
-			"log_ref":     evidenceLog,
-			"results":     results,
+		return factoryEvidenceRun(env, evidenceOpts{
+			kind: evidenceKind, log: evidenceLog, totals: evidenceTotals,
+			pass: evidencePass, fail: evidenceFail, skip: evidenceSkip,
+			role: evidenceRole, revision: evidenceRevision,
 		})
-		if err != nil {
-			return err
-		}
-		if status != 200 {
-			return fmt.Errorf("server %d: %v", status, body["error"])
-		}
-		run, _ := dataOf(body)["run"].(map[string]any)
-		printSuccess("evidence %s: %s (%d targets, sha %s)", str(dataOf(body), "result"), str(run, "external_id"), len(results), sha)
-		return nil
 	},
+}
+
+func factoryEvidenceRun(env *factoryEnv, o evidenceOpts) error {
+	results := buildEvidenceResults(o.pass, o.fail, o.skip, o.role)
+	if len(results) == 0 {
+		return fmt.Errorf("no targets — give at least --pass or --fail")
+	}
+
+	totals := map[string]any{}
+	for _, pair := range strings.Split(o.totals, ",") {
+		if k, v, found := strings.Cut(pair, "="); found {
+			if n, err := strconv.Atoi(v); err == nil {
+				totals[k] = n
+			}
+		}
+	}
+
+	// REQ-CROSS-378: --revision pins the run to a named commit — the RED commit,
+	// recorded after the fix landed — without a checkout. The run's sha is the
+	// short form; every result carries the full revision so the row says exactly
+	// what was tested. Default: HEAD, as before.
+	rev := "HEAD"
+	if o.revision != "" {
+		rev = o.revision
+	}
+	full := gitOut(env.Root, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	if full == "" {
+		return fmt.Errorf("--revision %q is not a commit in this repository — give a sha, tag or branch git resolves", rev)
+	}
+	sha := gitOut(env.Root, "rev-parse", "--short", full)
+	for _, r := range results {
+		r["revision"] = full
+	}
+	status, body, err := env.call("POST", "/api/v1/sync/evidence", map[string]any{
+		"system_id":   env.SystemID,
+		"external_id": "RUN-" + time.Now().UTC().Format("2006-01-02T15-04-05Z") + "-" + sha,
+		"kind":        o.kind,
+		"sha":         sha,
+		"branch":      gitOut(env.Root, "rev-parse", "--abbrev-ref", "HEAD"),
+		"ran_at":      time.Now().UTC().Format(time.RFC3339),
+		"runner":      map[string]any{"kind": "agent", "agent_slug": "modernpath-cli"},
+		"totals":      totals,
+		"log_ref":     o.log,
+		"results":     results,
+	})
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return serverRefusal("", status, body)
+	}
+	run, _ := dataOf(body)["run"].(map[string]any)
+	printSuccess("evidence %s: %s (%d targets, sha %s)", str(dataOf(body), "result"), str(run, "external_id"), len(results), sha)
+	// REQ-CROSS-378: the server's record-time warnings (a pass with no RED before
+	// it; a RED that a passing result already outranks) are printed, never
+	// swallowed — a warning is not a refusal.
+	for _, w := range stringSlice(dataOf(body)["warnings"]) {
+		printWarning("%s", w)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- drift
@@ -1359,6 +2113,13 @@ var driftReport bool
 var factoryDriftCmd = &cobra.Command{
 	Use:   "drift",
 	Short: "Compare each target's evidence sha to the working tree (Done decays)",
+	Long: `Compare each target's evidence sha to the working tree (Done decays).
+
+A target whose recorded run no longer matches the head, or whose run's
+validity lapsed, is a drift item: your-move lists it as [Drift] with its
+basis — the run's revision and the head it no longer matches, or the run's
+time with its validity lapsed — and the re-record path, a fresh passing run
+recorded at the current head with 'factory evidence --pass <id>'.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
 		if err != nil {
@@ -1370,7 +2131,7 @@ var factoryDriftCmd = &cobra.Command{
 			return err
 		}
 		if status != 200 {
-			return fmt.Errorf("server %d: %v", status, body["error"])
+			return serverRefusal("", status, body)
 		}
 
 		tracePaths, err := env.workspaceTracePaths()
@@ -1467,6 +2228,16 @@ var factoryWatchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "The daemon: sync + heartbeat + pull --apply on a cadence; SIGINT closes the session",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Store-backed (REQ-CROSS-329): watch's per-cycle sync is the same
+		// file-derived push the flip retires — decline up front rather than
+		// looping doomed syncs. Resolved by walking up, so a subdir invocation
+		// is caught too; no separate pull-only watch entrypoint exists.
+		if _, active := storeBackedFromCwd(); active {
+			printInfo("this workspace is store-backed (process/store-backed.md) — 'factory watch' syncs file ledgers that are retired; there is nothing to watch")
+			printInfo("read store state with 'modernpath working-set pull' / 'modernpath factory status'; write it with 'modernpath author'")
+			return nil
+		}
+
 		env, err := factoryEnvLoad()
 		if err != nil {
 			return err
@@ -1486,7 +2257,7 @@ var factoryWatchCmd = &cobra.Command{
 			<-sigs
 			fmt.Println("\nclosing session…")
 			closeSession()
-			os.Exit(0)
+			exit(0)
 		}()
 
 		for cycle := 1; ; cycle++ {
@@ -1518,6 +2289,8 @@ func init() {
 	factorySyncCmd.Flags().BoolVar(&factorySyncNoDocs, "no-docs", false, "skip workspace-document ops (upsert_document); sync process state only")
 
 	factoryGatesCmd.Flags().StringVar(&gatesKind, "kind", "", "show only this kind (approval_request, decision, question, roadblock, …)")
+	factoryGatesCmd.Flags().StringVar(&gatesState, "state", "", "list gate history in this state: open, answered, dismissed, superseded, all (default: the open queue)")
+	factoryGatesCmd.Flags().BoolVar(&gatesJSON, "json", false, "emit the server's gate envelope as JSON on stdout and nothing else")
 
 	factoryAnswerCmd.Flags().StringVar(&answerText, "text", "", "the answer, recorded verbatim as the USER: decision")
 	factoryAnswerCmd.Flags().StringVar(&answerOptions, "options", "", "chosen option keys, comma-separated")
@@ -1531,6 +2304,8 @@ func init() {
 	factoryEvidenceCmd.Flags().StringVar(&evidencePass, "pass", "", "passing target ids, comma-separated")
 	factoryEvidenceCmd.Flags().StringVar(&evidenceFail, "fail", "", "failing target ids, comma-separated")
 	factoryEvidenceCmd.Flags().StringVar(&evidenceSkip, "skip", "", "skipped target ids, comma-separated")
+	factoryEvidenceCmd.Flags().StringVar(&evidenceRole, "role", "", "evidence role stamped on every result this run — RED for a red-first result (upper-cased here; the server matches RED exactly); empty = unset")
+	factoryEvidenceCmd.Flags().StringVar(&evidenceRevision, "revision", "", "pin the run to this commit (sha, tag or branch) instead of HEAD — record a RED at the RED commit without a checkout")
 
 	// Q-ARCH-016 (USER:2026-08-18): --report was advertised in drift's own
 	// output but never registered; the drift-report POST was unreachable.
@@ -1540,17 +2315,23 @@ func init() {
 	factoryWatchCmd.Flags().IntVar(&watchInterval, "interval", 120, "seconds between cycles")
 	factoryWatchCmd.Flags().IntVar(&watchCycles, "cycles", 0, "stop after N cycles (0 = forever)")
 
-	factoryReleaseCmd.AddCommand(factoryReleaseUseCmd, factoryReleaseShowCmd, factoryReleaseClearCmd)
+	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivateSource, "source", "", "attributable USER: source, required (e.g. USER:2026-09-11:why)")
+	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivatePin, "pin", "", "release PIN confirmation (the same guard release lifecycle transitions require)")
+	factoryReleaseCmd.AddCommand(factoryReleaseUseCmd, factoryReleaseShowCmd, factoryReleaseClearCmd, factoryReleaseActivateCmd)
+
+	factoryPinCmd.AddCommand(factoryPinSetCmd)
+	factoryPinSetCmd.Flags().BoolVar(&pinSetStdin, "pin-stdin", false,
+		"read the PIN from stdin (one line) instead of prompting — for non-interactive use")
 
 	factorySyncCmd.Flags().BoolVar(&factorySyncIfQuiescent, "if-quiescent", false,
-		"hook mode: sync only when the workspace is coherent; log outcomes, never error (EPIC-SYNC-009)")
+		"hook mode: sync only when the workspace is coherent; log outcomes, never error")
 	factorySyncCmd.Flags().StringVar(&factorySyncTrigger, "trigger", "manual", "trigger label for the hook log")
 	factorySyncCmd.Flags().DurationVar(&factorySyncMinInterval, "min-interval", 60*time.Second,
 		"debounce: skip when the last successful sync is younger than this")
 
 	factoryCmd.AddCommand(factoryConnectCmd, factoryStatusCmd, factorySyncCmd, factoryGatesCmd,
 		factoryAnswerCmd, factoryPullCmd, factoryEvidenceCmd, factoryDriftCmd, factoryWatchCmd,
-		factoryManifestCmd, factoryReleaseCmd, factoryImageCmd)
+		factoryManifestCmd, factoryReleaseCmd, factoryPinCmd, factoryImageCmd)
 	factoryImageCmd.Flags().StringVar(&imagePurpose, "purpose", "", "context tag stored with the image (e.g. decision-brief)")
 	rootCmd.AddCommand(factoryCmd)
 }

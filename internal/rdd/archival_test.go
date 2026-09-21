@@ -99,12 +99,15 @@ func writeArchivalCorpus(t *testing.T, root string) map[string]string {
 			"| ID | Title | Stage | Status | UR | Source | Tests | Code |\n" +
 			"|---|---|---|---|---|---|---|---|\n" +
 			"| REQ-AR-001 | A row | MVP | PROPOSED | UR-AR-001 | doc-a | — | — |\n",
-		"WORKLIST.md":                 "# WORKLIST\n",
-		"BACKLOG.md":                  "# Backlog\n\nA discovery nobody routed yet.\n",
-		"PROGRESS.md":                 "# Progress\n\n| Context | Done |\n|---|---|\n| AR | 1 |\n",
-		"process/gap-register.md":     "# Gap register\n\n### GAP-AR-1 — a capability nobody built\n\nNarrative.\n",
-		"epics/README.md":             "# Epics\n\nHow this folder is organised.\n",
-		"epics/EPIC-AR-001-x/EPIC.md": "# EPIC-AR-001 — Fixture\n\n## User outcome\n\nProse.\n",
+		"WORKLIST.md":             "# WORKLIST\n",
+		"BACKLOG.md":              "# Backlog\n\nA discovery nobody routed yet.\n",
+		"PROGRESS.md":             "# Progress\n\n| Context | Done |\n|---|---|\n| AR | 1 |\n",
+		"process/gap-register.md": "# Gap register\n\n### GAP-AR-1 — a capability nobody built\n\nNarrative.\n",
+		// SR-CROSS-329: the release registry rides the batch byte-for-byte via the
+		// same archival carrier once it joins RetiredPathFamilies.
+		"process/releases.md":                       "# Releases\n\n| Slug | Status | Source |\n|---|---|---|\n| ar-release-1 | active | USER:2026-08-04 |\n",
+		"epics/README.md":                           "# Epics\n\nHow this folder is organised.\n",
+		"epics/EPIC-AR-001-x/EPIC.md":               "# EPIC-AR-001 — Fixture\n\n## User outcome\n\nProse.\n",
 		"epics/EPIC-AR-001-x/specs/architecture.md": "# Architecture spec\n\nGrounded claims.\n",
 		"epics/EPIC-AR-001-x/DECISION-INTERVIEW.md": "# Decision interview\n\nQ: why? A: because.\n",
 		// Not markdown, and not to be reshaped into any: significant

@@ -79,7 +79,8 @@ func runInitWorkspace(cmd *cobra.Command, args []string) error {
 
 	systems, err := client.ListSystems()
 	if err != nil {
-		printError("Failed to list systems: %v\n", err)
+		err = initListingRefused(baseURL, err)
+		printError("%v\n", err)
 		return err
 	}
 
@@ -110,9 +111,9 @@ func runInitWorkspace(cmd *cobra.Command, args []string) error {
 	printWorkspaceMemberMapping(localRepos, selectedSystem.WorkspaceMembers)
 
 	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{
-		force:          force,
-		initMode:       "workspace",
-		localRepos:     localRepos,
+		force:           force,
+		initMode:        "workspace",
+		localRepos:      localRepos,
 		platformMembers: selectedSystem.WorkspaceMembers,
 	})
 }
@@ -154,6 +155,16 @@ func resolveWorkspaceSystemSelection(client *api.Client, systems []api.System) (
 		return nil, fmt.Errorf("unified workspace system matching '%s' not found", systemNameFlag)
 	}
 
+	if !stdinIsTerminal() {
+		sys, err := chooseSystemWithoutTerminal(systems)
+		if err != nil {
+			return nil, err
+		}
+		if len(sys.WorkspaceMembers) == 0 {
+			return client.GetSystem(sys.ID)
+		}
+		return sys, nil
+	}
 	return selectWorkspaceSystem(client, systems)
 }
 

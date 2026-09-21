@@ -40,6 +40,13 @@ Do not ask for human input inside the loop. Return to planning only when drift
 creates a new product, scope, architecture, acceptance, priority, release,
 workflow, or material technical decision. Record an external blocker exactly.
 
+The project's commit gate binds the GREEN, cleanup, and reconciliation
+commits. A RED waypoint may legitimately fail the very suite the gate runs —
+its targeted failing test is its gate, and committing it before the change
+that satisfies it is what makes red-first auditable in history. Record the
+RED evidence while the repository stands at the RED commit, so the evidence
+is pinned to the revision that produced it.
+
 ## Report
 
 Report the planning revision, RED and passing observations, code and test

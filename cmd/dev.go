@@ -166,7 +166,7 @@ incremental progress on complex tasks.
 
 Examples:
   modernpath dev ralph                           # Interactive task selection
-  modernpath dev ralph abc123-uuid               # Specific task  
+  modernpath dev ralph abc123-uuid               # Specific task
   modernpath dev ralph --max-iterations 10       # Limit iterations
   modernpath dev ralph --tool opencode           # Use specific tool
   modernpath dev ralph status                    # Check loop status`,

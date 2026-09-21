@@ -118,3 +118,23 @@ func TestYourMoveHookWritesNoProjection(t *testing.T) {
 		t.Fatalf("hook mode must not write GATES.md")
 	}
 }
+
+// REQ-CROSS-317 (SR-CLI-0088): the SessionStart brief carries one scoped line
+// per held piece — the derived phase, the declared phase, and whether they
+// diverge. Since REQ-CROSS-415 (EPIC-CLI-021, D11) it is rendered from the
+// held-work read, so the hook stays at two pure reads and holding several
+// pieces no longer silences it.
+func TestREQCROSS317HookBriefCarriesTheScopedPhaseLine(t *testing.T) {
+	env := wsEnv(t, wsServe(t, &wsFixture{
+		feed: feedFixture(),
+		held: []any{heldPieceFixture("EPIC-X-001", "plan", map[string]any{
+			"derived_phase": "cold_review",
+			"divergence":    true,
+		})},
+	}))
+	var out bytes.Buffer
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"scoped","source":"startup"}`), &out, time.Second, hookLoader(env))
+	want(t, out.String(), "cold_review")
+	want(t, out.String(), "plan")
+	want(t, out.String(), "diverges")
+}

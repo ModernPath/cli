@@ -22,8 +22,8 @@ and entities built here that the server's response does not include.
 Stranded rows are the dangerous ones: invisible to every local query, and an id
 allocated from the ledger's maximum can land on one. Entities the endpoint does
 not serve — UR rows on the requirements endpoint, answered gates on the
-DEFAULT gates listing (readable since REQ-CROSS-219 via state=answered, which
-this reconcile deliberately does not consume: its subject is the open queue) —
+default gates listing (readable with state=answered, which this reconcile
+deliberately does not consume: its subject is the open queue) —
 are counted rather than listed, because reporting them as missing is noise
 that trains a reader to ignore the report.`,
 	RunE: func(cmd *cobra.Command, args []string) error {

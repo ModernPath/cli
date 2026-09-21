@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,12 +20,24 @@ var wsNow = time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 // wsServer serves the four read endpoints the commands consume, from mutable
 // fixture state so tests can change the server side between calls.
 type wsFixture struct {
-	gates         []any // the open set: served on the default listing
-	answeredGates []any // served only under state=all|answered (REQ-CROSS-219)
-	epics         []any
-	requirements  []any
-	failGates     bool
-	emptyEnvelope bool // serve 200 {"data":{}} — the envelope-skew case
+	gates            []any // the open set: served on the default listing
+	answeredGates    []any // served only under state=all|answered (REQ-CROSS-219)
+	epics            []any
+	requirements     []any
+	userRequirements []any // served under data.user_requirements (REQ-CROSS-048/308)
+	failGates        bool
+	emptyEnvelope    bool   // serve 200 {"data":{}} — the envelope-skew case
+	lastReqQuery     string // captured ?… of the last /api/v1/sync/requirements request
+
+	// REQ-CROSS-109 — gate history reads and the by-id show route. Before this SR
+	// the fixture served only state=""/open/answered/all and had no show route.
+	dismissedGates  []any          // served under state=dismissed|all
+	supersededGates []any          // served under state=superseded|all
+	closedGates     []any          // applied answers: in `all`, never in `answered`
+	gate            map[string]any // served by GET /sync/gates/{id} when its external_id matches
+	lastGatesQuery  string         // captured ?… of the last list or show request
+	gatesStatus     int            // force this status on the list AND show routes (0 = normal)
+	gatesBody       map[string]any // the exact body to serve with gatesStatus
 
 	// REQ-CROSS-220
 	workSelection  map[string]any // served on GET /work-selection
@@ -32,12 +45,57 @@ type wsFixture struct {
 	selectStatus   int            // POST response status (default 200)
 	selectError    string         // POST error body when selectStatus >= 400
 
+	// REQ-CROSS-345: the caller-scoped read. lastSelectGet captures the GET
+	// query (so ?scope= is observable); selectReadStatus/Body serve the
+	// "you hold several current pieces" 422 the client must surface.
+	lastSelectGet    string         // captured ?… of the last GET work-selection
+	selectReadStatus int            // GET response status (0 = normal 200)
+	selectReadBody   map[string]any // the exact body to serve with selectReadStatus
+
+	// REQ-CROSS-312/313: packet sections served on GET /sync/packet-sections
+	packetSections []any
+	// A non-200 status to serve from /sync/packet-sections (0 = normal 200). 404
+	// is an absent endpoint (honest absence); any other non-200 is a real error.
+	packetSectionsStatus int
+
+	// REQ-CROSS-314 (push): capture author writes and drive per-record 409s.
+	// authorConflict is keyed by a requirement/epic external_id or, for a packet
+	// section, "<scope_kind>:<scope_external_id>:<section_key>".
+	authorPosts    []map[string]any
+	authorConflict map[string]bool
+
 	// REQ-CROSS-274 feed, consumed by the your-move brief (REQ-CROSS-276/277)
 	feed          map[string]any // served as {"data": feed}
 	failFeed      bool           // serve 500 {"error":"boom"}
 	feedNoItems   bool           // serve 200 {"data":{...}} without "items" (envelope skew)
 	feedDelay     time.Duration  // sleep before answering /feed (the hook deadline test)
 	lastFeedQuery string         // captured ?…  of the last /api/v1/feed request
+
+	// REQ-CROSS-317: the delivery-context read the SessionStart hook appends its
+	// scoped derived/declared-phase line from (served as {"data": deliveryContext}).
+	deliveryContext map[string]any
+
+	// REQ-CROSS-348: served as the x-modernpath-store-revision response header
+	// on every route when non-empty.
+	storeRevision string
+
+	// REQ-CROSS-393: backlog, gap and tooling records served on GET /sync/backlog.
+	backlog []any
+
+	// REQ-CROSS-415 (EPIC-CLI-021): the caller-scoped held-work read the
+	// SessionStart brief renders its continuing mode from, served as
+	// {"data": {"pieces": held}} on GET /sync/work-selection/held.
+	held []any
+
+	// REQ-CROSS-417 (EPIC-CLI-021): the contract advertisement. Zero keeps the
+	// route unserved (404, the pre-advertisement server); contractDelay holds
+	// the answer so a status verb's own timeout can be observed.
+	contractVersion int
+	contractDelay   time.Duration
+
+	// SCN-BRIEF-005: every request the fixture answered, "METHOD path" — the
+	// reads-only assertion is that none of them is a write.
+	requests []string
 }
 
 func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
@@ -46,7 +104,16 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 	write := func(w http.ResponseWriter, key string, items []any) {
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{key: items}})
 	}
+	mux.HandleFunc("/api/v1/sync/backlog", func(w http.ResponseWriter, r *http.Request) {
+		write(w, "backlog", fx.backlog)
+	})
 	mux.HandleFunc("/api/v1/sync/gates", func(w http.ResponseWriter, r *http.Request) {
+		fx.lastGatesQuery = r.URL.RawQuery
+		if fx.gatesStatus != 0 && fx.gatesStatus != 200 {
+			w.WriteHeader(fx.gatesStatus)
+			json.NewEncoder(w).Encode(fx.gatesBody)
+			return
+		}
 		if fx.emptyEnvelope {
 			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
 			return
@@ -61,16 +128,93 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			write(w, "gates", fx.gates)
 		case "answered":
 			write(w, "gates", fx.answeredGates)
+		case "dismissed":
+			write(w, "gates", fx.dismissedGates)
+		case "superseded":
+			write(w, "gates", fx.supersededGates)
 		case "all":
-			write(w, "gates", append(append([]any{}, fx.gates...), fx.answeredGates...))
+			all := append([]any{}, fx.gates...)
+			all = append(all, fx.answeredGates...)
+			all = append(all, fx.dismissedGates...)
+			all = append(all, fx.supersededGates...)
+			all = append(all, fx.closedGates...)
+			write(w, "gates", all)
 		default:
 			w.WriteHeader(422)
 			json.NewEncoder(w).Encode(map[string]any{"error": "unknown state"})
 		}
 	})
+	// REQ-CROSS-109: the by-id show route. Mirrors the server: 400 without
+	// system_id, the served gate, or a nested {"error":{"message":"no such gate: …"}}
+	// 404 when absent. The gatesStatus/gatesBody knob forces an arbitrary failure —
+	// the routeless case (Phoenix's {"errors":{"detail":"Not Found"}}) needs the body,
+	// not the status alone.
+	mux.HandleFunc("/api/v1/sync/gates/", func(w http.ResponseWriter, r *http.Request) {
+		fx.lastGatesQuery = r.URL.RawQuery
+		if fx.gatesStatus != 0 && fx.gatesStatus != 200 {
+			w.WriteHeader(fx.gatesStatus)
+			json.NewEncoder(w).Encode(fx.gatesBody)
+			return
+		}
+		if r.URL.Query().Get("system_id") == "" {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]any{"errors": map[string]any{"detail": "Bad Request"}})
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/sync/gates/")
+		if fx.gate != nil && str(fx.gate, "external_id") == id {
+			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"gate": fx.gate}})
+			return
+		}
+		w.WriteHeader(404)
+		json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "no such gate: " + id}})
+	})
 	mux.HandleFunc("/api/v1/sync/epics", func(w http.ResponseWriter, r *http.Request) { write(w, "epics", fx.epics) })
+	mux.HandleFunc("/api/v1/sync/delivery-context", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"data": fx.deliveryContext})
+	})
+	mux.HandleFunc("/api/v1/sync/packet-sections", func(w http.ResponseWriter, r *http.Request) {
+		if fx.packetSectionsStatus != 0 && fx.packetSectionsStatus != 200 {
+			w.WriteHeader(fx.packetSectionsStatus)
+			json.NewEncoder(w).Encode(map[string]any{"error": "boom"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"packet_sections":   fx.packetSections,
+			"missing_canonical": []any{"red_strategy", "decisions"},
+		}})
+	})
+	mux.HandleFunc("/api/v1/sync/author", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		fx.authorPosts = append(fx.authorPosts, body)
+		rec, _ := body["record"].(map[string]any)
+		conflictKey := str(rec, "external_id")
+		respKey := "requirement"
+		switch str(rec, "kind") {
+		case "epic":
+			respKey = "epic"
+		case "packet_section":
+			respKey = "packet_section"
+			conflictKey = str(rec, "scope_kind") + ":" + str(rec, "scope_external_id") + ":" + str(rec, "section_key")
+		}
+		if fx.authorConflict[conflictKey] {
+			w.WriteHeader(409)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "the content has moved since that fingerprint"}})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			respKey: map[string]any{"external_id": str(rec, "external_id"), "fingerprint": "served-after-" + conflictKey},
+		}})
+	})
 	mux.HandleFunc("/api/v1/sync/requirements", func(w http.ResponseWriter, r *http.Request) {
-		write(w, "requirements", fx.requirements)
+		fx.lastReqQuery = r.URL.RawQuery
+		// The real endpoint serves system requirements AND user requirements in
+		// one envelope, under separate keys (sync_api_controller requirements/2).
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"requirements":      fx.requirements,
+			"user_requirements": fx.userRequirements,
+		}})
 	})
 	mux.HandleFunc("/api/v1/sync/evidence/latest", func(w http.ResponseWriter, r *http.Request) {
 		write(w, "evidence", nil)
@@ -104,9 +248,41 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"selection": body}})
 			return
 		}
+		fx.lastSelectGet = r.URL.RawQuery
+		if fx.selectReadStatus >= 400 {
+			w.WriteHeader(fx.selectReadStatus)
+			json.NewEncoder(w).Encode(fx.selectReadBody)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"data": fx.workSelection})
 	})
-	srv := httptest.NewServer(mux)
+	mux.HandleFunc("/api/v1/sync/work-selection/held", func(w http.ResponseWriter, r *http.Request) {
+		pieces := fx.held
+		if pieces == nil {
+			pieces = []any{}
+		}
+		write(w, "pieces", pieces)
+	})
+	mux.HandleFunc("/api/v1/sync/contract", func(w http.ResponseWriter, r *http.Request) {
+		if fx.contractDelay > 0 {
+			time.Sleep(fx.contractDelay)
+		}
+		if fx.contractVersion == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"version": fx.contractVersion, "capabilities": map[string]any{}}})
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fx.requests = append(fx.requests, r.Method+" "+r.URL.Path)
+		if fx.storeRevision != "" {
+			w.Header().Set("x-modernpath-store-revision", fx.storeRevision)
+		}
+		if fx.contractVersion > 0 {
+			w.Header().Set("x-modernpath-contract", fmt.Sprint(fx.contractVersion))
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -130,6 +306,15 @@ func wsReq(id, title string) map[string]any {
 		"work_status": "in_progress", "stage": "MVP", "release": "modernpath-v1-09"}
 }
 
+// wsUserReq builds a user-requirement payload shaped like the requirements
+// read's data.user_requirements element: it carries its derived SR ids under
+// system_requirement_external_ids and, unlike an SR, has no stage/priority/owner.
+func wsUserReq(id, title string) map[string]any {
+	return map[string]any{"external_id": id, "title": title, "context": "CROSS",
+		"description": "a user outcome", "work_status": "PROPOSED",
+		"system_requirement_external_ids": []any{"SR-1"}}
+}
+
 // --- REQ-CROSS-215 — the your-move projection ---
 
 // §215.1+2: the projection lists what the server serves (the server's own
@@ -151,6 +336,74 @@ func TestYourMoveMaterializesTheServedGatesUnderASnapshotHeader(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("projection must contain %q:\n%s", want, got)
 		}
+	}
+}
+
+// REQ-CROSS-308 (EPIC-CLI-007): `working-set … --include-candidates` asks the
+// requirements read for candidates so a just-authored DERIVED candidate is
+// materializable; the default read is unchanged. RED first: wsIndex takes no
+// include-candidates argument yet.
+func TestWorkingSetIncludeCandidatesRidesTheReadQuery(t *testing.T) {
+	fx := &wsFixture{requirements: []any{wsReq("SR-1", "x")}}
+	env := wsEnv(t, wsServe(t, fx))
+
+	if _, _, err := wsIndex(env, true, nil); err != nil {
+		t.Fatalf("wsIndex(include): %v", err)
+	}
+	if !strings.Contains(fx.lastReqQuery, "include=candidates") {
+		t.Fatalf("--include-candidates must add include=candidates, got %q", fx.lastReqQuery)
+	}
+
+	if _, _, err := wsIndex(env, false, nil); err != nil {
+		t.Fatalf("wsIndex(default): %v", err)
+	}
+	if strings.Contains(fx.lastReqQuery, "include=candidates") {
+		t.Fatalf("the default read must not request candidates, got %q", fx.lastReqQuery)
+	}
+}
+
+// REQ-CROSS-048/308 (EPIC-CLI-007): the requirements read serves user
+// requirements under a SEPARATE envelope key (data.user_requirements). wsIndex
+// indexed only data.requirements, so every UR — including a just-authored
+// DERIVED UR candidate the include=candidates read is meant to make
+// materializable — came back unknown to `working-set pull`. RED first: wsIndex
+// does not index user requirements at all.
+func TestWorkingSetIndexesUserRequirements(t *testing.T) {
+	fx := &wsFixture{
+		requirements:     []any{wsReq("SR-1", "a system requirement")},
+		userRequirements: []any{wsUserReq("UR-1", "a user requirement")},
+	}
+	env := wsEnv(t, wsServe(t, fx))
+
+	index, _, err := wsIndex(env, true, nil)
+	if err != nil {
+		t.Fatalf("wsIndex: %v", err)
+	}
+	ur, ok := index["UR-1"]
+	if !ok {
+		keys := make([]string, 0, len(index))
+		for k := range index {
+			keys = append(keys, k)
+		}
+		t.Fatalf("wsIndex must index the user requirement UR-1 (so pull can resolve it); got keys %v", keys)
+	}
+	if ur.kind != "requirement" {
+		t.Fatalf("a UR indexes as a requirement so pull materializes it, got kind %q", ur.kind)
+	}
+	if _, ok := index["SR-1"]; !ok {
+		t.Fatalf("wsIndex must still index the system requirement SR-1 alongside the UR")
+	}
+}
+
+// A pulled UR must render an HONEST body: its actual relation content is the
+// derived system requirements it carries (system_requirement_external_ids), not
+// the SR-side parent_external_ids it lacks. RED first: the requirement renderer
+// only reads parent_external_ids, so a UR's derived SRs never appear.
+func TestUserRequirementBodyShowsItsDerivedSRs(t *testing.T) {
+	ur := wsItem{id: "UR-1", kind: "requirement", payload: wsUserReq("UR-1", "a user requirement")}
+	body := renderItemBody(ur, nil)
+	if !strings.Contains(body, "SR-1") {
+		t.Fatalf("a user requirement's body must show its derived system requirements; got:\n%s", body)
 	}
 }
 
@@ -585,9 +838,130 @@ func TestSelectSurfacesTheServerRefusal(t *testing.T) {
 	}
 }
 
+// --- REQ-CROSS-345: one holder per piece of work (client half) ---
+
+// A take names the one current piece it displaces, and the displaced piece's
+// outcome rides along so the server can close it in the same write.
+func TestSelectNamesWhatItReplaces(t *testing.T) {
+	fx := &wsFixture{}
+	env := wsEnv(t, wsServe(t, fx))
+
+	if err := workingSetSelect(env, wsSelectOpts{
+		scope: "EPIC-NEW", kind: "epic", phase: "plan",
+		replaces: "EPIC-OLD", outcome: "returned=plan",
+	}, wsNow); err != nil {
+		t.Fatalf("select --replaces failed: %v", err)
+	}
+	got := fx.lastSelectPost
+	if got["scope_external_id"] != "EPIC-NEW" {
+		t.Fatalf("the taken scope must post: %v", got)
+	}
+	if got["replaces"] != "EPIC-OLD" {
+		t.Fatalf("--replaces must name the displaced piece, got %v", got["replaces"])
+	}
+	if got["previous_outcome"] != "returned:plan" {
+		t.Fatalf("the displaced piece's outcome must ride along, got %v", got["previous_outcome"])
+	}
+}
+
+// Without --replaces a take names nothing to displace: it adds a current
+// holder beside any the caller already has, never silently overwriting one.
+func TestSelectWithoutReplacesAdds(t *testing.T) {
+	fx := &wsFixture{}
+	env := wsEnv(t, wsServe(t, fx))
+
+	if err := workingSetSelect(env, wsSelectOpts{
+		scope: "EPIC-NEW", kind: "epic", phase: "plan",
+	}, wsNow); err != nil {
+		t.Fatalf("select failed: %v", err)
+	}
+	if _, present := fx.lastSelectPost["replaces"]; present {
+		t.Fatalf("an unnamed take must not post replaces — it adds a holder: %v", fx.lastSelectPost)
+	}
+}
+
+// A put-down closes the caller's own named current piece, recording how it
+// ended. It is a close, not a take — it posts `close`, not scope_external_id.
+func TestPutDownClosesTheNamedPiece(t *testing.T) {
+	fx := &wsFixture{}
+	env := wsEnv(t, wsServe(t, fx))
+
+	if err := workingSetSelect(env, wsSelectOpts{
+		scope: "EPIC-B3", putDown: true, outcome: "done",
+	}, wsNow); err != nil {
+		t.Fatalf("select --put-down failed: %v", err)
+	}
+	got := fx.lastSelectPost
+	if got["close"] != "EPIC-B3" {
+		t.Fatalf("--put-down must close the named piece, got %v", got["close"])
+	}
+	if got["previous_outcome"] != "done" {
+		t.Fatalf("the put-down outcome must ride along, got %v", got["previous_outcome"])
+	}
+	if _, present := got["scope_external_id"]; present {
+		t.Fatalf("a put-down is a close, not a take — it must post no scope_external_id: %v", got)
+	}
+}
+
+// A put-down with no named piece is refused client-side and posts nothing.
+func TestPutDownNeedsAScope(t *testing.T) {
+	fx := &wsFixture{}
+	env := wsEnv(t, wsServe(t, fx))
+
+	err := workingSetSelect(env, wsSelectOpts{putDown: true, outcome: "done"}, wsNow)
+	if err == nil || !strings.Contains(err.Error(), "put-down") {
+		t.Fatalf("--put-down with no scope must be refused client-side, got %v", err)
+	}
+	if fx.lastSelectPost != nil {
+		t.Fatalf("a refused put-down must post nothing, got %v", fx.lastSelectPost)
+	}
+}
+
+// The read is caller-scoped; --piece names which of the caller's own current
+// pieces the read resolves, carried to the server as ?scope=.
+func TestSelectionReadNamesThePiece(t *testing.T) {
+	defer func() { wsPiece = "" }()
+	wsPiece = "EPIC-B3"
+	fx := &wsFixture{workSelection: wsSelectionPayload()}
+	env := wsEnv(t, wsServe(t, fx))
+
+	if err := workingSetPull(env, []string{"selection"}, wsNow); err != nil {
+		t.Fatalf("pull selection failed: %v", err)
+	}
+	if !strings.Contains(fx.lastSelectGet, "scope=EPIC-B3") {
+		t.Fatalf("--piece must carry as ?scope=, got query %q", fx.lastSelectGet)
+	}
+}
+
+// When the caller holds several current pieces and names none, the server 422s
+// naming them; the client surfaces that actionable refusal, not a bare status.
+func TestSelectionReadSurfacesAmbiguousHolder(t *testing.T) {
+	fx := &wsFixture{
+		selectReadStatus: 422,
+		selectReadBody: map[string]any{
+			"error":  "you hold several current selections (EPIC-A, EPIC-B) — name one with ?scope=<id>",
+			"pieces": []any{"EPIC-A", "EPIC-B"},
+		},
+	}
+	env := wsEnv(t, wsServe(t, fx))
+
+	err := workingSetPull(env, []string{"selection"}, wsNow)
+	if err == nil {
+		t.Fatal("an ambiguous holder must surface as an error")
+	}
+	for _, want := range []string{"EPIC-A", "EPIC-B"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal must name the held pieces, got %v", err)
+		}
+	}
+	if strings.Contains(err.Error(), "server 422") {
+		t.Fatalf("the actionable server message must surface, not a bare status: %v", err)
+	}
+}
+
 func wsSelectionPayload() map[string]any {
 	return map[string]any{
-		"active_release": []any{map[string]any{"slug": "modernpath-v1-09", "status": "planned"}},
+		"active_release": []any{map[string]any{"slug": "modernpath-v1-09", "status": "active"}},
 		"current": map[string]any{
 			"scope_external_id": "EPIC-B3", "scope_kind": "epic", "phase": "build",
 			"status": "current", "owner": "jussi", "fingerprint": "abc123",
@@ -617,7 +991,7 @@ func TestPullSelectionMaterializesTheShape(t *testing.T) {
 	got := string(raw)
 	for _, want := range []string{
 		"Source identity:** sha256:", "Written body:** sha256:",
-		"Active release", "modernpath-v1-09", "planned",
+		"Active release", "modernpath-v1-09", "active",
 		"EPIC-B3", "build",
 		"EPIC-OLD", "returned:plan",
 	} {

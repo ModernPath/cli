@@ -23,7 +23,11 @@ func TestInstalledFilesMatchTheirSource(t *testing.T) {
 	}
 	compared := 0
 	for asset, target := range installTargets {
-		if _, isMerge := mergeTargets[asset]; isMerge {
+		isMerge := false
+		for _, m := range mergeTargets {
+			isMerge = isMerge || m.asset == asset
+		}
+		if isMerge {
 			continue // the client owns everything outside the marked block
 		}
 		want, err := assets.ReadFile(asset)

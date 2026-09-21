@@ -5,13 +5,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-BASE="${MODERNPATH_VERSION:-0.5.0}"
+# VERSION is the next release (see version.go); a local build is a pre-release
+# of it, `<VERSION>-dev`, so semver orders it after the last release and before
+# the next. The hand-bumped 0.5.0 that used to live here read as older than a
+# release the repo had already shipped (v0.6.0), which is the opposite of what
+# a freshness check needs (BACKLOG-TOOL-71).
+BASE="${MODERNPATH_VERSION:-$(tr -d '[:space:]' < VERSION)}"
 # Stamp the commit and date, not just a hand-bumped number: a version string that
 # never changes cannot tell a fresh build from one three weeks old, which is how
-# a stale binary ran the hooks unnoticed (RUN:2026-08-11).
+# a stale binary ran the hooks unnoticed (RUN:2026-08-11). A dirty tree says so:
+# the commit alone would claim bytes that commit does not have.
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+DIRTY=""
+if [[ -n "$(git status --porcelain --untracked-files=no -- . 2>/dev/null)" ]]; then
+  DIRTY=".dirty"
+fi
 BUILT="$(date -u +%Y-%m-%dT%H:%MZ)"
-VERSION="${BASE}+${COMMIT} (${BUILT})"
+VERSION="${BASE}-dev+${COMMIT}${DIRTY} (${BUILT})"
 LDFLAGS="-X 'github.com/modernpath/cli/cmd.Version=${VERSION}'"
 
 echo "Building modernpath ${VERSION}..."

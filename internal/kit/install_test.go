@@ -453,6 +453,82 @@ func TestInstallDoesNotClobberASymlinkedTarget(t *testing.T) {
 	}
 }
 
+// RUN:2026-09-11: with CLAUDE.md and AGENTS.md as one file, install merged both
+// managed blocks into it under the same markers; the last write won in map
+// order and `install --check` flagged the other block on every run. The
+// AGENTS.md block must win in either link direction — and on a fresh repository
+// whose link dangles — and the result must be stable and drift-free.
+func TestInstallMergesOneBlockIntoASharedEntryFile(t *testing.T) {
+	agentsBlock, err := assets.ReadFile("assets/agents-block.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, link, dest string
+		seed             bool
+	}{
+		{"CLAUDE.md links to AGENTS.md", "CLAUDE.md", "AGENTS.md", true},
+		{"AGENTS.md links to CLAUDE.md", "AGENTS.md", "CLAUDE.md", true},
+		{"dangling link on a fresh repository", "CLAUDE.md", "AGENTS.md", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.seed {
+				if err := os.WriteFile(filepath.Join(root, tc.dest), []byte("# Their guide\n\nProject rules.\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(tc.dest, filepath.Join(root, tc.link)); err != nil {
+				t.Fatal(err)
+			}
+
+			var first string
+			for run := range 2 {
+				res, err := Install(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Aliased["CLAUDE.md"] != "AGENTS.md" {
+					t.Fatalf("CLAUDE.md should be reported as AGENTS.md's file, got %v", res.Aliased)
+				}
+				raw, err := os.ReadFile(filepath.Join(root, tc.dest))
+				if err != nil {
+					t.Fatal(err)
+				}
+				doc := string(raw)
+				if run == 0 {
+					first = doc
+				} else if doc != first {
+					t.Fatal("a second install changed the shared file")
+				}
+				if strings.Count(doc, BeginMarker) != 1 {
+					t.Fatalf("expected exactly one managed block, got:\n%s", doc)
+				}
+				if !strings.Contains(doc, strings.Trim(string(agentsBlock), "\n")) {
+					t.Fatal("the AGENTS.md block must be the one merged — it is the only channel non-Claude agents read")
+				}
+				if strings.Contains(doc, "@.modernpath/rdd/PROCESS.md") {
+					t.Fatal("the CLAUDE.md block replaced the AGENTS.md block")
+				}
+				if tc.seed && !strings.Contains(doc, "Project rules.") {
+					t.Fatal("their content was lost")
+				}
+			}
+
+			if info, err := os.Lstat(filepath.Join(root, tc.link)); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("the %s symlink was not preserved (err %v)", tc.link, err)
+			}
+			drift, err := Check(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(drift) != 0 {
+				t.Fatalf("a freshly installed shared entry file must not drift: %v", drift)
+			}
+		})
+	}
+}
+
 // REQ-CROSS-040 (EPIC-ONB-001, `USER:2026-08-11`): the brownfield path — a
 // repository with code and no ledgers — existed only as a prompt someone retyped
 // per repo. It ships as a skill so the agent finds the method by itself.
@@ -726,4 +802,155 @@ func TestCheckReportsDamagedMarkersAsDrift(t *testing.T) {
 	}
 	t.Fatalf("damaged markers reported as %v — a workspace whose managed block cannot be located "+
 		"reads as up to date, and the next install cannot repair what it cannot find", drift)
+}
+
+// A store-backed workspace has no ledger files by declaration: the flip
+// retires tasks/*-REQUIREMENTS.md and the marker process/store-backed.md
+// records it. The ledger skill's own trigger is "changing a requirement's
+// status", so installing it there hands every later session a procedure whose
+// first step recreates a retired file — which the dual-authority guard then
+// flags. The skill is withheld under the marker, an installed copy is retired,
+// and Check treats its presence there as drift rather than its absence.
+func TestInstallWithholdsTheLedgerSkillOnAStoreBackedWorkspace(t *testing.T) {
+	const ledger = ".claude/skills/rdd-ledger/SKILL.md"
+
+	fileBacked := t.TempDir()
+	if _, err := Install(fileBacked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(fileBacked, ledger)); err != nil {
+		t.Fatalf("a file-backed workspace still gets the ledger skill: %v", err)
+	}
+
+	storeBacked := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(storeBacked, "process"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(storeBacked, "process", "store-backed.md")
+	if err := os.WriteFile(marker, []byte("# Store-backed declaration\n\nretired: tasks/*-REQUIREMENTS.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A copy left behind by an install made before the flip.
+	if err := os.MkdirAll(filepath.Join(storeBacked, ".claude/skills/rdd-ledger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeBacked, ledger), []byte("stale pre-flip copy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Install(storeBacked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(storeBacked, ledger)); !os.IsNotExist(err) {
+		t.Fatalf("the ledger skill must be withheld on a store-backed workspace (stat err=%v)", err)
+	}
+	removed := false
+	for _, r := range res.Removed {
+		if r == ledger {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Fatalf("the pre-flip copy must be reported as removed, got Removed=%v", res.Removed)
+	}
+	for _, w := range res.Written {
+		if w == ledger {
+			t.Fatalf("the ledger skill must not be reported as written on a store-backed workspace")
+		}
+	}
+
+	drift, err := Check(storeBacked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) != 0 {
+		t.Fatalf("absence of the ledger skill is the configuration, not drift: %v", drift)
+	}
+
+	// A session that recreates it is the drift.
+	if err := os.MkdirAll(filepath.Join(storeBacked, ".claude/skills/rdd-ledger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeBacked, ledger), []byte("recreated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	drift, err = Check(storeBacked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) != 1 || !strings.HasPrefix(drift[0], ledger) {
+		t.Fatalf("a ledger skill present on a store-backed workspace must be reported as drift, got %v", drift)
+	}
+}
+
+// After the flip the managed block is the only place a session is told how to
+// write. "author is the only write path" was wrong on the day it was written:
+// packet sections and item patches go through working-set push, the frozen
+// scope through working-set select, cold-review findings through process
+// findings, automatic transitions through process reconcile, and evidence and
+// human answers through the factory verbs. A block naming one of six channels
+// leaves an agent unable to record a finding or a packet without inventing a
+// path.
+func TestAgentsBlockNamesEveryStoreBackedWriteChannel(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := string(raw)
+	managed := agents[strings.Index(agents, BeginMarker):strings.Index(agents, EndMarker)]
+
+	// The write-channel table left the block for the tooling skill so no
+	// session pays for it in context unless a step needs it (USER:2026-09-12,
+	// D-1/D-3 of the tooling self-sufficiency plan). The block must point at
+	// the skill by name and by installed path, and the skill must still name
+	// every channel — otherwise the pointer is a dangling one.
+	for _, want := range []string{
+		"mp-process-cli",
+		".claude/skills/mp-process-cli/SKILL.md",
+		".modernpath/cli-reference.md",
+		"store-backed.md",
+	} {
+		if !strings.Contains(managed, want) {
+			t.Fatalf("the managed block never names %q:\n%s", want, managed)
+		}
+	}
+	skillRaw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "mp-process-cli", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("the tooling skill the block points at is not installed: %v", err)
+	}
+	skill := string(skillRaw)
+	for _, want := range []string{
+		"modernpath author",
+		"working-set push",
+		"working-set select",
+		"process findings",
+		"process reconcile",
+		"factory evidence",
+		"factory answer",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Fatalf("the tooling skill never names the write channel %q", want)
+		}
+	}
+	if strings.Contains(managed, "only write path") {
+		t.Fatal("the managed block still calls author the only write path")
+	}
+	// The release registry is not among the retired path families; a session
+	// must be told so, or rdd-start's release preflight has nowhere to look.
+	if !strings.Contains(managed, "process/releases.md") {
+		t.Fatal("the managed block must say where the release registry lives after the flip")
+	}
+	// The ledger skill is withheld under the marker; the block must not promise it.
+	if !strings.Contains(managed, "rdd-ledger") {
+		t.Fatal("the managed block must scope the ledger skill to a file-backed workspace")
+	}
+	// The stale GAP-016 breadcrumb left with the table (plan item D2).
+	if strings.Contains(managed, "GAP-016") {
+		t.Fatal("the managed block still carries the resolved GAP-016 breadcrumb")
+	}
 }

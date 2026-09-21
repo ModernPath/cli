@@ -17,7 +17,9 @@ packet, cold-review findings, current gate records, and relevant sources.
    candidate links counted as authoritative, ambiguous acceptance, broad SRs,
    stale reconnaissance, incomplete implementation context, inadequate RED
    strategy, or unresolved material cold-review findings.
-3. Record the entry trace gate against the exact content fingerprint. Keep the
+3. Record the entry trace gate against the exact content fingerprint, before
+   the human gate exists, so the gate names it as its prerequisite; a human
+   gate opened without a named passing trace cannot be answered. Keep the
    human gate `DRAFT` when the trace does not pass.
 4. After a current trace `PASS`, make only the exact scoped human gate `OPEN`
    and present its brief and recommendation in **plain product language** — see
@@ -27,13 +29,20 @@ packet, cold-review findings, current gate records, and relevant sources.
    reader and expand any bare identifier or jargon.
 5. Do not answer the gate for the human. If the authorized human answers,
    record the real actor, role, scope, answer, and `USER:` source; apply only
-   named transitions and reconcile all affected records.
+   named transitions and reconcile all affected records. The answer and its
+   application are two steps: apply member requirements before a named epic,
+   and report an answer that is recorded but not yet applied as exactly that.
 6. Move approved named `PROPOSED` or `PENDING_VERIFICATION` requirements and
    any named proposed epic to `TODO`. Otherwise retain the strongest honest
    state and route requested changes.
+7. Report and stop. The entry pass ends with the applied transitions, not
+   with the first build step: the answer was a decision about the gate, not
+   an instruction to build (`PROCESS.md` §Gates). The build begins with a
+   fresh session entry when the human asks for it.
 
 ## Report
 
 Report the entry-trace verdict, exact human-gate state, applied transitions,
 remaining blockers, and the exact handoff: `rdd-build`, `rdd-verify`, or the
-earliest planning pass that must be repeated.
+earliest planning pass that must be repeated — named as the next pass for the
+human to open, not entered by this one.

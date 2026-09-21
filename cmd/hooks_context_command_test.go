@@ -34,8 +34,10 @@ func runContextHook(t *testing.T, stub string) (stdout string, code int) {
 
 	cmd := exec.Command("sh", "-c", contextHookCommand("UserPromptSubmit"))
 	// An empty stub dir still goes first, so a real modernpath installed on this
-	// machine cannot make the missing-CLI case pass by accident.
-	cmd.Env = append(os.Environ(), "PATH="+dir)
+	// machine cannot make the missing-CLI case pass by accident — and the
+	// project dir is the same empty dir, so neither can this workspace's own
+	// .modernpath/hooks/modernpath link.
+	cmd.Env = append(os.Environ(), "PATH="+dir, "CLAUDE_PROJECT_DIR="+dir)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

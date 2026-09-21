@@ -32,7 +32,7 @@ var contextCmd = &cobra.Command{
 	Short: "Get codebase context for a prompt (optimized for hooks)",
 	Long: `Evaluate a prompt for codebase relevance and return brief context.
 
-This command is optimized for IDE hooks (Cursor, Claude Code, Codex).
+This command is optimized for IDE hooks (Cursor, Claude Code, Codex, Pi).
 It uses a fast LLM to:
 1. Evaluate if the prompt asks about THIS specific codebase
 2. Decompose complex questions into targeted search queries
@@ -43,7 +43,7 @@ Returns empty output if the prompt is not codebase-relevant.
 Examples:
   modernpath context "How does authentication work?"
   modernpath context "What is the database schema?" --max-queries=2
-  
+
 For hooks, simply:
   context=$(modernpath context "$prompt")
   # Returns markdown context or empty string`,

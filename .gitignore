@@ -1,0 +1,11 @@
+# Local build outputs. This file is read twice: by git, and by the release
+# rsync via `--filter=':- .gitignore'`.
+#
+# rsync copies the filesystem, not git's index, so untracking a binary does
+# not stop it being published — `modernpath` was ignored by git for months and
+# would still have been copied into the public repository by any release cut
+# after a local build. Keep the names here rather than in the parent
+# .gitignore, where the rsync cannot see them.
+modernpath
+modernpath-new
+cli

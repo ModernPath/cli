@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 )
 
 // REQ-CROSS-291 — the device flow must ask for the platform project audience,
@@ -36,18 +37,15 @@ func TestLoginScopes_IncludeProjectAudience(t *testing.T) {
 	}
 }
 
-// A profile with no project id yet (EPIC-CLI-006 D2 is unanswered) must ask
-// for exactly what it asks for today — never a malformed
+// A profile with no project id must never produce a malformed
 // `...:project:id::aud`, which Zitadel would reject and which would break the
-// login that works now.
-func TestLoginScopes_NoProjectID_UnchangedFromToday(t *testing.T) {
+// login that works now. The exact scope count moved to REQ-CROSS-334's
+// TestLoginScopesWithoutAProjectIDOmitOnlyTheProjectAudience.
+func TestLoginScopes_NoProjectID_OmitsTheProjectAudience(t *testing.T) {
 	scopes := loginScopes(Profile{})
 
-	if len(scopes) != 4 {
-		t.Errorf("scopes = %v, want exactly the four existing scopes", scopes)
-	}
 	for _, s := range scopes {
-		if strings.Contains(s, "urn:zitadel:iam:org:project:id:") {
+		if strings.HasPrefix(s, "urn:zitadel:iam:org:project:id:") && s != zitadelAudienceScope {
 			t.Errorf("scopes %v contain a project-audience scope with no project id", scopes)
 		}
 	}
@@ -85,31 +83,33 @@ func TestBakedInProfilesRequestTheirOwnProjectAudience(t *testing.T) {
 // line in Login's oauth2 config and dropping it would leave every test above
 // green while the issued token again carries the client id alone.
 func TestLoginSendsProjectAudienceScopeOnTheWire(t *testing.T) {
+	var mu sync.Mutex
 	var sentScope string
 
+	issuer := inMemoryIssuerURL
 	mux := http.NewServeMux()
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
 
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"issuer":                        srv.URL,
-			"authorization_endpoint":        srv.URL + "/authorize",
-			"token_endpoint":                srv.URL + "/token",
-			"device_authorization_endpoint": srv.URL + "/device_authorization",
+			"issuer":                        issuer,
+			"authorization_endpoint":        issuer + "/authorize",
+			"token_endpoint":                issuer + "/token",
+			"device_authorization_endpoint": issuer + "/device_authorization",
 		})
 	})
 	mux.HandleFunc("/device_authorization", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("parse device-authorization form: %v", err)
 		}
+		mu.Lock()
 		sentScope = r.Form.Get("scope")
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"device_code":      "FAKE-DEVICE-CODE",
 			"user_code":        "FAKE-USER-CODE",
-			"verification_uri": srv.URL + "/device",
+			"verification_uri": issuer + "/device",
 			"expires_in":       30,
 			"interval":         1,
 		})
@@ -122,17 +122,22 @@ func TestLoginSendsProjectAudienceScopeOnTheWire(t *testing.T) {
 		})
 	})
 
-	var out bytes.Buffer
 	profile := Profile{
-		Issuer:    srv.URL,
+		Issuer:    issuer,
 		ClientID:  "test-client",
 		APIURL:    "https://cloud.example.test",
 		ProjectID: "424242",
 	}
-	if _, err := Login(context.Background(), profile, &out); err != nil {
-		t.Fatalf("Login: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var out bytes.Buffer
+		ctx := withInMemoryIssuer(context.Background(), mux)
+		if _, err := DeviceLogin(ctx, profile, &out, Options{}); err != nil {
+			t.Fatalf("Login: %v", err)
+		}
+	})
 
+	mu.Lock()
+	defer mu.Unlock()
 	want := "urn:zitadel:iam:org:project:id:424242:aud"
 	if !strings.Contains(sentScope, want) {
 		t.Errorf("device-authorization scope = %q, want it to contain %q", sentScope, want)

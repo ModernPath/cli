@@ -58,7 +58,7 @@ func TestVendoredSchemaMatchesCanonicalAndServer(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	sources := map[string]string{
 		"contracts/sync/v1.schema.json (canonical)":       filepath.Join(thisFile, "../../../../../..", "contracts/sync/v1.schema.json"),
-		"apps/aiengine_web/priv/sync-schema/v1.json copy": filepath.Join(thisFile, "../../../../..", "apps/aiengine_web/priv/sync-schema/v1.json"),
+		"apps/core_http_api/priv/sync-schema/v1.json copy": filepath.Join(thisFile, "../../../../..", "apps/core_http_api/priv/sync-schema/v1.json"),
 	}
 	checked := 0
 	for name, path := range sources {

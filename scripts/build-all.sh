@@ -3,13 +3,16 @@
 
 set -e
 
-VERSION="${1:-dev}"
 OUTPUT_DIR="dist"
 BINARY_NAME="modernpath"
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# The release build passes the tag's version; anything else is a pre-release
+# of the next one, read from the single VERSION file (see version.go).
+VERSION="${1:-$(tr -d '[:space:]' < "$PROJECT_DIR/VERSION")-dev}"
 
 cd "$PROJECT_DIR"
 

@@ -15,8 +15,10 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current ModernPath status",
-	Long:  `Display the current ModernPath project status including system, sync status, and documentation.`,
-	RunE:  runStatus,
+	Long: `Display the current ModernPath project status: the binding, what the bound
+server is serving (store revision and sync contract version, one read bounded
+at 2 s, no write), the process state, sync status, and documentation.`,
+	RunE: runStatus,
 }
 
 // exportRoot is one system export tree found under .modernpath/.
@@ -123,6 +125,38 @@ func countFiles(dir string) int {
 	return n
 }
 
+// storeBackedReadWrite names the read and write paths that replace factory sync
+// after the flip: the bulk channel refuses process-record batches
+// (REQ-CROSS-227), so state is read with working-set pull and written with author.
+func storeBackedReadWrite() string {
+	return "read: modernpath working-set pull · write: modernpath author"
+}
+
+// storeBackedNote is the one-line store-backed disclosure the loop-navigation
+// commands (process next, the SessionStart brief) show so a session knows which
+// half of the process model it is in — AGENTS.md now routes orientation through
+// exactly those reads. "" on a file-backed workspace.
+func storeBackedNote(root string) string {
+	if storeBackedWorkspace(root) {
+		return "store-backed workspace · " + storeBackedReadWrite()
+	}
+	return ""
+}
+
+// renderStateSyncLine is the "State Sync" status line. On a store-backed
+// workspace with nothing synced it must not tell the reader to run factory
+// sync (the refused channel); it names the store instead.
+func renderStateSyncLine(stateSyncAt string, storeBacked bool) string {
+	switch {
+	case stateSyncAt != "":
+		return fmt.Sprintf("State Sync:    %s  (factory sync)", renderSyncTime(stateSyncAt, time.Local))
+	case storeBacked:
+		return "State Sync:    n/a — store-backed (process state lives in the server store)"
+	default:
+		return "State Sync:    Never  (run 'modernpath factory sync')"
+	}
+}
+
 func runStatus(cmd *cobra.Command, args []string) error {
 	configDir, err := config.FindConfigDir()
 	if err != nil || configDir == "" {
@@ -137,37 +171,31 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	bold := color.New(color.Bold)
-	green := color.New(color.FgGreen)
-	yellow := color.New(color.FgYellow)
 
 	fmt.Println()
 	bold.Println("ModernPath Project Status")
 	fmt.Println("─────────────────────────────────────────")
 
-	// Environment info (prominent)
+	// REQ-CROSS-391: the binding lines are the same renderer `factory status`
+	// prints, so the two commands never disagree about the server or system.
 	apiURL := cfg.APIURL
 	if apiURL == "" {
 		apiURL = config.DefaultAPIURL
 	}
-	envName := environmentName(apiURL)
-	fmt.Printf("Environment:   ")
-	if envName == "production" {
-		green.Printf("%s", envName)
-	} else if envName == "local" {
-		yellow.Printf("%s", envName)
-	} else {
-		fmt.Printf("%s", envName)
+	auth, _ := config.ReadAuth()
+	for _, line := range bindingLines(cfg, auth) {
+		fmt.Println(line)
 	}
-	fmt.Printf(" (%s)\n", apiURL)
-
 	if cfg.SystemID > 0 {
-		fmt.Printf("System:  %s (ID: %d)\n", cfg.SystemName, cfg.SystemID)
 		fmt.Printf("Slug:          %s\n", cfg.SystemSlug)
 		if warning := statusReachabilityWarning(apiURL, cfg.SystemID); warning != "" {
 			printWarning("%s\n", warning)
 		}
-	} else {
-		fmt.Println("System:  Not configured")
+		// REQ-CROSS-417: the served store revision and contract, from the same
+		// helper `factory status` prints, so the two never disagree.
+		if env, err := factoryBindingLoad(); err == nil {
+			fmt.Printf("Serving:       %s\n", serverLine(env))
+		}
 	}
 
 	if cfg.EpicID > 0 {
@@ -178,18 +206,21 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	rep := buildStatusReport(configDir, cfg)
 
+	storeBacked := storeBackedWorkspace(filepath.Dir(configDir))
+	if storeBacked {
+		fmt.Printf("Process state: store-backed  (%s)\n", storeBackedReadWrite())
+	}
+
 	// Two lanes, two writers: `docs sync` downloads the export, `factory sync`
 	// pushes workspace state. Reporting one as "Last Sync" hides the other.
+	// (docs sync stays valid after the flip — only the process-record channel is
+	// refused, so only the State Sync line changes below.)
 	if rep.DocsSyncAt != "" {
 		fmt.Printf("Docs Sync:     %s  (modernpath docs sync)\n", renderSyncTime(rep.DocsSyncAt, time.Local))
 	} else {
 		fmt.Println("Docs Sync:     Never  (run 'modernpath docs sync')")
 	}
-	if rep.StateSyncAt != "" {
-		fmt.Printf("State Sync:    %s  (factory sync)\n", renderSyncTime(rep.StateSyncAt, time.Local))
-	} else {
-		fmt.Println("State Sync:    Never  (run 'modernpath factory sync')")
-	}
+	fmt.Println(renderStateSyncLine(rep.StateSyncAt, storeBacked))
 
 	if len(rep.Exports) == 0 {
 		fmt.Println("Local Docs:    Not synced (run 'modernpath docs sync')")

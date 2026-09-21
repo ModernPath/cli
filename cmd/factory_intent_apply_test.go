@@ -123,6 +123,8 @@ func intentApplyServer(t *testing.T, fixture intentApplyKeyFixture, mutation htt
 			"source_tag":                  "USER:2026-08-27",
 		}}}})
 	})
+	// REQ-CROSS-390: this fake predates the contract read (an older server).
+	mux.HandleFunc("/api/v1/sync/contract", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
 	mux.HandleFunc("/", mutation)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)

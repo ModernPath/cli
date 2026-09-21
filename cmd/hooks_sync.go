@@ -21,16 +21,14 @@ const syncHookScriptName = "modernpath-sync.sh"
 // hook that never errors into the harness. Guarded so a machine without the
 // CLI no-ops, detached so the harness never waits.
 func syncHookCommand(event string) string {
-	return "command -v modernpath >/dev/null 2>&1 && " +
-		"( modernpath factory sync --if-quiescent --trigger " + event + " >/dev/null 2>&1 & ) ; exit 0"
+	return hookDetachedCommand("factory sync --if-quiescent --trigger "+event, "exit 0")
 }
 
 // Codex validates successful Stop output as JSON. The sync remains detached,
 // then the hook always emits a valid empty response even when modernpath is not
 // on PATH. SessionEnd shares this command but has a stricter config timeout.
 func codexSyncHookCommand(event string) string {
-	return "command -v modernpath >/dev/null 2>&1 && " +
-		"( modernpath factory sync --if-quiescent --trigger " + event + " >/dev/null 2>&1 & ) ; printf '{}'"
+	return hookDetachedCommand("factory sync --if-quiescent --trigger "+event, "printf '{}'")
 }
 
 // The script detaches the gated sync and returns immediately (D-AS-5):
@@ -79,7 +77,6 @@ func installSyncFamily(agent agentConfig, events []string, codex bool) error {
 		// Replace only ModernPath-owned entries. This migrates the old script
 		// adapter, updates prior command shapes, and collapses duplicates.
 		existing, _ := hooks[event].([]interface{})
-		kept := dropEntriesWithMarkers(existing, syncHookMarker, syncHookScriptName)
 
 		command := syncHookCommand(event)
 		timeout := 10
@@ -99,16 +96,11 @@ func installSyncFamily(agent agentConfig, events []string, codex bool) error {
 				},
 			},
 		}
-		hooks[event] = append(kept, entry)
+		hooks[event] = replaceOwnedEntry(existing, entry, syncHookMarker, syncHookScriptName)
 	}
 
 	settings["hooks"] = hooks
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(agent.configPath, data, 0o644)
+	return writeSettingsFile(agent.configPath, settings)
 }
 
 // our entries are recognised by the CLI invocation they carry (or, for legacy

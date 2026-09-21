@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,9 +24,26 @@ var exportPollInterval = 2 * time.Second
 // is indistinguishable from a hang, and users kill syncs that were working.
 var exportHeartbeatEvery = 15 * time.Second
 
+// ErrUnauthorized marks a response the server answered 401: the request was
+// well-formed and the credential was not accepted. Callers render it as a
+// statement about the credential rather than as the status line.
+var ErrUnauthorized = errors.New("the server rejected the credential (HTTP 401)")
+
 // NewAuthenticatedRequest creates an HTTP request with auth token from config.
 // This is a convenience function for commands that don't use the full API client.
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
+	auth, _ := config.ReadAuth()
+	token := ""
+	if auth != nil {
+		token = auth.Token
+	}
+	return NewRequestWithToken(method, url, body, token)
+}
+
+// NewRequestWithToken creates an HTTP request carrying the given bearer; an
+// empty token attaches no header. The caller has already decided the token is
+// present and fresh — the api-client verbs check that before any request.
+func NewRequestWithToken(method, url string, body io.Reader, token string) (*http.Request, error) {
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
@@ -35,15 +53,33 @@ func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request,
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	// Add auth token if available
-	auth, _ := config.ReadAuth()
-	if auth != nil && auth.Token != "" {
-		if err := platform.Authorize(req, auth.Token); err != nil {
+	if token != "" {
+		if err := platform.Authorize(req, token); err != nil {
 			return nil, err
 		}
 	}
 
 	return req, nil
+}
+
+// DoGetWithToken performs a GET carrying the given bearer.
+func DoGetWithToken(url, token string, timeout time.Duration) (*http.Response, error) {
+	req, err := NewRequestWithToken("GET", url, nil, token)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: timeout}
+	return client.Do(req)
+}
+
+// DoPostWithToken performs a POST carrying the given bearer.
+func DoPostWithToken(url string, body io.Reader, token string, timeout time.Duration) (*http.Response, error) {
+	req, err := NewRequestWithToken("POST", url, body, token)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: timeout}
+	return client.Do(req)
 }
 
 // DoAuthenticatedGet performs an authenticated GET request
@@ -147,13 +183,22 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 	return c.HTTPClient.Do(req)
 }
 
-// HealthCheck checks if the API is reachable
+// HealthCheck checks if the API is reachable.
+//
+// It carries the stored bearer, exactly as doRequest does: the shared platform
+// Gateway fails closed and authenticates every route it fronts, core's health
+// route included, so a probe sent without the bearer is answered 401 no matter
+// how healthy the server is (REQ-CROSS-290/405). An empty token attaches no
+// header, leaving an unauthenticated dev host's public /_health unchanged.
 func (c *Client) HealthCheck() error {
 	req, err := http.NewRequest("GET", c.BaseURL+platform.HealthPath(c.BaseURL), nil)
 	if err != nil {
 		return fmt.Errorf("cannot reach API: %w", err)
 	}
 	platform.Prepare(req)
+	if err := platform.Authorize(req, c.Token); err != nil {
+		return err
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -161,6 +206,14 @@ func (c *Client) HealthCheck() error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The server answered — it is reachable, and it rejected the credential.
+		// Surface that so callers render the credential statement instead of a
+		// bare status line and a misleading "server is down" hint (REQ-CROSS-405:
+		// a served 401 never renders as `HTTP 401` alone). Reachable-but-rejected
+		// is a separate answer from unreachable.
+		return fmt.Errorf("health check: %w", ErrUnauthorized)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("API health check failed: HTTP %d", resp.StatusCode)
 	}
@@ -176,6 +229,9 @@ func (c *Client) ListSystems() ([]System, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("failed to list systems: %w", ErrUnauthorized)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("failed to list systems: HTTP %d - %s", resp.StatusCode, string(body))
@@ -273,6 +329,9 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 	if err != nil {
 		return nil, fmt.Errorf("failed to read start export response: %w", err)
 	}
+	if startResp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("failed to start export: %w", ErrUnauthorized)
+	}
 	if startResp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("failed to start export: HTTP %d — %s", startResp.StatusCode, string(startBody))
 	}
@@ -314,6 +373,9 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 		pr.Body.Close()
 		if err != nil {
 			return nil, err
+		}
+		if pr.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("export status: %w", ErrUnauthorized)
 		}
 		if pr.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("export status: HTTP %d — %s", pr.StatusCode, string(pb))
@@ -402,6 +464,9 @@ func (c *Client) downloadExportZipByPath(path string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("failed to download export: %w", ErrUnauthorized)
+	}
 	if resp.StatusCode != http.StatusOK {
 		var errResp struct {
 			Error   string                 `json:"error"`
@@ -503,82 +568,4 @@ func (c *Client) CreateSystem(name, description string) (*System, error) {
 	}
 
 	return &sys, nil
-}
-
-// DeviceFlowResponse is the response from initiating a device flow
-type DeviceFlowResponse struct {
-	DeviceCode      string `json:"device_code"`
-	UserCode        string `json:"user_code"`
-	VerificationURL string `json:"verification_url"`
-	ExpiresIn       int    `json:"expires_in"`
-}
-
-// TokenResponse is the response from successful authentication
-type TokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-}
-
-// DeviceFlowPollResponse is the response from polling the device flow
-type DeviceFlowPollResponse struct {
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	TokenType    string `json:"token_type,omitempty"`
-	ExpiresIn    int    `json:"expires_in,omitempty"`
-	Error        string `json:"error,omitempty"`
-}
-
-// InitiateDeviceFlow starts the device flow authentication
-func (c *Client) InitiateDeviceFlow() (*DeviceFlowResponse, error) {
-	resp, err := c.HTTPClient.Post(c.BaseURL+"/api/v1/auth/cli/initiate", "application/json", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initiate device flow: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to initiate device flow: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	var result DeviceFlowResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse device flow response: %w", err)
-	}
-
-	return &result, nil
-}
-
-// PollDeviceFlow polls for device flow completion
-func (c *Client) PollDeviceFlow(deviceCode string) (*DeviceFlowPollResponse, error) {
-	body := fmt.Sprintf(`{"device_code": "%s"}`, deviceCode)
-	resp, err := c.HTTPClient.Post(c.BaseURL+"/api/v1/auth/cli/poll", "application/json", io.NopCloser(strings.NewReader(body)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to poll device flow: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result DeviceFlowPollResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse poll response: %w", err)
-	}
-
-	// Handle known status codes
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return &result, nil
-	case 428: // Precondition Required - authorization pending
-		result.Error = "authorization_pending"
-		return &result, nil
-	case http.StatusBadRequest:
-		result.Error = "expired"
-		return &result, nil
-	case http.StatusNotFound:
-		result.Error = "invalid_device_code"
-		return &result, nil
-	default:
-		return nil, fmt.Errorf("unexpected status: HTTP %d", resp.StatusCode)
-	}
 }

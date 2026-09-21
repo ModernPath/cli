@@ -49,6 +49,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"dev", "ralph", "status"},
 		{"factory", "manifest", "show"}, {"factory", "manifest", "init"},
 		{"factory", "release", "use"}, {"factory", "release", "show"}, {"factory", "release", "clear"},
+		{"factory", "release", "activate"},
 		{"work", "specs", "generate"}, {"work", "specs", "sync"}, {"work", "specs", "push"},
 	}
 
@@ -403,22 +404,54 @@ const (
 // precondition, 5 never run. Every entry here was observed, not assumed.
 var leafDispositions = map[string]disposition{
 	// --- executed: the handler runs and the server receives the request ---
-	"ask":               {kind: dispExecute, args: []string{"ask", "smoke question"}},
-	"context":           {kind: dispExecute, args: []string{"context", "smoke query"}},
-	"datamodel export":  {kind: dispExecute, args: []string{"datamodel", "export", "--json"}},
-	"docs cleanup":      {kind: dispExecute},
-	"docs preview":      {kind: dispExecute},
-	"docs push":         {kind: dispExecute},
-	"docs refresh":      {kind: dispExecute},
-	"docs repair":       {kind: dispExecute},
-	"docs sync":         {kind: dispExecute},
-	"env test":          {kind: dispExecute}, // the leaf the hard-coded ten missed
-	"factory connect":   {kind: dispExecute},
-	"factory drift":     {kind: dispExecute},
-	"factory evidence":  {kind: dispExecute, args: []string{"factory", "evidence", "report", "--kind", "local_test", "--log", "x", "--totals", "passed=1,failed=0", "--pass", "REQ-X-001"}},
-	"factory gates":     {kind: dispExecute},
-	"factory image":     {kind: dispExecute, args: []string{"factory", "image", "smoke"}},
-	"factory next-id":   {kind: dispExecute, args: []string{"factory", "next-id", "CROSS"}},
+	"ask": {kind: dispExecute, args: []string{"ask", "smoke question"}},
+	// REQ-CROSS-316 (EPIC-CLI-008): a pure read — GETs /sync/delivery-context.
+	"process check": {kind: dispExecute, args: []string{"process", "check", "--phase", "plan"}},
+	// REQ-CROSS-317: `next` is a pure read (GET delivery-context); `reconcile`
+	// POSTs (dry run by default). Both reach the server, so both dispExecute.
+	"process next":      {kind: dispExecute, args: []string{"process", "next"}},
+	"process reconcile": {kind: dispExecute, args: []string{"process", "reconcile"}},
+	// REQ-CROSS-374 (EPIC-CLI-017): advance reads the selection and the facts
+	// before any write — a server call either way, so dispExecute.
+	"process advance": {kind: dispExecute, args: []string{"process", "advance", "SR-SMOKE"}},
+	// REQ-CROSS-373: enter reads the facts before any write — a server call.
+	"process enter": {kind: dispExecute, args: []string{"process", "enter", "EPIC-SMOKE"}},
+	// REQ-CROSS-375: complete checks git first, then reads the facts — with
+	// --no-fetch the git check needs no remote and the facts read is the call.
+	"process complete": {kind: dispExecute, args: []string{"process", "complete", "EPIC-SMOKE", "--log", "smoke", "--no-fetch"}},
+	// REQ-CROSS-413 (BACKLOG-TOOL-22): reapply-entry — POST /sync/author after the
+	// client USER: check; the server call is the disposition.
+	"process reapply-entry": {kind: dispExecute, args: []string{"process", "reapply-entry", "EPIC-SMOKE", "--decision", "USER:2026-09-14:smoke"}},
+	// BACKLOG-TOOL-44: reenter (open) reads cold-review facts then opens the
+	// re-entry gate; --apply POSTs /sync/author. The server call is the disposition.
+	"process reenter": {kind: dispExecute, args: []string{"process", "reenter", "EPIC-SMOKE"}},
+	// REQ-CROSS-318 (EPIC-CLI-008): supersede — POST /sync/author (report-only unless enforce).
+	"process supersede":    {kind: dispExecute, args: []string{"process", "supersede", "SR-SMOKE", "--reason", "smoke"}},
+	"process cascade-mode": {kind: dispExecute, args: []string{"process", "cascade-mode", "enforce", "--source", "USER:2026-09-05:smoke"}},
+	// REQ-CROSS-315 (EPIC-CLI-008): findings CRUD — POST /sync/author, GET /sync/findings.
+	"process findings add":         {kind: dispExecute, args: []string{"process", "findings", "add", "--scope", "epic:SMOKE", "--id", "F-SMOKE", "--body", "smoke"}},
+	"process findings list":        {kind: dispExecute, args: []string{"process", "findings", "list"}},
+	"process findings disposition": {kind: dispExecute, args: []string{"process", "findings", "disposition", "--id", "F-SMOKE", "--disposition", "RESOLVED"}},
+	"context":                      {kind: dispExecute, args: []string{"context", "smoke query"}},
+	"datamodel export":             {kind: dispExecute, args: []string{"datamodel", "export", "--json"}},
+	"docs cleanup":                 {kind: dispExecute},
+	"docs preview":                 {kind: dispExecute},
+	"docs push":                    {kind: dispExecute},
+	"docs refresh":                 {kind: dispExecute},
+	"docs repair":                  {kind: dispExecute},
+	"docs sync":                    {kind: dispExecute},
+	"env test":                     {kind: dispExecute}, // the leaf the hard-coded ten missed
+	"auth status":                  {kind: dispExecute}, // GETs /api/systems to verify the stored credential
+	"factory connect":              {kind: dispExecute},
+	"factory drift":                {kind: dispExecute},
+	"factory evidence":             {kind: dispExecute, args: []string{"factory", "evidence", "report", "--kind", "local_test", "--log", "x", "--totals", "passed=1,failed=0", "--pass", "REQ-X-001"}},
+	"factory gates":                {kind: dispExecute},
+	"factory image":                {kind: dispExecute, args: []string{"factory", "image", "smoke"}},
+	"factory next-id":              {kind: dispExecute, args: []string{"factory", "next-id", "CROSS"}},
+	// REQ-CROSS-361 (EPIC-CLI-014): `factory pin set` runs factoryEnvLoad first
+	// (the reachability call), then bails at the no-terminal PIN prompt — so it
+	// reaches the server like every other factoryEnvLoad-fronted leaf.
+	"factory pin set":   {kind: dispExecute},
 	"factory pull":      {kind: dispExecute},
 	"factory reconcile": {kind: dispExecute},
 	"factory sync":      {kind: dispExecute},
@@ -430,19 +463,32 @@ var leafDispositions = map[string]disposition{
 	"migrate report": {kind: dispNoCall, reason: "needs-precondition"},
 	"migrate run":    {kind: dispNoCall, reason: "needs-precondition"},
 	// REQ-CROSS-225: refuses the ledgerless smoke workspace before any call.
-	"migrate flip": {kind: dispNoCall, reason: "needs-precondition"},
+	"migrate flip":  {kind: dispNoCall, reason: "needs-precondition"},
+	"migrate clear": {kind: dispExecute, args: []string{"migrate", "clear", "--gate", "G-SMOKE", "--gate-fingerprint", "fp", "--gate-answer", "approved"}},
 	// REQ-CROSS-228: every authoring verb posts the attributed call.
-	"author requirement": {kind: dispExecute, args: []string{"author", "requirement", "REQ-SMK-001", "--title", "t", "--context", "SMK"}},
-	"author epic":        {kind: dispExecute, args: []string{"author", "epic", "EPIC-SMK-001", "--title", "t"}},
-	"author gate":        {kind: dispExecute, args: []string{"author", "gate", "Q-SMK-001", "--title", "t"}},
-	"author trace":       {kind: dispExecute, args: []string{"author", "trace", "TRACE-SMK-001", "--title", "t", "--purpose", "cold-review", "--transition", "plan->entry", "--scope", "EPIC-SMK-001", "--fingerprint", "packet-sha256", "--verdict", "FAIL", "--source", "RUN:2026-08-26"}},
-	"author advance":     {kind: dispExecute, args: []string{"author", "advance", "REQ-SMK-001", "--to", "IN_PROGRESS", "--expected", "TODO"}},
-	"import":             {kind: dispExecute},
-	"new":                {kind: dispExecute},
-	"read-doc":           {kind: dispExecute, args: []string{"read-doc", "--list"}},
-	"read-file":          {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
-	"scan":               {kind: dispExecute},
-	"search":             {kind: dispExecute, args: []string{"search", "smoke query"}},
+	"author requirement":   {kind: dispExecute, args: []string{"author", "requirement", "REQ-SMK-001", "--title", "t", "--context", "SMK"}},
+	"author backlog":       {kind: dispExecute, args: []string{"author", "backlog", "BACKLOG-SMK-001", "--kind", "backlog", "--title", "t", "--observed", "o", "--why-unrouted", "w"}},
+	"feedback":             {kind: dispExecute, args: []string{"feedback", "a gap met in the smoke test"}},
+	"author epic":          {kind: dispExecute, args: []string{"author", "epic", "EPIC-SMK-001", "--title", "t"}},
+	"author gate":          {kind: dispExecute, args: []string{"author", "gate", "Q-SMK-001", "--title", "t"}},
+	"author gate-withdraw": {kind: dispExecute, args: []string{"author", "gate-withdraw", "Q-SMK-001", "--reason", "smoke"}},
+	"author trace":         {kind: dispExecute, args: []string{"author", "trace", "TRACE-SMK-001", "--title", "t", "--purpose", "cold-review", "--transition", "plan->entry", "--scope", "EPIC-SMK-001", "--fingerprint", "packet-sha256", "--verdict", "FAIL", "--source", "RUN:2026-08-26"}},
+	"author advance":       {kind: dispExecute, args: []string{"author", "advance", "REQ-SMK-001", "--to", "IN_PROGRESS", "--expected", "TODO"}},
+	// REQ-CROSS-421: demote reads the item's served status before any write — a server call.
+	"author demote": {kind: dispExecute, args: []string{"author", "demote", "REQ-SMK-001", "--to", "IN_PROGRESS", "--basis", "defect", "--reason", "USER:2026-09-21:smoke"}},
+	// EPIC-CLI-007: update edits and relate declares a UR<->SR relation; both post.
+	"author update": {kind: dispExecute, args: []string{"author", "update", "REQ-SMK-001", "--expected-fingerprint", "sha-current", "--description", "d"}},
+	"author relate": {kind: dispExecute, args: []string{"author", "relate", "REQ-SMK-001", "--parent", "REQ-SMK-000", "--expected-fingerprint", "sha-current"}},
+	"author member": {kind: dispExecute, args: []string{"author", "member", "EPIC-SMK-001", "--member", "REQ-SMK-000"}},
+	"import":        {kind: dispExecute},
+	"new":           {kind: dispExecute},
+	"read-doc":      {kind: dispExecute, args: []string{"read-doc", "--list"}},
+	"read-file":     {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
+	// SR-CROSS-324: reuses fetchRequirementLists — GETs /sync/requirements via the
+	// factoryEnvLoad reachability call, so the server is reached (like `status`).
+	"requirements-corpus": {kind: dispExecute, args: []string{"requirements-corpus", "--json"}},
+	"scan":                {kind: dispExecute},
+	"search":              {kind: dispExecute, args: []string{"search", "smoke query"}},
 	// REQ-CROSS-282: status now checks the bound system's reachability
 	// whenever a bearer and a system_id are both present — exactly this
 	// fixture's shape — so it genuinely reaches the server and is no longer
@@ -478,14 +524,20 @@ var leafDispositions = map[string]disposition{
 	"factory release clear": {kind: dispNoCall, reason: "local-only"},
 	"factory release show":  {kind: dispNoCall, reason: "local-only"},
 	"factory release use":   {kind: dispNoCall, args: []string{"factory", "release", "use", "smoke"}, reason: "local-only"},
-	"factory status":        {kind: dispNoCall, reason: "local-only"},
-	"hooks doctor":          {kind: dispNoCall, reason: "local-only"},
-	"hooks install":         {kind: dispNoCall, reason: "local-only"},
-	"hooks status":          {kind: dispNoCall, reason: "local-only"},
-	"hooks uninstall":       {kind: dispNoCall, reason: "local-only"},
-	"init workspace":        {kind: dispNoCall, reason: "local-only"},
-	"install":               {kind: dispNoCall, reason: "local-only"},
-	"work review":           {kind: dispNoCall, reason: "local-only"},
+	// REQ-CROSS-339: activate is the tenant-wide, attributed verb — unlike its
+	// local-only siblings it POSTs the release_activate authoring action, so it
+	// MUST reach the server (dispExecute).
+	"factory release activate": {kind: dispExecute, args: []string{"factory", "release", "activate", "smoke-slug", "--source", "USER:2026-09-11:smoke", "--pin", "0000"}},
+	// REQ-CROSS-379 (EPIC-CLI-018): status lists the held pieces best-effort, so
+	// it now reaches the server when a token loads (still runs without one).
+	"factory status":  {kind: dispExecute},
+	"hooks doctor":    {kind: dispNoCall, reason: "local-only"},
+	"hooks install":   {kind: dispNoCall, reason: "local-only"},
+	"hooks status":    {kind: dispNoCall, reason: "local-only"},
+	"hooks uninstall": {kind: dispNoCall, reason: "local-only"},
+	"init workspace":  {kind: dispNoCall, reason: "local-only"},
+	"install":         {kind: dispNoCall, reason: "local-only"},
+	"work review":     {kind: dispNoCall, reason: "local-only"},
 
 	// Server-backed, but they refuse before the call without state the smoke
 	// cannot cheaply build. Asserted as no-call so that fixing the
@@ -499,10 +551,12 @@ var leafDispositions = map[string]disposition{
 	// always makes one reachability call when a bearer+system_id are
 	// present — exactly this fixture's shape.
 	"working-set check": {kind: dispExecute},
+	"working-set push":  {kind: dispExecute}, // REQ-CROSS-314: reads the work selection, then patches
 	"work specs push":   {kind: dispNoCall, reason: "needs-precondition"},
 
 	// --- exempt, NOT run: the only unchecked claims in this test ---
-	"auth":          {kind: dispUnrun, reason: "interactive"},  // stdin prompt + openBrowser
+	// `auth` (bare) is no longer a leaf — it grew the `auth status` subcommand
+	// (classified dispExecute above), so its own entry is gone.
 	"github":        {kind: dispUnrun, reason: "interactive"},  // openBrowser
 	"dev run":       {kind: dispUnrun, reason: "spawns-agent"}, // exec.Command(tool.Command)
 	"dev task":      {kind: dispUnrun, reason: "spawns-agent"}, // exec.Command(tool.Command)

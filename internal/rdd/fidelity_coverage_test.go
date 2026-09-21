@@ -562,6 +562,9 @@ func TestRetiredFamilyMatcherBoundaries(t *testing.T) {
 		"tasks/CV-REQUIREMENTS.md", "WORKLIST.md", "BACKLOG.md", "PROGRESS.md",
 		"epics/EPIC-CV-001.md", "epics/EPIC-CV-001/specs/requirements.md",
 		"process/gap-register.md", "docs/85-loop-review-queue.md",
+		// SR-CROSS-329: the release registry joins the retired population once the
+		// store serves the active-release selection and its USER: source.
+		"process/releases.md",
 	} {
 		if !matchesRetiredFamily(in) {
 			t.Errorf("%q must match the retired population", in)

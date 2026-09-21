@@ -65,13 +65,15 @@ type askResult struct {
 func runAsk(cmd *cobra.Command, args []string) error {
 	question := strings.Join(args, " ")
 
-	if !config.IsInitialized() {
+	// REQ-CROSS-405: binding and credential statements before any request.
+	env, err := apiClientCredentialLoad()
+	if err != nil {
 		if askFormat == "json" {
-			fmt.Println(`{"error": "Not initialized. Run 'modernpath init' first."}`)
+			fmt.Printf(`{"error": %q}`+"\n", err.Error())
 		} else {
-			printError("Not initialized. Run 'modernpath init' first.\n")
+			printError("%v\n", err)
 		}
-		return nil
+		return err
 	}
 
 	cfg, err := config.ReadConfig()
@@ -113,7 +115,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 
 	jsonPayload, _ := json.Marshal(payload)
 
-	resp, err := api.DoAuthenticatedPostRaw(apiURL, bytes.NewBuffer(jsonPayload), 120*time.Second)
+	resp, err := api.DoPostWithToken(apiURL, bytes.NewBuffer(jsonPayload), env.token, 120*time.Second)
 	if err != nil {
 		if askFormat == "json" {
 			fmt.Printf(`{"error": "API error: %v"}`, err)
@@ -124,6 +126,15 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		err := env.credentialRejected()
+		if askFormat == "json" {
+			fmt.Printf(`{"error": %q}`+"\n", err.Error())
+		} else {
+			printError("%v\n", err)
+		}
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if askFormat == "json" {

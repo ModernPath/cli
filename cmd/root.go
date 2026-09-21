@@ -65,10 +65,22 @@ func applyGroupUnknownArgGuard(c *cobra.Command) {
 }
 
 func Execute() {
+	// The struct literal above captured Version at package init; a stamp set
+	// later (main's embedded VERSION default) must still be what --version
+	// prints.
+	rootCmd.Version = Version
 	applyGroupUnknownArgGuard(rootCmd)
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	// REQ-CROSS-387: every user-run invocation is recorded (argv, exit, an
+	// output tail) for `feedback --last`; the recorder drains before exit.
+	code := runWithHistory(os.Args[1:], func() int {
+		if err := rootCmd.Execute(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	})
+	if code != 0 {
+		exit(code)
 	}
 }
 

@@ -68,3 +68,20 @@ func TestReleaseWarningNamesWhereTheWorkLands(t *testing.T) {
 		})
 	}
 }
+
+// SR-CROSS-328: post-flip process/releases.md is retired (REQ-CROSS-329), so a
+// bare os.Stat of it would falsely report "no release registry" for a
+// store-backed workspace. Under the store-backed marker the warning must not
+// blame a missing registry file and must point at the store surface instead.
+func TestReleaseWarningStoreBackedPointsAtStore(t *testing.T) {
+	root := t.TempDir()
+	markStoreBacked(t, root)
+
+	msg := releaseWarning(root)
+	if strings.Contains(msg, "no release registry") {
+		t.Fatalf("store-backed: the retired file is not a missing registry: %q", msg)
+	}
+	if !strings.Contains(msg, "store") {
+		t.Fatalf("store-backed: the warning must point at the store surface: %q", msg)
+	}
+}

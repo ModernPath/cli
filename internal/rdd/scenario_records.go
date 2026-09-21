@@ -187,7 +187,7 @@ func parseScenarioRealizes(recordText string, known map[string]bool) scenarioEdg
 			}
 			sawText = true
 			var parsed []string
-			addRequirementMembershipTokens(cell, map[string]bool{}, &parsed)
+			addMembershipTokens(cell, map[string]bool{}, &parsed, reqOnlyMemberTokenRe)
 			if len(parsed) > 0 {
 				sawID = true
 			}

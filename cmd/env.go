@@ -20,24 +20,21 @@ var (
 
 // knownEnvironment is a named ModernPath server `modernpath env` can switch to.
 type knownEnvironment struct {
-	Name       string
-	URL        string
-	Desc       string
-	Deprecated bool
+	Name string
+	URL  string
+	Desc string
 }
 
 // knownEnvironments is the embedded set the CLI offers by name. The cloud URLs
 // are the same baked-in Zitadel profile hosts auth (`--sso` / `--sso --test`)
 // and the platform layer use, so there is one source of truth for them and the
-// env names line up with the auth flags. Beta is retained as an explicitly
-// deprecated target during the beta→cloud migration rather than dropped, so a
-// workspace still pointed at it is named rather than shown as "custom".
+// env names line up with the auth flags. Any other URL, the retired beta
+// server included, shows as "custom".
 func knownEnvironments() []knownEnvironment {
 	return []knownEnvironment{
-		{"production", zitadel.ProdProfile.APIURL, "ModernPath production (cloud)", false},
-		{"test", zitadel.TestProfile.APIURL, "ModernPath test-plat (cloud)", false},
-		{"local", config.LocalAPIURL, "Local development server", false},
-		{"beta", config.BetaAPIURL, "Legacy beta — being decommissioned", true},
+		{"production", zitadel.ProdProfile.APIURL, "ModernPath production (cloud)"},
+		{"test", zitadel.TestProfile.APIURL, "ModernPath test-plat (cloud)"},
+		{"local", config.LocalAPIURL, "Local development server"},
 	}
 }
 
@@ -63,8 +60,6 @@ func environmentURL(name string) (string, bool) {
 		return zitadel.TestProfile.APIURL, true
 	case "local", "localhost", "dev":
 		return config.LocalAPIURL, true
-	case "beta":
-		return config.BetaAPIURL, true
 	}
 	return "", false
 }
@@ -78,7 +73,14 @@ Available environments:
   production  - https://api.modernpath.ai (cloud, default)
   test        - https://api.workload.test-plat.modernpath.ai (cloud test-plat)
   local       - http://localhost:4000
-  beta        - https://beta.modernpath.ai (legacy, being decommissioned)
+
+--set switches the whole binding: the current system binding is kept under
+its environment in config.json and the target's restored; the current
+credential is kept under its identity provider in auth.json and the one for
+the target's provider restored. A target with nothing kept is left unbound
+(run 'modernpath init') or signed out (run the sign-in command it names) —
+never an interactive prompt. A restored credential this server will not
+accept is reported at the switch, not at the next write.
 
 Examples:
   modernpath env                    # Show current environment
@@ -102,7 +104,7 @@ var envTestCmd = &cobra.Command{
 }
 
 func init() {
-	envCmd.Flags().StringVar(&envSet, "set", "", "Set environment: production, test, local, beta, custom, or a URL")
+	envCmd.Flags().StringVar(&envSet, "set", "", "Set environment: production, test, local, custom, or a URL")
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envTestCmd)
 	rootCmd.AddCommand(envCmd)
@@ -144,9 +146,6 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		current := cfg.APIURL == env.URL ||
 			(env.URL == config.DefaultAPIURL && cfg.APIURL == "")
 		name := env.Name
-		if env.Deprecated {
-			name += "  (deprecated)"
-		}
 		marker := "  "
 		if current {
 			marker = "→ "
@@ -326,26 +325,144 @@ func setEnvironment(cfg *config.Config, env string) error {
 			newURL = env
 		} else {
 			printError("Unknown environment: %s\n", env)
-			printInfo("Available environments: production, test, local, beta, custom\n")
+			printInfo("Available environments: production, test, local, custom\n")
 			printInfo("Or provide a full URL: --set=https://your-server.com\n")
 			return nil
 		}
 	}
 
-	// Update config
+	return switchEnvironment(cfg, newURL)
+}
+
+// switchEnvironment moves the workspace to newURL whole (REQ-CROSS-391): the
+// current system binding is stashed under its environment and the target's
+// restored, the current credential is stashed under its issuer and the one
+// for the target's identity provider restored, so a switch never leaves the
+// test system and a test-plane token under the production URL. A target
+// with nothing stashed is left unbound or signed out and the remedy verb is
+// named — never an interactive prompt, which an agent cannot answer (D6).
+func switchEnvironment(cfg *config.Config, newURL string) error {
+	auth, err := config.ReadAuth()
+	if err != nil {
+		// An unreadable auth.json is not "signed out": writing an empty
+		// credential back would replace it. Refuse and name the file.
+		return fmt.Errorf("cannot read .modernpath/auth.json (%v); fix or remove it before switching", err)
+	}
+	if auth == nil {
+		auth = &config.Auth{}
+	}
+	oldURL := cfg.APIURL
+	if oldURL == "" {
+		oldURL = config.DefaultAPIURL
+	}
+
+	if cfg.SystemID > 0 {
+		if cfg.Environments == nil {
+			cfg.Environments = map[string]config.EnvBinding{}
+		}
+		cfg.Environments[bindingKey(oldURL)] = config.EnvBinding{
+			SystemID: cfg.SystemID, SystemName: cfg.SystemName, SystemSlug: cfg.SystemSlug, CurrentRelease: cfg.CurrentRelease,
+		}
+	}
+	if auth.Token != "" {
+		if auth.Stash == nil {
+			auth.Stash = map[string]config.AuthMaterial{}
+		}
+		auth.Stash[credentialKeyFor(auth, oldURL)] = config.AuthMaterial{
+			Token: auth.Token, RefreshToken: auth.RefreshToken, ExpiresAt: auth.ExpiresAt,
+			Actor: auth.Actor, WorkspaceID: auth.WorkspaceID, WorkspaceName: auth.WorkspaceName,
+			Issuer: auth.Issuer,
+		}
+	}
+
 	cfg.APIURL = newURL
+	if b, ok := cfg.Environments[bindingKey(newURL)]; ok {
+		cfg.SystemID, cfg.SystemName, cfg.SystemSlug, cfg.CurrentRelease = b.SystemID, b.SystemName, b.SystemSlug, b.CurrentRelease
+	} else {
+		cfg.SystemID, cfg.SystemName, cfg.SystemSlug, cfg.CurrentRelease = 0, "", "", ""
+	}
+
+	envName := environmentName(newURL)
+	var note string
+	targetIssuer, known := issuerFor(newURL)
+	if m, ok := auth.Stash[targetIssuer]; ok && known {
+		activateCredential(auth, m, targetIssuer)
+		delete(auth.Stash, targetIssuer)
+	} else if m, ok := auth.Stash[newURL]; ok && !known {
+		activateCredential(auth, m, "")
+		delete(auth.Stash, newURL)
+	} else if known {
+		activateCredential(auth, config.AuthMaterial{}, "")
+		note = fmt.Sprintf("not signed in for %s — run '%s'", envName, authRepairCommand(newURL))
+	} else if auth.Token != "" {
+		note = fmt.Sprintf("cannot tell which identity provider serves %s; the stored credential stays active", newURL)
+	}
+
 	if err := config.WriteConfig(cfg); err != nil {
 		printError("Failed to save config: %v\n", err)
 		return err
 	}
+	if err := config.WriteAuth(auth); err != nil {
+		printError("Failed to save credentials: %v\n", err)
+		return err
+	}
 
-	envName := environmentName(newURL)
 	printSuccess("Environment set to %s\n", envName)
-	fmt.Printf("  URL: %s\n", newURL)
+	for _, line := range bindingLines(cfg, auth) {
+		fmt.Printf("  %s\n", line)
+	}
+	if note != "" {
+		printWarning("%s\n", note)
+	}
+	if why := credentialRefusal(newURL, auth.Token); why != "" {
+		printWarning("Credential: the stored credential is not one this server accepts — %s; run '%s'\n", why, authRepairCommand(newURL))
+	}
 	fmt.Println()
 	printInfo("Run 'modernpath env test' to verify the connection.\n")
-
 	return nil
+}
+
+// issuerFor names the identity provider of a known host; a custom host has
+// none the CLI can name.
+func issuerFor(apiURL string) (string, bool) {
+	if p, ok := zitadel.ProfileForAPIURL(apiURL); ok {
+		return p.Issuer, true
+	}
+	return "", false
+}
+
+// credentialKeyFor is the stash slot of the active credential: its recorded
+// issuer, else the issuer of the host it was used against, else that URL.
+func credentialKeyFor(auth *config.Auth, apiURL string) string {
+	if auth.Issuer != "" {
+		return auth.Issuer
+	}
+	if issuer, ok := issuerFor(apiURL); ok {
+		return issuer
+	}
+	return apiURL
+}
+
+func activateCredential(auth *config.Auth, m config.AuthMaterial, issuer string) {
+	auth.Token, auth.RefreshToken, auth.ExpiresAt = m.Token, m.RefreshToken, m.ExpiresAt
+	auth.Actor, auth.WorkspaceID, auth.WorkspaceName = m.Actor, m.WorkspaceID, m.WorkspaceName
+	if issuer == "" {
+		issuer = m.Issuer
+	}
+	auth.Issuer = issuer
+}
+
+// workspaceStatusLine says which workspace the stored credential is for:
+// name and id, the id alone when no name is stored, nothing when none is.
+func workspaceStatusLine(auth *config.Auth) string {
+	switch {
+	case auth == nil || auth.WorkspaceID == "":
+		return ""
+	case auth.WorkspaceName == "":
+		return auth.WorkspaceID
+	default:
+		return fmt.Sprintf("%s (%s)", auth.WorkspaceName, auth.WorkspaceID)
+	}
 }
 
 func displayEnvironmentStatus(cfg *config.Config) {
@@ -368,6 +485,13 @@ func displayEnvironmentStatus(cfg *config.Config) {
 
 	cyan.Printf("  URL:  ")
 	fmt.Printf("%s\n", apiURL)
+
+	if auth, err := config.ReadAuth(); err == nil {
+		if line := workspaceStatusLine(auth); line != "" {
+			cyan.Printf("  Workspace: ")
+			fmt.Printf("%s\n", line)
+		}
+	}
 
 	// Check connection status
 	client := &http.Client{Timeout: 5 * time.Second}

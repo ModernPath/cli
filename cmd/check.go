@@ -130,7 +130,43 @@ func runCheckHook(event string) error {
 // commit matches) and the quote character is not one (`sh -c "git commit"`
 // does not) — so it serves only as the first pass; commitGated reads the
 // quotes.
-var gitCommitCommand = regexp.MustCompile(`(^|[\s;&|()])\\?git[[:space:]]+commit([[:space:]]|$)`)
+//
+// git's global options sit between `git` and the subcommand, and a commit
+// behind one is still a commit: `git -C <dir> commit`, `git -c
+// core.hooksPath=/dev/null commit` (which also skips the repository's own
+// hooks), `git --no-pager commit`, `git --git-dir=… --work-tree=… commit`.
+// The first regex matched `git commit` only, so every one of those landed
+// unchecked (BACKLOG-TOOL-53).
+const gitGlobalOption = `(?:-[Cc][[:space:]]+[^[:space:]]+|-[Cc][^[:space:]]+` +
+	`|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source)[[:space:]]+[^[:space:]]+` +
+	`|--?[A-Za-z][A-Za-z0-9-]*(?:=[^[:space:]]*)?)`
+
+var gitCommitCommand = regexp.MustCompile(`(^|[\s;&|()])\\?git(?:[[:space:]]+` + gitGlobalOption + `)*[[:space:]]+commit([[:space:]]|$)`)
+
+// gitChangeDirectory captures the first `-C <dir>` global option: the commit
+// runs in that directory, not in the hook's cwd, so the gate reads the
+// repository the commit will land in.
+var gitChangeDirectory = regexp.MustCompile(`(^|[\s;&|()])\\?git(?:[[:space:]]+` + gitGlobalOption + `)*?[[:space:]]+-C[[:space:]]+([^[:space:]"'` + "`" + `]+)`)
+
+// commitDirectory is where the commit runs: the `-C <dir>` of the command,
+// resolved against the hook cwd, when it names a directory that exists;
+// otherwise the cwd itself. A `-C` the gate cannot resolve (quoted, with
+// spaces, a typo) keeps the cwd's verdict — the reading may only move the gate
+// to the right repository, never open it.
+func commitDirectory(cwd, cmd string) string {
+	m := gitChangeDirectory.FindStringSubmatch(cmd)
+	if m == nil {
+		return cwd
+	}
+	dir := m[2]
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(cwd, dir)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return cwd
+	}
+	return dir
+}
 
 // commitGated decides whether a command faces the process gate. The quote
 // scan corrects the regex in both of its blind directions: a quoted span the
@@ -141,16 +177,19 @@ var gitCommitCommand = regexp.MustCompile(`(^|[\s;&|()])\\?git[[:space:]]+commit
 // unterminated quote or substitution, runaway nesting) falls back to the
 // regex's own verdict, so uncertainty never widens what slips the gate.
 func commitGated(cmd string) bool {
-	return commitGatedDepth(cmd, 0)
+	return executableMatches(cmd, 0, gitCommitCommand)
 }
 
-func commitGatedDepth(cmd string, depth int) bool {
+// executableMatches reports whether re matches a span of cmd a shell would
+// execute. It is the commit gate's scanner, shared with the subagent store-write
+// guard: the same wrappers, chains, quotes and substitutions apply to both.
+func executableMatches(cmd string, depth int, re *regexp.Regexp) bool {
 	if depth > 8 {
-		return gitCommitCommand.MatchString(cmd)
+		return re.MatchString(cmd)
 	}
-	gated, classified := scanForExecutableCommit(cmd, depth)
+	gated, classified := scanForExecutable(cmd, depth, re)
 	if !classified {
-		return gitCommitCommand.MatchString(cmd)
+		return re.MatchString(cmd)
 	}
 	return gated
 }
@@ -162,12 +201,12 @@ var (
 	gateCFlagRe = regexp.MustCompile(`^-[A-Za-z]*c$`)
 )
 
-// scanForExecutableCommit walks the command once, replacing each quoted span
+// scanForExecutable walks the command once, replacing each quoted span
 // with a placeholder and re-scanning the spans a shell would execute. It
 // returns (gated, classified); classified=false means the walk met something
 // it cannot be sure about — an unterminated quote or substitution — and the
 // caller keeps the regex's deny.
-func scanForExecutableCommit(cmd string, depth int) (bool, bool) {
+func scanForExecutable(cmd string, depth int, re *regexp.Regexp) (bool, bool) {
 	var stripped, cur strings.Builder
 	var tokens []string // the current simple command's completed words
 	flush := func() {
@@ -193,11 +232,11 @@ func scanForExecutableCommit(cmd string, depth int) (bool, bool) {
 			prev = tokens[len(tokens)-1]
 		}
 		if gateCFlagRe.MatchString(prev) && hasShell() {
-			if commitGatedDepth(content, depth+1) {
+			if executableMatches(content, depth+1, re) {
 				return true, true
 			}
 		} else if double {
-			if g, ok := scanSubstitutions(content, depth); !ok || g {
+			if g, ok := scanSubstitutions(content, depth, re); !ok || g {
 				return g, ok
 			}
 		}
@@ -253,7 +292,7 @@ func scanForExecutableCommit(cmd string, depth int) (bool, bool) {
 			if j < 0 {
 				return false, false
 			}
-			if commitGatedDepth(cmd[i+1:i+1+j], depth+1) {
+			if executableMatches(cmd[i+1:i+1+j], depth+1, re) {
 				return true, true
 			}
 			stripped.WriteString("_q_")
@@ -273,7 +312,7 @@ func scanForExecutableCommit(cmd string, depth int) (bool, bool) {
 			if open != 0 {
 				return false, false
 			}
-			if commitGatedDepth(cmd[i+2:j-1], depth+1) {
+			if executableMatches(cmd[i+2:j-1], depth+1, re) {
 				return true, true
 			}
 			stripped.WriteString("_q_")
@@ -291,12 +330,12 @@ func scanForExecutableCommit(cmd string, depth int) (bool, bool) {
 			cur.WriteByte(c)
 		}
 	}
-	return gitCommitCommand.MatchString(stripped.String()), true
+	return re.MatchString(stripped.String()), true
 }
 
 // scanSubstitutions re-scans what a double-quoted span still executes:
 // $( … ) and backticks run whether or not they are quoted.
-func scanSubstitutions(content string, depth int) (bool, bool) {
+func scanSubstitutions(content string, depth int, re *regexp.Regexp) (bool, bool) {
 	for i := 0; i < len(content); i++ {
 		switch {
 		case content[i] == '\\' && i+1 < len(content):
@@ -306,7 +345,7 @@ func scanSubstitutions(content string, depth int) (bool, bool) {
 			if j < 0 {
 				return false, false
 			}
-			if commitGatedDepth(content[i+1:i+1+j], depth+1) {
+			if executableMatches(content[i+1:i+1+j], depth+1, re) {
 				return true, true
 			}
 			i += j + 1
@@ -324,7 +363,7 @@ func scanSubstitutions(content string, depth int) (bool, bool) {
 			if open != 0 {
 				return false, false
 			}
-			if commitGatedDepth(content[i+2:j-1], depth+1) {
+			if executableMatches(content[i+2:j-1], depth+1, re) {
 				return true, true
 			}
 			i = j - 1
@@ -340,11 +379,19 @@ func processGateHookPayload(payload []byte) string {
 			Command string `json:"command"`
 		} `json:"tool_input"`
 	}
-	if err := json.Unmarshal(payload, &input); err != nil || !commitGated(input.ToolInput.Command) {
+	if err := json.Unmarshal(payload, &input); err != nil {
+		return "{}"
+	}
+	// A delegated agent never writes to the process store: the guard answers
+	// before the commit gate, from the payload alone, with no repository read.
+	if marker := subagentMarker(payload); marker != "" && storeWriteCommand(input.ToolInput.Command) {
+		return subagentGuardEnvelope(marker)
+	}
+	if !commitGated(input.ToolInput.Command) {
 		return "{}"
 	}
 
-	root, err := hookRepositoryRoot(input.CWD)
+	root, err := hookRepositoryRoot(commitDirectory(input.CWD, input.ToolInput.Command))
 	if err != nil {
 		return "{}"
 	}

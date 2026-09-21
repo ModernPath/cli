@@ -750,3 +750,104 @@ func TestFidelityNamesUnextractedURsAsLosses(t *testing.T) {
 		t.Fatalf("an unextracted UR must be a named loss (its derives edges drop silently): %+v", l)
 	}
 }
+
+// A sixth and seventh membership shape, both from the newer RDD-shaped epic
+// records: the member table sits under `## System requirements` (EPIC-UI-005,
+// EPIC-UI-006, EPIC-CHAT-003), under `## System requirements and tasks`
+// (EPIC-PORTFOLIO-051), or under `## Members` (EPIC-NEXT-010). None of the four
+// recognized headings matches, so a from-empty import carried 12 declared edges
+// as nothing while reporting zero fidelity losses (verified 2026-09-05,
+// against the store and against the client-side dry-run payload).
+//
+// The first two sections are harvested REQ-ONLY. Their first column is a
+// display/task id — 343 such tokens across 109 records, none of which names a
+// requirement record — so the wider member vocabulary would mint that many
+// phantom memberships. `## Members` carries no such column and takes the full
+// vocabulary.
+func TestRequirementMembershipRecognizesSystemRequirementsAndMembersSections(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		record string
+		want   []string
+	}{
+		{
+			name: "system requirements table",
+			record: `# EPIC-MAP-300 — Fixture
+
+## System requirements
+
+| Requirement | Statement | Status |
+|---|---|---|
+| REQ-MAP-080 | A statement. | IN_REVIEW |
+| REQ-MAP-081 | Another statement. | IN_REVIEW |
+`,
+			want: []string{"REQ-MAP-080", "REQ-MAP-081"},
+		},
+		{
+			name: "system requirements and tasks table, display column ignored",
+			record: `# EPIC-MAP-301 — Fixture
+
+## System requirements and tasks
+
+| SR | Requirement | Summary | Task | Status |
+|---|---|---|---|---|
+| SR-MAP-3011 | REQ-MAP-082 | A summary. | TASK-MAP-3011 | IN_REVIEW |
+| SR-MAP-3012 | REQ-MAP-083 | Another summary. | TASK-MAP-3012 | IN_REVIEW |
+`,
+			want: []string{"REQ-MAP-082", "REQ-MAP-083"},
+		},
+		{
+			name: "members table",
+			record: `# EPIC-MAP-302 — Fixture
+
+## Members
+
+| SR | Statement (thin) | Boundary | Status |
+|---|---|---|---|
+| REQ-MAP-084 | A thin statement. | core | IN_REVIEW |
+| REQ-MAP-085 | Another thin statement. | frontend | IN_REVIEW |
+
+All three are children of UR-MAP-084 — trailing prose, not a further member.
+`,
+			want: []string{"REQ-MAP-084", "REQ-MAP-085"},
+		},
+		{
+			// EPIC-FE-003's shape: the subject cell is a display id and the
+			// requirement is CITED inside an evidence cell. A citation is not a
+			// declaration — taking the row's first id anywhere would make the
+			// epic a member of a requirement it only mentions.
+			name: "a requirement cited inside a prose cell is not a member",
+			record: `# EPIC-MAP-304 — Fixture
+
+## System requirements
+
+| SR | Evidence | Status |
+|---|---|---|
+| SR-AF-001 | frontend rehome; ` + "`App.architecture.test.tsx`" + ` (5 REQ-MAP-099 tests) | LOWER_VERIFIED |
+`,
+			want: nil,
+		},
+		{
+			// The row is the declaration, not the heading: the same headings
+			// carry prose that only cites ids, and that must stay excluded.
+			name: "prose under the same heading declares nothing",
+			record: `# EPIC-MAP-303 — Fixture
+
+## System requirements
+
+Evidence mentions REQ-MAP-090 and the prose range REQ-MAP-091 … REQ-MAP-095.
+`,
+			want: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := requirementIDsOf(tc.record)
+			if len(got) == 0 && len(tc.want) == 0 {
+				return
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("membership must be declared by this section, got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

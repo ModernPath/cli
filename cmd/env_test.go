@@ -30,7 +30,7 @@ func TestEnvironmentNameMapsKnownHosts(t *testing.T) {
 		{zitadel.ProdProfile.APIURL, "production"},
 		{zitadel.TestProfile.APIURL, "test"},
 		{config.LocalAPIURL, "local"},
-		{config.BetaAPIURL, "beta"},
+		{config.BetaAPIURL, "custom"},
 		{"https://some-operator-host.example", "custom"},
 		{"", "custom"},
 	}
@@ -53,7 +53,6 @@ func TestEnvironmentURLResolvesNamesAndAliases(t *testing.T) {
 		{"local", config.LocalAPIURL},
 		{"localhost", config.LocalAPIURL},
 		{"dev", config.LocalAPIURL},
-		{"beta", config.BetaAPIURL},
 	}
 	for _, tc := range cases {
 		got, ok := environmentURL(tc.name)

@@ -63,9 +63,11 @@ type SearchResponse struct {
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	if !config.IsInitialized() {
-		printError("Not initialized. Run 'modernpath init' first.\n")
-		return nil
+	// REQ-CROSS-405: binding and credential statements before any request.
+	env, err := apiClientCredentialLoad()
+	if err != nil {
+		printError("%v\n", err)
+		return err
 	}
 
 	cfg, err := config.ReadConfig()
@@ -100,7 +102,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	printInfo("Searching for: %s\n\n", query)
 
 	// Make authenticated request
-	resp, err := api.DoAuthenticatedGet(requestURL, 30*time.Second)
+	resp, err := api.DoGetWithToken(requestURL, env.token, 30*time.Second)
 	if err != nil {
 		printError("Failed to connect to API: %v\n", err)
 		return err
@@ -113,6 +115,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		err := env.credentialRejected()
+		printError("%v\n", err)
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		var errResp struct {
 			Error string `json:"error"`

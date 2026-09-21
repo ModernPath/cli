@@ -1,6 +1,10 @@
 package cmd
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // The gate exists so a violating commit cannot land; the command shapes agents
 // actually emit include env-assignment prefixes and shell wrappers, and a
@@ -87,6 +91,63 @@ func TestTheScannerOnlyNarrows(t *testing.T) {
 	} {
 		if !commitGated(cmd) {
 			t.Errorf("gate must hold on %q", cmd)
+		}
+	}
+}
+
+// git's global options sit between `git` and the subcommand. A commit behind
+// `-C <dir>`, `-c key=value` (including core.hooksPath, which also skips the
+// repository's own hooks), `--no-pager` or `--git-dir=…` is still a commit;
+// the first matcher saw only `git commit` and let every one of them land
+// unchecked (BACKLOG-TOOL-53).
+func TestGlobalOptionsBeforeTheSubcommandAreStillACommit(t *testing.T) {
+	for _, cmd := range []string{
+		"git -C /repo commit -m x",
+		"git -C ../sibling commit",
+		"git -C sub -c user.name=x commit -m x",
+		"git -c core.hooksPath=/dev/null commit -m x",
+		"git --no-pager commit --amend",
+		"git -P commit -m x",
+		"git --git-dir=/r/.git --work-tree=/r commit -m x",
+		"git --git-dir /r/.git commit -m x",
+		"cd /x && git -C /repo commit -m x",
+		`sh -c "git -C /repo commit -m x"`,
+	} {
+		if !commitGated(cmd) {
+			t.Errorf("gate misses %q — the commit would land unchecked", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"git -C /repo log --oneline",
+		"git -C /repo status",
+		"git -c color.ui=false diff",
+		"git --no-pager commitish",
+	} {
+		if commitGated(cmd) {
+			t.Errorf("gate over-fires on %q", cmd)
+		}
+	}
+}
+
+// The gate reads the repository the commit lands in: `-C <dir>` moves it
+// there, resolved against the hook cwd; a `-C` it cannot resolve keeps the cwd.
+func TestCommitDirectoryFollowsDashC(t *testing.T) {
+	cwd := t.TempDir()
+	sub := filepath.Join(cwd, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for cmd, want := range map[string]string{
+		"git commit -m x":                    cwd,
+		"git -C sub commit -m x":             sub,
+		"git -C " + sub + " commit -m x":     sub,
+		"git -c user.name=x -C sub commit":   sub,
+		"git -C missing commit -m x":         cwd,
+		`git -C "dir with space" commit`:     cwd,
+		"cd /elsewhere && git -C sub commit": sub,
+	} {
+		if got := commitDirectory(cwd, cmd); got != want {
+			t.Errorf("commitDirectory(%q) = %q, want %q", cmd, got, want)
 		}
 	}
 }

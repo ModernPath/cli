@@ -45,6 +45,11 @@ var RetiredPathFamilies = []string{
 	"process/08-open-questions.md",
 	"epics/**",
 	"docs/85-loop-review-queue.md",
+	// SR-CROSS-329: the release registry retires once the store serves the
+	// active-release selection and its USER: source (REQ-CROSS-328). This single
+	// edit auto-wires the byte carrier, the archival coverage check, and the
+	// marker's frozen retired: list.
+	"process/releases.md",
 }
 
 // ---------------------------------------------------------------- epic records on disk

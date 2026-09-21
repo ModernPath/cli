@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://modernpath.ai/contracts/sync/v1.schema.json",
   "title": "ModernPath workspace↔server sync batch (v1)",
-  "description": "The canonical sync op contract (REQ-CROSS-012, converged into the central contracts/ home per OQ-A1x USER:2026-07-28). This file is the ONE source: the server serves a byte-identical copy at GET /api/v1/sync/schema (apps/aiengine_web/priv/sync-schema/v1.json) and the modernpath CLI embeds one (tools/modernpath/internal/opschema/v1.json) — both kept in lockstep by tests. Prose form: docs/data/42-sync-contract.md. OpenAPI binding: contracts/openapi/sync-api.yaml. Fingerprint mapping (REQ-CROSS-254, USER:2026-08-24; REQ-PLN-159, USER:2026-08-26): the applier persists each applied op's content_hash — the canonical-form sha256 the builders compute, one value with sync_shadows.last_hash — into the row's content_fingerprint column. Gate evaluated-scope identity travels separately as optional evaluated_scope_fingerprint; legacy decision_gates.fingerprint is compatibility-only. process_records is excluded — its identity is content_sha256 over the raw bytes.",
+  "description": "The canonical sync op contract (REQ-CROSS-012, converged into the central contracts/ home per OQ-A1x USER:2026-07-28). This file is the ONE source: the server serves a byte-identical copy at GET /api/v1/sync/schema (apps/core_http_api/priv/sync-schema/v1.json) and the modernpath CLI embeds one (tools/modernpath/internal/opschema/v1.json) — both kept in lockstep by tests. Prose form: docs/data/42-sync-contract.md. OpenAPI binding: contracts/openapi/sync-api.yaml. Fingerprint mapping (REQ-CROSS-254, USER:2026-08-24; REQ-PLN-159, USER:2026-08-26): the applier persists each applied op's content_hash — the canonical-form sha256 the builders compute, one value with sync_shadows.last_hash — into the row's content_fingerprint column. Gate evaluated-scope identity travels separately as optional evaluated_scope_fingerprint; legacy decision_gates.fingerprint is compatibility-only. process_records is excluded — its identity is content_sha256 over the raw bytes.",
   "x-schema-version": 1,
   "type": "object",
   "required": [
@@ -775,9 +775,11 @@
         "criteria_changed",
         "gate_opened",
         "gate_answered",
+        "gate_withdrawn",
         "approval_granted",
         "evidence_recorded",
         "drift_detected",
+        "patch_authored",
         "discovery_captured",
         "commit_burst",
         "session_heartbeat_transition",
@@ -1017,9 +1019,10 @@
           "type": "string",
           "enum": [
             "backlog",
-            "gap"
+            "gap",
+            "tooling"
           ],
-          "description": "backlog = unrouted triage discovery (BACKLOG.md); gap = capability/specification gap (process/gap-register.md)."
+          "description": "backlog = unrouted triage discovery (BACKLOG.md); gap = capability/specification gap (process/gap-register.md); tooling = a filed tooling gap (modernpath feedback)."
         },
         "title": {
           "type": "string",

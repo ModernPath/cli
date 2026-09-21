@@ -33,6 +33,13 @@ type sessionStartPayload struct {
 type briefFetch struct {
 	data map[string]any
 	err  error
+	// REQ-CROSS-415: the held-work read, or heldOK false when it failed.
+	held   []heldPiece
+	heldOK bool
+	// REQ-CROSS-416: the contract version the server named on this run's
+	// responses, carried in the result so it is never read from the shared
+	// env after the deadline (F-CLI021-R1-08).
+	servedContract string
 }
 
 func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Duration, loadEnv func() (*factoryEnv, error)) {
@@ -66,38 +73,100 @@ func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Durat
 		return
 	}
 
+	started := time.Now()
 	done := make(chan briefFetch, 1)
 	go func() {
 		data, ferr := fetchFeed(env, "active")
-		done <- briefFetch{data, ferr}
+		// REQ-CROSS-415 (EPIC-CLI-021): the second pure read — the caller's held
+		// pieces and what moved on them, which also carries the REQ-CROSS-317
+		// derived/declared-phase line (D11). Best-effort — a failure drops the
+		// block, never the brief. Fetched in the same goroutine so it stays
+		// within the deadline.
+		held, ok := readHeldPieces(env)
+		done <- briefFetch{data: data, err: ferr, held: held, heldOK: ok, servedContract: env.contractVersion}
 	}()
+	// REQ-CROSS-416: the local freshness inputs — kit drift, source
+	// provenance, the release cache or one bounded GET — are gathered beside
+	// the feed fetch, never after it.
+	local := make(chan localFreshness, 1)
+	go func() { local <- gatherLocalFreshness(root) }()
+
+	// freshness is the line (or "") for the outcome at hand; it waits for the
+	// local inputs only until the deadline and reads the contract only from
+	// the fetch result. Past the deadline the local inputs are unknown and the
+	// line is silent rather than late.
+	freshness := func(servedContract string) (string, string) {
+		var in localFreshness
+		select {
+		case in = <-local:
+		case <-time.After(remaining(started, deadline)):
+		}
+		return briefFreshness(in, servedContract)
+	}
+	// envelopeFor is the failure branch's output: the freshness line alone
+	// when one fired, else {} as before.
+	envelopeFor := func(signal, line string) string {
+		if line == "" {
+			return "{}"
+		}
+		return briefEnvelope(event, freshnessNote(line))
+	}
 
 	select {
 	case r := <-done:
+		signal, line := freshness(r.servedContract)
 		if r.err != nil {
-			fmt.Fprint(out, "{}")
-			briefLog(root, sid, src, "failed", r.err.Error())
+			fmt.Fprint(out, envelopeFor(signal, line))
+			briefLog(root, sid, src, "failed", r.err.Error()+" · "+freshnessDetail(signal))
 			return
 		}
-		fmt.Fprint(out, briefEnvelope(event, renderCompactBrief(r.data)))
-		detail := ""
+		body := renderCompactBrief(r.data, renderHeldBlock(r.held, r.heldOK))
+		if line != "" {
+			body += "\n\n" + freshnessNote(line)
+		}
+		if note := storeBackedNote(root); note != "" {
+			body += "\n\n_" + note + "_"
+		}
+		fmt.Fprint(out, briefEnvelope(event, body))
+		detail := heldMode(r.held, r.heldOK) + " · " + freshnessDetail(signal)
 		if p.SessionID == "" {
-			detail = "no-session-id"
+			detail = "no-session-id · " + detail
 		}
 		briefLog(root, sid, src, "delivered", detail)
 	case <-time.After(deadline):
 		// The in-flight request is abandoned: a brief that arrives after the
 		// agent has started is worse than none — the turn was paid for either way.
-		fmt.Fprint(out, "{}")
-		briefLog(root, sid, src, "failed", "deadline exceeded")
+		signal, line := freshness("")
+		fmt.Fprint(out, envelopeFor(signal, line))
+		briefLog(root, sid, src, "failed", "deadline exceeded · "+freshnessDetail(signal))
 	}
 }
 
-// renderCompactBrief is the top three items and the three CTA lines under a
-// name header — the hook's smaller form of the terminal brief.
-func renderCompactBrief(data map[string]any) string {
+func remaining(started time.Time, deadline time.Duration) time.Duration {
+	if left := deadline - time.Since(started); left > 0 {
+		return left
+	}
+	return 0
+}
+
+func freshnessNote(line string) string { return "_⚠ " + line + "_" }
+
+func freshnessDetail(signal string) string {
+	if signal == "" {
+		return "freshness:fresh"
+	}
+	return "freshness:" + signal
+}
+
+// renderCompactBrief is the held-work block (REQ-CROSS-415), the top three
+// items and the three CTA lines under a name header — the hook's smaller
+// form of the terminal brief.
+func renderCompactBrief(data map[string]any, held string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Your move — %s\n\n", str(feedMap(data, "person"), "name"))
+	if held != "" {
+		b.WriteString(held + "\n")
+	}
 	items := feedList(data, "items")
 	for i, raw := range briefSlice(items, 0, 3) {
 		renderBriefItem(&b, i+1, feedMapOf(raw))

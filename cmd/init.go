@@ -3,11 +3,13 @@ package cmd
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/api"
@@ -36,9 +38,11 @@ var initCmd = &cobra.Command{
 
 This command will:
 1. Connect to the ModernPath platform (cloud production, api.modernpath.ai, by default)
-2. Let you select a system
-3. Download the documentation and analysis data
-4. Create a .modernpath directory with all the data
+2. Sign you in when no credential is stored, or stop naming the sign-in command
+   (without a terminal, or when the stored credential has expired)
+3. Let you select a system (--system-id or --system when there is no terminal)
+4. Download the documentation and analysis data
+5. Create a .modernpath directory with all the data
 
 Example:
   modernpath init                    # Connect to cloud production
@@ -70,7 +74,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	systems, err := client.ListSystems()
 	if err != nil {
-		printError("Failed to list systems: %v\n", err)
+		err = initListingRefused(baseURL, err)
+		printError("%v\n", err)
 		return err
 	}
 
@@ -99,21 +104,39 @@ func connectInitClient() (*api.Client, string, error) {
 
 	printInfo("Connecting to ModernPath at %s...\n", baseURL)
 
-	auth, _ := config.ReadAuth()
-	token := ""
-	if auth != nil {
-		token = auth.Token
-	}
+	client := api.NewClient(baseURL, "")
 
-	client := api.NewClient(baseURL, token)
+	// REQ-CROSS-405: the credential comes before the reachability check as well
+	// as the listing. On the shared platform host the Gateway fails closed and
+	// authenticates core's health route, so an unauthenticated probe is answered
+	// 401 however healthy the server is — the health check carries the bearer,
+	// and there is none until sign-in. With no stored credential init runs the
+	// sign-in (or names the step); probing or listing with none is a 401 and an
+	// unbound workspace.
+	token, err := initCredential(baseURL, time.Now())
+	if err != nil {
+		printError("%v\n", err)
+		return nil, "", err
+	}
+	client.Token = token
 
 	if err := client.HealthCheck(); err != nil {
+		// A 401 from the preflight is a reachable server rejecting the
+		// credential, not an unreachable one — render it as the credential
+		// statement (REQ-CROSS-405: never `HTTP 401` alone), not a bare status
+		// line and a misleading "server is down" hint.
+		if errors.Is(err, api.ErrUnauthorized) {
+			err = (&factoryEnv{APIURL: baseURL}).credentialRejected()
+			printError("%v\n", err)
+			return nil, "", err
+		}
 		printError("Cannot connect to ModernPath: %v\n", err)
 		printInfo("Make sure the ModernPath server is running\n")
 		return nil, "", err
 	}
 
 	printSuccess("Connected to ModernPath\n")
+
 	return client, baseURL, nil
 }
 
@@ -140,6 +163,9 @@ func resolveSingleRepoSystemSelection(client *api.Client, systems []api.System) 
 		return nil, fmt.Errorf("system not found")
 	}
 
+	if !stdinIsTerminal() {
+		return chooseSystemWithoutTerminal(systems)
+	}
 	return selectSystem(client, systems)
 }
 
@@ -220,7 +246,7 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	// reports a missing file as "not signed in" rather than as an error — so
 	// without this the next command is the first sign anything is wrong.
 	if auth, err := config.ReadAuth(); err == nil && auth.Token == "" {
-		printWarning("No credential for this workspace — run 'modernpath auth' before syncing\n")
+		printWarning("No credential in this checkout — run '%s' before syncing\n", authRepairCommand(baseURL))
 	}
 
 	if err := addToGitignore(cwd); err != nil {
@@ -325,6 +351,7 @@ const modernpathGitignoreBlock = `# ModernPath CLI local data (process package i
 /.modernpath/*
 !/.modernpath/rdd/
 !/.modernpath/rdd/**
+!/.modernpath/cli-reference.md
 `
 
 // addToGitignore ignores ModernPath credentials and machine state while
@@ -342,16 +369,18 @@ func addToGitignore(projectDir string) error {
 
 	controlled := map[string]bool{
 		"# ModernPath CLI local data (process package is versioned)": true,
-		".modernpath":          true,
-		"/.modernpath":         true,
-		".modernpath/":         true,
-		"/.modernpath/":        true,
-		".modernpath/*":        true,
-		"/.modernpath/*":       true,
-		"!.modernpath/rdd/":    true,
-		"!/.modernpath/rdd/":   true,
-		"!.modernpath/rdd/**":  true,
-		"!/.modernpath/rdd/**": true,
+		".modernpath":                    true,
+		"/.modernpath":                   true,
+		".modernpath/":                   true,
+		"/.modernpath/":                  true,
+		".modernpath/*":                  true,
+		"/.modernpath/*":                 true,
+		"!.modernpath/rdd/":              true,
+		"!/.modernpath/rdd/":             true,
+		"!.modernpath/rdd/**":            true,
+		"!/.modernpath/rdd/**":           true,
+		"!.modernpath/cli-reference.md":  true,
+		"!/.modernpath/cli-reference.md": true,
 	}
 	kept := make([]string, 0)
 	for _, line := range strings.Split(existingContent, "\n") {

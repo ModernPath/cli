@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -104,6 +105,14 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// Check API connection
 	client := api.NewClient(baseURL, "")
 	if err := client.HealthCheck(); err != nil {
+		// A reachable server rejecting the credential answers 401 here on a
+		// fail-closed platform host; render the credential statement, not a
+		// misleading "server is down" hint (REQ-CROSS-405).
+		if errors.Is(err, api.ErrUnauthorized) {
+			err = (&factoryEnv{APIURL: baseURL}).credentialRejected()
+			printError("%v\n", err)
+			return err
+		}
 		printError("Cannot connect to ModernPath at %s\n", baseURL)
 		printInfo("Make sure the server is running\n")
 		return err

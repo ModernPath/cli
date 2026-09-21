@@ -2043,6 +2043,54 @@ func TestEpicOpCarriesEveryDeclaredUserRequirement(t *testing.T) {
 	}
 }
 
+// REQ-CROSS-222 (defect, USER:2026-09-05): the epic membership tokenizer was
+// REQ-only and letter-context, so an epic that declares an SR-prefixed member
+// (an `SR-<CTX>-NNN` ledger id — the form the ledger skill defines for a system
+// requirement) or a display-id member (SR-16-1, the fallback id for a
+// reverse-engineered requirement) had those edges silently dropped at import.
+// Because the SR link apply is replace-set, a dropped member is not merely
+// un-added — any edge the store already held for it is deleted. Note the
+// vocabulary is the bullet form's: a member TABLE's leading `SR-CLI-0041`-style
+// column is task numbering paired with a TASK- id, defined in no ledger, and the
+// table reader deliberately steps over it (addMembershipTableRows).
+// RED: requirementIDsOf keeps only the REQ- member.
+func TestEpicMembershipCapturesNonReqPrefixedMembers(t *testing.T) {
+	section := "## Requirements in this epic\n- REQ-CROSS-229 · SR-USR-014 · SR-16-1\n"
+	got := requirementIDsOf(section)
+	want := []string{"REQ-CROSS-229", "SR-USR-014", "SR-16-1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("membership = %v, want %v — SR-prefixed and display-id members must be captured verbatim, not dropped", got, want)
+	}
+}
+
+// REQ-CROSS-222 (defect, UR path, USER:2026-09-05): the epic UR-membership
+// reader scans the URCell with the strict urTokenRe, which requires a
+// letter-context and a two-segment id. So a display-id member (UR-1-0, the
+// fallback for a reverse-engineered UR) or a two-segment one (UR-44) named in
+// the URCell is dropped, exactly as SR-prefixed members were on the SR path.
+// RED: BuildEpicOp keeps only the canonical member.
+func TestEpicURMembershipCapturesDisplayIDMembers(t *testing.T) {
+	epic := Epic{ID: "EPIC-UR-001", URCell: "UR-1-0 (inferred) · UR-44 · UR-NEXT-005"}
+	op := BuildEpicOp(epic, "# EPIC-UR-001 — Fixture\n")
+	got := payloadIDList(op.Payload, "user_requirement_external_ids")
+	want := []string{"UR-1-0", "UR-44", "UR-NEXT-005"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("UR membership = %v, want %v — display-id and two-segment UR members must be captured", got, want)
+	}
+}
+
+// The widening must not cost urTokenRe's prose safety: provenance prose in the
+// URCell (the UI ledger writes "finding RUN:… · fixed RUN:…" there) mints no
+// phantom UR member.
+func TestEpicURMembershipDoesNotMintPhantomMembersFromProse(t *testing.T) {
+	epic := Epic{ID: "EPIC-UR-002", URCell: "UR-NEXT-005 (done) · finding RUN:2026-08-12 · fixed RUN:2026-08-20"}
+	op := BuildEpicOp(epic, "# EPIC-UR-002 — Fixture\n")
+	got := payloadIDList(op.Payload, "user_requirement_external_ids")
+	if strings.Join(got, ",") != "UR-NEXT-005" {
+		t.Fatalf("UR membership = %v, want only UR-NEXT-005 — provenance prose must not mint members", got)
+	}
+}
+
 // One user-requirement op per declared UR — an id that reaches no op has no
 // entity for the membership edge to point at. The ledger-derived row still
 // wins over the epic-derived one for an id declared in both places.
@@ -2290,5 +2338,24 @@ func TestEpicDescriptionFallsBackToWhatTheRecordDeclares(t *testing.T) {
 		"- **Ledger:** `REQ-PLT-016`\n\n## Tasks\n"
 	if got = ParseEpicDescription(meta); got != "" {
 		t.Errorf("description = %q, want empty — a status banner is not an outcome", got)
+	}
+}
+
+// A range whose end names a different prefix is two ids, not a run under the
+// first: `REQ-CROSS-001..REQ-UI-005` declares REQ-CROSS-001 and REQ-UI-005.
+// main's tokenizer carried that branch and the verbatim-id rewrite dropped it,
+// minting REQ-CROSS-002..005 and losing REQ-UI-005. No corpus record uses the
+// shape today, which is why no test caught it; a same-prefix range still
+// expands as before.
+func TestEpicMembershipRangeAcrossPrefixesIsTwoIDs(t *testing.T) {
+	got := requirementIDsOf("## Requirements in this epic\n- REQ-CROSS-001..REQ-UI-005\n")
+	want := []string{"REQ-CROSS-001", "REQ-UI-005"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("cross-prefix range = %v, want %v", got, want)
+	}
+	got = requirementIDsOf("## Requirements in this epic\n- REQ-CROSS-001..REQ-CROSS-003\n")
+	want = []string{"REQ-CROSS-001", "REQ-CROSS-002", "REQ-CROSS-003"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("same-prefix range = %v, want %v", got, want)
 	}
 }

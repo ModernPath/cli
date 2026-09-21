@@ -5,9 +5,28 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// The slow-call timer writes from a separate goroutine.
+type noticeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *noticeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *noticeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // REQ-CROSS-176: a factory call that is taking long says so.
 //
@@ -24,7 +43,7 @@ func TestSlowFactoryCallPrintsANotice(t *testing.T) {
 	defer srv.Close()
 
 	prevAfter, prevTo := slowCallNoticeAfter, slowCallNoticeTo
-	var buf bytes.Buffer
+	var buf noticeBuffer
 	slowCallNoticeAfter, slowCallNoticeTo = 5*time.Millisecond, &buf
 	defer func() { slowCallNoticeAfter, slowCallNoticeTo = prevAfter, prevTo }()
 
@@ -46,7 +65,7 @@ func TestFastFactoryCallPrintsNothing(t *testing.T) {
 	defer srv.Close()
 
 	prevAfter, prevTo := slowCallNoticeAfter, slowCallNoticeTo
-	var buf bytes.Buffer
+	var buf noticeBuffer
 	slowCallNoticeAfter, slowCallNoticeTo = 200*time.Millisecond, &buf
 	defer func() { slowCallNoticeAfter, slowCallNoticeTo = prevAfter, prevTo }()
 
@@ -54,7 +73,7 @@ func TestFastFactoryCallPrintsNothing(t *testing.T) {
 	if _, _, err := env.call("GET", "/api/v1/sync/gates", nil); err != nil {
 		t.Fatal(err)
 	}
-	if buf.Len() != 0 {
+	if buf.String() != "" {
 		t.Fatalf("fast call produced noise: %q — the notice must mark the exception, not the rule", buf.String())
 	}
 }

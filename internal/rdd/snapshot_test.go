@@ -182,6 +182,25 @@ func TestSnapshotWarnsOnImplementationWithoutSpecApproval(t *testing.T) {
 	}
 }
 
+// GAP-013: on a store-backed workspace the mandated corpus is retired by
+// declaration, so Snapshot must not emit the loud "MANDATED document type …
+// matches no files" warnings that drive factory status.
+func TestSnapshotSilentOnMandatedGapsWhenStoreBacked(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "process"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "process", "store-backed.md"), []byte("# Store-backed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, warnings := Snapshot(ws, manifest.Default())
+	for _, w := range warnings {
+		if strings.Contains(w, "MANDATED document type") {
+			t.Fatalf("store-backed workspace must not warn on mandated gaps, got: %v", warnings)
+		}
+	}
+}
+
 // REQ-CROSS-114: a record that grants its specification approval in the
 // template's table while its own status marker still says SPEC-DRAFT
 // contradicts itself. The conservative reading syncs — and the contradiction is

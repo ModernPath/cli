@@ -79,6 +79,14 @@ func quiescentPrecheck(root string, minInterval time.Duration) string {
 
 // factorySyncQuiescent is the hook entrypoint: gate, sync, log — exit 0 always.
 func factorySyncQuiescent(trigger string, minInterval time.Duration) error {
+	// Store-backed (REQ-CROSS-329): the file ledgers this sync reads are retired
+	// and the bulk channel is refused. Skip ahead of env/network so a flipped
+	// workspace's hooks are silent, credential-free no-ops.
+	if root, active := storeBackedFromCwd(); active {
+		hookLog(root, trigger, "skip", "store-backed: file ledgers retired (write via 'modernpath author')")
+		return nil
+	}
+
 	env, err := factoryEnvLoad()
 	if err != nil {
 		// not connected / not initialized — a hook in a fresh clone; log-and-quiet

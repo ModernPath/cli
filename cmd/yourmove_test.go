@@ -83,7 +83,8 @@ func runBrief(t *testing.T, fx *wsFixture, opts briefOpts) (string, error) {
 }
 
 // §276.1/.2/.3/.4 — projection first, then the header, item lines with chips and
-// hold titles, an owned domain as "D · owner", and exactly three CTA lines.
+// hold titles, an owned domain as "D · owner", the two CTA lines, and the
+// by-kind/by-domain breakdowns.
 func TestYourMoveBriefRendersHeaderItemsAndCtas(t *testing.T) {
 	fx := &wsFixture{gates: []any{wsGate("RQ-268", "decision")}, feed: feedFixture()}
 	env := wsEnv(t, wsServe(t, fx))
@@ -119,6 +120,19 @@ func TestYourMoveBriefRendersHeaderItemsAndCtas(t *testing.T) {
 	if strings.Contains(out, "OQ-NX-04") {
 		t.Fatalf("default brief showed a rank-6 item:\n%s", out)
 	}
+}
+
+// §276.4b — the brief shows the in-scope composition by kind (totals.by_kind),
+// most-numerous first and title-cased to match the item-line kind tags. It is a
+// breakdown of the "Everything" total, so it prints just under that CTA. RED:
+// renderBriefCtas prints no "By kind:" line yet.
+func TestYourMoveBriefRendersKindBreakdown(t *testing.T) {
+	out, err := runBrief(t, &wsFixture{feed: feedFixture()}, briefOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fixture totals.by_kind = {decision:4, ready:5} → most-numerous first
+	want(t, out, "By kind: Ready 5 · Decision 4")
 }
 
 // §276.5 --more reveals ranks 6–10
@@ -251,5 +265,44 @@ func TestANamedOwnerStillRendersBesideItsDomain(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "sync · Jussi Rajala") {
 		t.Errorf("an owned domain must read \"D · owner\":\n%s", buf.String())
+	}
+}
+
+// REQ-CROSS-408 (EPIC-CLI-020): the [Drift] line carries its basis and what
+// the feed knows, and names the re-record verb.
+func TestYourMoveDriftLineCarriesItsBasisAndTheRemedy(t *testing.T) {
+	event := feedItem("drift", "REQ-EV", "A drifted requirement",
+		[]any{scoreTerm("preset", "drift")}, []any{}, []any{})
+	event["evidence"] = map[string]any{"basis": "drift_event", "revision": "abc1234", "head": "def5678", "test_case_ref": "x_test.exs"}
+	lapse := feedItem("drift", "REQ-LAPSE", "A lapsed requirement",
+		[]any{scoreTerm("preset", "drift")}, []any{}, []any{})
+	lapse["evidence"] = map[string]any{"basis": "validity_stale", "revision": "0a1b2c3", "at": "2026-09-10T08:00:00Z"}
+
+	fx := &wsFixture{feed: map[string]any{
+		"items":   []any{event, lapse},
+		"totals":  map[string]any{"by_kind": map[string]any{"drift": 2}, "by_domain": map[string]any{}},
+		"domains": []any{},
+		"release": map[string]any{"active": []any{map[string]any{"slug": "modernpath-v1-09"}}},
+		"person":  map[string]any{"name": "Jussi Rajala"},
+	}}
+	out, err := runBrief(t, fx, briefOpts{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, w := range []string{
+		"[Drift] REQ-EV",
+		"recorded at abc1234", "head def5678",
+		"factory evidence --pass REQ-EV",
+		"[Drift] REQ-LAPSE",
+		"ran at 2026-09-10T08:00:00Z", "validity has lapsed", "0a1b2c3",
+		"factory evidence --pass REQ-LAPSE",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("want %q in the brief:\n%s", w, out)
+		}
+	}
+	lapseLine := out[strings.Index(out, "[Drift] REQ-LAPSE"):]
+	if strings.Contains(lapseLine, "head ") || strings.Contains(lapseLine, "lapsed at") {
+		t.Errorf("a validity_stale item names no head and no lapse time (the feed holds none):\n%s", lapseLine)
 	}
 }

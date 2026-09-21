@@ -5,19 +5,14 @@ package cmd
 // one agent-neutral CLI adapter rather than a repository script owned by one
 // harness.
 
-import (
-	"encoding/json"
-	"os"
-)
-
 const gateHookScriptName = "rdd-gate.sh"
 const gateHookMarker = "check --hook PreToolUse"
 
 // A missing or old CLI is a tooling failure, not a process violation. The
 // adapter itself always exits zero and expresses a proven violation through
-// the PreToolUse deny envelope.
-const gateHookCommand = "command -v modernpath >/dev/null 2>&1 && modernpath " +
-	gateHookMarker + " 2>/dev/null || printf '{}'"
+// the PreToolUse deny envelope. The command goes through the hook prelude
+// (hooks_binary.go): the workspace link first, PATH second.
+var gateHookCommand = hookCommand(gateHookMarker, "printf '{}'")
 
 // installGateFamilyClaude MERGES the PreToolUse gate entry into
 // .claude/settings.json; every other event and hook entry is preserved.
@@ -51,15 +46,9 @@ func installGateFamily(agent agentConfig) error {
 	}
 
 	existing, _ := hooks["PreToolUse"].([]interface{})
-	kept := dropEntriesWithMarkers(existing, gateHookMarker, gateHookScriptName)
-	hooks["PreToolUse"] = append(kept, interface{}(entry))
+	hooks["PreToolUse"] = replaceOwnedEntry(existing, entry, gateHookMarker, gateHookScriptName)
 	settings["hooks"] = hooks
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(agent.configPath, data, 0o644)
+	return writeSettingsFile(agent.configPath, settings)
 }
 
 func gateFamilyInstalled(agent agentConfig) bool {

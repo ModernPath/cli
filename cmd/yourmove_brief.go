@@ -11,6 +11,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 )
@@ -54,7 +55,7 @@ func fetchFeed(env *factoryEnv, release string) (map[string]any, error) {
 		return nil, err
 	}
 	if status != 200 {
-		return nil, fmt.Errorf("server %d: %v", status, body["error"])
+		return nil, serverRefusal("", status, body)
 	}
 	data := dataOf(body)
 	if _, ok := data["items"]; !ok {
@@ -118,6 +119,10 @@ func renderBriefItem(out io.Writer, n int, it map[string]any) {
 	if title := str(it, "title"); title != "" {
 		line += " — " + title
 	}
+	// REQ-CROSS-392: an item on a customer-blocking defect's clock says so first.
+	if str(it, "lane") == "defect" {
+		line += " · ⚑ defect"
+	}
 	// Every applied term is a chip, in served order — except the kind (already in
 	// the bracket) and ownership (the owned-domain chip below carries the owner).
 	for _, raw := range feedList(it, "score_terms") {
@@ -160,6 +165,47 @@ func renderBriefItem(out io.Writer, n int, it map[string]any) {
 		}
 		fmt.Fprintf(out, "   holds %s\n", strings.Join(parts, " · "))
 	}
+	// REQ-CROSS-408: a [Drift] item says its basis and what the feed knows,
+	// and names the re-record path.
+	if str(it, "kind") == "drift" {
+		if line := driftLine(it); line != "" {
+			fmt.Fprintf(out, "   %s\n", line)
+		}
+	}
+}
+
+// driftLine — the drift item's basis: for a drift_event the recorded run's
+// revision and the head it no longer matches; for a validity_stale the time
+// the run's validity lapsed and its revision. Each ends with the re-record
+// verb: a fresh passing run at the current head.
+func driftLine(it map[string]any) string {
+	ev := feedMap(it, "evidence")
+	if ev == nil {
+		return ""
+	}
+	id := str(it, "external_id")
+	revision := str(ev, "revision")
+	if revision == "" {
+		revision = "an unrecorded revision"
+	}
+	remedy := "re-record with modernpath factory evidence --pass " + id
+	switch str(ev, "basis") {
+	case "drift_event":
+		head := str(ev, "head")
+		if head == "" {
+			head = "an unrecorded head"
+		}
+		return fmt.Sprintf("drift: the evidence run recorded at %s no longer matches head %s — %s", revision, head, remedy)
+	case "validity_stale":
+		// The feed holds the run's time, not a lapse time (PR #487 review,
+		// finding 3): say what is known.
+		at := str(ev, "at")
+		if at == "" {
+			at = "an unrecorded time"
+		}
+		return fmt.Sprintf("drift: the evidence run recorded at %s ran at %s; its validity has lapsed — %s", revision, at, remedy)
+	}
+	return ""
 }
 
 func renderBriefCtas(out io.Writer, data map[string]any, items []any) {
@@ -176,6 +222,31 @@ func renderBriefCtas(out io.Writer, data map[string]any, items []any) {
 	}
 	fmt.Fprintf(out, "Next: modernpath your-move --more (%d more)\n", next)
 	fmt.Fprintf(out, "Everything: modernpath your-move --queue (%d in scope)\n", total)
+
+	// The in-scope total broken down by kind, most-numerous first (name asc as
+	// tiebreak so the line is deterministic), title-cased to match the item-line
+	// kind tags. Omitted when the feed sends no composition.
+	if byKind := feedMap(feedMap(data, "totals"), "by_kind"); len(byKind) > 0 {
+		type kindCount struct {
+			name  string
+			count int
+		}
+		kinds := make([]kindCount, 0, len(byKind))
+		for name := range byKind {
+			kinds = append(kinds, kindCount{name, feedNum(byKind, name)})
+		}
+		sort.Slice(kinds, func(i, j int) bool {
+			if kinds[i].count != kinds[j].count {
+				return kinds[i].count > kinds[j].count
+			}
+			return kinds[i].name < kinds[j].name
+		})
+		parts := make([]string, 0, len(kinds))
+		for _, k := range kinds {
+			parts = append(parts, fmt.Sprintf("%s %d", titleKind(k.name), k.count))
+		}
+		fmt.Fprintf(out, "By kind: %s\n", strings.Join(parts, " · "))
+	}
 
 	domains := feedList(data, "domains")
 	if len(domains) == 0 {

@@ -79,12 +79,12 @@ var workDeriveCmd = &cobra.Command{
 	Use:   "derive",
 	Short: "Derive tasks and subtasks from specifications",
 	Long: `Analyze specifications and create actionable work items:
-  
+
   - Tasks from architecture components
-  - Stories from requirements and flows  
+  - Stories from requirements and flows
   - Subtasks from interfaces and data entities
   - Dependencies between work items
-  
+
 This converts your specs into a complete development task plan.`,
 	RunE: runWorkDerive,
 }
@@ -101,7 +101,7 @@ var workSpecsGenerateCmd = &cobra.Command{
 	Short: "Run the specification pipeline for the current epic",
 	Long: `Run the full 6-phase specification pipeline:
   1. Discovery - Requirements & User Stories
-  2. Architecture - Component specs & C4 diagrams  
+  2. Architecture - Component specs & C4 diagrams
   3. Data - ERD & Data dictionary
   4. UI/UX - Wireframes & Design system
   5. Testing - Test plans & Coverage matrix

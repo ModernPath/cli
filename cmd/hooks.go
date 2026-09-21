@@ -16,6 +16,7 @@ var (
 	hooksCursor    bool
 	hooksClaude    bool
 	hooksCodex     bool
+	hooksPi        bool
 	hooksAll       bool
 	hooksNoSync    bool
 	hooksNoContext bool
@@ -33,6 +34,7 @@ Supported agents:
   - Cursor      (.cursor/hooks.json)
   - Claude Code (.claude/settings.json)
   - Codex       (.codex/hooks.json)
+  - Pi          (.pi/settings.json + .pi/extensions/modernpath.ts)
 
 The hook auto-injects codebase context when asking questions using
 LLM-based intelligent relevance filtering.`,
@@ -47,6 +49,7 @@ By default, installs for all detected agents. Use flags to target specific agent
   --cursor    Install for Cursor only
   --claude    Install for Claude Code only
   --codex     Install for Codex only
+  --pi        Install for Pi only
   --all       Install for all agents (regardless of detection)
 
 The hook uses LLM-based intelligent filtering to determine when to inject context.`,
@@ -69,11 +72,12 @@ func init() {
 	hooksInstallCmd.Flags().BoolVar(&hooksCursor, "cursor", false, "Install for Cursor only")
 	hooksInstallCmd.Flags().BoolVar(&hooksClaude, "claude", false, "Install for Claude Code only")
 	hooksInstallCmd.Flags().BoolVar(&hooksCodex, "codex", false, "Install for Codex only")
+	hooksInstallCmd.Flags().BoolVar(&hooksPi, "pi", false, "Install for Pi only")
 	hooksInstallCmd.Flags().BoolVar(&hooksAll, "all", false, "Install for all agents")
-	hooksInstallCmd.Flags().BoolVar(&hooksNoSync, "no-sync", false, "Skip the auto-sync hook family (EPIC-SYNC-009)")
+	hooksInstallCmd.Flags().BoolVar(&hooksNoSync, "no-sync", false, "Skip the auto-sync hook family")
 	hooksInstallCmd.Flags().BoolVar(&hooksNoContext, "no-context", false, "Skip the context-injection hook family")
-	hooksInstallCmd.Flags().BoolVar(&hooksNoGate, "no-gate", false, "Skip the process-gate hook family (REQ-CROSS-030)")
-	hooksInstallCmd.Flags().BoolVar(&hooksNoBrief, "no-brief", false, "Skip the session-brief hook family (REQ-CROSS-277)")
+	hooksInstallCmd.Flags().BoolVar(&hooksNoGate, "no-gate", false, "Skip the process-gate hook family")
+	hooksInstallCmd.Flags().BoolVar(&hooksNoBrief, "no-brief", false, "Skip the session-brief hook family")
 
 	hooksCmd.AddCommand(hooksInstallCmd)
 	hooksCmd.AddCommand(hooksUninstallCmd)
@@ -86,12 +90,12 @@ func init() {
 // command itself, since the hook no longer owns a file to be named after.
 const contextHookMarker = "context --hook"
 
-// contextHookCommand runs the installed CLI. `command -v` makes a missing binary
-// a silent no-op and `|| echo '{}'` guarantees the agent gets a well-formed
-// response whatever happens — a context hook must never cost the user a prompt.
+// contextHookCommand runs the installed CLI through the hook prelude (see
+// hooks_binary.go): the workspace link first, PATH second, and `|| echo '{}'`
+// guarantees the agent a well-formed response whatever happens — a context
+// hook must never cost the user a prompt.
 func contextHookCommand(event string) string {
-	return "command -v modernpath >/dev/null 2>&1 && " +
-		"modernpath context --hook " + event + " 2>/dev/null || echo '{}'"
+	return hookCommand("context --hook "+event, "echo '{}'")
 }
 
 type agentConfig struct {
@@ -124,6 +128,13 @@ var hookAgents = map[string]agentConfig{
 		scriptName: "modernpath-context.sh",
 		eventName:  "UserPromptSubmit",
 	},
+	"pi": {
+		name:       "Pi",
+		hooksDir:   ".pi/extensions",
+		configPath: ".pi/settings.json",
+		scriptName: piExtensionName,
+		eventName:  "before_agent_start",
+	},
 }
 
 func detectInstalledAgents() []string {
@@ -144,6 +155,11 @@ func detectInstalledAgents() []string {
 		detected = append(detected, "codex")
 	}
 
+	// Check for Pi
+	if _, err := os.Stat(".pi"); err == nil {
+		detected = append(detected, "pi")
+	}
+
 	return detected
 }
 
@@ -154,8 +170,8 @@ func runHooksInstall(cmd *cobra.Command, args []string) error {
 	var targetAgents []string
 
 	if hooksAll {
-		targetAgents = []string{"cursor", "claude", "codex"}
-	} else if hooksCursor || hooksClaude || hooksCodex {
+		targetAgents = []string{"cursor", "claude", "codex", "pi"}
+	} else if hooksCursor || hooksClaude || hooksCodex || hooksPi {
 		if hooksCursor {
 			targetAgents = append(targetAgents, "cursor")
 		}
@@ -164,6 +180,9 @@ func runHooksInstall(cmd *cobra.Command, args []string) error {
 		}
 		if hooksCodex {
 			targetAgents = append(targetAgents, "codex")
+		}
+		if hooksPi {
+			targetAgents = append(targetAgents, "pi")
 		}
 	} else {
 		// Auto-detect
@@ -191,6 +210,21 @@ func runHooksInstall(cmd *cobra.Command, args []string) error {
 		}
 		if err := gate.MigrateLegacyBaseline(root); err != nil {
 			return fmt.Errorf("cannot migrate the process-gate baseline: %w", err)
+		}
+	}
+
+	// The binary that installs the hooks is the binary the hooks run: the
+	// commands written below prefer this link over whatever PATH the harness
+	// gives a hook shell (BACKLOG-TOOL-33, -43).
+	if root, err := os.Getwd(); err == nil {
+		target, note, err := linkHooksBinary(root)
+		switch {
+		case err != nil:
+			printWarning("Hooks binary: could not write %s (%v) — the hooks resolve modernpath on PATH\n", hooksBinaryRel, err)
+		case note != "":
+			printInfo("Hooks binary: %s\n", note)
+		default:
+			printSuccess("Hooks binary: %s → %s (version %s)\n", hooksBinaryRel, target, Version)
 		}
 	}
 
@@ -227,10 +261,11 @@ func runHooksInstall(cmd *cobra.Command, args []string) error {
 		fmt.Println("  ✗ Skips: \"Add a login button\" (task)")
 		fmt.Println("  ✗ Skips: \"How do I use React?\" (general)")
 		fmt.Println()
-		if !containsAgentName(installed, "Codex") {
+		if !containsAgentName(installed, "Codex") && !containsAgentName(installed, "Pi") {
 			printInfo("Restart your IDE to activate the hooks.\n")
 		}
 		printCodexTrustGuidance(installed)
+		printPiTrustGuidance(installed)
 	}
 
 	return nil
@@ -251,13 +286,23 @@ func printCodexTrustGuidance(agentNames []string) {
 	}
 }
 
+func printPiTrustGuidance(agentNames []string) {
+	if containsAgentName(agentNames, "Pi") {
+		printInfo("Pi loads project .pi/ only after the project is trusted. Approve the prompt, or start with `pi --approve`.\n")
+	}
+}
+
 func targetsProcessGate(agentKeys []string) bool {
 	for _, key := range agentKeys {
-		if key == "claude" || key == "codex" {
+		if key == "claude" || key == "codex" || key == "pi" {
 			return true
 		}
 	}
 	return false
+}
+
+func processGateAgent(name string) bool {
+	return name == "Claude Code" || name == "Codex" || name == "Pi"
 }
 
 // installProcessOnlyHooks is the unbound repository's install: the process
@@ -291,8 +336,8 @@ func installProcessOnlyHooks(targetAgents []string) error {
 	var failed bool
 	for _, agentKey := range targetAgents {
 		agent := hookAgents[agentKey]
-		if agent.name != "Claude Code" && agent.name != "Codex" {
-			printInfo("%s: process gate deferred (it speaks the PreToolUse deny protocol — REQ-CROSS-030)\n", agent.name)
+		if !processGateAgent(agent.name) {
+			printInfo("%s: process gate deferred (it speaks the PreToolUse deny protocol)\n", agent.name)
 			continue
 		}
 		if err := os.MkdirAll(agent.hooksDir, 0755); err != nil {
@@ -301,9 +346,12 @@ func installProcessOnlyHooks(targetAgents []string) error {
 			continue
 		}
 		var err error
-		if agent.name == "Codex" {
+		switch agent.name {
+		case "Codex":
 			err = installGateFamilyCodex(agent)
-		} else {
+		case "Pi":
+			err = installPiGateOnly(agent)
+		default:
 			err = installGateFamilyClaude(agent)
 		}
 		if err != nil {
@@ -318,8 +366,8 @@ func installProcessOnlyHooks(targetAgents []string) error {
 		// "no target was selected" would be a false statement over a selected
 		// target whose install just failed and said why.
 		if !failed {
-			printWarning("No hooks were installed: the process gate supports Claude Code and Codex, and neither target was selected.\n")
-			printInfo("Run 'modernpath hooks install --claude' or '--codex', or 'modernpath init' to bind this repository.\n")
+			printWarning("No hooks were installed: the process gate supports Claude Code, Codex and Pi, and neither target was selected.\n")
+			printInfo("Run 'modernpath hooks install --claude', '--codex' or '--pi', or 'modernpath init' to bind this repository.\n")
 		}
 		return nil
 	}
@@ -327,14 +375,19 @@ func installProcessOnlyHooks(targetAgents []string) error {
 	fmt.Println()
 	printSuccess("Process gate configured for: %s\n", strings.Join(armed, ", "))
 	printInfo("When enabled, it runs 'modernpath check' before every git commit and denies on a real violation.\n")
-	if !containsAgentName(armed, "Codex") {
+	if !containsAgentName(armed, "Codex") && !containsAgentName(armed, "Pi") {
 		printInfo("Restart your IDE to activate the hook.\n")
 	}
 	printCodexTrustGuidance(armed)
+	printPiTrustGuidance(armed)
 	return nil
 }
 
 func installForAgent(agent agentConfig) error {
+	if agent.name == "Pi" {
+		return installPi(agent)
+	}
+
 	// Create hooks directory
 	if err := os.MkdirAll(agent.hooksDir, 0755); err != nil {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
@@ -364,17 +417,39 @@ func installForAgent(agent agentConfig) error {
 	// Sync family (EPIC-SYNC-009 / EPIC-SYNC-012): Claude Code and Codex carry
 	// the full verified trigger set. Cursor remains deferred.
 	if !hooksNoSync {
-		switch agent.name {
-		case "Claude Code":
-			if err := installSyncFamilyClaude(agent); err != nil {
-				return err
+		// Store-backed (REQ-CROSS-329): the file-derived auto-sync is retired —
+		// the ledgers it reads no longer exist and the bulk channel is refused.
+		// On a flipped workspace, RETIRE the family (remove any entries a
+		// pre-flip install wired) rather than writing it, so re-running install
+		// cleans the workspace instead of re-adding a retired hook.
+		if _, active := storeBackedFromCwd(); active {
+			switch agent.name {
+			case "Claude Code":
+				if _, err := uninstallSyncFamilyClaude(agent); err != nil {
+					return err
+				}
+				printInfo("%s: auto-sync hooks retired (store-backed) — write process state with 'modernpath author'\n", agent.name)
+			case "Codex":
+				if _, err := uninstallSyncFamilyCodex(agent); err != nil {
+					return err
+				}
+				printInfo("%s: auto-sync hooks retired (store-backed) — write process state with 'modernpath author'\n", agent.name)
+			default:
+				printInfo("%s: sync-hook wiring deferred (event vocabulary unverified)\n", agent.name)
 			}
-		case "Codex":
-			if err := installSyncFamilyCodex(agent); err != nil {
-				return err
+		} else {
+			switch agent.name {
+			case "Claude Code":
+				if err := installSyncFamilyClaude(agent); err != nil {
+					return err
+				}
+			case "Codex":
+				if err := installSyncFamilyCodex(agent); err != nil {
+					return err
+				}
+			default:
+				printInfo("%s: sync-hook wiring deferred (event vocabulary unverified)\n", agent.name)
 			}
-		default:
-			printInfo("%s: sync-hook wiring deferred (event vocabulary unverified — EPIC-SYNC-009)\n", agent.name)
 		}
 	}
 
@@ -383,6 +458,11 @@ func installForAgent(agent agentConfig) error {
 	if !hooksNoGate {
 		switch agent.name {
 		case "Claude Code":
+			if changed, err := installPermissionsClaude(agent); err != nil {
+				return err
+			} else if changed {
+				printInfo("%s: permission rules for the CLI verbs merged into %s\n", agent.name, agent.configPath)
+			}
 			if err := installGateFamilyClaude(agent); err != nil {
 				return err
 			}
@@ -403,7 +483,7 @@ func installForAgent(agent agentConfig) error {
 				return err
 			}
 		case "Codex":
-			printInfo("%s: session-brief hook deferred (SessionStart additionalContext unverified — REQ-CROSS-277)\n", agent.name)
+			printInfo("%s: session-brief hook deferred (SessionStart additionalContext unverified)\n", agent.name)
 		}
 	}
 
@@ -527,10 +607,16 @@ func familyConfigState(agent agentConfig, events []string, current, legacy []str
 }
 
 func contextFamilyState(agent agentConfig) hookFamilyState {
+	if agent.name == "Pi" {
+		return piExtensionState(agent, contextHookMarker)
+	}
 	return familyConfigState(agent, []string{agent.eventName}, []string{contextHookMarker}, []string{agent.scriptName})
 }
 
 func syncFamilyState(agent agentConfig) hookFamilyState {
+	if agent.name == "Pi" {
+		return piExtensionState(agent, syncHookMarker)
+	}
 	events := claudeSyncEvents
 	if agent.name == "Codex" {
 		events = codexSyncEvents
@@ -539,6 +625,9 @@ func syncFamilyState(agent agentConfig) hookFamilyState {
 }
 
 func gateFamilyState(agent agentConfig) hookFamilyState {
+	if agent.name == "Pi" {
+		return piExtensionState(agent, gateHookMarker)
+	}
 	return familyConfigState(agent, []string{"PreToolUse"}, []string{gateHookMarker}, []string{gateHookScriptName})
 }
 
@@ -595,12 +684,7 @@ func removeHookEntries(configPath string, events []string, markers ...string) (b
 		return false, nil
 	}
 	settings["hooks"] = hooks
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("cannot serialize %s: %w", configPath, err)
-	}
-	if err := os.WriteFile(configPath, out, 0o644); err != nil {
+	if err := writeSettingsFile(configPath, settings); err != nil {
 		return false, fmt.Errorf("cannot write %s: %w", configPath, err)
 	}
 	return true, nil
@@ -643,13 +727,7 @@ func writeCursorConfig(agent agentConfig) error {
 	}
 	hooks[agent.eventName] = kept
 	config["hooks"] = hooks
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(agent.configPath, data, 0644)
+	return writeSettingsFile(agent.configPath, config)
 }
 
 // readJSONObject reads a JSON object, returning an empty one when the file is
@@ -709,30 +787,16 @@ func writeClaudeConfig(agent agentConfig) error {
 		},
 	}
 
-	// Drop any entry left by an older install: it points at a script this
-	// version deletes, so keeping it would fire a missing file on every prompt
-	// — and counting it as "installed" would make reinstall unable to repair
-	// (RUN:2026-08-10, the sync family's defect).
+	// Replace the entry an earlier install wrote — whether it points at the
+	// script this version deletes (RUN:2026-08-10) or carries an older command
+	// shape — and keep every other hook, as the gate and brief families do. The
+	// previous code appended only when no entry carried the marker, so a stale
+	// context command survived every reinstall (BACKLOG-TOOL-33: the bare-name
+	// command stayed in .claude/settings.json after the launcher changed).
 	existing, _ := hooks[agent.eventName].([]interface{})
-	var kept []interface{}
-	for _, e := range existing {
-		raw, _ := json.Marshal(e)
-		if !containsStr(string(raw), agent.scriptName) {
-			kept = append(kept, e)
-		}
-	}
-	if !containsSyncMarker(kept, contextHookMarker) {
-		kept = append(kept, interface{}(entry))
-	}
-	hooks[agent.eventName] = kept
+	hooks[agent.eventName] = replaceOwnedEntry(existing, entry, contextHookMarker, agent.scriptName)
 	settings["hooks"] = hooks
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(agent.configPath, data, 0644)
+	return writeSettingsFile(agent.configPath, settings)
 }
 
 func writeCodexConfig(agent agentConfig) error {
@@ -761,16 +825,9 @@ func writeCodexConfig(agent agentConfig) error {
 	// old script adapter and collapses duplicates from earlier installs while
 	// preserving every project-owned matcher group and event.
 	existing, _ := hooks[agent.eventName].([]interface{})
-	kept := dropEntriesWithMarkers(existing, contextHookMarker, agent.scriptName)
-	hooks[agent.eventName] = append(kept, interface{}(entry))
+	hooks[agent.eventName] = replaceOwnedEntry(existing, entry, contextHookMarker, agent.scriptName)
 	settings["hooks"] = hooks
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(agent.configPath, data, 0644)
+	return writeSettingsFile(agent.configPath, settings)
 }
 
 func dropEntriesWithMarkers(entries []interface{}, markers ...string) []interface{} {
@@ -806,8 +863,19 @@ func runHooksUninstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	for _, agentKey := range []string{"claude", "cursor", "codex"} {
+	for _, agentKey := range []string{"claude", "cursor", "codex", "pi"} {
 		agent := hookAgents[agentKey]
+
+		if agent.name == "Pi" {
+			names, err := uninstallPi(agent)
+			if err != nil {
+				failed = true
+				printError("%s: %v\n", agent.name, err)
+				continue
+			}
+			removed = append(removed, names...)
+			continue
+		}
 
 		// A legacy install owned a script; this one writes none. Remove the
 		// leftover, but never read its absence as "nothing is installed".
@@ -833,6 +901,10 @@ func runHooksUninstall(cmd *cobra.Command, args []string) error {
 			ok, err = uninstallGateFamilyClaude(agent)
 		}
 		report(agent.name+" (gate)", ok, err)
+		if agent.name == "Claude Code" {
+			ok, err = uninstallPermissionsClaude(agent)
+			report(agent.name+" (permissions)", ok, err)
+		}
 		// brief family (REQ-CROSS-277): Claude Code only
 		if agent.name == "Claude Code" {
 			ok, err = uninstallBriefFamilyClaude(agent)
@@ -860,6 +932,27 @@ func reportCodexStatusFamily(label string, state hookFamilyState) {
 	printWarning("  %s: %s\n", label, state)
 }
 
+// Keep retirement in reporting: install and uninstall still need the physical
+// wiring state, including hooks left behind when a workspace flips.
+func reportRetiredSyncFamily(agentKey, label string, state hookFamilyState) bool {
+	if _, storeBacked := storeBackedFromCwd(); !storeBacked {
+		return false
+	}
+	switch state {
+	case hookStateAbsent:
+		printInfo("%s retired (store-backed)\n", label)
+	case hookStateInvalid:
+		printWarning("%s retired (store-backed), but invalid config — cannot inspect sync hooks\n", label)
+	default:
+		repair := fmt.Sprintf("run 'modernpath hooks install --%s'", agentKey)
+		if agentKey == "pi" && state == hookStateLegacy {
+			repair = fmt.Sprintf("move %s to .pi/modernpath.ts.bak (or another unused path outside .pi/extensions) first, then %s", piExtensionPath(hookAgents[agentKey]), repair)
+		}
+		printWarning("%s retired (store-backed), but still installed (%s) — %s\n", label, state, repair)
+	}
+	return true
+}
+
 // reportSyncFamily prints the sync family for Claude Code.
 //
 // The tri-state comes first: `legacy` and `invalid config` are neither installed
@@ -870,7 +963,11 @@ func reportCodexStatusFamily(label string, state hookFamilyState) {
 // whole family installed, and a family that runs on one of its three triggers
 // silently stops syncing at the other two (REQ-CROSS-102, REQ-CROSS-118).
 func reportSyncFamily(agent agentConfig) {
-	switch state := syncFamilyState(agent); state {
+	state := syncFamilyState(agent)
+	if reportRetiredSyncFamily("claude", "  Sync hooks:", state) {
+		return
+	}
+	switch state {
 	case hookStateLegacy:
 		printWarning("  Sync hooks: LEGACY script form — re-run 'modernpath hooks install' to move to the CLI's own command\n")
 		return
@@ -898,12 +995,20 @@ func runHooksStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("═══════════════════════════════════════")
 	fmt.Println()
 
-	for _, key := range []string{"claude", "cursor", "codex"} {
+	for _, key := range []string{"claude", "cursor", "codex", "pi"} {
 		agent := hookAgents[key]
 		fmt.Printf("%s:\n", agent.name)
+		if agent.name == "Pi" {
+			reportPiStatus(agent)
+			fmt.Println()
+			continue
+		}
 		if agent.name == "Codex" {
 			reportCodexStatusFamily("Context hook", contextFamilyState(agent))
-			reportCodexStatusFamily("Sync hooks", syncFamilyState(agent))
+			state := syncFamilyState(agent)
+			if !reportRetiredSyncFamily(key, "  Sync hooks:", state) {
+				reportCodexStatusFamily("Sync hooks", state)
+			}
 			reportCodexStatusFamily("Process gate", gateFamilyState(agent))
 			printInfo("  Trust/execution: check /hooks in Codex; ModernPath can only report project configuration.\n")
 			fmt.Println()
@@ -917,8 +1022,8 @@ func runHooksStatus(cmd *cobra.Command, args []string) error {
 		}
 
 		if agent.name != "Claude Code" {
-			printInfo("  Sync hooks: deferred (event vocabulary unverified — EPIC-SYNC-009)\n")
-			printInfo("  Process gate: deferred (PreToolUse deny protocol — REQ-CROSS-030)\n")
+			printInfo("  Sync hooks: deferred (event vocabulary unverified)\n")
+			printInfo("  Process gate: deferred (PreToolUse deny protocol)\n")
 			fmt.Println()
 			continue
 		}
@@ -929,9 +1034,14 @@ func runHooksStatus(cmd *cobra.Command, args []string) error {
 		// other two (REQ-CROSS-102).
 		reportSyncFamily(agent)
 		if gateFamilyInstalled(agent) {
-			printSuccess("  Process gate: armed (PreToolUse → modernpath check --hook PreToolUse)\n")
+			printSuccess("  Process gate: armed (PreToolUse → modernpath check --hook PreToolUse; delegated agents denied store writes)\n")
 		} else {
 			printWarning("  Process gate: not armed\n")
+		}
+		if present, total := permissionsState(agent); present == total {
+			printSuccess("  Permissions: %d/%d CLI verb rules in place\n", present, total)
+		} else {
+			printWarning("  Permissions: %d/%d CLI verb rules placed — 'modernpath hooks install' adds the missing ones (--no-gate skips them)\n", present, total)
 		}
 		fmt.Println()
 	}

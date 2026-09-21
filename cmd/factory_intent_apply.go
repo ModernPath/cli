@@ -33,7 +33,7 @@ func applyRDDIntent(env *factoryEnv, intent map[string]any, jobRef string) (map[
 		return nil, err
 	}
 	if status != 200 {
-		return nil, fmt.Errorf("intent apply failed for %s: server %d: %v", externalID, status, body["error"])
+		return nil, serverRefusal("intent apply failed for "+externalID, status, body)
 	}
 	application, ok := dataOf(body)["application"].(map[string]any)
 	if !ok {
