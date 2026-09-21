@@ -1,0 +1,57 @@
+name: Update Formula
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (without v prefix)"
+        required: true
+        type: string
+      windows_sha256:
+        description: "SHA256 for modernpath-windows-amd64.zip"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update manifest
+        run: |
+          VERSION="${{ inputs.version }}"
+          SHA="${{ inputs.windows_sha256 }}"
+
+          python3 <<'PY'
+          import json, os, sys
+
+          version = os.environ["VERSION"]
+          sha = os.environ["SHA"]
+          path = "modernpath.json"
+
+          with open(path) as f:
+              data = json.load(f)
+
+          data["version"] = version
+          data["url"] = f"https://github.com/ModernPath/cli/releases/download/v{version}/modernpath-windows-amd64.zip"
+          data["hash"] = f"sha256:{sha}"
+
+          with open(path, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          PY
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.windows_sha256 }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add modernpath.json
+          git diff --staged --quiet || git commit -m "Update modernpath to v${{ inputs.version }}"
+          git push
