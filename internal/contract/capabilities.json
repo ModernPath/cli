@@ -9,6 +9,10 @@
     "batch": ["batch_multi_status"],
     "evidence": ["evidence_revision"],
     "gate.answer": ["governed_answer_review"],
+    "reverse_engineering.authorize": ["source_scoped_onboarding"],
+    "reverse_engineering.capture": ["source_scoped_onboarding"],
+    "reverse_engineering.publish": ["source_scoped_onboarding"],
+    "candidate_set.decide": ["exact_candidate_set"],
     "work_selection": ["selection_piece"]
   }
 }

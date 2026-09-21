@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased
+
+## v0.8.0 — onboarding reads the code you authorized, and its evidence cannot move
+
+### `modernpath reverse-engineer` establishes an as-built baseline
+
+A codebase with no requirement corpus had no sanctioned way into the loop: the
+skill described the pass, and every step of it was manual. `reverse-engineer`
+now runs it — bind the workspace, sync documentation, inventory the declared
+repositories, derive candidates against explicit denominators, and hand
+confirmed scope to the loop. It takes either road: an authorized as-built
+baseline, or review-only `DERIVED` proposals for an existing corpus.
+
+### `reverse-engineer inventory` reads repositories the tooling used to skip
+
+The inventory is read-only and local, and it no longer assumes Git. Repeat
+`--repository key=directory` for each one; a non-Git root and a legacy source
+format are both inventoried rather than passed over, so the denominators a
+derivation is measured against cover the estate that is actually there.
+
+### `reverse-engineer capture-source` refuses anything but the authorized bytes
+
+Capture takes exactly the files the authorization names. A file whose bytes
+changed since it was authorized, and a symlink pointing outside the captured
+tree, are both refused rather than captured quietly — the baseline states what
+the code was at a named revision, and that claim is only worth the isolation
+behind it.
+
+### Document evidence is immutable across the API, the CLI and the UI
+
+A document cited as evidence can now be read back exactly as it was when it
+was cited. The snapshot is required on every surface that serves it, so a
+citation cannot come to mean something else because the document moved on
+underneath it.
+
+### Onboarding writes are refused to a delegated agent
+
+`reverse-engineer`'s mutations join the verbs the subagent guard covers. A
+delegated pass returns findings; the session that owns the work records them.
+The guard is what makes that a property of the tool rather than of everyone
+remembering.
+
+### `rdd-audit` ships as a package skill, with its citation auditor under test
+
+The citation auditor moves into the process package at
+`.modernpath/rdd/skills/rdd-audit/audit-citations.mjs` and gains a test suite.
+A foreign-history citation no longer reads as a false positive, and the skill
+states how an instrument fails as well as how to run it.
+
+### `rdd-reverse-engineer` and `mp-process-cli` describe the pass the CLI runs
+
+Both skills are rewritten against the verbs that now exist: the
+reverse-engineering procedure follows the command rather than describing the
+work by hand, and the tooling skill carries the onboarding sequence and the
+refusals it meets.
+
 ## v0.7.0 — the CLI ships its own instructions, and a shipped item can be reopened
 
 ### `process reenter --gate-id` opens a successor when the default id is reserved

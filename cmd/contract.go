@@ -102,6 +102,9 @@ func (e *factoryEnv) noteServedContract(header string) {
 // for a create the record kind (author.gate, author.backlog), else the sync
 // path with its separators normalised (work_selection, gate.answer).
 func writeName(apiPath string, payload any) string {
+	if name := reverseWriteName(apiPath); name != "" {
+		return name
+	}
 	path := strings.TrimPrefix(apiPath, "/api/v1/sync/")
 	path = strings.TrimPrefix(path, "/api/v1/")
 	if idx := strings.Index(path, "?"); idx >= 0 {

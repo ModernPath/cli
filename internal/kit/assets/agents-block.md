@@ -30,9 +30,9 @@ starting product work:
    - `rdd-completion-review` — audit evidence before the completion gate;
    - `rdd-triage` — route discoveries, blockers and deferrals;
    - `rdd-deliver` — land, reconcile and close the loop;
-   - `rdd-reverse-engineer` — adopt a codebase with no requirement corpus:
-     derive `DERIVED` candidates against explicit denominators and hand
-     confirmed scope to the loop;
+   - `rdd-reverse-engineer` — establish a source-scoped as-built baseline or
+     propose `DERIVED` additions; ask for the mode, preserve existing requirements,
+     and verify the persisted graph against explicit denominators;
    - `rdd-audit` — shared utility the other passes invoke: resolve citations,
      diff inventories both directions, judge whether a measurement is real;
 4. `.modernpath/rdd/file-state/` — the canonical serialization shapes for

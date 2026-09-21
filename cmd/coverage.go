@@ -163,12 +163,13 @@ func runCoverage(cmd *cobra.Command, args []string) error {
 	// check` (cmd/check.go) instead of failing on the empty input set. Narrow:
 	// only when there are no records AND the marker is present.
 	if !hasProcessRecords(root) && storeBackedWorkspace(root) {
-		const reason = "store-backed workspace (process/store-backed.md): requirement→code coverage is measured in the server store, not from local ledgers"
+		const reason = "store-backed workspace (process/store-backed.md): local coverage not measured; use modernpath reverse-engineer coverage --run <run-id> for stored onboarding coverage"
 		if coverageJSON {
 			// --json owns stdout (REQ-CROSS-121): a stand-down is a document too,
 			// or the caller that was told to read summary.citations gets prose.
 			out, err := json.MarshalIndent(map[string]any{
 				"store_backed": true,
+				"status":       "not_measured",
 				"marker":       "process/store-backed.md",
 				"reason":       reason,
 			}, "", "  ")

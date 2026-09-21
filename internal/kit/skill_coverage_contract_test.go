@@ -27,38 +27,32 @@ func TestReverseEngineerSkillCarriesTheCoverageContract(t *testing.T) {
 	for _, marker := range []string{
 		// the floor and its nature
 		"floor is 90%",
-		"exit code — never a sentence",
+		"exit code, not just an agent's summary",
 		// the executable-audit rule
-		"coverage-audit",
 		"exits non-zero below the floor",
-		"embeds the scripts' verbatim output",
+		"retain its verbatim output",
 		// never-give-up / no-laziness / no-silent-fallback
-		"No row budgets exist",
-		"Below the floor, the pass is not done",
-		"No silent fallbacks",
-		"no such thing as a row budget",
-		// the recorded failures that justify all of it
-		"65/110",
-		"46-row",
+		"No row budget replaces behavioral granularity",
+		"Below the floor is incomplete",
+		"never silently truncated",
 		// denominator classes that history shows get dropped
-		"every test file",
-		"scheduled job",
+		"integrations and tests",
+		"jobs/events/webhooks",
 		// grain calibration and the no-babysitting rule
-		"978 requirements",
-		"under-derived, full stop",
-		"relaunches for the remainder",
+		"independently meaningful SRs",
+		"continues across remaining",
 		// REQ-CROSS-179/180: the platform measures first — the pass is
 		// coverage-guided, and the before/after delta is the pass's receipt
-		"modernpath coverage --json",
-		"ranked uncovered directories",
-		"the same command is the after",
+		"authoritative store projection",
+		"rank uncovered directories",
+		"same measurement before and after",
 		"untraced test files",
 		// REQ-CROSS-181: the sweep is one autonomous invocation with a
 		// file-coverage floor — no per-component human checkpoints
-		"well over 50%",
-		"file-coverage floor",
-		"one invocation loops",
-		"no human checkpoint inside the loop",
+		"60% of eligible",
+		"candidate extraction",
+		"governed coverage",
+		"no per-context\nbaseline reapproval",
 	} {
 		if !strings.Contains(s, marker) {
 			t.Errorf("coverage contract marker missing from the skill: %q — "+

@@ -37,7 +37,8 @@ on a decision, or what is blocked:
    focused `skills/rdd-*/SKILL.md` when the request explicitly ends at one
    process pass; use `skills/rdd-verify/SKILL.md` for reverse-engineered
    `PENDING_VERIFICATION` rows, and `skills/rdd-reverse-engineer/SKILL.md` to
-   adopt a codebase that has no requirement corpus yet;
+   establish an authorized as-built baseline or propose DERIVED additions to
+   an existing requirement corpus;
    `skills/rdd-audit/SKILL.md` is a shared utility other passes invoke, not a
    phase;
 4. read the relevant product sources, requirement records, optional epic, and

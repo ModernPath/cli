@@ -19,6 +19,7 @@
 - **UR content:** «actor, context, intended outcome, and inline scenarios; N/A for SR»
 - **SR content:** «boundary, behavior, scope/non-goals, and technical context; N/A for UR»
 - **Candidate packet:** «inference sources, proposed relations, consequences, and confirmation brief; DERIVED only»
+- **Onboarding authority:** «source-scoped run authorization and group receipt, or exact candidate-set decision; N/A for ordinary authored intent»
 
 ### Trace references
 

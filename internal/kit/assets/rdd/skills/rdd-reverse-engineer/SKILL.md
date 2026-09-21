@@ -1,327 +1,146 @@
 ---
 name: rdd-reverse-engineer
-description: Bootstrap a requirement corpus from an existing codebase that has none — inventory observable behavior by bounded context against explicit denominators, create every inferred requirement as DERIVED with candidate-only relations, build exact confirmation packets, and hand confirmed scope to the normal delivery loop. Use to adopt a repository that has code but no authoritative requirement records; never for a workspace that already has them (use rdd-plan there), and never as a substitute for any phase — it creates no acceptance content, tests, release commitments, or authoritative relations.
+description: Onboard an existing system from code and documentation. Ask whether to establish a usable as-built baseline or create DERIVED additions for review; inventory declared repositories, derive grounded URs/SRs with citations and relationships, publish through the sanctioned store workflow, and verify read-backs. Use for initial adoption or additional reverse-engineering, not implementation or verification.
 ---
 
-# Bootstrap a corpus from an existing codebase
+# Reverse-engineer a usable requirement base
 
-An optional orchestrator over the standard process, not another lifecycle. A
-repository arrives with a hundred thousand lines and no requirement records;
-this pass gives it a corpus that says what the code observably does, marks
-every inferred statement as awaiting human confirmation, and routes what a
-human confirms into the same loop every other requirement travels.
+Read the project `AGENTS.md` and canonical `PROCESS.md`. This skill applies its
+source-scoped baseline and DERIVED rules; it never changes product code or
+turns code inspection into passing verification evidence.
 
-Read the project `AGENTS.md` and the canonical `PROCESS.md`
-(`.modernpath/rdd/PROCESS.md` in a consuming repository) first. `PROCESS.md`
-owns the `DERIVED` hold, the confirmation gate, and every status this pass may
-apply; nothing here redefines them.
+## Connect, inspect, then ask once
 
-## Preflight — when this pass applies
+1. Establish the target system and workspace binding through the sanctioned
+   tool. Synchronize documentation locally. Read the authoritative requirement
+   corpus and current fingerprint; directories and cached exports are not proof
+   the system is empty. Do not change a different system's records.
+2. Declare every repository with a stable key and local root. The parent may be
+   non-Git; a Git worktree may have a `.git` file. Inventory tracked/unignored
+   files or explicitly scoped non-Git files. Include configuration and legacy
+   templates such as XML, JSP, XSL and XSLT, not just modern source extensions.
+   Report generated/vendor/secret exclusions and unsupported classes explicitly.
+3. Pin repository revision, dirty state, exact paths/sizes/digests and synchronized
+   document identities/versions/digests. Exclude credentials and private workspace
+   metadata. Show the source scope and existing corpus counts.
+4. Ask which result the user wants, explaining both consequences:
+   - **Baseline ready for use** (recommend for an empty corpus): publish grounded
+     as-built URs/SRs and their graph to Base, visible in Ledger and System →
+     Requirements as **Baselined — not verified**. The choice authorizes this
+     source-scoped run, not compliance approval, delivery entry or DONE.
+   - **DERIVED additions for approval** (recommend when requirements exist):
+     leave the existing corpus untouched and put proposed requirements/links in
+     System → Requirements, awaiting exact later approval and absent from Ledger.
+     This does not require a delivery Epic.
+5. Record the explicit attributable mode/source authorization through the
+   supported operation. Do not silently choose, rebaseline existing rows or claim
+   the user reviewed not-yet-generated statements. Resume an already authorized
+   unchanged run without asking again; materially changed sources or corpus
+   require fresh scope, not an expanded retry.
 
-1. **Stop if an authoritative requirement corpus exists** — a store binding
-   with requirement records, or populated `file-state/REQUIREMENTS.md`
-   equivalents. Re-deriving over a real corpus overwrites decisions people
-   made deliberately; use `rdd-plan` to extend it instead. A bare `tasks/` or
-   `docs/` directory proves nothing — other conventions use those names, so
-   check for the records, not the directory.
-2. **Identify the process store** per `PROCESS.md` — store-backed or
-   file-backed — and serialize every record this pass creates through the
-   `file-state/` shapes for that store. This pass never invents a third
-   representation.
+In ModernPath workspaces, read `mp-process-cli` for the concrete command sequence
+and `.modernpath/cli-reference.md` for flags and payload contracts. Use the
+source-scoped onboarding operations, not generic requirement birth with a forced
+status. If necessary server/tool support is absent, report that exact gap.
+Do not substitute raw API writes or a task-ledger sync.
 
-   **A ledger-format workspace materializes the requirement corpus too.** Where
-   a workspace's tooling reads `tasks/<CTX>-REQUIREMENTS.md` — the shape the
-   `rdd-ledger` adapter and `modernpath factory sync` ingest — write the
-   corpus there as well as to `file-state/REQUIREMENTS.md`, one file per
-   context, in the dashboard/detail-block shape. **Keep the `UR-`/`SR-` id
-   prefix** — it is how a ledger row says which kind it is, and the store
-   routes user and system requirements to different tables. Writing every row
-   as `REQ-` files a user requirement under a system requirement's evidence
-   class, which is a silent loss, not a formatting choice. `REQ-<CTX>-NNN`
-   remains valid and still means a system requirement.
-   `file-state/` alone is not enough for those workspaces: in a store-backed
-   repository it is a projection, so a corpus that exists only there never
-   reaches the store: sync reads its `tasks/` glob, finds nothing, and coverage
-   reports zero rows over the whole tree after a complete pass. This
-   instruction already says so for Epics and for NFRs; saying it for the
-   requirement corpus is the same rule, not a new one.
-3. **Take what analysis exists as a lens.** A platform knowledge core, a
-   maintained `ARCHITECTURE.md`, human-written guides — read them all before
-   the code. Each proposes; the code decides. Every claim this pass records
-   cites `CODE:`, `DOC:`, or `TEST:` sources it verified itself. A guide that
-   cannot be confirmed in code becomes an open question naming the guide,
-   never a silently adopted fact — and this pass never authors a guide, which
-   would launder its assumptions into an input.
+## Recover behavior with explicit denominators
 
-## Four phases, and the order is the method
+Work a coherent bounded context at a time, repeating these passes:
 
-```text
-A  DOMAIN        schema and analysis        ->  entities, invariants, contexts
-B  SURFACES      every view, its actors     ->  journeys carrying candidate URs
-C  REQUIREMENTS  entry points, both halves  ->  DERIVED candidates, cross-linked
-D  ARCHITECTURE  the shape around it all    ->  recovered design documents
-```
+| Pass | Inspect | Produce |
+|---|---|---|
+| Domain | schemas, migrations, constraints, existing analysis | aggregates, invariants and ownership |
+| Surfaces | views, actors, role gates, entry points | user journeys and actor/outcome URs |
+| Behavior | implementation paths, normal and refusal cases, tests | independently meaningful SRs, UR scenarios and evidence |
+| Recovered design | the complete context map and checked documents | system-level architecture/integration/data-flow notes |
 
-A–C loop, one bounded context per pass, until the context map lists no
-context without records; phase D runs **once per system**, after at least one
-full A–C pass, because its documents need the context map and the data model.
-A pass that starts at C produces a corpus of refusals with no statement of
-what the product is for — that question is settled in the schema and the
-views, which an endpoint walk never visits.
+Enumerate routes/RPCs, jobs/events/webhooks, CLI and agent-tool surfaces, data
+models, access controls, client flows, integrations and tests. A genuinely absent
+class is stated as inapplicable. Draw contexts by aggregate ownership, not route
+layout. Read existing knowledge and human guides as orientation, then confirm
+claims against code. Unconfirmed intent and contradictory behavior remain open
+questions; a dead path is a finding, not shipped behavior.
 
-**Phase A** reads the schema directly — models, migrations, constraints —
-beside whatever analysis exists. For each entity: what it is, who writes it,
-and what the schema enforces; those constraints are invariants nobody wrote
-down anywhere else. Contexts are drawn by **aggregate ownership** — who
-writes which table — never by route-file layout.
+A requirement states behavior a change could breach, not how functions happen
+to be arranged. Derive both what an entry point does and what it refuses. Include
+the implementation behind entry points. Do not invent intent from a constant or
+write one row per function. URs need actor, outcome, inline acceptance scenarios
+and sources; SRs need a boundary, behavior, source and meaningful criteria.
+Criteria describe expected observations; they do not claim a test ran.
 
-**Phase B** walks every surface: which actors reach it (cite the **role
-gate** — it is a fact in code), what each actor can do there, and which entry
-points it calls. Group the views into user journeys; each journey is a
-candidate epic carrying a candidate **user requirement** — an actor, an
-outcome, and the views that serve it, every one cited. Candidate groupings
-serialize to `file-state/EPICS.md` (ledger-format workspaces materialize an
-`epics/` directory).
+Join both sides: UR journeys to serving SRs, and SRs to implementing code and
+existing test identities. Produce a join report naming views calling nothing
+and endpoints no view reaches, alongside missing joins and optional relation rationales.
+Do not infer relations merely from prose mentioning an ID. Do not create Epics
+as discovery folders. Where the user explicitly wants a real grouping, persist
+its intended UR/SR members and verify both membership counts.
 
-**Phase C** derives candidates from the entry-point inventory below.
-**Phase D** writes the recovered design documents, further down.
+## Capture, publish, read back
 
-## Inventory observable behavior — the denominators
+Capture authorized bytes before publishing references. New systems need not
+have provider OAuth or FileAnalysis records. A source snapshot is not an AI
+analysis request and must not replace a connected repository's latest selection.
+Keep Git revision separate from dirty snapshot digest. A file citation names
+repository key, revision, relative path, digest, optional locator and immutable
+source identity. A document citation names the authorized document revision.
+Ambiguous basenames and unresolved evidence are not valid authority.
 
-Enumerate mechanically, by bounded context, before deriving anything. The
-counts are denominators; coverage is measured against them, and no class may
-be silently omitted — a genuinely inapplicable class (no client app, no jobs)
-is a stated fact in the report, not a skipped row.
+Publish each coherent group atomically and read its receipt back:
 
-| Class | Enumerate |
-|---|---|
-| Entry points | every HTTP route, RPC procedure, worker, scheduled job, webhook, event handler, CLI command — and every agent/LLM tool surface, which carries its own authorization and is the class most often missed |
-| Data models | every table/model, with the invariants the schema enforces — uniqueness, foreign keys, nullability, state machines |
-| Access control | every guard, middleware, policy, role gate |
-| User-visible flows | every route/view/flow in each client application, and which actors reach it (cite the gate — it is a fact in code) |
-| Integrations | every external system, enumerated from injected credentials and configuration, not only from named modules — an adapter wired in config has no module to find |
-| Tests | every test file, so existing evidence can be traced rather than rewritten |
+- **Baseline:** create new grounded requirements as PENDING_VERIFICATION in Base
+  with confirmed canonical UR–SR and SR–code/test relationships. Reuse only exact
+  unchanged existing identities. No row/context approval round follows.
+- **DERIVED:** create new distinct candidate IDs, proposed scenarios/criteria,
+  sources, proposed relations, conflicts, consequences and a confirmation brief.
+  Comparisons to existing requirements use exact typed identities and show
+  current versus proposed content. Never overwrite existing approval/content.
+- **Exceptions:** insufficient provenance remains explicitly DERIVED; do not
+  invent edges to meet a count. Report partial baseline output and remainder.
+  Candidate test stubs and edges remain review-only and cannot count as ordinary
+  tests, coverage, execution assignments or release snapshot content.
 
-Draw context boundaries by who writes which aggregate, not by route-file
-layout or deployment units — a map drawn from those describes the build
-system, not the business. A table written by two contexts is a single-writer
-violation: report it, never smooth it over.
+Keep stable run/group keys and input fingerprints. After interruption, query
+receipts before retrying identical input. A conflict requires reconciliation,
+not generating a new key to defeat the check. Read captured historical evidence
+by identity; do not silently replace an unavailable source with latest code.
 
-Work the entry-point list, not the error branches. For each entry point,
-derive both halves: what it does and for whom, and what it refuses — the
-rejection branches are where invariants live, and they are the requirements
-most worth having.
+In a store-backed workspace, the store is the sole authority. Do not recreate
+retired `tasks/*-REQUIREMENTS.md`, `WORKLIST.md` or mirrored `file-state/` files
+to make old synchronization work. In a file-backed workspace, use the canonical
+`file-state/` shapes and preserve the same authorization/receipt semantics;
+if tooling cannot enforce baseline authority, report the limitation rather than
+silently assigning PENDING_VERIFICATION.
 
-## Derive — one observable behavior, one candidate
+## Exact candidate review
 
-A requirement is something a change could **breach**. A sentence that merely
-describes how the code is shaped cannot be breached — it is documentation, and
-it belongs in the recovered design documents this pass writes alongside the
-corpus, not in a requirement record.
+Prepare the exact typed UR/SR selection and separately named proposed links.
+Preview the current content, evidence, comparisons and transitions at one graph
+fingerprint. One human action may approve all named requirements and links;
+neither an Epic nor an open delivery release is required. Omitted links stay
+candidate and may be accepted later without reopening accepted requirements.
 
-| Sentence | Verdict |
-|---|---|
-| "An event's type is at most 64 characters" | requirement — a change can breach it |
-| "Only the lead may open a draft" | requirement |
-| "An event's detail is unstructured JSON with no schema" | documentation — adding a schema breaches nothing |
-| "The model and the migration agree, column for column" | a test, not a requirement |
-| "Append-only is a convention, not a constraint" | a finding — record it as one |
+Route explicit decisions only:
 
-- One behavior, one candidate — not one function, one candidate. A
-  three-function validation chain enforcing one rule is one requirement; an
-  endpoint with five distinct observable behaviors is five.
-- State behavior, never implementation: *"a refund reverses the VAT it
-  charged"*, not *"RefundService calls VatCalculator.reverse"*.
-- Declare the canonical kind on every candidate: `UR` for an actor-outcome
-  behavior served by identified surfaces, `SR` for a system behavior at a
-  boundary. Group views into user journeys and derive candidate URs from
-  them — a UR carries the same evidence burden as an SR and needs it more,
-  because a user story reads as true even when nobody checked. Cite the view,
-  the route, and the gate, or leave it out.
-- A hardcoded threshold is either a business rule nobody wrote down (a
-  candidate) or an accident (an open question). Never present an inferred
-  intent as a derived fact: code answers *what*, rarely *why* — a threshold
-  with no comment, a branch nobody can date, a rule contradicting another is
-  an open question for the confirmation packet, not a guess.
+- accept as-built → Base/PENDING_VERIFICATION;
+- accept desired intent → PROPOSED, eligible for normal delivery planning;
+- reject → OBSOLETE, no relationship publication;
+- defer → unchanged DERIVED.
 
-While establishing these facts, prefer the artefact over the description of
-it; read the whole expression, never the grep hit; search the entity alone
-rather than conjoining verb and noun on one line (deletion code almost never
-names its table beside the verb); exclude comment lines from behavioral
-evidence while still citing a comment as evidence of what the code *says*;
-and support an absence claim only with a named search — *"nothing does X"*
-requires stating which files were opened to reject it, and a clean absence
-after a real search is a finding to state plainly, with the search shown.
-Where a decision is recorded but not deployed, write both halves labelled
-**Decided** and **Deployed** — they are different facts with different
-evidence.
-
-Link candidate URs and SRs both ways, then report the **join report**: a view
-calling an entry point that does not exist is a broken or unfinished surface;
-an entry point no view calls is dead surface or an undocumented integration.
-Neither is visible from one side alone, and an empty join over a codebase of
-any size is a claim that needs its own evidence.
-
-## Everything lands DERIVED
-
-Every inferred requirement is created `DERIVED`, exactly as `PROCESS.md`
-§Derived requirement hold prescribes: candidate statement, inference sources,
-proposed relations all labelled `CANDIDATE`, conflicts, consequences, and a
-confirmation brief — the **Candidate packet** slot in the requirement shape.
-`DERIVED` rows are excluded from authoritative trace, release, readiness,
-coverage, progress, and completion, and this pass never creates or advances
-anything related to them.
-
-The legacy failure this replaces: assigning `PENDING_VERIFICATION` directly
-to derived rows. That status is human-confirmed as-built behavior; inference
-is not confirmation, however good the citations. Only a human answer moves a
-row out of `DERIVED`.
-
-Three routings that are not `DERIVED` candidates:
-
-- a **pre-existing red test** is work someone started, not shipped behavior —
-  record it as a discovery for `rdd-triage`, and say the suite was already
-  red there before this pass arrived;
-- a code path that **provably cannot run as written** is a finding, not a
-  behavior;
-- a discovery with unclear ownership or a cross-cutting concern goes to the
-  triage backlog shape, not the requirement shape.
-
-## The coverage contract — the only definition of "done enough"
-
-**The floor is 90% of every denominator class, the target is 100%, and the
-claim is a script's exit code — never a sentence.** Two recorded failures
-share one cause: a 46-row "complete" corpus over an 80-endpoint,
-two-application estate, and a "110/110 endpoints routed" claim that audited
-to 65/110 the same day. Both stated coverage as prose, and prose drifts
-toward optimism.
-
-- For each denominator class, write the enumeration and matching as a small
-  script kept in the repository (e.g. `tools/endpoint-coverage-audit.py`)
-  that prints `N/N` per context, lists every miss, and
-  **exits non-zero below the floor** — coverage stays re-checkable by anyone, forever. The
-  report **embeds the scripts' verbatim output**; a coverage claim without
-  embedded audit output is invalid, and an orchestrator receiving one
-  re-runs the audit rather than relaying the claim.
-- **No row budgets exist.** There is no such thing as a row budget: the
-  grain is one candidate per observable behavior, however many that yields.
-  A reference estate correctly derived carried **978 requirements** across
-  13 contexts, at per-context densities of 50–130; a context reporting 6
-  rows over 30 endpoints is under-derived, full stop. Grouping is legal only
-  where the observable behavior is genuinely one, and the grouped units are
-  always enumerated on the row.
-- **Below the floor, the pass is not done.** Keep deriving, or hand off an
-  honest partial that names the precise remainder — a partial is a handoff,
-  never an endpoint, and a silent truncation reads as "covered everything".
-- **No silent fallbacks.** A tool that fails — an analysis export missing, a
-  test runner broken, a script erroring — is named in the report with what
-  it blocked; work continues on every path that does not depend on it.
-- Where the workspace ships a standing coverage instrument (for ModernPath
-  workspaces, `modernpath coverage --json`), run it before deriving anything
-  and pin its output as the pass's *before*; take targets from its
-  ranked uncovered directories rather than from taste, and passing over the
-  top-ranked gap needs a stated reason. At the end of the pass
-  the same command is the after — the delta is the pass's receipt, and a pass whose
-  delta on its declared target is zero did not happen, whatever its prose
-  says. An instrument's untraced test files list is standing input for
-  `rdd-verify`: an existing green test nobody traced is the cheapest
-  verification available once its row is confirmed.
-
-Before claiming anything, invoke `skills/rdd-audit/SKILL.md` over what this
-pass produced: every citation resolves from the repository root
-(§"Citations — does every reference resolve?"), every inventory is diffed in
-both directions, and the coverage numbers carry their populations
-(§"The audit").
-
-### The full sweep — every context, one run, stated cost
-
-One context per pass is the default because it protects derivation rigor.
-When the human explicitly asks for the complete adoption, the sweep is a
-different contract, not a shortcut, and it runs unattended:
-**one invocation loops** measure → target → derive → audit, taking the next ranked gap each
-iteration, until every denominator-class floor passes **and** the
-**file-coverage floor** passes — coverage lands **well over 50%** of the
-source-file inventory (operationally, keep looping below 60%
-cited-or-dispositioned; files legitimately outside the behavioral surface,
-such as type barrels, migrations, and generated code, count only when
-explicitly dispositioned in the report — a disposition is written, never
-assumed). There is **no human checkpoint inside the loop**: candidates still
-land `DERIVED`, and the confirmation gates open in the terminating report,
-which embeds the final audit output as proof — deferring confirmation to the
-end of the sweep is not skipping it. On an honest-partial handoff the
-orchestrating agent **relaunches for the remainder** automatically rather
-than reporting the partial and waiting; asking the human to notice
-under-coverage is the failure mode this contract exists to prevent.
-
-## Phase D — the recovered design documents, once per system
-
-Phase C says what the system does; none of it says what the system *is*.
-
-Read `docs/guides/` — every human-written guide — before phase A begins. A
-guide is a **lens**, never a source: it directs attention, every claim still
-cites the code or config it came from, a guide that cannot be confirmed
-becomes an open question naming the guide, and the pass never writes one.
-
-## D1. The five documents
-
-System-wide, written once — no per-context fan-out:
-
-| Document | Answers |
-|---|---|
-| `docs/03-architecture.md` | key subsystems, external interfaces, datastores, the path one request takes — the document a reader opens first |
-| `docs/20-deployment-topology.md` | what runs where and what a request crosses; fold into `03` for a single-stack estate |
-| `docs/21-integrations.md` | each external system — direction, protocol, and **what happens when it is unreachable**, which no dependency list gives you |
-| `docs/22-cross-cutting.md` | auth, tenancy, secrets, observability, resilience *as implemented*, each concern naming its enforcement point |
-| `docs/23-data-flow.md` | where a value originates, what transforms it, where it lands, which trust boundaries it crosses |
-
-Before writing any document, look for what the repository **already covers**
-— a maintained architecture document, existing ADRs. Adopt it or extend it
-in place rather than writing a competing file, and supersede only
-deliberately, with a coverage diff proving nothing is lost.
-
-## D2. Decision records — `docs/adr/NNNN-<slug>.md`
-
-One record per decision the code has plainly already made — datastore,
-transport, isolation, deployment shape — with status **`observed`**, a third
-status beside accepted and superseded: the pass can prove a decision was
-made, never that anyone ratified it, and an ADR claiming a ratification the
-repository never performed is the same lie as a completion with no evidence.
-
-## D3. Non-functional requirements — `tasks/NFR-REQUIREMENTS.md`
-
-Ids follow the ledger convention, `REQ-NFR-NNN`, not `NFR-<CATEGORY>-NNN`: the
-ledger row regex matches `REQ-<CTX>-NNN` and parses nothing otherwise, so rows
-written any other way are silently ingested as none.
-
-Quality attributes get their own requirement context, serialized like any
-other — ledger-format workspaces materialize it at the path above — one
-category per row from exactly eight:
-`performance` · `scalability` · `availability` · `security` · `privacy` ·
-`operability` · `maintainability` · `compatibility`; an open list becomes
-forty overlapping labels within two passes. Sweep for latent thresholds
-(timeouts, pool sizes, retry counts, rate limits, cache TTLs, payload caps),
-but first check whether the behavior **already has a requirement** — an NFR
-row for a threshold another row owns is a duplicate wearing a different id.
-Every remaining bare constant becomes a candidate held as a question —
-`BLOCKED` on the only thing that matters: is the value a target, a measured
-limit, or the first number someone typed? A `timeout: 30_000` gives the
-value, never the intent, and asserting intent from a constant is the same
-failure the `DERIVED` hold exists to prevent.
-
-**D5 — when phase D is done:** the five documents present or explicitly
-folded, every integration carrying a failure entry or an open question,
-every ADR at `observed`, the NFR sweep run with every bare-constant row held
-as a question, and **citations resolve** across all of it — checked, not
-trusted. Phase D is idempotent — ADRs key by slug, NFR rows by the
-`file:symbol` the threshold lives at — and it measures nothing: configured
-thresholds are read, latencies are never invented, and threat models are a
-person's to write, seeded by `22`, never substituted by this pass.
+Changed content/relationships invalidate the preview. Refresh it; never retry
+an old human decision against new content. Record typed requirement/link
+decisions and an idempotent receipt. Approval is additive, not replacement,
+compliance approval, behavioral verification, entry approval or DONE.
 
 ## Relation serialization
 
-A relation this pass declares must reach the graph. Write it in the Candidate
-packet, in one of these exact shapes — the reader parses ids that follow the
-verb, and nothing else:
+Store-backed onboarding uses the sanctioned typed group contract: an SR's
+`parent_external_ids` names exact UR parents; typed code/test citations create
+the corresponding proposed or baseline source links. The server returns exact
+trace IDs and authority. Candidate decisions select those trace IDs separately.
+Do not put prose relation clauses into store fields and assume they create edges.
+
+For an existing **file-backed legacy ledger only**, retain these importer shapes:
 
 ```
 Proposed relations (CANDIDATE): requires SR-KERNEL-030, SR-KERNEL-031.
@@ -331,118 +150,96 @@ Proposed relations (CANDIDATE): requires SR-KERNEL-030, SR-KERNEL-031.
 Proposed relations (CANDIDATE): serves UR-KERNEL-002.
 ```
 
-`requires` names the rows that take this one as their parent; `serves` names
-this row's parent. A row may also carry its parent in a dedicated field — a
-`UR` ledger column, a bare `UR-…` in the `Source` cell, or a detail bullet:
-
 ```
 - **UR:** UR-KERNEL-002
 ```
 
-A dedicated field always wins: a packet sentence never overwrites a parent an
-author stated in a field of its own.
+`requires` names rows that take this row as parent; `serves` names its parent.
+A dedicated UR field takes precedence over a packet sentence. Mere mentions of
+IDs create no relation. An unknown target is a reported defect, not a dropped
+edge. An explicit empty typed relation set plus rationale is valid; never invent
+a parent to satisfy a count. These legacy forms do not authorize promotion or
+recreation of retired store-backed task ledgers.
 
-Prose that merely mentions a requirement is a citation, not a relation, and is
-read as none — `Conflict — SR-KERNEL-033 records that …` declares nothing.
-Naming an id no row carries is a corpus defect and is reported, never dropped.
+## D1. Recovered system-document output contract
 
-**Do not invent a shape.** Three estates have been synced with every row
-orphaned because a pass wrote parents in a form the reader did not parse
-(REQ-CROSS-076, SR-SY-1402, REQ-CROSS-286). The forms above are the contract
-between this skill and `internal/rdd`, and a test asserts that every example in
-this section parses. A new shape needs a reader in the same change.
+Read maintained `docs/guides/` first as a human lens, not evidence of implemented
+behavior. Preserve guide provenance separately from derived findings. Reuse or
+extend existing documents before creating a competing account. Produce the
+following system-wide set once, with verified code/config citations:
 
-Declaring nothing is a real answer, and a common one: most derived rows have no
-parent to propose. Say so by writing no relation clause — not by inventing a
-plausible one. The pass reports how many rows declare a relation against how
-many exist, and that ratio is a quality signal about the derivation, not a
-number to inflate.
+| Document | Content |
+|---|---|
+| `docs/03-architecture.md` | Subsystems, interfaces, stores and representative request flow |
+| `docs/20-deployment-topology.md` | Runtime locations and boundaries; explicitly fold into architecture for a single stack |
+| `docs/21-integrations.md` | Direction, protocol and failure behavior, including unreachable dependencies, for each external system |
+| `docs/22-cross-cutting.md` | Auth, tenancy, secrets, observability and resilience enforcement points |
+| `docs/23-data-flow.md` | Origins, transformations, destinations and trust boundaries |
 
-## Confirmation — the only exit for a candidate
+An existing `ARCHITECTURE.md` or `architecture.md` can satisfy the architecture
+role; adopt it explicitly and verify the document collector recognizes its path.
+Use the sanctioned document publication route and verify its store readback.
+These are derived design documents, not a second requirement store.
 
-Build exact confirmation gates per `PROCESS.md` §Strict human transitions:
-the candidate packet and exact confirmation scope complete before the gate
-opens, each gate carrying the standard brief. One human answer may cover
-explicitly named candidates — batch confirmation over a context's candidates
-is the expected shape; a gate per row is a denial-of-service on the person
-this pass is meant to help. Never batch by wildcard or range: the gate names
-every id it covers.
+## D2. Observed decision records — `docs/adr/NNNN-<slug>.md`
 
-Apply answers exactly as `PROCESS.md` routes them:
+Key by slug and preserve existing ADRs. New recovered decisions carry status
+`observed`, never fabricated ratification. A code/config citation establishes
+what choice was implemented, not that a human accepted it.
 
-```text
-confirmed accurate as-built --> PENDING_VERIFICATION
-confirmed/corrected intent ---> PROPOSED
-rejected ---------------------> OBSOLETE
-```
+## D3. NFRs (legacy file-backed path: `tasks/NFR-REQUIREMENTS.md`)
 
-Confirmation proves the requirement exists. It does not approve entry, make
-candidate links authoritative, prove behavior, or select a release — a
-derived corpus describes what already ships and is never stamped into an
-active release.
+In a **store-backed** workspace, publish NFRs as ordinary typed requirements
+through the authorized run. Never create the path in this heading there. It is
+the compatibility contract for workspaces whose authoritative ledger already
+uses that file-backed format; canonical file-state workspaces use their selected
+`file-state/` serialization instead.
 
-## Handoff
+Use context IDs such as `REQ-NFR-NNN` and the categories performance, scalability,
+availability, security, privacy, operability, maintainability and compatibility.
+Check existing requirement ownership before deriving another row. A bare timeout,
+pool size, retry count or threshold with unconfirmed intent stays a question or
+DERIVED exception, not an invented target or measured result. Key repeated
+findings by exact source/symbol. For numeric configuration, read the whole expression
+and its units before interpreting it; a partial grep hit is not a value.
+Before finishing, check the document set, every
+integration's failure behavior, observed ADR provenance, NFR questions and actual
+publication readbacks. A file existing locally does not prove it reached the UI.
 
-Confirmed scope enters the standard loop and this orchestrator's job ends:
-`rdd-plan` → `rdd-cold-review` → `rdd-entry-review`, then `rdd-verify` for
-`PENDING_VERIFICATION` rows or `rdd-build` for `PROPOSED` behavior — those
-passes own the advance to `IN_REVIEW` — then `rdd-completion-review`.
-`rdd-start`'s session discipline binds throughout: run the project's
-deterministic process checks (for ModernPath workspaces, `modernpath check`)
-before every commit of derived records, chained so a failure stops the
-commit. Comprehensive is reached by repetition — one bounded
-context per pass, confirmed and handed off, until the context map lists no
-context without records — not by one enormous unreviewable pass.
+## Audit and finish
 
-## This pass never
+Invoke `rdd-audit` over exact outputs and declared repositories. Measure both
+directions: inventory units without requirements and requirement references
+outside inventory. Use the authoritative store projection, not empty retired
+ledgers. Distinguish **candidate extraction** from **governed coverage**, and both
+from **verified behavior**. Zero recognized citations over nonempty input is a
+failed measurement, not 100% coverage.
 
-- creates or advances acceptance content, tests, implementation,
-  verification, or delivery while its candidates are `DERIVED`;
-- assigns `PENDING_VERIFICATION`, `TODO`, or any status past `DERIVED`
-  without an applied human answer;
-- makes a candidate relation authoritative, or invents a parent to complete
-  a trace;
-- commits derived items to a release;
-- edits product code — a pass that edits code can be reviewed as neither
-  documentation nor a change;
-- guesses a business rule to avoid recording an open question.
+Keep re-runnable enumeration/matching scripts and their actual output. Report
+N/N by denominator class and repository/context, exclusions and every miss.
+The audit script exits non-zero below the floor; retain its verbatim output and
+exit code, not just an agent's summary. Run the same measurement before and after;
+rank uncovered directories and untraced test files to choose the next scope.
+The extraction floor is 90% of each applicable behavior class and 60% of eligible
+source files cited or explicitly dispositioned; target complete coverage.
+No row budget replaces behavioral granularity. Below the floor is incomplete,
+never silently truncated. A requested full sweep continues across remaining
+contexts while authority and source scope stay unchanged, with no per-context
+baseline reapproval.
 
-## Coverage floor — the pass is not finished at 59%
+Read back exact UR/SR IDs, lifecycle/release, citations, relationship authority,
+test artifacts and optional Epic memberships. For baseline, verify Ledger and
+System → Requirements agree with the receipt. For DERIVED, verify candidate
+review contains them while governed views/counts remain unchanged. Report
+created/reused/baselined/derived/rejected/unresolved counts separately.
 
-Before reporting, run the workspace's own instrument and read the number it
-gives, not one of your own:
+Adopt existing design documents before creating competing ones. Recovered
+architecture, deployment, integrations (including failure behavior), cross-cutting
+concerns and data flow are system-wide, not per-context duplicates. Observed
+ADRs are labelled observed, not ratified. NFRs use the same store and authority
+as other requirements; bare thresholds with unknown intent remain questions.
 
-```
-modernpath coverage
-```
-
-**A pass below 60% file coverage is incomplete, not merely modest.** It means
-the corpus describes what the system exposes — routes, pages, tables — and not
-what implements it. Entry points are the easy half: a route handler is named in
-one place and reads like a requirement already. The modules behind it are where
-behaviour actually lives, and a corpus that skips them cannot support a change.
-
-Two rules follow:
-
-- **Derive against the implementation layer too.** A `lib/`, `services/`,
-  `domain/` or `internal/` module that holds a rule, a calculation, a state
-  transition or an integration is behaviour a requirement must name and cite.
-  Reaching a directory only through the handler that calls it does not cover it.
-- **Read the per-app breakdown, not just the total.** One directory sitting far
-  below the rest is the gap; a healthy total can hide it. Report each app's
-  number, and treat a low one as a finding with a reason — "these 81 modules are
-  presentation-only" is an answer, silence is not.
-
-The instrument counts what git accounts for, so a vendored or gitignored tree
-never inflates or deflates the result. If the number still looks wrong, say so
-and show the breakdown rather than quietly adopting a denominator that flatters
-the pass.
-
-## Report
-
-Report the contexts inventoried and the one derived; every denominator class
-as `N/N` with misses and stated-inapplicable classes; candidates created by
-kind; conflicts, open questions, and backlog discoveries routed; the audit
-result over the pass's own output; the confirmation gates now open and the
-exact ids each covers; and which contexts remain, with the one this pass
-would take next.
+Onboarding ends with a usable base or a clearly reviewable candidate set and an
+honest remainder. Normal `rdd-plan`/entry review and `rdd-verify` own subsequent
+verification; reverse-engineering itself changes no implementation, executes no
+untrusted code and creates no passing test result or DONE state.

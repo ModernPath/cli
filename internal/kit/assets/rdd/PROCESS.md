@@ -21,6 +21,7 @@ EPIC: PROPOSED -[HUMAN]-> TODO -> IN_PROGRESS -> IN_REVIEW -[HUMAN]-> DONE
 
 UR/SR: DERIVED -[HUMAN]-> PROPOSED -[HUMAN]-> TODO -> IN_PROGRESS -> IN_REVIEW -[HUMAN]-> DONE
 UR/SR: DERIVED -[HUMAN]-> PENDING_VERIFICATION -[HUMAN]-> TODO -> IN_PROGRESS -> IN_REVIEW -[HUMAN]-> DONE
+UR/SR: source-scoped baseline authorization -[publish as-built]-> PENDING_VERIFICATION
 
 TRACE: PENDING -> PASS | FAIL; PASS | FAIL -> STALE -> PASS | FAIL
 
@@ -105,7 +106,7 @@ UR and SR use the same status vocabulary.
 | Status | Meaning |
 |---|---|
 | `DERIVED` | Inferred requirement awaiting human confirmation; all relations are candidate-only |
-| `PENDING_VERIFICATION` | Human-confirmed as-built behavior awaiting entry approval and current direct evidence |
+| `PENDING_VERIFICATION` | As-built behavior established by exact confirmation or source-scoped baseline authorization; awaiting entry approval and current direct evidence |
 | `PROPOSED` | Confirmed or directly sourced requirement being prepared for entry |
 | `TODO` | Entry trace passed and human entry approval was applied |
 | `IN_PROGRESS` | Applicable red-first evidence work is underway |
@@ -137,8 +138,12 @@ While a requirement is `DERIVED`:
 - label every proposed relation `CANDIDATE`;
 - exclude it from authoritative trace, release, readiness, coverage, progress,
   and completion;
-- do not create or advance related requirements, acceptance content,
-  reconnaissance, tests, implementation, verification, or delivery.
+- candidate statements may include proposed UR scenarios, related candidates,
+  source links and references to existing tests so they are reviewable together;
+  all such content and artifacts remain candidate-only, excluded from ordinary
+  test lists, coverage, release snapshots and execution assignment;
+- do not use a candidate to authorize implementation, test execution,
+  verification, entry, release commitments or delivery.
 
 ```text
 DERIVED -> confirmed/corrected ----------> PROPOSED
@@ -146,8 +151,53 @@ DERIVED -> confirmed/corrected ----------> PROPOSED
         -> rejected ---------------------> OBSOLETE
 ```
 
-Confirmation proves the requirement exists. It does not approve entry, make
-candidate links authoritative, prove behavior, or select a release.
+Confirmation proves the requirement exists. Requirement decisions and link
+decisions are separate: one attributable action may cover an exact typed set
+of URs/SRs and explicitly named proposed relationships at a checked packet and
+graph fingerprint. Unselected links remain candidate-only and may be approved
+later in a relationship-only decision. No Epic is required. Changed inputs
+require a refreshed preview. Rejection publishes no links; deferral leaves the
+candidate unchanged. Approval is additive and never overwrites a referenced
+existing requirement or its compliance approval.
+
+Accepting as-built scope places it in Base/PENDING_VERIFICATION; accepting new
+desired intent makes it PROPOSED and eligible for normal delivery planning.
+Neither action approves entry, verifies behavior, records a passing test result
+or marks anything DONE. Candidate confirmation is not delivery release selection.
+
+### Source-scoped baseline onboarding
+
+Reverse-engineering can establish a usable requirement base or propose additions
+to an existing corpus. Before publication, present both modes and require an
+explicit choice. Recommend baseline when the corpus is empty, DERIVED additions
+when it is populated. Existing content and approvals are preserved in both modes.
+
+A baseline authorization names the authenticated actor, system/store, immutable
+repository/file and document revision inventory, current corpus fingerprint,
+Base destination, permitted relationship publication and process revision.
+It authorizes derivation and publication of grounded as-built URs/SRs with
+inline scenarios and canonical source/UR–SR/code/test relationships. It does
+**not** assert the human reviewed statements that had not yet been generated.
+No per-row or per-context confirmation is required within this approved scope.
+
+Publish coherent groups atomically with durable input fingerprints and receipts.
+Identical retries return the same receipt; changed input, out-of-scope sources
+or conflicting existing content cannot silently expand the authorization.
+Unchanged existing requirements may be reused only by exact identity/fingerprint.
+Essential unresolved evidence remains an explicit DERIVED exception, never an
+authoritative guess. Report partial publication and the exact remainder.
+
+Baseline requirements are PENDING_VERIFICATION, not compliance-approved or
+verified. They and their grounded confirmed graph appear in authoritative
+requirement views; DERIVED additions appear only in candidate review. A test
+reference or stub is not an execution result. Optional Epics need real intended
+members; do not manufacture discovery-container Epics or membership.
+
+Source capture preserves immutable repository/revision/path/digest identity,
+including local changes. A historical read never substitutes latest code.
+Unavailability or explicit source revocation is shown honestly while retaining
+audit identity. Source/store read-backs and explicit coverage denominators are
+part of onboarding completion, not evidence of product verification.
 
 ## Gates
 
@@ -175,6 +225,7 @@ not a gate answer.
 | Transition | Required trace `PASS` before human input |
 |---|---|
 | Requirement `DERIVED -> PROPOSED/PENDING_VERIFICATION/OBSOLETE` | Candidate packet and exact confirmation scope complete |
+| Source-scoped baseline authorization | Bound system/store, current corpus and exact source/document inventory reviewed; allowed baseline publication made explicit |
 | Requirement `PROPOSED/PENDING_VERIFICATION -> TODO` | Its Entry packet is complete at the exact fingerprint |
 | Epic `PROPOSED -> TODO` | Its Entry packet and every selected member's entry trace are complete |
 | Requirement `IN_REVIEW -> DONE` | Its completion predicate is satisfied at the delivered fingerprint |
@@ -598,7 +649,8 @@ human decisions.
 
 | Discovery | Route |
 |---|---|
-| Inferred possible requirement | `DERIVED` plus confirmation gate; links remain candidate-only |
+| Inferred possible requirement outside an authorized baseline | `DERIVED` plus exact confirmation; links remain candidate-only |
+| Grounded as-built requirement within authorized baseline scope | `PENDING_VERIFICATION` in Base with validated relationships; not verified or delivered |
 | Directly sourced requirement | `PROPOSED` UR or SR |
 | Missing human decision or ambiguity | Decision gate; `BLOCKED` only when work cannot proceed |
 | Known future work | `DEFERRED` with reason, owner, and target |

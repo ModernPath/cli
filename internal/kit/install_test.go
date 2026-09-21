@@ -546,11 +546,11 @@ func TestInstallPlacesTheReverseEngineeringSkill(t *testing.T) {
 	skill := string(raw)
 
 	// The description is how an agent finds it without being handed the path, and
-	// it must not invite a second pass over a workspace that already has a ledger.
+	// it must distinguish initial adoption from safe additions to an existing corpus.
 	if !strings.Contains(skill, "name: rdd-reverse-engineer") {
 		t.Fatalf("skill needs its frontmatter name:\n%s", skill[:min(400, len(skill))])
 	}
-	for _, want := range []string{"IN_REVIEW", "BLOCKED", "modernpath check"} {
+	for _, want := range []string{"Baseline ready for use", "DERIVED additions for approval", "source-scoped", "Never overwrite existing approval/content"} {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("the method never mentions %q — the decisions it encodes are missing", want)
 		}
@@ -607,8 +607,8 @@ func TestReverseEngineerSkillCarriesTheThreePhases(t *testing.T) {
 		{"aggregate ownership", "D-ONB-8: contexts come from who writes which table, not route-file layout"},
 		{"role gate", "D-ONB-10: a user requirement cites the gate that admits its actor"},
 		{"join report", "D-ONB-11: views calling nothing and endpoints no view reaches are findings"},
-		{"user requirement", "D-ONB-9: phase B produces epics carrying UR, not only ledger rows"},
-		{"epics/", "the pass must write epics — their absence is what factory status kept reporting"},
+		{"actor/outcome URs", "surfaces produce user outcomes, not only system requirements"},
+		{"Do not create Epics", "SR-RDD-ONBOARD-004: discovery must not fabricate delivery groupings"},
 	} {
 		if !strings.Contains(skill, want.token) {
 			t.Fatalf("skill is missing %q — %s", want.token, want.why)
@@ -617,8 +617,8 @@ func TestReverseEngineerSkillCarriesTheThreePhases(t *testing.T) {
 
 	// Order matters: domain before surfaces before requirements. A skill that
 	// mentions all three but derives requirements first is the method we replaced.
-	domain := strings.Index(skill, "aggregate ownership")
-	surfaces := strings.Index(skill, "role gate")
+	domain := strings.Index(skill, "| Domain |")
+	surfaces := strings.Index(skill, "| Surfaces |")
 	if domain < 0 || surfaces < 0 || domain > surfaces {
 		t.Fatalf("phases out of order: domain at %d, surfaces at %d", domain, surfaces)
 	}
@@ -679,7 +679,7 @@ func TestReverseEngineerSkillCarriesTheNFRRules(t *testing.T) {
 		{"NFR-REQUIREMENTS.md", "D-ARCH-1: quality attributes get their own context, not a contract kind"},
 		{"performance", "the eight-term taxonomy — an open list becomes forty labels in two passes"},
 		{"operability", "same taxonomy; a term nobody would invent by accident"},
-		{"BLOCKED", "D-ARCH-3: a latent threshold is a question, never an assertion"},
+		{"DERIVED exception", "a latent threshold is a question, never a baseline assertion"},
 	} {
 		if !strings.Contains(skill, want.token) {
 			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
@@ -709,10 +709,10 @@ func TestReverseEngineerSkillMakesPhaseDRunnable(t *testing.T) {
 	skill := string(raw)
 
 	for _, want := range []struct{ token, why string }{
-		{"D5", "phase D needs its own exit criterion, not only its content"},
-		{"once per system", "A–C loop per context; D runs once — a loop must know the difference"},
-		{"phase D", "the run order has to name it explicitly or a loop cannot sequence it"},
-		{"citations resolve", "a document whose citations do not resolve is not done, however complete it reads"},
+		{"actual\npublication readbacks", "recovered design has a persisted exit criterion"},
+		{"system-wide set once", "design is system-wide rather than duplicated per context"},
+		{"Recovered design", "the run order includes recovered design after behavior"},
+		{"Invoke `rdd-audit`", "design citations must be checked"},
 	} {
 		if !strings.Contains(skill, want.token) {
 			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
@@ -747,8 +747,8 @@ func TestReverseEngineerSkillRefusesToDuplicateWhatExists(t *testing.T) {
 	// skill for. Two were pinned here; the third was not, and it is the one that
 	// fabricates rather than duplicates.
 	for _, want := range []struct{ token, why string }{
-		{"already covers", "an equivalent document may exist — adopt or extend it, never compete with it"},
-		{"already has a requirement", "a threshold may already be a requirement; an NFR row for it is a duplicate"},
+		{"Reuse or\nextend existing documents", "adopt equivalent documents rather than competing with them"},
+		{"Check existing requirement ownership", "avoid duplicate quality requirements"},
 		{"read the whole expression", "a grep hit stopping at the line start turned " +
 			"`MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB` into \"50 bytes\" — a fabricated " +
 			"absurdity in an architecture document costs more trust than the row was worth"},

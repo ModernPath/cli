@@ -39,12 +39,29 @@ and it is the cheapest guard against a ledger that reads well and points nowhere
 ```bash
 # beside this skill; installed at .modernpath/rdd/skills/rdd-audit/ in a consuming repository
 node .modernpath/rdd/skills/rdd-audit/audit-citations.mjs        # docs/ + ARCHITECTURE.md
-node .modernpath/rdd/skills/rdd-audit/audit-citations.mjs tasks  # or any root
+node .modernpath/rdd/skills/rdd-audit/audit-citations.mjs docs/recovered \
+  --repository=api=/workspace/api --repository=legacy=/workspace/legacy
 ```
 
-It sweeps both citation shapes over every markdown file under the given roots,
-resolves by path suffix against `git ls-files`, flags elided paths, excuses named
-gaps, and exits non-zero on failure. The rest of this section explains *why* each
+Declare every source repository explicitly when auditing from a non-Git parent
+or across repositories. Git worktrees (`.git` files) and scoped non-Git roots
+are supported. `CODE:repository@revision:exact/path.xml:12` and `TEST:` use the
+declared identity; revision disagreement fails. Unqualified suffixes must resolve
+uniquely, never to whichever candidate happens to have enough lines. XML, JSP,
+XSL and XSLT are recognized; unknown prefixed forms fail visibly.
+
+It sweeps citation shapes over every markdown file under the given document roots,
+flags elided paths, excuses named gaps, and exits non-zero on failure, ambiguity,
+or zero recognized citations. Raise `--min=N` to the known corpus floor. This is a
+checkout citation audit, not proof that historical captured bytes remain available;
+use the sanctioned immutable source reader for that check.
+
+For store-backed onboarding, read the authoritative run's inventory coverage
+projection: included/excluded/unassessed/unresolved source units, candidate links,
+governed links and overlap. Measure behavior-class denominators separately. Do not
+recreate or scan retired task ledgers as if they were the requirement corpus.
+Store citations and proposed links are checked through the store's typed source
+contract, not inferred from an empty local markdown scan. The rest of this section explains *why* each
 of those rules exists — read it when the output surprises you, and when you are
 tempted to write your own.
 
@@ -62,9 +79,10 @@ absences stated correctly). Ignore any reference preceded by *no*, *missing*,
 
 **And resolve paths properly before reporting a failure.** A citation written
 `db/models.py:1483` may live six directories deep; a bare `admin.py` may match two
-files, only one of which is long enough. Match on path suffix, accept if **any**
-candidate satisfies the line, and search the whole repository rather than one
-subtree. Three separate audit scripts written in one session each reported the
+files, only one of which is long enough. Search the declared repository scope,
+but accept a suffix only when it has **one** match. Multiple matches require an
+exact repository-qualified path; line count never disambiguates identity.
+Three separate audit scripts written in one session each reported the
 ledger as broken when the resolver was at fault. Prove your
 checker on a citation you know is good before you trust its failures.
 
@@ -375,7 +393,8 @@ every citation in every document in seconds:
 
 ```bash
 node .modernpath/rdd/skills/rdd-audit/audit-citations.mjs           # docs/
-node .modernpath/rdd/skills/rdd-audit/audit-citations.mjs tasks epics process
+node .modernpath/rdd/skills/rdd-audit/audit-citations.mjs docs/recovered --min=50 \
+  --repository=api=/workspace/api --repository=legacy=/workspace/legacy
 ```
 
 **This section used to carry an inline Python re-implementation, and removing it

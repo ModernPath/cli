@@ -502,6 +502,91 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `transition is required for purpose …: give --from and --to` | cli | `author trace --purpose upper` without `--from`/`--to` | add `--from build --to verify`; only cold-review, entry, lower and completion infer their transition |
 | `criteria: every stated criterion needs an external_id` | server | `author update --criteria` with an object lacking `external_id` | give every object `external_id`, `given`, `when`, `then` |
 
+## Reverse-engineering onboarding (store-backed)
+
+Use this sequence with `rdd-reverse-engineer`; these operations are separate
+from delivery entry/completion gates. Run them only in the main session.
+
+1. `modernpath factory status` verifies the authenticated system binding.
+   `modernpath docs sync` refreshes the local document projection.
+2. `modernpath reverse-engineer inventory --repository key=/absolute/root`
+   (repeat for each repository) emits frozen paths, hashes, sizes, revision,
+   dirty state and exclusions. Non-Git directories and Git worktrees are supported.
+3. `modernpath reverse-engineer preflight` returns existing-corpus fingerprint,
+   recommended mode and document descriptors. Ask the user for **baseline** or
+   **derived**, showing scope and consequences; recommendation is not authorization.
+4. `modernpath reverse-engineer authorize --file authorization.json` takes
+   `key`, explicit `mode`, attributable `authorization_source: "USER:…"`,
+   `corpus_fingerprint`, `repositories` from inventory and `documents` selected
+   from preflight. Document descriptors include `id`, `kind`, `version` and
+   `fingerprint`. Actor, system, Base and process revision are server-owned.
+5. For each repository, `modernpath reverse-engineer capture-source --run ID
+   --repository key --root /absolute/root`. Poll `source-status --capture ID`
+   until ready; use returned immutable source-file IDs. Interrupted captures
+   resume without provider OAuth or FileAnalysis. `read-source --source ID`
+   returns exact captured bytes; `read-document --run ID --document ID` returns
+   the authorized immutable document snapshot.
+6. `modernpath reverse-engineer publish --run ID --group stable-key --file group.json`
+   publishes a coherent graph atomically. `status --run ID` reads durable group
+   receipts. Repeat identical inputs and keys after interruption; conflict means
+   reconcile, not silently pick another key.
+7. `modernpath reverse-engineer coverage --run ID` measures the frozen inventory
+   against stored traces. It separates governed/candidate linkage, captures,
+   assessments and exclusions. It is not execution evidence or behavior-class
+   enumeration. `modernpath coverage` does not measure retired local ledgers in
+   a store-backed workspace. Read the actual Ledger and Requirements surfaces
+   before claiming baseline-ready or candidate-ready.
+
+### Group JSON contract
+
+`requirements` is a list of `kind: "user" | "system"`, unique `external_id`,
+`title`, `description`, `source_citations`, and `criteria`. UR criteria contain
+`external_id`, `given`, `when`, `then`; SR criteria contain `external_id` and
+`statement`. Supply the UR actor/outcome and SR boundary/verification method.
+SR `parent_external_ids` names exact UR parents; a parentless SR needs a rationale.
+Do not send authority, approval, release or work-status fields as intent.
+
+File citations use `kind: "code" | "test" | "document"`, `source_file_id`,
+`repository_key`, `revision`, `path`, `sha256`, and optional locator fields.
+Document citations use `system_doc_id`, `version`, `fingerprint`; the server
+validates them against the run and supplies their readable reference.
+Typed citations publish SR→source/test edges and parents publish UR→SR edges.
+Citing a test creates a source reference, never a passing test execution.
+
+DERIVED rows require `candidate_packet` with `confirmation_brief` and nonempty
+`consequences`; optional `conflicts` and `open_questions` explain ambiguity.
+`compares_to: [{"kind":"SR","external_id":"SR-EXISTING"}]` asks the server
+to capture an existing governed record. Review shows current versus proposed
+content and warns about intervening edits. Never supply fabricated current text.
+
+In baseline mode, explicit nonempty `exception_reason` keeps that individual row
+DERIVED and requires a candidate packet. Only candidates may cite an authorized
+but unresolved path using `kind: "unresolved"`, `repository_key`, `path`, `reason`.
+They cannot be accepted as-built until evidence is resolved. Their links remain
+candidate. Baseline receipts separate baselined and DERIVED counts.
+
+To reuse an unchanged existing row, send only `kind`, `external_id` and exact
+`reuse_fingerprint`. No incidental overwrite is permitted. Optional `epics`
+contain `external_id`, `title`, and nonempty exact `members`; baseline members
+must be governed. Do not create Epics to hold DERIVED discovery groups.
+
+`source_assessments` may accompany a group or an empty `requirements` list:
+each names `repository_key`, `snapshot_digest`, `path`, `sha256`, `outcome`
+(`reviewed`, `unresolved`, `unsupported`) and a nonempty `reason`. Latest durable
+assessment wins; an assessment is not a code trace or verified coverage.
+
+### Exact candidate decisions
+
+`candidates` reads typed records and proposed trace IDs. `preview --file selection.json`
+takes `requirements: [{kind, external_id, decision}]` and independent `links: [trace-id]`.
+Decisions are `accept_as_built`, `accept_desired`, `reject`, `defer`. No Epic is needed.
+After explicit approval of that preview, `decide --file decision.json` takes the
+same exact selection plus returned `fingerprint`, stable `key` and `source: "USER:…"`.
+As-built becomes Base/PENDING_VERIFICATION; desired intent becomes PROPOSED;
+rejected becomes OBSOLETE; deferred remains DERIVED. Unselected links remain
+candidate and can be accepted later by a links-only selection. Stale fingerprints
+require a new preview and decision. None of this approves compliance or DONE.
+
 ## 6. Traps
 
 - **255 characters** per bounded authoring field: title, context code, source

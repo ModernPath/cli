@@ -486,9 +486,24 @@ var leafDispositions = map[string]disposition{
 	"read-file":     {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
 	// SR-CROSS-324: reuses fetchRequirementLists — GETs /sync/requirements via the
 	// factoryEnvLoad reachability call, so the server is reached (like `status`).
-	"requirements-corpus": {kind: dispExecute, args: []string{"requirements-corpus", "--json"}},
-	"scan":                {kind: dispExecute},
-	"search":              {kind: dispExecute, args: []string{"search", "smoke query"}},
+	"requirements-corpus":             {kind: dispExecute, args: []string{"requirements-corpus", "--json"}},
+	"reverse-engineer preflight":      {kind: dispExecute},
+	"reverse-engineer coverage":       {kind: dispExecute, args: []string{"reverse-engineer", "coverage", "--run", "smoke"}},
+	"reverse-engineer candidates":     {kind: dispExecute},
+	"reverse-engineer status":         {kind: dispExecute, args: []string{"reverse-engineer", "status", "--run", "smoke"}},
+	"reverse-engineer source-status":  {kind: dispExecute, args: []string{"reverse-engineer", "source-status", "--capture", "smoke"}},
+	"reverse-engineer read-source":    {kind: dispExecute, args: []string{"reverse-engineer", "read-source", "--source", "smoke"}},
+	"reverse-engineer read-document":  {kind: dispExecute, args: []string{"reverse-engineer", "read-document", "--run", "smoke", "--document", "smoke"}},
+	"reverse-engineer capture-source": {kind: dispExecute, args: []string{"reverse-engineer", "capture-source", "--run", "smoke", "--repository", "catalog", "--root", "."}},
+	"reverse-engineer inventory":      {kind: dispNoCall, reason: "local-only"},
+	// Exact JSON intent is required before any write; nested payloads are
+	// exercised by reverse_engineer_test.go against its own HTTP fixture.
+	"reverse-engineer authorize": {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer publish":   {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer preview":   {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer decide":    {kind: dispNoCall, reason: "needs-precondition"},
+	"scan":                       {kind: dispExecute},
+	"search":                     {kind: dispExecute, args: []string{"search", "smoke query"}},
 	// REQ-CROSS-282: status now checks the bound system's reachability
 	// whenever a bearer and a system_id are both present — exactly this
 	// fixture's shape — so it genuinely reaches the server and is no longer

@@ -32,6 +32,7 @@ var storeWriteCommandRE = regexp.MustCompile(
 	`(^|[\s;&|()])\\?(\S*/)?modernpath\s+(-v\s+|--verbose\s+|--api-url(=\S+|\s+\S+)\s+)*(` +
 		`author\s|` +
 		`feedback(\s|$)|` +
+		`reverse-engineer\s+(authorize|capture-source|publish|decide)(\s|$)|` +
 		`factory\s+(answer|evidence|sync|release|connect|pin|pull)|` +
 		`working-set\s+(select|push)|` +
 		`process\s+(reconcile|findings\s+(add|disposition)|supersede|cascade-mode|reapply-entry|reenter)|` +
