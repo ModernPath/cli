@@ -63,9 +63,14 @@ func renderCLIReference(root *cobra.Command) string {
 			writeFlagTable(&b, flags)
 			b.WriteString("\n")
 		}
-		if inherited := flagRows(localPersistentFlags(c)); len(inherited) > 0 {
+		if shared := flagRows(localPersistentFlags(c)); len(shared) > 0 {
 			b.WriteString("Flags this command shares with its subcommands:\n\n")
-			writeFlagTable(&b, inherited)
+			writeFlagTable(&b, shared)
+			b.WriteString("\n")
+		}
+		for _, a := range inheritedFlagTables(c) {
+			fmt.Fprintf(&b, "Inherited from `%s`:\n\n", a.path)
+			writeFlagTable(&b, a.rows)
 			b.WriteString("\n")
 		}
 	}
@@ -118,9 +123,49 @@ func flagRows(fs *pflag.FlagSet) []flagRow {
 	return rows
 }
 
+// inheritedFlags is one ancestor's persistent flags as the reference prints
+// them under a subcommand.
+type inheritedFlags struct {
+	path string
+	rows []flagRow
+}
+
+// inheritedFlagTables returns the persistent flags a subcommand inherits,
+// grouped by the ancestor that declares them, nearest first. Without this a
+// group's persistent flag was printed only on the group — `--piece` is
+// declared on `process` and on `working-set`, so `working-set pull --piece`
+// was a documented flag that appeared in no verb's table (BACKLOG-TOOL-68).
+// The root's own persistent flags are deliberately not repeated here: they
+// apply to every verb and the reference lists them once under "Global flags",
+// so echoing them under all ~90 sections would be noise, not information.
+func inheritedFlagTables(c *cobra.Command) []inheritedFlags {
+	var out []inheritedFlags
+	seen := map[string]bool{}
+	for a := c.Parent(); a != nil && a.HasParent(); a = a.Parent() {
+		var rows []flagRow
+		for _, r := range flagRows(localPersistentFlags(a)) {
+			// localPersistentFlags already drops a name an ancestor only
+			// redeclares, so a redeclared flag prints under the ancestor that
+			// first declared it — the farther one — and this map should never
+			// fire. It is kept so that a change there cannot make one command
+			// list the same flag twice.
+			if seen[r.name] {
+				continue
+			}
+			seen[r.name] = true
+			rows = append(rows, r)
+		}
+		if len(rows) > 0 {
+			out = append(out, inheritedFlags{path: a.CommandPath(), rows: rows})
+		}
+	}
+	return out
+}
+
 // localPersistentFlags returns the persistent flags this command declares
-// itself, not the ones inherited from its ancestors, which the reference lists
-// once at the top.
+// itself, not the ones inherited from its ancestors. The root's are the ones
+// the reference lists once at the top; a group's are listed again under each
+// subcommand that inherits them (inheritedFlagTables).
 func localPersistentFlags(c *cobra.Command) *pflag.FlagSet {
 	out := pflag.NewFlagSet(c.Name(), pflag.ContinueOnError)
 	c.PersistentFlags().VisitAll(func(f *pflag.Flag) {

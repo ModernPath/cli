@@ -7,6 +7,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 var (
 	findingsScope               string
+	findingsAll                 bool
 	findingsExternalID          string
 	findingsSeverity            string
 	findingsCategory            string
@@ -128,6 +130,16 @@ func processFindingsAdd(env *factoryEnv) error {
 		return fmt.Errorf("--category and --severity are both required — the CLI never defaults to the most blocking pair. --category: %s (%s block the cold-review gate while OPEN or DEFERRED); --severity: %s (a note never blocks, whatever its category)",
 			strings.Join(findingCategories, ", "), strings.Join(findingBlockingCategories, ", "), strings.Join(findingSeverities, ", "))
 	}
+	// REQ-CROSS-424: a value outside the vocabulary is refused here, naming the
+	// set — the server's bare "is invalid" is never the only answer.
+	if !contains(findingSeverities, findingsSeverity) {
+		return fmt.Errorf("--severity %q is not a severity — one of %s (a note never blocks, whatever its category)",
+			findingsSeverity, strings.Join(findingSeverities, ", "))
+	}
+	if !contains(findingCategories, findingsCategory) {
+		return fmt.Errorf("--category %q is not a category — one of %s (%s block the cold-review gate while OPEN or DEFERRED)",
+			findingsCategory, strings.Join(findingCategories, ", "), strings.Join(findingBlockingCategories, ", "))
+	}
 	record := map[string]any{
 		"kind":              "finding",
 		"external_id":       findingsExternalID,
@@ -191,22 +203,39 @@ func processFindingsDisposition(env *factoryEnv) error {
 	return nil
 }
 
+// REQ-CROSS-424: the list is scoped to the piece you hold unless --scope
+// names one by hand or --all asks for the system. The scope is composed from
+// the caller-scoped selection read (--piece when several are held), so the
+// read never sends a bare id and never falls back to the whole system by
+// omission — the cause of the 1549-line answer (BACKLOG-TOOL-9).
 func processFindingsList(env *factoryEnv) error {
+	scope := findingsScope
+	if scope == "" && !findingsAll {
+		kind, ext, err := heldPieceScope(env, processPiece)
+		if err != nil {
+			return err
+		}
+		scope = kind + ":" + ext
+	}
 	path := fmt.Sprintf("/api/v1/sync/findings?system_id=%d", env.SystemID)
-	if findingsScope != "" {
-		path += "&scope=" + findingsScope
+	if scope != "" {
+		path += "&scope=" + url.QueryEscape(scope)
 	}
 	status, body, err := env.call("GET", path, nil)
 	if err != nil {
 		return err
 	}
 	if status != 200 {
-		return fmt.Errorf("findings list returned HTTP %d", status)
+		return serverRefusal("findings list", status, body)
 	}
 	data, _ := body["data"].(map[string]any)
 	rows, _ := data["findings"].([]any)
 	if len(rows) == 0 {
-		fmt.Println("no findings for this scope")
+		if scope == "" {
+			fmt.Println("no findings on this system")
+		} else {
+			fmt.Printf("no findings for %s\n", scope)
+		}
 		return nil
 	}
 	for _, r := range rows {
@@ -224,9 +253,56 @@ func processFindingsList(env *factoryEnv) error {
 		if fp := str(f, "content_fingerprint"); fp != "" {
 			fmt.Printf("             fingerprint: %s\n", fp)
 		}
+		if verbose {
+			printFindingDetail(f)
+		}
 	}
 	printFindingRounds(rows)
 	return nil
+}
+
+// printFindingDetail prints under a row what `add` wrote: body, source, owner,
+// scope, aggregate and disposition reference, each as served.
+func printFindingDetail(f map[string]any) {
+	fmt.Printf("             body: %s\n", fieldOr(f, "body", "—"))
+	fmt.Printf("             source: %s\n", fieldOr(f, "source", "—"))
+	fmt.Printf("             owner: %s\n", fieldOr(f, "owner", "—"))
+	fmt.Printf("             scope: %s:%s\n", fieldOr(f, "scope_kind", "—"), fieldOr(f, "scope_external_id", "—"))
+	fmt.Printf("             aggregate: %s\n", fieldOr(f, "aggregate_fingerprint", "—"))
+	fmt.Printf("             disposition ref: %s\n", fieldOr(f, "disposition_ref", "—"))
+}
+
+// heldPieceScope resolves the piece the caller holds — the one named by
+// --piece when several are held — to its scope kind and external id from the
+// caller-scoped selection read. The server's several-pieces refusal surfaces
+// naming --piece; a caller holding nothing is told to name a scope or --all.
+func heldPieceScope(env *factoryEnv, piece string) (string, string, error) {
+	path := fmt.Sprintf("/api/v1/sync/work-selection?system_id=%d", env.SystemID)
+	if piece != "" {
+		path += "&scope=" + url.QueryEscape(piece)
+	}
+	status, body, err := env.call("GET", path, nil)
+	if err != nil {
+		return "", "", err
+	}
+	if status != 200 {
+		if ok, refusal := heldPiecesRefusal(body); ok {
+			return "", "", refusal
+		}
+		return "", "", serverRefusal("work-selection read", status, body)
+	}
+	current, _ := dataOf(body)["current"].(map[string]any)
+	kind, ext := str(current, "scope_kind"), str(current, "scope_external_id")
+	if kind == "" || ext == "" {
+		// The caller-scoped read serves no current row both when nothing is
+		// held and when --piece names a piece the caller does not hold; say
+		// which (PR #618 review, finding 5).
+		if piece != "" {
+			return "", "", fmt.Errorf("you do not hold %s — name a piece you hold with --piece, a scope with --scope <kind>:<external-id>, or --all for the system's findings", piece)
+		}
+		return "", "", fmt.Errorf("you hold no current piece — name a scope with --scope <kind>:<external-id>, or --all for the system's findings")
+	}
+	return kind, ext, nil
 }
 
 // findingRound is one review round: the findings filed under one review
@@ -388,6 +464,7 @@ func init() {
 	processFindingsAddCmd.Flags().StringVar(&findingsAggregate, "aggregate", "", "the packet aggregate fingerprint it was raised against")
 
 	processFindingsListCmd.Flags().StringVar(&findingsScope, "scope", "", "the scope as <kind>:<external-id>")
+	processFindingsListCmd.Flags().BoolVar(&findingsAll, "all", false, "the whole system's findings, not only the piece you hold")
 
 	processFindingsDispositionCmd.Flags().StringVar(&findingsExternalID, "id", "", "the finding external id")
 	processFindingsDispositionCmd.Flags().StringVar(&findingsDisposition, "disposition", "", "OPEN|RESOLVED|DEFERRED|REJECTED")

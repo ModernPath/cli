@@ -93,6 +93,20 @@ type credentialError struct {
 func (e credentialError) Error() string { return e.err.Error() }
 func (e credentialError) Unwrap() error { return e.err }
 
+// bindingError marks a workspace that names no system: `factory connect` or
+// `init` fixes it, re-running the failing command does not. Callers that can
+// degrade rather than exit — `feedback`, whose whole job is not to lose the
+// line — ask errors.As for it (REQ-CROSS-434; BACKLOG-TOOL-74).
+type bindingError struct {
+	err error
+	// why is the short reason a caller that degrades names; empty means the
+	// workspace names no system.
+	why string
+}
+
+func (e bindingError) Error() string { return e.err.Error() }
+func (e bindingError) Unwrap() error { return e.err }
+
 // credentialRejected turns a 401 into a statement about the credential. A bare
 // `server 401` is the shape of a rejected request; the reader should not have
 // to infer that the request itself was fine and the credential was not. A 401
@@ -130,7 +144,7 @@ func authRepairCommand(apiURL string) string {
 func factoryBindingLoad() (*factoryEnv, error) {
 	cfgDir, err := config.FindConfigDir()
 	if err != nil || cfgDir == "" {
-		return nil, fmt.Errorf("not connected — run 'modernpath factory connect --system <id>' in the workspace root")
+		return nil, bindingError{err: fmt.Errorf("not connected — run 'modernpath factory connect --system <id>' in the workspace root")}
 	}
 
 	cfg, err := config.ReadConfig()
@@ -138,7 +152,7 @@ func factoryBindingLoad() (*factoryEnv, error) {
 		return nil, err
 	}
 	if cfg.SystemID == 0 {
-		return nil, fmt.Errorf("no system_id in %s/config.json — run 'modernpath factory connect --system <id>'", config.ConfigDir)
+		return nil, bindingError{err: fmt.Errorf("no system_id in %s/config.json — run 'modernpath factory connect --system <id>'", config.ConfigDir)}
 	}
 
 	env := &factoryEnv{
@@ -159,7 +173,12 @@ func factoryBindingLoad() (*factoryEnv, error) {
 // verbs (`docs sync`, `search`, `ask`, `read-doc`, `read-file`) stop here
 // (REQ-CROSS-405): the same refusals, the same repair command, before any
 // request.
-func factoryCredentialLoad() (*factoryEnv, error) {
+func factoryCredentialLoad() (*factoryEnv, error) { return credentialLoad(true) }
+
+// credentialLoad is factoryCredentialLoad with the refresh made optional. A
+// caller that cannot wait for a refresh to finish passes false: the stored
+// token is used while it is valid and refused once expired (REQ-CROSS-405).
+func credentialLoad(refresh bool) (*factoryEnv, error) {
 	env, err := factoryBindingLoad()
 	if err != nil {
 		return nil, err
@@ -182,9 +201,13 @@ func factoryCredentialLoad() (*factoryEnv, error) {
 	}
 	// REQ-CROSS-389: refresh, warn or refuse on the credential's own expiry
 	// before anything leaves the process — the reachability probe included.
-	auth, err = ensureFreshCredential(env, auth, time.Now())
-	if err != nil {
-		return nil, err
+	if refresh {
+		auth, err = ensureFreshCredential(env, auth, time.Now())
+		if err != nil {
+			return nil, err
+		}
+	} else if expiry := storedExpiry(auth); !expiry.IsZero() && !expiry.After(time.Now()) {
+		return nil, expiredCredential(expiry, authRepairCommand(env.APIURL))
 	}
 	env.token = auth.Token
 	env.tokenExpiry = storedExpiry(auth)
@@ -196,14 +219,22 @@ func factoryCredentialLoad() (*factoryEnv, error) {
 // credential statements, but an unbound workspace is told to run `init` —
 // the on-ramp — rather than a `factory connect` with a system id a fresh
 // checkout does not have (PR #487 review, finding 8).
-func apiClientCredentialLoad() (*factoryEnv, error) {
+func apiClientCredentialLoad() (*factoryEnv, error) { return apiClientLoad(true) }
+
+// apiClientLoadWithoutRefresh is apiClientCredentialLoad for a caller that
+// returns at a deadline — the context hook. Its process exits then, and a
+// refresh cut off after the issuer rotated the refresh token, but before
+// auth.json was written, would leave a dead refresh token on disk.
+func apiClientLoadWithoutRefresh() (*factoryEnv, error) { return apiClientLoad(false) }
+
+func apiClientLoad(refresh bool) (*factoryEnv, error) {
 	if cfgDir, err := config.FindConfigDir(); err != nil || cfgDir == "" {
 		return nil, fmt.Errorf("no system is bound here — run 'modernpath init' in the repository root (or 'modernpath factory connect --system <id>' for a system you already know)")
 	}
 	if cfg, err := config.ReadConfig(); err == nil && cfg.SystemID == 0 {
 		return nil, fmt.Errorf("no system is bound in %s/config.json — run 'modernpath init' (or 'modernpath factory connect --system <id>' for a system you already know)", config.ConfigDir)
 	}
-	return factoryCredentialLoad()
+	return credentialLoad(refresh)
 }
 
 func factoryEnvLoad() (*factoryEnv, error) {
@@ -219,7 +250,9 @@ func factoryEnvLoad() (*factoryEnv, error) {
 	// unreachable," and a transient outage must never block every command.
 	if systems, serr := listSystemsFn(env.APIURL, env.token); serr == nil {
 		if !systemReachable(systems, env.SystemID) {
-			return nil, fmt.Errorf("%s", systemMismatchMessage(env.SystemID, systems))
+			// A binding the credential cannot reach is fixed by `factory
+			// connect`, like no binding at all (REQ-CROSS-434).
+			return nil, bindingError{err: fmt.Errorf("%s", systemMismatchMessage(env.SystemID, systems)), why: "the bound system is not reachable"}
 		}
 	}
 
@@ -1457,7 +1490,10 @@ func factoryGateList(env *factoryEnv, state, kind string, jsonOut bool, out, err
 }
 
 // renderGate is the by-id detail: state and applied state, then the answer,
-// chosen options, source and answerer when the gate carries them.
+// chosen options, source and answerer when the gate carries them. A trace
+// gate (REQ-CROSS-425) adds its verdict, evaluator, recording revision, pin
+// and class, scope, purpose, transition and prerequisites; -v prints any
+// gate's body after its fields.
 func renderGate(out io.Writer, g map[string]any) {
 	fmt.Fprintf(out, "\n%s  [%s]  %s\n", str(g, "external_id"), str(g, "kind"), str(g, "title"))
 	fmt.Fprintf(out, "  state: %s", str(g, "state"))
@@ -1481,6 +1517,78 @@ func renderGate(out io.Writer, g map[string]any) {
 			fmt.Fprintf(out, "  answered by %s\n", who)
 		}
 	}
+	if isTraceGate(g) {
+		fmt.Fprintf(out, "  verdict: %s\n", fieldOr(g, "verdict", "—"))
+		if who := gateEvaluator(g); who != "" {
+			if at := str(g, "evaluated_at"); at != "" {
+				fmt.Fprintf(out, "  evaluated by %s at %s\n", who, at)
+			} else {
+				fmt.Fprintf(out, "  evaluated by %s\n", who)
+			}
+		}
+		// application_revision is the recording HEAD, not a test run.
+		fmt.Fprintf(out, "  recorded at: %s\n", fieldOr(g, "application_revision", "—"))
+		fmt.Fprintf(out, "  pinned to: %s\n", gatePin(g))
+		fmt.Fprintf(out, "  scope: %s\n", idListOr(g, "exact_scope", "—"))
+		fmt.Fprintf(out, "  purpose: %s\n", fieldOr(g, "purpose", "—"))
+		fmt.Fprintf(out, "  transition: %s\n", fieldOr(g, "transition", "—"))
+		fmt.Fprintf(out, "  prerequisites: %s\n", idListOr(g, "prerequisite_gate_external_ids", "none"))
+		if _, has := g["predecessor_external_id"]; has {
+			fmt.Fprintf(out, "  predecessor: %s\n", servedOr(g, "predecessor_external_id", "—"))
+		}
+		if _, has := g["successor_external_id"]; has {
+			fmt.Fprintf(out, "  successor: %s\n", servedOr(g, "successor_external_id", "—"))
+		}
+	}
+	if verbose {
+		if body := str(g, "body_md"); body != "" {
+			fmt.Fprintf(out, "\n%s\n", strings.TrimRight(body, "\n"))
+		}
+	}
+}
+
+// isTraceGate: the store's gate_class, or a verdict on a gate that predates it.
+func isTraceGate(g map[string]any) bool {
+	return str(g, "gate_class") == "trace" || str(g, "verdict") != ""
+}
+
+// gateEvaluator mirrors gateAnswerer over the evaluator quartet.
+func gateEvaluator(g map[string]any) string {
+	if n := str(g, "evaluator_name"); n != "" {
+		return n
+	}
+	kind := str(g, "evaluator_kind")
+	if slug := str(g, "evaluator_agent_slug"); slug != "" {
+		if kind != "" {
+			return kind + " " + slug
+		}
+		return slug
+	}
+	if id := numericID(g["evaluator_user_id"]); id != "" {
+		return "user #" + id
+	}
+	return kind
+}
+
+// gatePin names the fingerprint a trace is pinned to and what that
+// fingerprint is: a packet aggregate for the cold-review, entry and
+// completion purposes, the item's content hash for lower and upper.
+func gatePin(g map[string]any) string {
+	fp := str(g, "evaluated_scope_fingerprint")
+	if fp == "" {
+		return "—"
+	}
+	return fp + " (" + gatePinClass(str(g, "purpose")) + ")"
+}
+
+func gatePinClass(purpose string) string {
+	switch purpose {
+	case "cold_review", "entry", "completion":
+		return "packet aggregate"
+	case "lower", "upper":
+		return "content hash"
+	}
+	return "fingerprint"
 }
 
 // renderGateHistory is one line-group in a --state listing: the gate, its stored
@@ -1522,7 +1630,13 @@ func gateAnswerer(g map[string]any) string {
 // format it as a base-10 integer — no trailing ".0", no scientific notation for
 // a large id — keeping the identity visible instead of collapsing to "human".
 func answererUserID(g map[string]any) string {
-	switch v := g["answerer_user_id"].(type) {
+	return numericID(g["answerer_user_id"])
+}
+
+// numericID formats a served numeric user id (REQ-CROSS-425 reuses it for the
+// evaluator); an absent or non-numeric value is "".
+func numericID(raw any) string {
+	switch v := raw.(type) {
 	case float64:
 		return strconv.FormatInt(int64(v), 10)
 	case json.Number:

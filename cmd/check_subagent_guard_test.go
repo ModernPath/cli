@@ -63,6 +63,30 @@ func TestSubagentStoreWriteIsDeniedThroughTheGateAdapter(t *testing.T) {
 		"echo $(modernpath author trace T)",
 		"(modernpath process reconcile --apply)",
 		"modernpath process reconcile",
+		// BACKLOG-TOOL-6/105: a --help word inside quotes is prose the write
+		// carries, not a help request — the invocation still writes.
+		`modernpath author backlog --title "x --help"`,
+		`modernpath author backlog --title 'see --help'`,
+		"modernpath author gate X --title t",
+		// PR #624 cold review, BLOCKER: the help word only ever excuses the
+		// invocation that carries it. A real write in one simple command and a
+		// help call in another is still a write, whatever joins them — and a
+		// help call inside a command substitution excuses nothing at all.
+		"modernpath author trace T --verdict PASS && modernpath author --help",
+		"modernpath author gate X --title t; modernpath author --help",
+		"modernpath author gate X --title t\nmodernpath author --help",
+		"modernpath author gate X --title t | tee log; modernpath author -h",
+		`modernpath author trace T --body "$(modernpath author --help)"`,
+		"modernpath author --help && modernpath author trace T --verdict PASS",
+		// PR #624 cold review round 2: pflag takes the next argv as a flag's
+		// value even when it starts with a dash, so these set a field to "-h"
+		// or "--help" and write. They are not help requests.
+		"modernpath author gate X --title -h",
+		"modernpath author gate X --title --help",
+		"modernpath author update REQ-1 --detail -h --expected-fingerprint abc --source USER:x",
+		// A separator inside a quoted value is data: the value cannot split the
+		// command into a harmless-looking second half.
+		`modernpath author gate --title "a; b" X`,
 	} {
 		out := processGateHookPayload(hookPayload(sub, cmd))
 		if !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "abc123") {
@@ -90,6 +114,29 @@ func TestSubagentReadsAndMainSessionWritesPass(t *testing.T) {
 		"modernpath process next && grep 'modernpath author' docs/x.md",
 		"go test ./...",
 		"git commit -m 'modernpath author trace'",
+		// BACKLOG-TOOL-6/105: reading a write verb's own help writes nothing,
+		// so the guard must not deny a delegated pass its documentation.
+		"modernpath author gate --help",
+		"modernpath author create -h",
+		"modernpath author --help",
+		"modernpath feedback --help",
+		"modernpath working-set select --help",
+		"modernpath author demote REQ-1 --help",
+		"modernpath help author gate",
+		// PR #624 cold review: Go's $ is end-of-text, so a trailing newline —
+		// what a heredoc or an editor-composed command carries — must not
+		// re-deny a genuine help call.
+		"modernpath author gate --help\n",
+		"modernpath author gate --help && echo done",
+		"modernpath author --help | head -40",
+		`sh -c "modernpath author gate --help"`,
+		// PR #624 cold review round 2: the help word is still a help word when
+		// what precedes it is the verb, a positional id, or the binary itself.
+		"modernpath author gate X --help",
+		// Verification pass: a flag that carries its value inline swallows
+		// nothing, so the help word after it is a help word.
+		"modernpath author gate X --title=t --help",
+		"modernpath author update REQ-1 --detail=x -h",
 	} {
 		if out := processGateHookPayload(hookPayload(sub, cmd)); out != "{}" {
 			t.Errorf("subagent read %q was not passed through: %s", cmd, out)

@@ -57,7 +57,8 @@ func TestBacklogFoldedFactsLandTyped(t *testing.T) {
 	if routed["raised_by"] != "CLI verification run" {
 		t.Fatalf("raised_by = %v", routed["raised_by"])
 	}
-	if routed["disposition"] != "routed" || routed["disposition_ref"] != "REQ-CROSS-211" {
+	// REQ-CROSS-423: the extractor emits the canonical disposition words.
+	if routed["disposition"] != "ROUTED to REQ-CROSS-211" || routed["disposition_ref"] != "REQ-CROSS-211" {
 		t.Fatalf("disposition = %v/%v", routed["disposition"], routed["disposition_ref"])
 	}
 	affected, _ := routed["affected_external_ids"].([]any)
@@ -105,7 +106,7 @@ func TestGapRegisterRowsUnbundle(t *testing.T) {
 	if gap["why_unrouted"] != "Follow-up slice" {
 		t.Fatalf("why_unrouted = %v", gap["why_unrouted"])
 	}
-	if gap["disposition"] != "deferred" || gap["disposition_ref"] != "REQ-KNW-105" {
+	if gap["disposition"] != "DEFERRED" || gap["disposition_ref"] != "REQ-KNW-105" {
 		t.Fatalf("disposition = %v/%v", gap["disposition"], gap["disposition_ref"])
 	}
 }
@@ -116,4 +117,24 @@ func keysOf(m map[string]map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// REQ-CROSS-423 (USER:2026-09-21 D2): a ledger gap is a missing record — a
+// specification gap — and the extractor says so in the canonical word.
+func TestLedgerGapIsASpecificationGap(t *testing.T) {
+	rows := ParseLedgerGaps("requirements/knowledge.md", `## Requirements
+
+### GAP-KNW-004 Pattern adoption has no record
+
+The adoption is observed in code and recorded nowhere.
+`)
+	if len(rows) != 1 {
+		t.Fatalf("want one ledger gap, got %d", len(rows))
+	}
+	if rows[0].ExternalID != "GAP-KNW-004" || rows[0].Kind != "gap" {
+		t.Fatalf("row = %+v", rows[0])
+	}
+	if rows[0].GapKind != "specification" {
+		t.Fatalf("gap_kind = %q, want specification", rows[0].GapKind)
+	}
 }

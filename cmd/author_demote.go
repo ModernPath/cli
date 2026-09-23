@@ -4,8 +4,9 @@ package cmd
 // a delivered item. It opens the demotion gate PROCESS.md §Attributable
 // demotions names (purpose demotion, the destination by basis, the human's
 // USER: reason, no prerequisite trace) and, after the human's answer, applies
-// it: the server runs the invalidation, retires the item's own entry, and
-// moves the user requirement and the epic that follow on the same gate
+// it: the server runs the invalidation, retires the item's own entry on a
+// demotion to PROPOSED (a defect keeps it, REQ-CROSS-435), and moves the user
+// requirement and the epic that follow on the same gate
 // (REQ-CROSS-418/419). The dedicated flag set never rebinds `author advance`'s
 // --to (author_advance_flags_test.go documents the hazard).
 

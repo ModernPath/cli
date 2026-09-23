@@ -51,3 +51,37 @@ func headerLine(body, key string) string {
 	}
 	return ""
 }
+
+// --- REQ-CROSS-220: --recon-revision on `working-set select` (BACKLOG-TOOL-5) ---
+//
+// The column exists (work_selections.recon_revision), the read serves it
+// (sync_api_controller work_selection_json) and the status render already
+// prints "Reconnaissance revision" — but no verb wrote it, so the field a
+// selection freezes its reconnaissance at could only ever read "—".
+
+func TestSelectPostsTheReconRevision(t *testing.T) {
+	fx := &wsFixture{}
+	cobraWorkspace(t, wsServe(t, fx))
+
+	if _, err := runRoot(t, "working-set", "select", "EPIC-R",
+		"--phase", "plan", "--recon-revision", "54611fd52"); err != nil {
+		t.Fatalf("working-set select --recon-revision: %v", err)
+	}
+	if fx.lastSelectPost["recon_revision"] != "54611fd52" {
+		t.Fatalf("the revision must post as recon_revision, got %v", fx.lastSelectPost["recon_revision"])
+	}
+}
+
+// Unnamed, the key is not posted: an advance must not wipe the stored value
+// (Core.WorkSelections.advance_attrs drops nils, so an absent key is kept).
+func TestSelectWithoutReconRevisionPostsNoKey(t *testing.T) {
+	fx := &wsFixture{}
+	cobraWorkspace(t, wsServe(t, fx))
+
+	if _, err := runRoot(t, "working-set", "select", "EPIC-R", "--phase", "plan"); err != nil {
+		t.Fatalf("working-set select: %v", err)
+	}
+	if _, present := fx.lastSelectPost["recon_revision"]; present {
+		t.Fatalf("an unnamed revision must post no key, got %v", fx.lastSelectPost)
+	}
+}

@@ -242,6 +242,18 @@ func processNext(env *factoryEnv) error {
 			printFingerprints(d.PacketFingerprint, d.ProcessRevision)
 		default:
 			fmt.Printf("no route derived — %s\n", d.DerivedReason)
+			// A reason with a known remedy names it here; the others print the
+			// reason alone, because a wrong remedy is worse than none. The
+			// entry origin is the MEMBER's own fact, so the remedy names the
+			// members: `process reenter` resolves the entry gate of the id it
+			// is given, and the scope's own entry is a different gate.
+			if d.DerivedReason == "entry_origin_unavailable" {
+				if ids := membersWithoutLiveEntry(d.Facts); len(ids) > 0 {
+					fmt.Printf("remedy:         no live entry origin (retired by a demotion, or never entered): %s — `process reenter <member-id>` for each, at a fresh cold review and a human approval\n", strings.Join(ids, ", "))
+				} else {
+					fmt.Println("remedy:         a member whose evidence is not current has no live entry origin (retired by a demotion, or never entered) — `process reenter <member-id>` re-establishes that member's entry, at a fresh cold review and a human approval; `process check --phase build` names the member")
+				}
+			}
 			printLane(d.Lane)
 			printFingerprints(d.PacketFingerprint, d.ProcessRevision)
 		}
@@ -290,12 +302,30 @@ var processReconcileCmd = &cobra.Command{
 	Use:   "reconcile",
 	Short: "Apply the legal automatic lifecycle transitions from current trace proofs (--apply to write)",
 	Long: `Compute — and with --apply, apply — the automatic transitions the current
-proofs allow: TODO -> IN_PROGRESS from a recorded RED, IN_PROGRESS ->
-IN_REVIEW from a passing lower trace at the requirement's content fingerprint
-plus a passing result, and the epic's own step once every member is reviewed
-and its traces pass. It never applies a human-gated transition (entry,
-completion) and never creates evidence or a trace; when it reports an unmet
-transition, the FAIL line names what is missing.
+proofs allow. The proofs differ by kind.
+
+A SYSTEM requirement is entry-gated. TODO -> IN_PROGRESS needs BOTH an
+applied entry gate at the current packet aggregate AND a recorded RED;
+IN_PROGRESS -> IN_REVIEW needs that same live entry plus a passing lower
+trace at the requirement's content fingerprint. An entry approval pinned to
+a superseded aggregate holds the SR where it is however fresh the proofs
+are — clear it with process reenter <SR> (or process reapply-entry when the
+aggregate moved for an immaterial reason). One exception: an SR reopened by
+an applied defect demotion that no entry gate names at all (an epic entered
+through a legacy approval gate) returns to IN_REVIEW on its RED and passing
+lower trace alone.
+
+A USER requirement has no entry gate of its own. It enters on its own
+recorded RED OR on a required SR that is already IN_PROGRESS, and reaches
+IN_REVIEW when every required SR is reviewed AND its upper trace passes.
+
+The epic takes two steps of its own: TODO or READY -> IN_PROGRESS as soon as
+ANY member is IN_PROGRESS, and IN_PROGRESS -> IN_REVIEW once EVERY member is
+reviewed and its applicable traces pass.
+
+It never applies a human-gated transition (entry, completion) and
+never creates evidence or a trace; when it reports an unmet transition, the
+FAIL line names what is missing.
 
 Run without --apply first: "nothing to do" can mean the proofs are not there
 yet, or that the read resolved a different scope — with several current
@@ -632,7 +662,7 @@ func init() {
 	// REQ-CROSS-345: the navigation reads are caller-scoped; --piece names which
 	// of the caller's own current pieces to resolve when they hold several.
 	processCmd.PersistentFlags().StringVar(&processPiece, "piece", "",
-		"when you hold several current selections, name which one process next/check/reconcile resolves")
+		"when you hold several current selections, --piece names which one process next, check, reconcile, advance, complete and findings list resolve")
 	processReconcileCmd.Flags().BoolVar(&processReconcileApply, "apply", false, "apply the transitions (default: dry run)")
 	processSupersedeCmd.Flags().StringVar(&processSupersedeReason, "reason", "", "why the item's trace is superseded")
 	processSupersedeCmd.Flags().StringVar(&processSupersedeSource, "source", "", "attributable USER: source for a scoped --apply, e.g. USER:2026-09-16:reverse-§061.6")
@@ -713,6 +743,49 @@ func checkReasonLines(c phaseCheck, facts *deliveryFacts) []string {
 		if c.State == "FAIL" && len(facts.ColdReview.OpenFindingIDs) > 0 {
 			return []string{"open or deferred material findings: " + strings.Join(facts.ColdReview.OpenFindingIDs, ", ")}
 		}
+	case "member_evidence_current":
+		// The build and verify check. It is the members' own fact, so the
+		// reason names every member that is not current with the proofs
+		// reconcile reads — without them the check said only that something
+		// was not current, and the member had to be found by hand.
+		var lines []string
+		for _, m := range facts.Members {
+			if m.EvidenceState == "passing" {
+				continue
+			}
+			line := fmt.Sprintf("%s · %s · evidence %s · %s · %s",
+				m.ExternalID, presentPin(m.Status), presentPin(m.EvidenceState),
+				factWord(m.RedRecorded, "RED recorded", "no RED recorded"),
+				factWord(m.LowerTracePass, "lower trace passes", "no passing lower trace"))
+			if m.DefectReopenWithoutEntry {
+				line += " · reopened by a defect with no entry — its lower trace returns it to review"
+			} else if m.EntryOrigin == nil {
+				// The entry origin is this member's own fact, so the remedy
+				// names this member: `process reenter` resolves the entry gate
+				// of the id it is given.
+				line += fmt.Sprintf(" · no live entry origin, retired by a demotion or never entered (`process reenter %s`)", m.ExternalID)
+			}
+			lines = append(lines, line)
+		}
+		return lines
+	case "entry_applied":
+		if c.State != "FAIL" {
+			return nil
+		}
+		// Not "at the current aggregate": a live anchor counts whatever its
+		// pin, so the fact the check reports is that no applied entry gate
+		// counts as live for this scope.
+		lines := []string{fmt.Sprintf("no live applied entry gate for %s", facts.Scope.ExternalID)}
+		var stranded []string
+		for _, m := range facts.Members {
+			if m.EntryOrigin == nil && !m.DefectReopenWithoutEntry {
+				stranded = append(stranded, fmt.Sprintf("%s (%s)", m.ExternalID, presentPin(m.Status)))
+			}
+		}
+		if len(stranded) > 0 {
+			lines = append(lines, "no live entry: "+strings.Join(stranded, ", "))
+		}
+		return lines
 	case "completion_gate":
 		cp := facts.Completion
 		switch c.State {
@@ -729,6 +802,37 @@ func checkReasonLines(c phaseCheck, facts *deliveryFacts) []string {
 		}
 	}
 	return nil
+}
+
+// membersWithoutLiveEntry names the members behind `entry_origin_unavailable`:
+// those whose evidence is NOT current and that carry no live applied entry. The
+// server's routing reads the same pair in that order, and the evidence half is
+// not optional — a member whose evidence passes is no blocker, and naming it
+// here would send a human into a re-entry gate for the wrong requirement. It is
+// a member fact, never the scope's.
+func membersWithoutLiveEntry(facts *deliveryFacts) []string {
+	if facts == nil {
+		return nil
+	}
+	var ids []string
+	for _, m := range facts.Members {
+		if m.EvidenceState == "passing" {
+			continue
+		}
+		if m.EntryOrigin == nil && !m.DefectReopenWithoutEntry {
+			ids = append(ids, m.ExternalID)
+		}
+	}
+	return ids
+}
+
+// factWord renders a served boolean fact as the words the reader needs, so a
+// reason line reads as a sentence instead of "red_recorded=false".
+func factWord(ok bool, yes, no string) string {
+	if ok {
+		return yes
+	}
+	return no
 }
 
 // independenceSentence says which arm of the independence rule the review

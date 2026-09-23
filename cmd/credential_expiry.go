@@ -60,10 +60,7 @@ func ensureFreshCredential(env *factoryEnv, auth *config.Auth, now time.Time) (*
 	}
 
 	if !expiry.After(now) {
-		return nil, credentialError{
-			err:    fmt.Errorf("the session token expired at %s and the server will reject it — run '%s'", expiry.Format(time.RFC3339), repair),
-			repair: repair,
-		}
+		return nil, expiredCredential(expiry, repair)
 	}
 	if noticeOnce(env.Root, "expiry-warning:"+credentialKey(auth.Token)) {
 		why := ""
@@ -74,6 +71,15 @@ func ensureFreshCredential(env *factoryEnv, auth *config.Auth, now time.Time) (*
 			expiry.Sub(now).Round(time.Second), expiry.Format(time.RFC3339), repair, why)
 	}
 	return auth, nil
+}
+
+// expiredCredential is the refusal for a token past its expiry, sent before
+// any request so the server never answers it with a bare 401.
+func expiredCredential(expiry time.Time, repair string) error {
+	return credentialError{
+		err:    fmt.Errorf("the session token expired at %s and the server will reject it — run '%s'", expiry.Format(time.RFC3339), repair),
+		repair: repair,
+	}
 }
 
 // storedExpiry is the credential's known expiry: the recorded expires_at,

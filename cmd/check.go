@@ -180,10 +180,16 @@ func commitGated(cmd string) bool {
 	return executableMatches(cmd, 0, gitCommitCommand)
 }
 
+// commandMatcher is what the scanner applies to a span a shell would execute.
+// *regexp.Regexp satisfies it; the subagent store-write guard passes a matcher
+// of its own, because its verdict needs the whole simple command and not a
+// single regex hit anywhere in the span.
+type commandMatcher interface{ MatchString(string) bool }
+
 // executableMatches reports whether re matches a span of cmd a shell would
 // execute. It is the commit gate's scanner, shared with the subagent store-write
 // guard: the same wrappers, chains, quotes and substitutions apply to both.
-func executableMatches(cmd string, depth int, re *regexp.Regexp) bool {
+func executableMatches(cmd string, depth int, re commandMatcher) bool {
 	if depth > 8 {
 		return re.MatchString(cmd)
 	}
@@ -206,7 +212,7 @@ var (
 // returns (gated, classified); classified=false means the walk met something
 // it cannot be sure about — an unterminated quote or substitution — and the
 // caller keeps the regex's deny.
-func scanForExecutable(cmd string, depth int, re *regexp.Regexp) (bool, bool) {
+func scanForExecutable(cmd string, depth int, re commandMatcher) (bool, bool) {
 	var stripped, cur strings.Builder
 	var tokens []string // the current simple command's completed words
 	flush := func() {
@@ -335,7 +341,7 @@ func scanForExecutable(cmd string, depth int, re *regexp.Regexp) (bool, bool) {
 
 // scanSubstitutions re-scans what a double-quoted span still executes:
 // $( … ) and backticks run whether or not they are quoted.
-func scanSubstitutions(content string, depth int, re *regexp.Regexp) (bool, bool) {
+func scanSubstitutions(content string, depth int, re commandMatcher) (bool, bool) {
 	for i := 0; i < len(content); i++ {
 		switch {
 		case content[i] == '\\' && i+1 < len(content):

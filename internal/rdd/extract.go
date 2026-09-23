@@ -110,11 +110,11 @@ type BacklogRow struct {
 	// REQ-CROSS-251: the folded facts, typed. Empty = the row states none.
 	RaisedAt       string // YYYY-MM-DD from the title's provenance parenthetical
 	RaisedBy       string
-	Disposition    string // routed | deferred
+	Disposition    string // OPEN | DEFERRED | ROUTED to <id> | … (the store's words)
 	DispositionRef string
 	CandidateRoute string
 	WhyUnrouted    string
-	GapKind        string // capability (register) | ledger (### GAP block)
+	GapKind        string // capability (register) | specification (### GAP block)
 	AffectedIDs    []string
 	RawBody        string // the row verbatim — the split is a transform, not a loss
 }
@@ -779,8 +779,10 @@ func ParseLedgerGaps(sourcePath, content string) []BacklogRow {
 			ExternalID: m[1],
 			Kind:       "gap",
 			// REQ-CROSS-251: a ledger gap is a different gap kind from the
-			// register's capability rows — the unbundled column says which
-			GapKind:    "ledger",
+			// register's capability rows — the unbundled column says which.
+			// REQ-CROSS-423 (USER:2026-09-21 D2): a ledger gap is a missing
+			// record, i.e. a specification gap — the store's canonical word.
+			GapKind:    "specification",
 			Title:      strip(strings.TrimPrefix(strings.TrimSpace(lines[i]), "###")),
 			NotesMD:    strings.TrimSpace(strings.Join(body, "\n")),
 			SourcePath: sourcePath,
@@ -888,7 +890,9 @@ func ParseBacklogRows(sourcePath, content, kind string) []BacklogRow {
 		switch kind {
 		case "backlog":
 			if ref := firstIDMention(row.Route); ref != "" {
-				row.Disposition = "routed"
+				// REQ-CROSS-423: the canonical disposition words, as the
+				// store's changeset states them.
+				row.Disposition = "ROUTED to " + ref
 				row.DispositionRef = ref
 			} else if v := dashless(strip(row.Route)); v != "" {
 				row.CandidateRoute = v
@@ -904,7 +908,7 @@ func ParseBacklogRows(sourcePath, content, kind string) []BacklogRow {
 			}
 			if len(fields) > 4 {
 				if ref := firstIDMention(fields[4]); ref != "" {
-					row.Disposition = "deferred"
+					row.Disposition = "DEFERRED"
 					row.DispositionRef = ref
 				}
 			}

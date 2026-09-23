@@ -223,9 +223,31 @@ type wsItem struct {
 // items so `working-set pull` resolves either. Indexing only data.requirements
 // left every UR (a DERIVED candidate UR included) reported unknown.
 func wsIndex(env *factoryEnv, includeCandidates bool, preGates []any) (map[string]wsItem, []any, error) {
+	index, gates, _, err := wsIndexSurfaces(env, includeCandidates, preGates)
+	return index, gates, err
+}
+
+// wsSurfaces is what the index searched: the four read surfaces, and the
+// reason the backlog one could not be read when it failed (REQ-CROSS-430).
+// The pull continues over the other three, and a miss says so.
+type wsSurfaces struct {
+	backlogErr error
+}
+
+// searched renders the surfaces for a miss line, naming an unreadable one.
+func (s wsSurfaces) searched() string {
+	backlog := "backlog"
+	if s.backlogErr != nil {
+		backlog = fmt.Sprintf("backlog (unreadable: %v)", s.backlogErr)
+	}
+	return "searched " + backlog + ", epics, requirements, gates"
+}
+
+func wsIndexSurfaces(env *factoryEnv, includeCandidates bool, preGates []any) (map[string]wsItem, []any, wsSurfaces, error) {
+	var surfaces wsSurfaces
 	epics, err := fetchList(env, fmt.Sprintf("/api/v1/sync/epics?system_id=%d", env.SystemID), "epics")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, surfaces, err
 	}
 	reqPath := fmt.Sprintf("/api/v1/sync/requirements?system_id=%d", env.SystemID)
 	if includeCandidates {
@@ -233,7 +255,7 @@ func wsIndex(env *factoryEnv, includeCandidates bool, preGates []any) (map[strin
 	}
 	requirements, userRequirements, err := fetchRequirementLists(env, reqPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, surfaces, err
 	}
 	// REQ-CROSS-219: pull and check read gate HISTORY (state=all, the store's
 	// vocabulary). The your-move projection deliberately keeps the default
@@ -242,13 +264,16 @@ func wsIndex(env *factoryEnv, includeCandidates bool, preGates []any) (map[strin
 	if gates == nil {
 		gates, err = fetchList(env, fmt.Sprintf("/api/v1/sync/gates?system_id=%d&state=all", env.SystemID), "gates")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, surfaces, err
 		}
 	}
 	// REQ-CROSS-393 (EPIC-CLI-019): backlog, gap and tooling records are
 	// pullable by id too. A server without the read (404) serves none.
+	// REQ-CROSS-430: a failed backlog read is kept and reported on a miss,
+	// never swallowed into "unknown external id".
 	backlog, err := fetchList(env, fmt.Sprintf("/api/v1/sync/backlog?system_id=%d", env.SystemID), "backlog")
 	if err != nil {
+		surfaces.backlogErr = err
 		backlog = nil
 	}
 	index := map[string]wsItem{}
@@ -282,7 +307,7 @@ func wsIndex(env *factoryEnv, includeCandidates bool, preGates []any) (map[strin
 			}
 		}
 	}
-	return index, gates, nil
+	return index, gates, surfaces, nil
 }
 
 func fieldOr(m map[string]any, key, marker string) string {
@@ -569,16 +594,49 @@ func writeGateBlock(b *strings.Builder, gm map[string]any) {
 	// outright, and it is the value the flip and the advance both reference:
 	// telling the reader to go find one they were already holding was the
 	// worst of the three.
-	fmt.Fprintf(b, "- **Prerequisites:** %s\n", idListOr(gm, "prerequisite_gate_external_ids", notServed))
+	// REQ-CROSS-425: a trace gate carries its verdict, evaluator, recording
+	// revision, pin and class, scope, purpose and transition.
+	if isTraceGate(gm) {
+		fmt.Fprintf(b, "- **Verdict:** %s\n", fieldOr(gm, "verdict", "—"))
+		who := gateEvaluator(gm)
+		if at := str(gm, "evaluated_at"); who != "" && at != "" {
+			who += " at " + at
+		}
+		fmt.Fprintf(b, "- **Evaluated by:** %s\n", orDash(who))
+		fmt.Fprintf(b, "- **Recorded at:** %s\n", fieldOr(gm, "application_revision", "—"))
+		fmt.Fprintf(b, "- **Pinned to:** %s\n", gatePin(gm))
+		fmt.Fprintf(b, "- **Scope:** %s\n", idListOr(gm, "exact_scope", "—"))
+		fmt.Fprintf(b, "- **Purpose / transition:** %s / %s\n", fieldOr(gm, "purpose", "—"), fieldOr(gm, "transition", "—"))
+	}
+	// A served empty list is an absence — `none` — not an unserved field.
+	fmt.Fprintf(b, "- **Prerequisites:** %s\n", prerequisitesOr(gm))
 	fmt.Fprintf(b, "- **Fingerprint:** %s\n", servedOr(gm, "fingerprint", notServed))
 	fmt.Fprintf(b, "- **Application:** %s\n", fieldOr(gm, "applied_state", notServed))
 	fmt.Fprintf(b, "- **Predecessor / successor:** %s\n", gateLineage(gm))
 }
 
-// gateAssociated ties a gate to an item by holds ∪ id-embedding — substring
-// alone misses hold-attached gates (the RQ-268-holds-REQ-PLN-043 pattern),
-// and an UNBOUNDED substring absorbs prefix-id neighbors: RQ-15 must not
-// claim RQ-150's gates.
+func prerequisitesOr(gm map[string]any) string {
+	if _, served := gm["prerequisite_gate_external_ids"]; !served {
+		return notServed
+	}
+	return idListOr(gm, "prerequisite_gate_external_ids", "none")
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+// gateAssociated ties a gate to an item by holds ∪ exact scope ∪ id or title
+// embedding — substring alone misses hold-attached gates (the
+// RQ-268-holds-REQ-PLN-043 pattern), and an UNBOUNDED substring absorbs
+// prefix-id neighbors: RQ-15 must not claim RQ-150's gates. REQ-CROSS-427:
+// exact-scope membership and whole-token title embedding mirror how the
+// server associates a gate with a record (Core.Author.gate_names_record?/4),
+// so a member named only in an entry gate's scope, or a question that names
+// its subject only in its title, lists under that item's Gates.
 func gateAssociated(gate map[string]any, itemID string) bool {
 	if gid := str(gate, "external_id"); gid != "" && containsBoundedID(gid, itemID) {
 		return true
@@ -589,6 +647,14 @@ func gateAssociated(gate map[string]any, itemID string) bool {
 		if str(hm, "held_external_id") == itemID {
 			return true
 		}
+	}
+	for _, s := range stringSlice(gate["exact_scope"]) {
+		if s == itemID {
+			return true
+		}
+	}
+	if title := str(gate, "title"); title != "" && containsBoundedID(title, itemID) {
+		return true
 	}
 	return false
 }
@@ -873,7 +939,7 @@ func renderSelectionBody(payload map[string]any, src *releaseSource) string {
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
 				str(rm, "scope_external_id"), str(rm, "suspended_status"),
 				fieldOr(rm, "restored_to", "—"),
-				fieldOr(rm, "suspended_reason", "—"), fieldOr(rm, "owner", "—"),
+				fieldOr(rm, "suspended_reason", "—"), selectionHolder(rm),
 				fieldOr(rm, "suspended_target", "—"), fieldOr(rm, "waiting_on", "—"))
 		}
 	}
@@ -901,6 +967,35 @@ func renderSelectionBody(payload map[string]any, src *releaseSource) string {
 		b.WriteString(rows.String())
 	}
 	return b.String()
+}
+
+// selectionHolder is the Owner column of a parked row (REQ-CROSS-429): who
+// parked it, as the read serves the holder, or `claimable` when the read
+// says nobody is recorded — `working-set select <scope> --resume` takes it.
+// The free-text owner is a label, not a holder, and never stands in. A read
+// that predates the holder field falls back to that label.
+func selectionHolder(rm map[string]any) string {
+	holder, served := rm["holder"]
+	if !served {
+		return fieldOr(rm, "owner", "—")
+	}
+	hm, _ := holder.(map[string]any)
+	name, email := str(hm, "name"), str(hm, "email")
+	switch {
+	case name != "" && email != "":
+		return name + " (" + email + ")"
+	case name != "":
+		return name
+	case email != "":
+		return email
+	}
+	// A holder the member list could not name is still a holder — the server
+	// refuses a plain resume — so the id shows, never claimable (PR #618
+	// review, finding 2).
+	if id := numericID(hm["user_id"]); id != "" {
+		return "user #" + id
+	}
+	return "claimable"
 }
 
 // memberList renders the served members array, or an honest dash.
@@ -1316,7 +1411,25 @@ func scenariosFromPayload(m map[string]any) []string {
 
 // composeScenario renders a served acceptance criterion for display: its
 // statement when it has one, else the assembled GIVEN/WHEN/THEN triple.
+// REQ-CROSS-426: a line whose object carries an external_id is prefixed
+// `<external_id> (<kind>) — ` so it can be named in a finding or replaced
+// through `author update --criteria`. Every render — the flat pull, the
+// review render and the authoring pull — comes through here, and push
+// compares the authoring block against the store re-rendered through this
+// same function, so the prefix round-trips without touching the grammar.
 func composeScenario(v map[string]any) string {
+	line := composeScenarioText(v)
+	id := str(v, "external_id")
+	if id == "" {
+		return line
+	}
+	if kind := str(v, "kind"); kind != "" {
+		return id + " (" + kind + ") — " + line
+	}
+	return id + " — " + line
+}
+
+func composeScenarioText(v map[string]any) string {
 	if s := str(v, "statement"); s != "" {
 		return s
 	}
@@ -2203,12 +2316,20 @@ func workingSetSelect(env *factoryEnv, opts wsSelectOpts, now time.Time) error {
 		return fmt.Errorf("--lane %q: expected planned or defect", opts.lane)
 	}
 	payload := map[string]any{}
+	// REQ-CROSS-429: a claim is a write on a colleague's parked row — explicit,
+	// and only meaningful on a resume.
+	if opts.claim && !opts.resume {
+		return fmt.Errorf("--claim applies to --resume: `working-set select <scope> --resume --claim` takes over a colleague's parked piece")
+	}
 	switch {
 	case opts.resume:
 		if opts.scope == "" {
 			return fmt.Errorf("--resume needs the suspended scope's external id")
 		}
 		payload["resume"] = opts.scope
+		if opts.claim {
+			payload["claim"] = true
+		}
 	case opts.suspend:
 		suspend := map[string]any{"reason": opts.reason}
 		if opts.target != "" {
@@ -2232,6 +2353,12 @@ func workingSetSelect(env *factoryEnv, opts wsSelectOpts, now time.Time) error {
 			return fmt.Errorf("name the scope to select, or use --suspend/--resume/--put-down")
 		}
 		payload["scope_external_id"] = opts.scope
+		// REQ-CROSS-220/345: scope_kind rides every take. The server owns the
+		// state machine and picks the arm — advance in place, or insert — so only
+		// it knows which applies: advance_attrs discards the key, while the insert
+		// requires it. Withholding it on the strength of a held read taken moments
+		// earlier 422s whenever that read goes stale in between. What the caller
+		// sees is corrected at the other end, in selectionSummary (BACKLOG-TOOL-10).
 		payload["scope_kind"] = opts.kind
 		// REQ-CROSS-345: naming a piece to replace displaces that own current
 		// piece; unnamed, the take adds a holder beside any already held.
@@ -2244,6 +2371,11 @@ func workingSetSelect(env *factoryEnv, opts wsSelectOpts, now time.Time) error {
 		if opts.lane != "" {
 			// REQ-CROSS-392: sent only when given, so an older server sees no key.
 			payload["lane"] = opts.lane
+		}
+		if opts.reconRevision != "" {
+			// REQ-CROSS-220: unnamed, the key is absent — advance_attrs drops
+			// nils, so an advance keeps the revision the take froze.
+			payload["recon_revision"] = opts.reconRevision
 		}
 		if len(opts.members) > 0 {
 			payload["members"] = opts.members
@@ -2278,19 +2410,62 @@ func workingSetSelect(env *factoryEnv, opts wsSelectOpts, now time.Time) error {
 	if status != 200 {
 		return serverRefusal("", status, body)
 	}
-	printSuccess("selection recorded: %v", payload)
+	// REQ-CROSS-220/345: report what the STORE now holds. The old line printed
+	// the request payload as a Go map, so a phase advance on a single_sr piece
+	// read back "scope_kind:epic" — a value the client had defaulted and the
+	// server had discarded.
+	row, _ := dataOf(body)["selection"].(map[string]any)
+	printSuccess("selection recorded: %s", selectionSummary(row, opts))
 	return nil
+}
+
+// selectionSummary renders the stored work-selection row the POST answered
+// with. REQ-CROSS-220/345: a server that serves no row back is said so rather
+// than papered over with the request's own values (BACKLOG-TOOL-10).
+func selectionSummary(row map[string]any, opts wsSelectOpts) string {
+	named := firstNonEmpty(opts.scope, "the selection")
+	if len(row) == 0 {
+		return named + " (the server returned no row to read back)"
+	}
+	var parts []string
+	for _, f := range []struct{ label, key string }{
+		{"kind", "scope_kind"},
+		{"phase", "phase"},
+		{"lane", "lane"},
+		{"waiting on", "waiting_on"},
+		{"outcome", "outcome"},
+	} {
+		if v := str(row, f.key); v != "" {
+			parts = append(parts, f.label+" "+v)
+		}
+	}
+	if status := str(row, "status"); status != "" {
+		parts = append(parts, status)
+	}
+	summary := firstNonEmpty(str(row, "scope_external_id"), named)
+	if len(parts) > 0 {
+		summary += " (" + strings.Join(parts, " · ") + ")"
+	}
+	return summary
 }
 
 func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 	var items []string
 	wantSelection := false
 	for _, id := range ids {
-		if id == selectionTarget {
+		// REQ-CROSS-430: the selection is addressed by the literal target and by
+		// the file name it is written to, so the two spellings agree.
+		if id == selectionTarget || id == selectionFile || id == strings.TrimSuffix(selectionFile, ".md") {
 			wantSelection = true
 			continue
 		}
 		items = append(items, id)
+	}
+	// REQ-CROSS-430: --piece narrows the caller-scoped reads (pull --scope, push,
+	// check); a by-id pull reads the whole system, so the flag is refused
+	// before any request rather than parsed and ignored.
+	if wsPiece != "" && len(items) > 0 {
+		return fmt.Errorf("--piece applies to pull --scope, push and check; a by-id pull reads the whole system — drop --piece")
 	}
 
 	var unknown, conflicts, refused []string
@@ -2316,7 +2491,7 @@ func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 		}
 	}
 
-	index, gates, err := wsIndex(env, workingSetIncludeCandidates, preGates)
+	index, gates, surfaces, err := wsIndexSurfaces(env, workingSetIncludeCandidates, preGates)
 	if err != nil {
 		return err
 	}
@@ -2324,7 +2499,7 @@ func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 		item, ok := index[id]
 		if !ok {
 			unknown = append(unknown, id)
-			fmt.Printf("✗ %s — not served by %s (unknown external id)\n", id, env.APIURL)
+			fmt.Printf("✗ %s — not served by %s (unknown external id; %s)\n", id, env.APIURL, surfaces.searched())
 			continue
 		}
 		if unsafeSnapshotName(id + ".md") {
@@ -2492,8 +2667,14 @@ type wsSelectOpts struct {
 	// it adds a holder); a put-down closes the caller's own named current piece.
 	replaces string
 	putDown  bool
+	// REQ-CROSS-429: with --resume, take over a colleague's parked piece.
+	claim bool
 	// lane is planned work or a customer-blocking defect (REQ-CROSS-392).
 	lane string
+	// reconRevision is the repository revision the scope's reconnaissance was
+	// taken at (REQ-CROSS-220; BACKLOG-TOOL-5); sent only when given, so an
+	// advance keeps the stored value.
+	reconRevision string
 }
 
 var (
@@ -2671,11 +2852,15 @@ func init() {
 	f.StringVar(&wsSelectFlags.lane, "lane", "", "planned (default) or defect — a customer-blocking defect is on the clock; process next, your-move and the session brief say so")
 	f.StringVar(&wsSelectFlags.waitingOn, "waiting-on", "", "gate id, blocker, or prerequisite")
 	f.StringVar(&wsSelectFlags.fingerprint, "fingerprint", "", "frozen-at fingerprint (default: workspace HEAD)")
+	f.StringVar(&wsSelectFlags.reconRevision, "recon-revision", "",
+		"the repository revision the scope's reconnaissance was taken at; `working-set status` reads it back as the Reconnaissance revision")
 	f.StringVar(&wsSelectFlags.outcome, "outcome", "", "displaced current selection's outcome: done|obsolete|returned=<phase>")
 	f.BoolVar(&wsSelectFlags.suspend, "suspend", false, "suspend the current selection")
 	f.StringVar(&wsSelectFlags.reason, "reason", "", "suspension reason (required with --suspend)")
 	f.StringVar(&wsSelectFlags.target, "target", "", "suspension target")
 	f.BoolVar(&wsSelectFlags.resume, "resume", false, "resume the named suspended scope")
+	f.BoolVar(&wsSelectFlags.claim, "claim", false,
+		"with --resume: take over a colleague's parked piece (recorded on their row); a parked piece nobody holds needs no --claim")
 	f.StringVar(&wsSelectFlags.replaces, "replaces", "",
 		"the one current piece this take displaces (pair with --outcome); unnamed, the take adds a holder")
 	f.BoolVar(&wsSelectFlags.putDown, "put-down", false,
@@ -2684,7 +2869,7 @@ func init() {
 	// REQ-CROSS-345: the read is caller-scoped; --piece names which of the
 	// caller's own current pieces any read resolves (pull, push, check).
 	workingSetCmd.PersistentFlags().StringVar(&wsPiece, "piece", "",
-		"when you hold several current selections, name which one a read resolves (carried as ?scope=)")
+		"when you hold several current selections, --piece names which one pull --scope, push and check resolve (a by-id pull reads the whole system and refuses it)")
 
 	workingSetCheckCmd.Flags().BoolVar(&workingSetRefresh, "refresh", false, "re-pull files reported stale")
 	for _, c := range []*cobra.Command{workingSetPullCmd, workingSetCheckCmd} {

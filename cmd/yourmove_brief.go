@@ -66,7 +66,12 @@ func fetchFeed(env *factoryEnv, release string) (map[string]any, error) {
 
 func renderBrief(out io.Writer, data map[string]any, systemID int, opts briefOpts) {
 	release := releaseLabel(data, opts)
-	fmt.Fprintf(out, "Your move — %s · %s · system %d\n", str(feedMap(data, "person"), "name"), release, systemID)
+	// REQ-CROSS-428: the header names the domain filter when one is set.
+	header := fmt.Sprintf("Your move — %s · %s · system %d", str(feedMap(data, "person"), "name"), release, systemID)
+	if opts.domain != "" {
+		header += " · domain: " + opts.domain
+	}
+	fmt.Fprintln(out, header)
 
 	items := feedList(data, "items")
 	shown := selectBriefItems(items, opts)
@@ -75,33 +80,48 @@ func renderBrief(out io.Writer, data map[string]any, systemID int, opts briefOpt
 	if len(shown) == 0 && noFilter {
 		fmt.Fprintf(out, "Nothing ranked for you in %s.\n", release)
 	}
+	if opts.domain != "" && len(filterByDomain(items, opts.domain)) == 0 {
+		fmt.Fprintf(out, "nothing in %s is in scope\n", opts.domain)
+	}
 	for i, raw := range shown {
 		renderBriefItem(out, i+1, feedMapOf(raw))
 	}
 	renderBriefCtas(out, data, items)
 }
 
-// The served list is already ranked; the flags slice or filter it, never rescore.
+// The served list is already ranked; the flags slice or filter it, never
+// rescore. REQ-CROSS-428: the domain filter applies first, then the view —
+// --queue everything, --more the next five, default the top five — so
+// --domain composes with either instead of --queue returning before it and
+// --domain shadowing --more.
 func selectBriefItems(items []any, opts briefOpts) []any {
+	items = filterByDomain(items, opts.domain)
 	switch {
 	case opts.queue:
 		return items
-	case opts.domain != "":
-		var out []any
-		for _, raw := range items {
-			for _, d := range feedList(feedMapOf(raw), "domains") {
-				if str(feedMapOf(d), "name") == opts.domain {
-					out = append(out, raw)
-					break
-				}
-			}
-		}
-		return out
 	case opts.more:
 		return briefSlice(items, 5, 10)
 	default:
 		return briefSlice(items, 0, 5)
 	}
+}
+
+// filterByDomain keeps the items touching the named domain; an empty name
+// keeps everything.
+func filterByDomain(items []any, domain string) []any {
+	if domain == "" {
+		return items
+	}
+	var out []any
+	for _, raw := range items {
+		for _, d := range feedList(feedMapOf(raw), "domains") {
+			if str(feedMapOf(d), "name") == domain {
+				out = append(out, raw)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func briefSlice(items []any, from, to int) []any {
@@ -163,7 +183,14 @@ func renderBriefItem(out io.Writer, n int, it map[string]any) {
 				parts = append(parts, id)
 			}
 		}
-		fmt.Fprintf(out, "   holds %s\n", strings.Join(parts, " · "))
+		// A question's holds are the items its scope names — it holds and
+		// blocks nothing (REQ-CROSS-427, D4), so the line says so, matching
+		// the server's `names N` chip (PR #618 review, finding 3).
+		label := "holds"
+		if str(it, "gate_kind") == "question" {
+			label = "names"
+		}
+		fmt.Fprintf(out, "   %s %s\n", label, strings.Join(parts, " · "))
 	}
 	// REQ-CROSS-408: a [Drift] item says its basis and what the feed knows,
 	// and names the re-record path.

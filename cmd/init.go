@@ -283,8 +283,13 @@ func downloadExportWithStatus(client *api.Client, systemID int) ([]byte, error) 
 	})
 }
 
-func selectSystem(client *api.Client, systems []api.System) (*api.System, error) {
-	// Build items for promptui — "+ New project" first, then existing
+// systemPickerItems is the picker's rows: "+ New project" first, then one per
+// system. REQ-CROSS-405: the id rides every label, because two systems sharing a
+// name — the common shape when a workspace is re-created — rendered as two
+// identical rows, so the choice was a coin flip. The non-tty path has always
+// printed the id (chooseSystemWithoutTerminal); this is the same fact, in the
+// place the choice is actually made (BACKLOG-TOOL-74).
+func systemPickerItems(systems []api.System) []string {
 	items := []string{"+ New project"}
 	for _, sys := range systems {
 		desc := sys.Description
@@ -294,8 +299,13 @@ func selectSystem(client *api.Client, systems []api.System) (*api.System, error)
 		if desc == "" {
 			desc = sys.SystemType
 		}
-		items = append(items, fmt.Sprintf("%s - %s", sys.Name, desc))
+		items = append(items, fmt.Sprintf("%s (id %d) - %s", sys.Name, sys.ID, desc))
 	}
+	return items
+}
+
+func selectSystem(client *api.Client, systems []api.System) (*api.System, error) {
+	items := systemPickerItems(systems)
 
 	prompt := promptui.Select{
 		Label:    "Select a project",

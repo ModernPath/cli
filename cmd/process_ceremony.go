@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/url"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,6 +76,15 @@ type factMember struct {
 	EvidenceState      string `json:"evidence_state"`
 	RedRecorded        bool   `json:"red_recorded"`
 	LowerTracePass     bool   `json:"lower_trace_pass"`
+	// The state the member's LIVE applied entry transition came from, or nil
+	// when no live entry names it (a demotion retired it, or it never entered).
+	// It is the fact behind an UNAVAILABLE evidence check and behind
+	// `entry_origin_unavailable`, so a reason line can name the member.
+	EntryOrigin *string `json:"entry_origin"`
+	// REQ-CROSS-435: reopened by an applied defect demotion while no entry
+	// gate names it — its lower trace returns it to review, so no remedy line
+	// sends it to `process reenter`. False on a server that predates the key.
+	DefectReopenWithoutEntry bool `json:"defect_reopen_without_entry"`
 }
 
 type advanceOpts struct {
@@ -352,8 +362,10 @@ func resolvePiece(env *factoryEnv, item, piece string) (string, error) {
 
 // freeTraceID walks the <base>, <base>-R2, -R3… series and returns either the
 // first unused id (existing == "") or, when a trace in the series already
-// passes at `pin`, that trace's id as existing (nothing to record — reuse it).
-func freeTraceID(env *factoryEnv, base, pin string) (free, existing string, err error) {
+// passes at `pin`, that trace's id as existing (nothing to record — reuse it)
+// together with the record it read, so a caller can ask what that trace's
+// evidence already covers (BACKLOG-TOOL-100).
+func freeTraceID(env *factoryEnv, base, pin string) (free, existing string, record map[string]any, err error) {
 	for n := 1; n <= 50; n++ {
 		id := base
 		if n > 1 {
@@ -362,23 +374,64 @@ func freeTraceID(env *factoryEnv, base, pin string) (free, existing string, err 
 		status, body, err := env.call("GET",
 			fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", url.PathEscape(id), env.SystemID), nil)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		if status == 200 {
 			gate, _ := dataOf(body)["gate"].(map[string]any)
 			if str(gate, "state") == "pass" && str(gate, "fingerprint") == pin {
-				return "", id, nil
+				return "", id, gate, nil
 			}
 			continue
 		}
 		if status == 404 {
 			if em, ok := body["error"].(map[string]any); ok && strings.HasPrefix(str(em, "message"), "no such gate") {
-				return id, "", nil
+				return id, "", nil, nil
 			}
 		}
-		return "", "", gateShowError(status, body, id)
+		return "", "", nil, gateShowError(status, body, id)
 	}
-	return "", "", fmt.Errorf("no free trace id in the %s series", base)
+	return "", "", nil, fmt.Errorf("no free trace id in the %s series", base)
+}
+
+// completionTraceBody is the audit body a completion trace carries: the
+// delivered revision, the run and the targets it names, and the members the
+// gate moves. traceRunTargets reads the "naming" clause back out of it, so
+// the writer and the reader share one format here rather than agreeing by
+// hand in two places (BACKLOG-TOOL-100).
+func completionTraceBody(head, kind, log string, runTargets, gateScope []string) string {
+	return fmt.Sprintf("Completion audit recorded by process complete at delivered revision %s. Evidence: %s run %s naming %s. Members moved by the gate: %s.",
+		head, kind, log, strings.Join(runTargets, ", "), strings.Join(gateScope, ", "))
+}
+
+// traceRunTargets recovers the targets the run a completion trace cites
+// already names, from the body completionTraceBody writes. ok is false when
+// the body carries no such sentence — an older trace, or one written by hand.
+// The caller then posts the run for every target rather than reading silence
+// as coverage (BACKLOG-TOOL-100).
+//
+// The cut is on the first " naming " after "Evidence: ", so a --log value
+// carrying that literal ends the list early and leaves real targets out of
+// the covered set. That errs toward posting the run for more targets than
+// strictly needed — a duplicate row, never a stranded member — which is the
+// direction this parser is allowed to be wrong in.
+func traceRunTargets(body string) (targets []string, ok bool) {
+	_, after, found := strings.Cut(body, "Evidence: ")
+	if !found {
+		return nil, false
+	}
+	_, list, found := strings.Cut(after, " naming ")
+	if !found {
+		return nil, false
+	}
+	if end := strings.Index(list, ". "); end >= 0 {
+		list = list[:end]
+	}
+	for _, t := range strings.Split(strings.TrimSuffix(strings.TrimSpace(list), "."), ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			targets = append(targets, t)
+		}
+	}
+	return targets, len(targets) > 0
 }
 
 // processAdvance takes one SR from recorded evidence to IN_REVIEW: refuse on
@@ -412,7 +465,7 @@ func processAdvance(env *factoryEnv, sr string, o advanceOpts) error {
 	if member.Kind == "ur" {
 		// Reconcile's UR path wants no RED and no lower evidence: the UR moves on
 		// its required SRs and its own UPPER trace at its content hash.
-		return fmt.Errorf("%s is a user requirement — process advance takes a system requirement; once its required SRs are IN_REVIEW, record its upper trace by hand (`author trace TRACE-UPPER-%s --purpose upper --from build --to verify --scope %s --fingerprint %s --verdict PASS --source RUN:…`) and run `process reconcile --apply`", sr, sr, sr, presentPin(member.ContentFingerprint))
+		return fmt.Errorf("%s is a user requirement — process advance takes a system requirement; once its required SRs are IN_REVIEW, record its upper trace by hand (`author trace TRACE-UPPER-%s --purpose upper --scope %s --verdict PASS --source RUN:…` — the pin defaults to its content hash %s and the transition to build->verify) and run `process reconcile --apply`", sr, sr, sr, presentPin(member.ContentFingerprint))
 	}
 	switch member.Status {
 	case "DONE", "OBSOLETE", "DEFERRED":
@@ -447,7 +500,7 @@ func processAdvance(env *factoryEnv, sr string, o advanceOpts) error {
 	if member.LowerTracePass {
 		printInfo("a lower trace already passes for %s at %s — reconciling", sr, member.ContentFingerprint)
 	} else {
-		id, existing, err := freeTraceID(env, "TRACE-LOWER-"+sr, member.ContentFingerprint)
+		id, existing, _, err := freeTraceID(env, "TRACE-LOWER-"+sr, member.ContentFingerprint)
 		if err != nil {
 			return err
 		}
@@ -766,6 +819,15 @@ func selectionKind(factsKind string) string {
 	return "single_sr"
 }
 
+// enteredEpicStates is REQ-CROSS-414's admission set: the owning-epic states
+// from which a members-only gate may recover un-entered members — already
+// entered and not terminal. The store holds the same list
+// (`Core.RDD.PacketFingerprint.members_only_owner_states/0`); it is the
+// authority, this copy only decides what the verb sends.
+var enteredEpicStates = []string{"TODO", "READY", "IN_PROGRESS", "IN_REVIEW", "BLOCKED"}
+
+func enteredEpic(status string) bool { return slices.Contains(enteredEpicStates, status) }
+
 // processEnter opens the entry gate for a scope from store facts: refuse on
 // any unmet fact before writing, open the gate naming the cold-review trace,
 // move the selection to phase entry.
@@ -833,8 +895,19 @@ func processEnter(env *factoryEnv, scope string, o enterOpts) error {
 	case epic:
 		if status == from {
 			exactScope = append(exactScope, scope)
+		} else if enteredEpic(status) {
+			// BACKLOG-TOOL-58: the epic is not named because it is already
+			// entered, so this is a members-only entry gate over its NEW
+			// PROPOSED members — a success, not a refusal, and the note says
+			// so. With no pin the store would resolve the lone member's OWN
+			// aggregate as the subject, and the epic-scoped cold-review trace
+			// is never pinned there, so the open would be refused for a
+			// prerequisite "pinned elsewhere". Carry the epic's aggregate,
+			// the one its cold review holds, as the verification arm does.
+			pin = facts.Aggregate
+			notes = append(notes, fmt.Sprintf("  %s is %s, already entered — not named by this gate; it enters the epic's new PROPOSED members on the epic's own cold review\n", scope, presentPin(status)))
 		} else {
-			notes = append(notes, fmt.Sprintf("  %s is %s, not %s — not named by this gate; a members-only gate is admitted only once the epic itself has been entered, so enter the epic with its %s members first if it has any\n", scope, presentPin(status), from, status))
+			notes = append(notes, fmt.Sprintf("  %s is %s, not %s — not named by this gate; a members-only gate is admitted only once the epic itself has been entered, so enter the epic first\n", scope, presentPin(status), from))
 		}
 		exactScope = append(exactScope, proposed...)
 	default:
@@ -867,8 +940,13 @@ func processEnter(env *factoryEnv, scope string, o enterOpts) error {
 	}
 
 	fmt.Printf("entry gate %s\n  scope: %s\n  transition: %s->TODO\n  prerequisite: %s (cold-review PASS at %s)\n", gateID, strings.Join(exactScope, ", "), from, cr.TraceExternalID, facts.Aggregate)
+	// BACKLOG-TOOL-58: state the pin this call WILL send, in both the dry run
+	// and the real open — it decides which subject the store resolves the gate
+	// against, and nothing else in the plan shows it.
 	if pin != "" {
-		fmt.Printf("  pin: the epic's packet aggregate %s (a members-only verification gate)\n", pin)
+		fmt.Printf("  pin: the epic's packet aggregate %s (a members-only gate — the epic's cold review is its prerequisite)\n", pin)
+	} else if epic && status != from {
+		fmt.Printf("  pin: none — this gate does not name %s, so the store resolves the named member's own packet aggregate, not the epic's %s, and the epic's cold-review trace does not pass there\n", scope, facts.Aggregate)
 	}
 	if predecessor != "" {
 		fmt.Printf("  predecessor: %s (closed or withdrawn) — this gate succeeds it\n", predecessor)
@@ -962,7 +1040,17 @@ requirement, then the epic.
 The run names the epic, its user requirement and every member this
 completion moves (IN_REVIEW): a DONE sibling an earlier completion accepted
 keeps its CURRENT evidence and is never re-posted, while the completion
-trace still names every member. A reopened epic — IN_PROGRESS after a defect demotion,
+trace still names every member.
+
+When a COMPLETE-TRACE-<scope> in the series already PASSes at the unchanged
+packet aggregate it is reused rather than recorded again, and the run is
+posted only for the targets that trace's own run did not name — no run at
+all when it named them all, and the whole run when its body carries no
+readable target list, since unread coverage is never taken for coverage. A
+trace is immutable, so the remainder run is not recorded on it: a repeat at
+the same aggregate posts that remainder again.
+
+A reopened epic — IN_PROGRESS after a defect demotion,
 every member back in IN_REVIEW or DONE, its earlier COMPLETE-<scope> closed —
 completes in the same call: the successor trace COMPLETE-TRACE-<scope>-R2 is
 recorded, process reconcile folds the epic to IN_REVIEW, and the successor
@@ -1084,7 +1172,7 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 	if len(notReady) > 0 {
 		remedy := "take each SR through `process advance <SR>`"
 		if urNotReady {
-			remedy += "; a user requirement needs its upper trace by hand (`author trace TRACE-UPPER-<UR> --purpose upper --scope <UR> --fingerprint <its content hash> --verdict PASS`) and `process reconcile --apply`"
+			remedy += "; a user requirement needs its upper trace by hand (`author trace TRACE-UPPER-<UR> --purpose upper --scope <UR> --verdict PASS`) and `process reconcile --apply`"
 		}
 		return fmt.Errorf("%s has members not yet IN_REVIEW: %s — %s before completing", scope, strings.Join(notReady, ", "), remedy)
 	}
@@ -1114,6 +1202,18 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 	switch {
 	case facts.Scope.Status == "IN_REVIEW":
 	case facts.Scope.Status == "DONE" && epic:
+		// A DONE epic with a member still IN_REVIEW would open a members-only
+		// completion gate (gateScope = toMove below), and the server refuses
+		// that for a done owner however many members it names: "does not reach
+		// into a done, obsolete or deferred epic; demote or reopen the epic
+		// first". The refusal used to arrive after the delivered run and the
+		// completion trace were already written, leaving an unusable trace
+		// behind; refuse here instead, before the first write. A DONE epic with
+		// nothing stranded still falls through to "nothing to do".
+		if len(toMove) > 0 {
+			return fmt.Errorf("%s is DONE and %s still IN_REVIEW — a completion gate naming only members does not reach into a done epic and the server refuses it, so nothing was posted; reopen the epic first with `author demote %s --kind epic --to IN_PROGRESS --basis defect --reason USER:<date>:<why>`, answer that gate, `author demote %s --kind epic --apply`, then rerun `process complete %s` — the reopened-epic arm records the successor trace, folds the epic and opens the successor gate",
+				scope, strings.Join(toMove, ", "), scope, scope, scope)
+		}
 	case epic && facts.Scope.Status == "IN_PROGRESS" && predecessor != "":
 		reopened = true
 		if facts.EntryGate.Applied && facts.EntryGate.PinnedAggregate != facts.Aggregate {
@@ -1153,17 +1253,58 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 	if err != nil {
 		return err
 	}
-	traceID, existingTrace, err := freeTraceID(env, "COMPLETE-TRACE-"+scope, facts.Aggregate)
+	traceID, existingTrace, existingRecord, err := freeTraceID(env, "COMPLETE-TRACE-"+scope, facts.Aggregate)
 	if err != nil {
 		return err
 	}
+
+	// BACKLOG-TOOL-100 (defect against REQ-CROSS-419, D4a: the posted run names
+	// every member this completion moves). A trace that already PASSes at the
+	// unchanged aggregate is reused — but the run it cites named the targets of
+	// the completion that recorded it, so a member this completion adds would
+	// get no delivered-revision evidence at all and the gate would refuse "not
+	// yet" for it. The rerun posts the remainder: the targets that run does not
+	// already name. Coverage that cannot be read is never assumed — the whole
+	// run is posted, which costs one duplicate row and strands nothing.
+	postTargets, coveredHere := runTargets, []string{}
 	traceLine := traceID
 	if existingTrace != "" {
-		traceLine = existingTrace + " (an existing PASS at the aggregate, reused — its evidence stands, none re-posted)"
+		traceLine = existingTrace + " (an existing PASS at the aggregate, reused)"
+		covered, ok := traceRunTargets(str(existingRecord, "body_md"))
+		if !ok {
+			traceLine = existingTrace + " (an existing PASS at the aggregate, reused — the targets its run names could not be read, so the run is posted for every target)"
+		} else {
+			postTargets = nil
+			for _, t := range runTargets {
+				if contains(covered, t) {
+					coveredHere = append(coveredHere, t)
+				} else {
+					postTargets = append(postTargets, t)
+				}
+			}
+		}
+	}
+	evidenceLine := fmt.Sprintf("%s run %s naming %s", kind, o.log, strings.Join(postTargets, ", "))
+	if len(postTargets) == 0 {
+		evidenceLine = "none — the reused trace's run already names every target"
 	}
 
-	fmt.Printf("completion of %s at delivered revision %s\n  evidence: %s run %s naming %s\n  trace: %s PASS at packet aggregate %s, scope %s\n  gate: %s naming the trace, scope %s\n",
-		scope, head[:7], kind, o.log, strings.Join(runTargets, ", "), traceLine, facts.Aggregate, strings.Join(named, ", "), gateID, strings.Join(gateScope, ", "))
+	fmt.Printf("completion of %s at delivered revision %s\n  evidence: %s\n  trace: %s PASS at packet aggregate %s, scope %s\n  gate: %s naming the trace, scope %s\n",
+		scope, head[:7], evidenceLine, traceLine, facts.Aggregate, strings.Join(named, ", "), gateID, strings.Join(gateScope, ", "))
+	if len(coveredHere) > 0 {
+		fmt.Printf("  already named by the reused trace's run, not re-posted: %s\n", strings.Join(coveredHere, ", "))
+	}
+	// The covered set is read off the reused trace's own body, and a trace is
+	// immutable — this run is never recorded on it. The delivery facts carry
+	// no revision-scoped evidence field either: `evidence_state` reads passing
+	// for every IN_REVIEW member before any completion run (REQ-CROSS-375,
+	// F-CLI022-PR2-01), so it cannot stand in for coverage at HEAD. A repeat
+	// at the same aggregate therefore posts this remainder again. That is a
+	// duplicate row, not a wrong one, and the plan says so rather than leaving
+	// it to be discovered.
+	if existingTrace != "" && len(postTargets) > 0 {
+		fmt.Printf("  the reused trace is immutable, so this run is not recorded on it: a repeat at this aggregate posts the remainder again\n")
+	}
 	if len(accepted) > 0 {
 		fmt.Printf("  accepted on current evidence, not re-posted: %s\n", strings.Join(accepted, ", "))
 	}
@@ -1180,16 +1321,18 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 		return nil
 	}
 
-	// A reused trace already cites its delivered run: a rerun after a refused
-	// gate posts no second identical run (review round 2, nit 9).
-	if existingTrace == "" {
-		if err := factoryEvidenceRun(env, evidenceOpts{kind: kind, log: o.log, pass: strings.Join(runTargets, ","), revision: head}); err != nil {
+	// REQ-CROSS-419 (D4a): the posted run names every member this completion
+	// moves, and no more. A reused trace already cites the run recorded with
+	// it, so that run is not posted a second time — only the targets it left
+	// uncovered (BACKLOG-TOOL-100).
+	if len(postTargets) > 0 {
+		if err := factoryEvidenceRun(env, evidenceOpts{kind: kind, log: o.log, pass: strings.Join(postTargets, ","), revision: head}); err != nil {
 			return err
 		}
 	}
 
 	if existingTrace == "" {
-		body := fmt.Sprintf("Completion audit recorded by process complete at delivered revision %s. Evidence: %s run %s naming %s. Members moved by the gate: %s.", head, kind, o.log, strings.Join(runTargets, ", "), strings.Join(gateScope, ", "))
+		body := completionTraceBody(head, kind, o.log, runTargets, gateScope)
 		if len(accepted) > 0 {
 			body += " Accepted on their current passing evidence, not re-posted: " + strings.Join(accepted, ", ") + "."
 		}
@@ -1220,10 +1363,15 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 		traceID = existingTrace
 	}
 
+	// The epic's status after the fold is what its apply recipe must expect;
+	// the served facts predate the fold (a reopened epic reads IN_PROGRESS there).
+	epicStatus := facts.Scope.Status
 	if reopened {
-		if err := foldReopenedEpic(env, scope, traceID); err != nil {
+		reached, err := foldReopenedEpic(env, scope, traceID)
+		if err != nil {
 			return err
 		}
+		epicStatus = reached
 	}
 
 	gateFields := map[string]any{
@@ -1248,22 +1396,35 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 	if err := workingSetSelect(env, wsSelectOpts{scope: scope, kind: selectionKind(facts.Scope.Kind), phase: "completion"}, time.Now()); err != nil {
 		return err
 	}
-	fmt.Printf("apply order after the answer: members first (%s), then the epic — `author advance <id> --to DONE --expected IN_REVIEW --gate %s --gate-answer approve --gate-fingerprint <gate Fingerprint>`\n", strings.Join(toMove, ", "), gateID)
+	// Two recipes, not one: `author advance --kind` defaults to requirement, so
+	// the member line moves every SR and the UR, and the epic needs its own line
+	// with --kind epic. Pasting the member line for the epic is refused 422.
+	if len(toMove) == 0 {
+		// A reopened epic whose members are all DONE moves nothing but itself.
+		fmt.Println("apply order after the answer: no members to advance")
+	} else {
+		fmt.Printf("apply order after the answer: members first (%s) — `author advance <id> --to DONE --expected IN_REVIEW --gate %s --gate-answer approve --gate-fingerprint <gate Fingerprint>` (--kind defaults to requirement, which is what an SR and the UR need)\n", strings.Join(toMove, ", "), gateID)
+	}
+	if epic {
+		fmt.Printf("then the epic itself — `author advance %s --kind epic --to DONE --expected %s --gate %s --gate-answer approve --gate-fingerprint <gate Fingerprint>`\n", scope, epicStatus, gateID)
+	}
 	printInfo("answer it in Mission Control or with `factory answer %s --options approve --text \"USER:<date>: …\"`", gateID)
 	return nil
 }
 
 // foldReopenedEpic reconciles the piece until nothing remains and requires
-// the epic to have reached IN_REVIEW on the successor completion trace; a
-// fold that does not happen is a refusal naming reconcile's own FAIL, and no
-// gate is opened over it.
-func foldReopenedEpic(env *factoryEnv, scope, traceID string) error {
+// the epic to have reached IN_REVIEW — the one state reconcile's epic edges
+// lead to — on the successor completion trace; a fold that does not happen,
+// and a fold that lands anywhere else, are both refusals naming the fact, and
+// no gate is opened over either. It returns the state the epic reached, which
+// is what its own apply recipe expects.
+func foldReopenedEpic(env *factoryEnv, scope, traceID string) (string, error) {
 	reached := ""
 	var fails []string
 	for pass := 0; pass < 4; pass++ {
 		rc, err := reconcileOnce(env, scope, true)
 		if err != nil {
-			return err
+			return "", err
 		}
 		for _, t := range rc.Data.Transitions {
 			fmt.Printf("  applied  %s %s->%s (%s)\n", t.ExternalID, t.From, t.To, t.Basis)
@@ -1279,12 +1440,24 @@ func foldReopenedEpic(env *factoryEnv, scope, traceID string) error {
 			break
 		}
 	}
-	if reached != "IN_REVIEW" && reached != "DONE" {
+	if reached == "IN_REVIEW" {
+		return reached, nil
+	}
+	if reached == "" {
 		detail := "reconcile applied no transition for it"
 		if len(fails) > 0 {
 			detail = strings.Join(fails, "; ")
 		}
-		return fmt.Errorf("the successor completion trace %s is recorded, but reconcile did not fold %s to IN_REVIEW (it is still IN_PROGRESS): %s — read `process reconcile --piece %s` for the proof it is missing; a rerun reuses the trace and opens no gate until the epic folds", traceID, scope, detail, scope)
+		return "", fmt.Errorf("the successor completion trace %s is recorded, but reconcile did not fold %s to IN_REVIEW (it is still IN_PROGRESS): %s — read `process reconcile --piece %s` for the proof it is missing; a rerun reuses the trace and opens no gate until the epic folds", traceID, scope, detail, scope)
 	}
-	return nil
+	// IN_REVIEW is the only state this fold has: reconcile's epic edges are
+	// entry -> IN_PROGRESS and IN_PROGRESS -> IN_REVIEW, and the completion
+	// step is human-gated. Any other state means the server's edges changed
+	// under this verb, so it stops instead of opening a gate and printing an
+	// apply recipe (`--to DONE --expected DONE` is refused 422).
+	unexpected := fmt.Sprintf("the successor completion trace %s is recorded, but the fold of %s reached an unexpected state %s, not IN_REVIEW — no gate was opened and no apply recipe is printed; read `process reconcile --piece %s` and the epic's status before rerunning (a rerun reuses the trace)", traceID, scope, reached, scope)
+	if len(fails) > 0 {
+		unexpected += ". Reconcile also reported: " + strings.Join(fails, "; ")
+	}
+	return "", errors.New(unexpected)
 }

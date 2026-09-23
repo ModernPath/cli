@@ -20,8 +20,9 @@ import (
 // BACKLOG-TOOL-<n> record in the caller's own store (a REQ-CROSS-393 create
 // of kind tooling), with the CLI build, the server contract and the time
 // captured; --last attaches the previous user-run command and its output.
-// Without a stored credential or a reachable server the line lands in the
-// interim file process/tooling-gaps.md instead, and the command says so.
+// Without a usable credential, a reachable binding or a reachable server the
+// line lands in the interim file process/tooling-gaps.md instead, and the
+// command says so.
 
 var (
 	feedbackLast bool
@@ -44,9 +45,11 @@ recent command instead (--ref 1 is --last) and implies --last; a value beyond
 the recorded count is refused naming how many entries exist. Nothing else is
 captured.
 
-Without a stored credential, or when the server cannot be reached, the line is
-appended to process/tooling-gaps.md at the workspace root and the output says
-so. A create the server refuses is reported verbatim and nothing is written.
+Without a usable credential (missing, expired or rejected), without a
+workspace binding (or one bound to a system you cannot reach), or when the
+server cannot be reached, the line is appended to process/tooling-gaps.md at
+the workspace root and the output says so. A create the server refuses is
+reported verbatim and nothing is written.
 
 Examples:
   modernpath feedback "process check prints only a check name"
@@ -88,17 +91,16 @@ func runFeedback(line string, attachLast bool, ref int) error {
 
 	env, err := factoryEnvLoad()
 	if err != nil {
-		var ce credentialError
-		if errors.As(err, &ce) {
-			return feedbackOffline(workspaceRootOrCwd(), line, "no usable credential: "+err.Error())
+		if why, ok := storeUnwritable(err); ok {
+			return feedbackOffline(workspaceRootOrCwd(), line, why)
 		}
 		return err
 	}
 
 	id, err := allocateToolingID(env)
 	if err != nil {
-		if isTransportError(err) {
-			return feedbackOffline(env.Root, line, "server unreachable: "+err.Error())
+		if why, ok := storeUnwritable(err); ok {
+			return feedbackOffline(env.Root, line, why)
 		}
 		return err
 	}
@@ -122,8 +124,8 @@ func runFeedback(line string, attachLast bool, ref int) error {
 		status, resp, err := env.call("POST", "/api/v1/sync/author", body)
 		switch {
 		case err != nil:
-			if isTransportError(err) {
-				return feedbackOffline(env.Root, line, "server unreachable: "+err.Error())
+			if why, ok := storeUnwritable(err); ok {
+				return feedbackOffline(env.Root, line, why)
 			}
 			return err
 		case status == 409 && attempt == 0:
@@ -141,6 +143,25 @@ func runFeedback(line string, attachLast bool, ref int) error {
 		return nil
 	}
 	return fmt.Errorf("feedback: the allocated id was taken twice — retry")
+}
+
+// storeUnwritable says why the store cannot take the line when the fix is
+// another command, not a retry: no usable credential (missing, expired, or
+// rejected by the server), no binding or one this credential cannot reach
+// (REQ-CROSS-434; BACKLOG-TOOL-74), or no server to reach. A server that
+// answers with a refusal or a 5xx is not one of these: that error is returned.
+func storeUnwritable(err error) (string, bool) {
+	var ce credentialError
+	var be bindingError
+	switch {
+	case errors.As(err, &ce):
+		return "no usable credential: " + err.Error(), true
+	case errors.As(err, &be):
+		return firstNonEmpty(be.why, "no workspace binding") + ": " + err.Error(), true
+	case isTransportError(err):
+		return "server unreachable: " + err.Error(), true
+	}
+	return "", false
 }
 
 // allocateToolingID is the next BACKLOG-TOOL-<n> after the highest served.

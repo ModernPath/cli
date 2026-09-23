@@ -29,6 +29,31 @@ type propSpec struct {
 	// callers can assert what the three copies say. This validator does not
 	// enforce it — the server does, loudly, before any write.
 	Enum []string `json:"enum"`
+	// Pattern is the regex source a string field is constrained to, read for
+	// the same reason (REQ-CROSS-423: the disposition vocabulary).
+	Pattern string `json:"pattern"`
+}
+
+// FieldSpec is what the vendored schema says about one payload field: its
+// closed vocabulary, if any, and its pattern, if any.
+type FieldSpec struct {
+	Enum    []string
+	Pattern string
+}
+
+// Field returns the vendored schema's spec for one field of an op's payload
+// (e.g. "upsert_backlog_record", "gap_kind"); ok is false when the op type or
+// the field is not declared.
+func Field(opType, field string) (FieldSpec, bool) {
+	def, known := payloadDef(opType)
+	if !known {
+		return FieldSpec{}, false
+	}
+	prop, ok := def.Properties[field]
+	if !ok {
+		return FieldSpec{}, false
+	}
+	return FieldSpec{Enum: prop.Enum, Pattern: prop.Pattern}, true
 }
 
 type defSpec struct {

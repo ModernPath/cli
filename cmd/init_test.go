@@ -18,9 +18,40 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/platform"
 	"github.com/modernpath/cli/internal/zitadel"
 )
+
+// REQ-CROSS-405: the interactive picker labelled each system
+// "<name> - <description>" and nothing else, so two systems that share a name
+// — the common shape when a workspace is re-created — were two identical rows
+// and the choice was a coin flip. The non-tty path has always printed the id
+// (chooseSystemWithoutTerminal); the picker must carry it too.
+func TestSystemPickerLabelsCarryTheSystemId(t *testing.T) {
+	items := systemPickerItems([]api.System{
+		{ID: 41, Name: "ModernPath", Description: "the platform"},
+		{ID: 77, Name: "ModernPath", SystemType: "service"},
+	})
+	if len(items) != 3 || items[0] != "+ New project" {
+		t.Fatalf("the picker still offers a new project first, got %v", items)
+	}
+	if !strings.Contains(items[1], "41") || !strings.Contains(items[2], "77") {
+		t.Fatalf("every label must carry its system id, got %v", items[1:])
+	}
+	if items[1] == items[2] {
+		t.Fatalf("two identically named systems must not render the same label: %q", items[1])
+	}
+	for _, want := range []string{"ModernPath", "the platform"} {
+		if !strings.Contains(items[1], want) {
+			t.Errorf("the label must keep %q, got %q", want, items[1])
+		}
+	}
+	// A system with no description still falls back to its type, as before.
+	if !strings.Contains(items[2], "service") {
+		t.Errorf("a description-less system keeps its type, got %q", items[2])
+	}
+}
 
 // REQ-CROSS-405 — `init` reaches a signed-in, bound workspace or names the
 // step; the api-client verbs carry the credential statements the factory

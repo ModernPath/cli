@@ -283,3 +283,125 @@ func TestProcessEnterSaysWhyTheEpicIsNotNamed(t *testing.T) {
 		t.Fatalf("the plan says the epic is not named and why: %q", out)
 	}
 }
+
+// BACKLOG-TOOL-58 (a defect against REQ-CROSS-422's D14 pin rule, over
+// REQ-CROSS-414's admission set): a NEW PROPOSED member added to an epic that
+// is ALREADY entered yields a members-only gate — the epic is not named, so
+// the store resolves the lone member as the gate's subject. Its prerequisite
+// is the epic-scoped cold-review trace, pinned at the epic's aggregate, so
+// the gate must carry that aggregate; with no pin the store compares the
+// trace against the member's own aggregate and refuses the open.
+func TestProcessEnterPinsAMembersOnlyGateAtTheEpicsAggregate(t *testing.T) {
+	for _, status := range []string{"TODO", "READY", "IN_PROGRESS", "IN_REVIEW", "BLOCKED"} {
+		cs := enterServer(t, enterFacts([]map[string]any{
+			member("REQ-A-1", "PROPOSED"), member("REQ-A-2", "TODO"),
+		}, status, "pass", true, "CR-A", nil), true)
+		env := wsEnv(t, cs.srv)
+		var err error
+		out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
+		if err != nil {
+			t.Fatalf("%s: enter: %v\n%s", status, err, out)
+		}
+		record, _ := cs.authored[0]["record"].(map[string]any)
+		if scope := stringSlice(record["exact_scope"]); len(scope) != 1 || scope[0] != "REQ-A-1" {
+			t.Fatalf("%s: a members-only gate names the PROPOSED member alone, got %v", status, scope)
+		}
+		if record["evaluated_scope_fingerprint"] != pinAggregate {
+			t.Fatalf("%s: the gate carries the epic's aggregate so its epic-scoped cold review is its prerequisite, got %v",
+				status, record["evaluated_scope_fingerprint"])
+		}
+		if !strings.Contains(out, "pin:") || !strings.Contains(out, pinAggregate) {
+			t.Fatalf("%s: the plan names the pin it will send: %q", status, out)
+		}
+		// PR #626 cold review round 2, finding B-1: this is the success path
+		// this verb now creates, so its note must read as one. The old wording
+		// was refusal-shaped and told the operator to "enter the epic with its
+		// <status> members first", which names nothing that exists.
+		if strings.Contains(out, "admitted only once the epic itself has been entered") ||
+			strings.Contains(out, "members first if it has any") {
+			t.Fatalf("%s: the entered-epic note must not read as a refusal: %q", status, out)
+		}
+		// The exact note, not just the words: "already entered" also appears in
+		// the unrelated "already entered, not named:" line for entered members.
+		want := fmt.Sprintf("  EPIC-A is %s, already entered — not named by this gate; it enters the epic's new PROPOSED members on the epic's own cold review\n", presentPin(status))
+		if !strings.Contains(out, want) {
+			t.Fatalf("%s: the note must read %q, got %q", status, want, out)
+		}
+	}
+}
+
+// An epic outside the admission set keeps the original note. DEFERRED is the
+// case: the epic is not named, no pin is sent, and "enter the epic first" is
+// genuinely what the operator has to do. (A still-PROPOSED epic never reaches
+// this arm — it equals `from`, so its own gate names it.)
+func TestProcessEnterKeepsTheRefusalShapedNoteForAnUnenteredEpic(t *testing.T) {
+	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "DEFERRED", "pass", true, "CR-A", nil), true)
+	env := wsEnv(t, cs.srv)
+	var err error
+	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
+	if err != nil {
+		t.Fatalf("dry run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "admitted only once the epic itself has been entered") {
+		t.Fatalf("a terminal epic still gets the enter-the-epic-first note: %q", out)
+	}
+}
+
+// A PROPOSED epic is named by its own gate, so there is nothing to pin: the
+// store resolves the epic as the subject and its own aggregate as the pin.
+func TestProcessEnterSendsNoPinWhenTheGateNamesTheEpic(t *testing.T) {
+	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
+	env := wsEnv(t, cs.srv)
+	if err := processEnter(env, "EPIC-A", enterOpts{}); err != nil {
+		t.Fatalf("enter: %v", err)
+	}
+	record, _ := cs.authored[0]["record"].(map[string]any)
+	if _, carried := record["evaluated_scope_fingerprint"]; carried {
+		t.Fatalf("a gate that names the epic carries no pin, got %v", record["evaluated_scope_fingerprint"])
+	}
+}
+
+// BACKLOG-TOOL-58 (PR #626 cold review, finding 2): the dry run must report
+// the pin the real open WILL send, which is a fact the verb holds without
+// asking the server. Comparing the named cold-review trace's own aggregate
+// with that pin is not a check: the server picks cr.TraceExternalID only from
+// traces already at facts.Aggregate, so the two agree by construction.
+//
+// The pin is what a reader cannot otherwise see. When none will be sent for a
+// members-only gate, the store resolves the named member's own aggregate
+// instead — where the epic's cold-review trace does not pass — and the plan
+// says so rather than leaving the line blank.
+func TestProcessEnterDryRunReportsThePinItWillSend(t *testing.T) {
+	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "IN_PROGRESS", "pass", true, "CR-A", nil), true)
+	env := wsEnv(t, cs.srv)
+
+	var err error
+	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
+	if err != nil {
+		t.Fatalf("dry run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pin: the epic's packet aggregate "+pinAggregate) {
+		t.Fatalf("the dry run names the pin it will send: %q", out)
+	}
+	assertNoWrites(t, cs)
+
+	// A terminal epic is outside the admission set, so no pin is sent and the
+	// store falls back to the member's own aggregate. The store refuses this
+	// shape on its own legality rule; the plan must not read as if the epic's
+	// aggregate were what the gate would carry.
+	for _, status := range []string{"DONE", "OBSOLETE", "DEFERRED"} {
+		cs = enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, status, "pass", true, "CR-A", nil), true)
+		env = wsEnv(t, cs.srv)
+		out = captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
+		if err != nil {
+			t.Fatalf("%s: dry run: %v\n%s", status, err, out)
+		}
+		if strings.Contains(out, "pin: the epic's packet aggregate") {
+			t.Fatalf("%s: no pin is sent for a terminal epic: %q", status, out)
+		}
+		if !strings.Contains(out, "pin: none") || !strings.Contains(out, "own packet aggregate") {
+			t.Fatalf("%s: the plan says the store resolves the member's own aggregate: %q", status, out)
+		}
+		assertNoWrites(t, cs)
+	}
+}

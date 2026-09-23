@@ -160,16 +160,16 @@ func authorRequirementFields() (map[string]any, error) {
 // flip left missing (GAP-017). `author update --kind backlog` edits it against
 // its fingerprint; a disposition change carries its --source.
 var (
-	authorBacklogKind       string
-	authorBacklogObserved   string
-	authorBacklogWhy        string
-	authorBacklogRoute      string
-	authorBacklogAffected   string
-	authorBacklogGapKind    string
-	authorBacklogTraces     string
-	authorBacklogConsequenc string
-	authorBacklogNotes      string
-	authorDisposition       string
+	authorBacklogKind        string
+	authorBacklogObserved    string
+	authorBacklogWhy         string
+	authorBacklogRoute       string
+	authorBacklogAffected    string
+	authorBacklogGapKind     string
+	authorBacklogTraces      string
+	authorBacklogConsequence string
+	authorBacklogNotes       string
+	authorDisposition        string
 )
 
 var authorBacklogCmd = &cobra.Command{
@@ -221,8 +221,31 @@ func authorBacklogFields() (map[string]any, error) {
 	setIf("why_unrouted", authorBacklogWhy)
 	setIf("candidate_route", authorBacklogRoute)
 	setIf("notes_md", authorBacklogNotes)
+	// REQ-CROSS-432: a backlog or tooling record has no gap fields; the server
+	// refuses them too. Checked before the vocabulary, so any gap flag on such
+	// a record is refused as one.
+	if kind != "gap" {
+		var given []string
+		for _, f := range []struct{ flag, value string }{
+			{"--gap-kind", authorBacklogGapKind},
+			{"--affected-trace", authorBacklogTraces},
+			{"--consequence", authorBacklogConsequence},
+		} {
+			if strings.TrimSpace(f.value) != "" {
+				given = append(given, f.flag)
+			}
+		}
+		if len(given) > 0 {
+			return nil, fmt.Errorf("%s: for a gap only — this record is --kind %s", strings.Join(given, ", "), kind)
+		}
+	}
+	// REQ-CROSS-423: the gap kind is checked against the store's vocabulary
+	// here, naming the set, rather than posted for the server to refuse.
+	if authorBacklogGapKind != "" && !contains(backlogGapKinds, authorBacklogGapKind) {
+		return nil, fmt.Errorf("--gap-kind %q: expected %s", authorBacklogGapKind, strings.Join(backlogGapKinds, "|"))
+	}
 	setIf("gap_kind", authorBacklogGapKind)
-	setIf("consequence", authorBacklogConsequenc)
+	setIf("consequence", authorBacklogConsequence)
 	if ids := splitIDs(authorBacklogAffected); len(ids) > 0 {
 		fields["affected_external_ids"] = ids
 	}
@@ -238,7 +261,7 @@ func authorBacklogFields() (map[string]any, error) {
 		if len(traces) == 0 {
 			missing = append(missing, "--affected-trace")
 		}
-		if authorBacklogConsequenc == "" {
+		if authorBacklogConsequence == "" {
 			missing = append(missing, "--consequence")
 		}
 		if len(missing) > 0 {
@@ -502,8 +525,10 @@ A human-gated transition names the exact ANSWERED gate (--gate), echoes the
 answer it rides (--gate-answer: the option key, its label, or the stored
 answer text) and pins to the gate's current content-shadow hash
 (--gate-fingerprint) — the Fingerprint: line of working-set pull <gate-id>,
-also served by factory gates <gate-id> --json as content_fingerprint. A stale
-hash conflicts instead of applying.
+also served by factory gates <gate-id> --json as fingerprint: the content
+shadow's hash, falling back to the gate row's own when no shadow exists.
+That read also carries content_fingerprint, the row's column — do not pass
+that one. A stale hash conflicts instead of applying.
 
 Members before the epic: apply each member the gate names, then the epic;
 the gate closes and reads applied once every named scope has its
@@ -627,7 +652,12 @@ var inferredTransitions = map[string]map[string]string{
 		"cold-review": "plan->entry",
 		"entry":       "PROPOSED->TODO",
 		"lower":       "build->verify",
-		"completion":  "IN_REVIEW->DONE",
+		// REQ-CROSS-431: a user requirement's own validation carries the same
+		// pair as the lower loop it sits above — the value the skill and
+		// `process advance`'s refusal have always told the operator to type
+		// (BACKLOG-TOOL-93).
+		"upper":      "build->verify",
+		"completion": "IN_REVIEW->DONE",
 	},
 	"gate": {
 		"entry":      "PROPOSED->TODO",
@@ -658,7 +688,7 @@ func resolveTransition(kind, purpose, transition, from, to string) (string, erro
 		return inferred, nil
 	}
 	if kind == "trace" {
-		return "", fmt.Errorf("transition is required for purpose %q: give --from and --to (e.g. --from build --to verify); it is inferred only for cold-review, entry, lower and completion", purpose)
+		return "", fmt.Errorf("transition is required for purpose %q: give --from and --to (e.g. --from build --to verify); it is inferred only for cold-review, entry, lower, upper and completion", purpose)
 	}
 	return "", nil
 }
@@ -680,17 +710,21 @@ func withEntrySourceHint(err error, inferred bool) error {
 // is a display prefix.
 var fullHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// aggregatePurposes pin to the scope's packet aggregate; `lower` pins to the
-// requirement's content hash; every other purpose is free and untouched.
+// aggregatePurposes pin to the scope's packet aggregate; contentHashPurposes
+// pin to the scoped record's own content hash — `lower` to a system
+// requirement's, `upper` to the user requirement's (REQ-CROSS-431;
+// BACKLOG-TOOL-93). Every other purpose is free and untouched.
 var aggregatePurposes = map[string]bool{"cold-review": true, "entry": true, "completion": true}
+
+var contentHashPurposes = map[string]bool{"lower": true, "upper": true}
 
 // REQ-CROSS-376 (EPIC-CLI-017): the pin an authored trace carries, defaulted
 // by purpose from the server's own reads and validated when given. A trace is
 // immutable and a pin that matches nothing can never be removed, so the value
 // is read from the store rather than typed: the packet aggregate for
 // cold-review, entry and completion (the caller-scoped delivery-context read
-// for the first scope token), the content hash for lower (the requirements
-// read). A given value that is not a full hash is refused; one that is the
+// for the first scope token), the content hash for lower and upper (the
+// requirements read). A given value that is not a full hash is refused; one that is the
 // other class is refused naming both; one that matches nothing is recorded
 // with a warning — a guard flags, it does not delete. When the reference is
 // not readable from this session an explicit full hash is recorded with a
@@ -700,7 +734,7 @@ func resolveTracePin(env *factoryEnv, purpose string, scope []string, given stri
 	switch {
 	case aggregatePurposes[purpose]:
 		wantClass, otherClass = "packet aggregate", "content hash"
-	case purpose == "lower":
+	case contentHashPurposes[purpose]:
 		wantClass, otherClass = "content hash", "packet aggregate"
 	default:
 		return given, nil, nil
@@ -726,7 +760,7 @@ func resolveTracePin(env *factoryEnv, purpose string, scope []string, given stri
 	contentHashes, contentErr := readContentHashesFor(env, scope)
 	var want, wantErr string
 	others := map[string]string{}
-	if purpose == "lower" {
+	if contentHashPurposes[purpose] {
 		want, wantErr = contentHashes[subject], contentErr
 		if aggregate != "" {
 			others[aggregate] = subject
@@ -754,7 +788,7 @@ func resolveTracePin(env *factoryEnv, purpose string, scope []string, given stri
 }
 
 func pinClass(purpose string) string {
-	if purpose == "lower" {
+	if contentHashPurposes[purpose] {
 		return "content hash"
 	}
 	return "packet aggregate"
@@ -829,7 +863,33 @@ Keep the scalar flags — --title, --stage, --priority, --owner, --context and
 each --source tag — under 255 characters. A value over the bound is refused
 as a 422 naming the field and the limit, and nothing is written. Prose
 belongs in --detail, which is unbounded; --description, --boundary,
---rationale and --verification-method take a paragraph.`,
+--rationale and --verification-method take a paragraph.
+
+--criteria is a JSON array — inline when the value starts with '[',
+otherwise a path to a file holding the same array. It replaces the stored
+set whole, keyed on external_id: omitting --criteria preserves the stored
+set, and a criteria value that is present but not an array is refused
+rather than silently ignored. Every object needs an external_id (one
+without it is refused as a 422) and may carry position, kind (criterion,
+or scenario for a user requirement's acceptance scenario), given, when,
+then, statement, source_citations and verification_refs.
+
+Set position on every object or on none. With none, the array order is the
+stored order; a set that states position on some objects and not on others
+is refused as a 422. A set is served by position, then external_id. To
+reorder a set, send it again in the new order: a set identical to the stored
+one writes nothing.
+
+  --criteria '[{"external_id":"AC-1","position":1,"kind":"criterion","statement":"the export names the workspace"}]'
+  --criteria '[{"external_id":"AS-1","kind":"scenario","given":"a stale fingerprint","when":"the edit is sent","then":"it conflicts"}]'
+
+--kind backlog edits a backlog, gap or tooling record: its disposition (with
+the --source that decided it) and its body — --notes, --observed,
+--why-unrouted, --candidate-route, --affected, and --gap-kind/--consequence/
+--affected-trace on a gap. A backlog record has no requirement fields:
+--detail, --description, --stage, --priority, --owner, --boundary,
+--rationale, --verification-method, --context and --criteria are refused
+there, and prose goes in --notes.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := authorEnv()
@@ -850,6 +910,9 @@ belongs in --detail, which is unbounded; --description, --boundary,
 // (the server 409s on a stale one); --criteria, when set, replaces the record's
 // scenarios/criteria, so an omitted flag sends no key rather than wiping them.
 func authorUpdateRecord(cmd *cobra.Command) (map[string]any, error) {
+	if err := refuseRequirementFieldsOnBacklog(cmd); err != nil {
+		return nil, err
+	}
 	record := map[string]any{"expected_fingerprint": authorExpectedFingerprint}
 	setStr := func(flag, field, val string) {
 		if cmd.Flags().Changed(flag) {
@@ -884,7 +947,87 @@ func authorUpdateRecord(cmd *cobra.Command) (map[string]any, error) {
 		}
 		record["criteria"] = criteria
 	}
+	if err := setBacklogBody(cmd, record); err != nil {
+		return nil, err
+	}
 	return record, nil
+}
+
+// requirementOnlyFlags are the author update flags a backlog record has no
+// field for.
+var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "context", "criteria"}
+
+// refuseRequirementFieldsOnBacklog refuses, before any request, a requirement
+// or epic field on a backlog record. The server reads only the backlog content
+// fields, drops the rest and answers 200, so the CLI printed "✓ updated" over
+// a value it never kept (REQ-CROSS-393 / REQ-BKLG-006; BACKLOG-TOOL-49).
+func refuseRequirementFieldsOnBacklog(cmd *cobra.Command) error {
+	if authorUpdateKind != "backlog" {
+		return nil
+	}
+	// --detail is named apart: its prose has a home, --notes. It is not
+	// remapped silently.
+	if cmd.Flags().Changed("detail") {
+		return fmt.Errorf("--detail: a backlog record has no detail body — put the prose in --notes; the server stores no detail_md for a backlog record and would answer 200 having kept nothing")
+	}
+	var given []string
+	for _, flag := range requirementOnlyFlags {
+		if cmd.Flags().Changed(flag) {
+			given = append(given, "--"+flag)
+		}
+	}
+	if len(given) > 0 {
+		return fmt.Errorf("%s: a backlog record has no such field and the server would answer 200 having kept nothing — its body is --title, --notes, --observed, --why-unrouted, --candidate-route and --affected, and on a gap --gap-kind, --consequence and --affected-trace",
+			strings.Join(given, ", "))
+	}
+	return nil
+}
+
+// setBacklogBody carries a backlog record's own content fields onto the edit
+// (REQ-CROSS-393; BACKLOG-TOOL-79). The server takes them on the same
+// fingerprint-guarded update it takes a disposition on (Core.Author
+// @backlog_content_fields); they were registered on `author backlog` alone, so
+// a filed record's body could only be corrected by filing a second record. On
+// any other kind they are refused here, before any request, naming each flag
+// given.
+func setBacklogBody(cmd *cobra.Command, record map[string]any) error {
+	fields := []struct{ flag, field, value string }{
+		{"notes", "notes_md", authorBacklogNotes},
+		{"observed", "observation", authorBacklogObserved},
+		{"why-unrouted", "why_unrouted", authorBacklogWhy},
+		{"candidate-route", "candidate_route", authorBacklogRoute},
+		{"gap-kind", "gap_kind", authorBacklogGapKind},
+		{"consequence", "consequence", authorBacklogConsequence},
+		{"affected", "affected_external_ids", authorBacklogAffected},
+		{"affected-trace", "affected_trace_external_ids", authorBacklogTraces},
+	}
+	idLists := map[string]bool{"affected_external_ids": true, "affected_trace_external_ids": true}
+	backlog := authorUpdateKind == "backlog"
+	var misplaced []string
+	for _, f := range fields {
+		if !cmd.Flags().Changed(f.flag) {
+			continue
+		}
+		if !backlog {
+			misplaced = append(misplaced, "--"+f.flag)
+			continue
+		}
+		if idLists[f.field] {
+			record[f.field] = splitIDs(f.value)
+			continue
+		}
+		record[f.field] = f.value
+	}
+	if len(misplaced) > 0 {
+		return fmt.Errorf("%s: backlog content — add --kind backlog, or edit a requirement or epic with --detail, --description and --rationale",
+			strings.Join(misplaced, ", "))
+	}
+	// REQ-CROSS-423: the gap kind is checked against the store's vocabulary
+	// here, naming the set, exactly as the create checks it.
+	if backlog && cmd.Flags().Changed("gap-kind") && !contains(backlogGapKinds, authorBacklogGapKind) {
+		return fmt.Errorf("--gap-kind %q: expected %s", authorBacklogGapKind, strings.Join(backlogGapKinds, "|"))
+	}
+	return nil
 }
 
 // sourceCitations turns each --source value (e.g. "USER:2026-09-01:x") into a
@@ -1018,10 +1161,10 @@ func init() {
 	authorTraceCmd.Flags().StringVar(&authorBody, "body", "", "trace verdict details markdown")
 	authorTraceCmd.Flags().StringVar(&authorGatePurpose, "purpose", "", "trace purpose, e.g. cold-review")
 	authorTraceCmd.Flags().StringVar(&authorGateTransition, "transition", "", "transition held by the trace as one FROM->TO value (quote the arrow); prefer --from/--to")
-	authorTraceCmd.Flags().StringVar(&authorTransFrom, "from", "", "the transition's FROM state (with --to); inferred by purpose: cold-review plan, entry PROPOSED, lower build, completion IN_REVIEW")
-	authorTraceCmd.Flags().StringVar(&authorTransTo, "to", "", "the transition's TO state (with --from); inferred by purpose: cold-review entry, entry TODO, lower verify, completion DONE")
+	authorTraceCmd.Flags().StringVar(&authorTransFrom, "from", "", "the transition's FROM state (with --to); inferred by purpose: cold-review plan, entry PROPOSED, lower build, upper build, completion IN_REVIEW")
+	authorTraceCmd.Flags().StringVar(&authorTransTo, "to", "", "the transition's TO state (with --from); inferred by purpose: cold-review entry, entry TODO, lower verify, upper verify, completion DONE")
 	authorTraceCmd.Flags().StringArrayVar(&authorGateScope, "scope", nil, "exact EPIC/UR/SR scope token, repeatable")
-	authorTraceCmd.Flags().StringVar(&authorTraceFingerprint, "fingerprint", "", "the pin evaluated: the packet aggregate (cold-review, entry, completion) or the content hash (lower); read from the store when omitted")
+	authorTraceCmd.Flags().StringVar(&authorTraceFingerprint, "fingerprint", "", "the pin evaluated: the packet aggregate (cold-review, entry, completion) or the content hash (lower, upper); read from the store when omitted")
 	authorTraceCmd.Flags().StringVar(&authorTraceVerdict, "verdict", "", "PASS | FAIL | STALE")
 	authorTraceCmd.Flags().StringArrayVar(&authorTraceSources, "source", nil, "verdict source reference, repeatable")
 	authorTraceCmd.Flags().StringArrayVar(&authorTracePrereqs, "prerequisite", nil, "prerequisite trace gate id, repeatable")
@@ -1043,13 +1186,26 @@ func init() {
 	authorUpdateCmd.Flags().StringVar(&authorRationale, "rationale", "", "new rationale (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorVerificationMethod, "verification-method", "", "new verification method (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorCriteria, "criteria", "",
-		"JSON array of criterion/scenario objects — inline when it starts with '[', otherwise a file path")
+		"JSON array of criterion/scenario objects — inline when it starts with '[', otherwise a file path. "+
+			"Each object needs external_id (the replace-set keys on it) and takes position "+
+			"(on every object or on none; none keeps the array order), "+
+			"kind (criterion | scenario), given, when, then, statement, source_citations, verification_refs")
 	authorUpdateCmd.Flags().StringVar(&authorExpectedFingerprint, "expected-fingerprint", "",
 		"the record's current content fingerprint (required; a stale one conflicts instead of overwriting)")
 	authorUpdateCmd.Flags().StringVar(&authorUpdateKind, "kind", "requirement",
 		"requirement (default), epic — an epic's title/description are edited too — or backlog")
 	authorUpdateCmd.Flags().StringVar(&authorDisposition, "disposition", "",
-		"backlog only: OPEN, ROUTED to <id>, REJECTED with <source>, CLOSED by <id>, ACCEPTED with <source> — needs --source")
+		"backlog only: "+backlogDispositionShape+" — needs --source")
+	// REQ-CROSS-393: a filed backlog record's body is editable, under the same
+	// flag names `author backlog` files it with (BACKLOG-TOOL-79).
+	authorUpdateCmd.Flags().StringVar(&authorBacklogNotes, "notes", "", "backlog only: new free notes (markdown)")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogObserved, "observed", "", "backlog only: new observation — what was seen, not what it implies")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogWhy, "why-unrouted", "", "backlog only: unclear owner, cross-cutting, or awaiting a decision")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogRoute, "candidate-route", "", "backlog only: PROPOSED UR/SR, DERIVED, gap, conflict, or decision gate")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogAffected, "affected", "", "backlog only: affected EPIC/UR/SR ids, comma-separated (replaces the stored list)")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogGapKind, "gap-kind", "", "backlog only, gap: capability | specification")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogConsequence, "consequence", "", "backlog only, gap: what the affected traces cannot currently prove")
+	authorUpdateCmd.Flags().StringVar(&authorBacklogTraces, "affected-trace", "", "backlog only, gap: ids whose trace is incomplete because of it, comma-separated (replaces the stored list)")
 	authorBacklogCmd.Flags().StringVar(&authorBacklogKind, "kind", "backlog", "backlog | gap | tooling")
 	authorBacklogCmd.Flags().StringVar(&authorTitle, "title", "", "the discovery in one line (required)")
 	authorBacklogCmd.Flags().StringVar(&authorBacklogObserved, "observed", "", "what was seen, not what it implies")
@@ -1058,7 +1214,7 @@ func init() {
 	authorBacklogCmd.Flags().StringVar(&authorBacklogAffected, "affected", "", "affected EPIC/UR/SR ids, comma-separated")
 	authorBacklogCmd.Flags().StringVar(&authorBacklogGapKind, "gap-kind", "", "gap only: capability | specification")
 	authorBacklogCmd.Flags().StringVar(&authorBacklogTraces, "affected-trace", "", "gap only: ids whose trace is incomplete because of it, comma-separated")
-	authorBacklogCmd.Flags().StringVar(&authorBacklogConsequenc, "consequence", "", "gap only: what the affected traces cannot currently prove")
+	authorBacklogCmd.Flags().StringVar(&authorBacklogConsequence, "consequence", "", "gap only: what the affected traces cannot currently prove")
 	authorBacklogCmd.Flags().StringVar(&authorBacklogNotes, "notes", "", "free notes (markdown)")
 	// REQ-CROSS-310 (SR-CLI-0081): --context and repeatable --source ride the edit.
 	authorUpdateCmd.Flags().StringVar(&authorContext, "context", "", "new bounded-context code")

@@ -100,8 +100,9 @@ Backlog, gap and tooling-gap records (`BACKLOG-…`, `GAP-…`, `BACKLOG-TOOL-<n
 are store records like every other (`PROCESS.md` §State records and
 reconciliation): read one with `modernpath working-set pull <id>`, file a
 tooling gap with `modernpath feedback "<line>"`, and change a disposition with
-`modernpath author update --kind backlog … --source USER:…`. No verb lists
-them yet; until one does, an id comes from the store's own reads —
+`modernpath author update --kind backlog … --source USER:…`. List them with
+`modernpath process backlog list [--kind backlog|gap|tooling] [--disposition
+<word>]`; an id comes from that list or the store's other reads —
 `your-move`, the feed, the record that routed it — never from a plan file, a
 handover or a note, which are projections and carry no disposition the store
 does not.

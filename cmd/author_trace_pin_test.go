@@ -20,6 +20,8 @@ const (
 	pinAggregate   = "f54758b841017af674a3b86f2f2e05865d749ddedc15172353e6ed62440b2f01"
 	pinContentHash = "baaf2aa5a8f0dedfa54265d224cc3cf12c4795b7bdf07b2a4096713acb78e870"
 	pinUnknown     = "0000000000000000000000000000000000000000000000000000000000000000"
+	// REQ-CROSS-431: the user requirement an upper trace pins to.
+	pinURContentHash = "1f9a3c6d20b5e47fa8c0d13e75b2648af0cd93e15b7a4c28d6e0f31b9a475c62"
 )
 
 // pinServer serves the two reads resolveTracePin needs: the caller-scoped
@@ -45,14 +47,28 @@ func pinServer(t *testing.T, aggregate string) *httptest.Server {
 		if aggregate == "" || (r.URL.Query().Get("scope") != "" && r.URL.Query().Get("scope") != "EPIC-P") {
 			agg = nil
 		}
+		// The frozen member list holds only the SRs; the epic's user requirement
+		// is found through the stored membership the facts serve, as on the
+		// real server (resolvePiece; REQ-CROSS-431).
+		var facts any
+		if r.URL.Query().Get("scope") == "EPIC-P" {
+			facts = map[string]any{
+				"scope": map[string]any{"external_id": "EPIC-P", "kind": "epic", "status": "IN_PROGRESS"},
+				"members": []map[string]any{
+					{"external_id": "REQ-P-1", "kind": "sr", "status": "IN_PROGRESS", "content_fingerprint": pinContentHash},
+					{"external_id": "UR-P", "kind": "ur", "status": "IN_PROGRESS", "content_fingerprint": pinURContentHash},
+				},
+			}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"packet_fingerprint": agg, "process_revision": strings.Repeat("c", 40), "checks": map[string]any{},
+			"facts": facts,
 		}})
 	})
 	mux.HandleFunc("/api/v1/sync/requirements", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"requirements":      []map[string]any{{"external_id": "REQ-P-1", "fingerprint": pinContentHash}},
-			"user_requirements": []map[string]any{},
+			"user_requirements": []map[string]any{{"external_id": "UR-P", "fingerprint": pinURContentHash}},
 		}})
 	})
 	srv := httptest.NewServer(mux)
@@ -120,6 +136,75 @@ func TestAuthorTraceClassUnverifiedWhenTheReadIsUnavailable(t *testing.T) {
 	_, _, err = resolveTracePin(env, "completion", []string{"EPIC-P"}, "")
 	if err == nil || !strings.Contains(err.Error(), "--fingerprint") {
 		t.Fatalf("an omitted pin with no readable reference is refused naming --fingerprint, got %v", err)
+	}
+}
+
+// --- REQ-CROSS-431: `--purpose upper` (BACKLOG-TOOL-93) ---
+//
+// A user requirement reaches IN_REVIEW through its own upper trace, which the
+// kit skill and `process advance`'s own refusal both spell as
+// `--purpose upper --scope <UR> --fingerprint <its content hash>`. `upper` fell
+// to resolveTracePin's default arm, so an omitted --fingerprint posted no pin at
+// all and the server refused with "fingerprint is required"; resolveTransition
+// had no entry for it either, so the one trace the loop tells you to write by
+// hand needed two values typed from memory.
+
+func TestAuthorTraceUpperDefaultsToTheURContentHash(t *testing.T) {
+	env := wsEnv(t, pinServer(t, pinAggregate))
+
+	pin, warnings, err := resolveTracePin(env, "upper", []string{"UR-P"}, "")
+	if err != nil || pin != pinURContentHash {
+		t.Fatalf("purpose upper must default to the user requirement's content hash, got %q, %v", pin, err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a pin read from the store warns about nothing, got %v", warnings)
+	}
+}
+
+func TestAuthorTraceUpperValidatesAGivenPin(t *testing.T) {
+	env := wsEnv(t, pinServer(t, pinAggregate))
+
+	if pin, _, err := resolveTracePin(env, "upper", []string{"UR-P"}, pinURContentHash); err != nil || pin != pinURContentHash {
+		t.Fatalf("the matching content hash must be accepted, got %q, %v", pin, err)
+	}
+	_, _, err := resolveTracePin(env, "upper", []string{"UR-P"}, pinURContentHash[:12])
+	if err == nil || !strings.Contains(err.Error(), "64") {
+		t.Fatalf("a display prefix must be refused for upper as it is for lower, got %v", err)
+	}
+}
+
+// REQ-CROSS-431 (F-CLI024-R1-01): the packet aggregate given for an upper
+// trace is the wrong class, and is refused naming both.
+func TestAuthorTraceUpperRefusesTheAggregateByName(t *testing.T) {
+	env := wsEnv(t, pinServer(t, pinAggregate))
+
+	_, _, err := resolveTracePin(env, "upper", []string{"UR-P"}, pinAggregate)
+	if err == nil || !strings.Contains(err.Error(), "content hash") || !strings.Contains(err.Error(), "packet aggregate") {
+		t.Fatalf("the aggregate given for an upper trace must be refused naming both classes, got %v", err)
+	}
+}
+
+func TestAuthorTraceUpperIsRefusedWhenTheURServesNoHash(t *testing.T) {
+	env := wsEnv(t, pinServer(t, pinAggregate))
+
+	_, _, err := resolveTracePin(env, "upper", []string{"UR-ABSENT"}, "")
+	if err == nil || !strings.Contains(err.Error(), "--fingerprint") {
+		t.Fatalf("an unreadable content hash with no --fingerprint is refused naming the flag, got %v", err)
+	}
+}
+
+func TestAuthorTraceUpperInfersItsTransition(t *testing.T) {
+	got, err := resolveTransition("trace", "upper", "", "", "")
+	if err != nil || got != "build->verify" {
+		t.Fatalf("an upper trace must infer build->verify, got %q, %v", got, err)
+	}
+	// An explicit pair still wins, and the remaining free purposes still name
+	// the flags rather than inventing a transition.
+	if got, err := resolveTransition("trace", "upper", "", "verify", "completion"); err != nil || got != "verify->completion" {
+		t.Fatalf("--from/--to must still win, got %q, %v", got, err)
+	}
+	if _, err := resolveTransition("trace", "custom_check", "", "", ""); err == nil || !strings.Contains(err.Error(), "upper") {
+		t.Fatalf("the refusal must list upper among the inferring purposes, got %v", err)
 	}
 }
 

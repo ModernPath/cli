@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fatih/color"
 )
 
 // REQ-CROSS-387 (EPIC-CLI-019) — `modernpath feedback "<line>"` files a
@@ -119,6 +122,122 @@ func TestFeedbackWithoutATokenAppendsToTheInterimFile(t *testing.T) {
 	}
 	if *got != nil {
 		t.Errorf("nothing may be posted without a token, posted %v", *got)
+	}
+}
+
+// (c″) REQ-CROSS-434: the same fallback for a workspace that names no
+// system. `feedback` promises the interim file "without a stored credential,
+// or when the server cannot be reached", but an unbound workspace is a plain
+// error — so the one command that exists to surface a gap exited on one,
+// losing the line, in exactly the situation a newcomer meets it.
+func TestFeedbackWithoutABindingAppendsToTheInterimFile(t *testing.T) {
+	for _, c := range []struct {
+		name, config, want string
+	}{
+		{"config names no system", `{"api_url":"http://127.0.0.1:1"}`, "system"},
+		{"no config at all", "", "connect"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv, got := feedbackServer(t, nil, 200)
+			cobraWorkspace(t, srv)
+			if c.config == "" {
+				_ = os.RemoveAll(".modernpath")
+			} else {
+				_ = os.WriteFile(filepath.Join(".modernpath", "config.json"), []byte(c.config), 0o644)
+			}
+
+			// The "why" rides printWarning, which writes to color.Error — a
+			// writer captureOutput does not swap. Capture it here so the whole
+			// message the operator sees is under test.
+			var warnings bytes.Buffer
+			savedErr := color.Error
+			color.Error = &warnings
+			out, err := runRoot(t, "feedback", "the gap met before the workspace was bound")
+			color.Error = savedErr
+
+			if err != nil {
+				t.Fatalf("an unbound workspace must still keep the line: %v", err)
+			}
+			raw, readErr := os.ReadFile(filepath.Join("process", "tooling-gaps.md"))
+			if readErr != nil {
+				t.Fatalf("the interim file must be written: %v", readErr)
+			}
+			if !strings.Contains(string(raw), "the gap met before the workspace was bound") {
+				t.Errorf("the row must carry the line:\n%s", raw)
+			}
+			if !strings.Contains(out, "tooling-gaps.md") {
+				t.Errorf("the output must name the file:\n%s", out)
+			}
+			said := out + warnings.String()
+			if !strings.Contains(said, c.want) {
+				t.Errorf("the output must say why the store was not written, got:\n%s", said)
+			}
+			if *got != nil {
+				t.Errorf("nothing may be posted by an unbound workspace, posted %v", *got)
+			}
+		})
+	}
+}
+
+// (c‴) REQ-CROSS-434: a credential the server rejects, and a binding to a
+// system this user cannot reach, leave the store unwritable just as a missing
+// credential or binding does. Both are fixed by another command (`auth`,
+// `factory connect`), not by retrying, so the line goes to the interim file
+// instead of being lost with the exit.
+func TestFeedbackKeepsTheLineWhenTheStoreCannotBeWritten(t *testing.T) {
+	for _, c := range []struct {
+		name, want, notWant string
+		setup               func(t *testing.T)
+	}{
+		{"the server rejects the credential", "rejected the session token", "", func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/sync/backlog", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+			cobraWorkspace(t, srv)
+		}},
+		// REQ-CROSS-434 (F-CLI024-R1-05): the same 401 on the create, after a
+		// read that succeeded.
+		{"the server rejects the credential on the create", "rejected the session token", "", func(t *testing.T) {
+			srv, _ := feedbackServer(t, nil, http.StatusUnauthorized)
+			cobraWorkspace(t, srv)
+		}},
+		{"the bound system is not reachable", "bound system is not reachable", "no workspace binding", func(t *testing.T) {
+			srv, _ := feedbackServer(t, nil, 200)
+			cobraWorkspace(t, srv) // bound to system 1
+			stubSystems(t)         // this user reaches system 7 only
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.setup(t)
+
+			var warnings bytes.Buffer
+			savedErr := color.Error
+			color.Error = &warnings
+			out, err := runRoot(t, "feedback", "a gap the store cannot take")
+			color.Error = savedErr
+
+			if err != nil {
+				t.Fatalf("the line must be kept, not lost with an exit: %v", err)
+			}
+			raw, readErr := os.ReadFile(filepath.Join("process", "tooling-gaps.md"))
+			if readErr != nil {
+				t.Fatalf("the interim file must be written: %v", readErr)
+			}
+			if !strings.Contains(string(raw), "a gap the store cannot take") {
+				t.Errorf("the row must carry the line:\n%s", raw)
+			}
+			said := out + warnings.String()
+			if !strings.Contains(said, c.want) {
+				t.Errorf("the output must say why the store was not written (%q), got:\n%s", c.want, said)
+			}
+			if c.notWant != "" && strings.Contains(said, c.notWant) {
+				t.Errorf("the output must not say %q, got:\n%s", c.notWant, said)
+			}
+		})
 	}
 }
 

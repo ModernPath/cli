@@ -1076,10 +1076,7 @@
         },
         "disposition": {
           "type": "string",
-          "enum": [
-            "routed",
-            "deferred"
-          ]
+          "pattern": "^(OPEN|DEFERRED|ROUTED to .+|REJECTED with .+|CLOSED by .+|ACCEPTED with .+)$"
         },
         "disposition_ref": {
           "type": "string"
@@ -1088,7 +1085,7 @@
           "type": "string",
           "enum": [
             "capability",
-            "ledger"
+            "specification"
           ]
         },
         "affected_trace_external_ids": {

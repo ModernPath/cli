@@ -81,9 +81,10 @@ backlog record (`author backlog <id> --kind backlog`), a gap is `--kind gap`
 with its `--gap-kind`, `--affected-trace` and `--consequence`, and a tooling
 gap is `modernpath feedback "<line>"`. These are store records like every
 other (`PROCESS.md` §State records and reconciliation): their state is read
-from the store — `working-set pull <id>` — never from a plan file or a note,
-which carry no disposition the store does not; no verb lists them yet, so an
-id comes from `your-move`, the feed or the record that routed it. The release
+from the store — `process backlog list [--kind backlog|gap|tooling]
+[--disposition <word>]` lists them newest first and `working-set pull <id>`
+reads one — never from a plan file or a note, which carry no disposition the
+store does not. The release
 registry file is retired;
 the single active release and its `USER:` source are the newest answered,
 approved `release_selection` gate naming `release:<slug>` on the system —
@@ -277,9 +278,9 @@ The operator records evidence; the tool does the ceremony (EPIC-CLI-017).
    trace and the gate name the epic and its user requirement `UR-<epic>`
    (`UR-<suffix>` for `EPIC-<suffix>`) while it is `IN_REVIEW`; it reaches
    `IN_REVIEW` through its upper trace by hand (`author trace TRACE-UPPER-<UR>
-   --purpose upper --scope <UR> --fingerprint <its content hash> --from build
-   --to verify --verdict PASS` — the transition is inferred only for
-   cold-review, entry, lower and completion, so an upper trace names it) and
+   --purpose upper --scope <UR> --verdict PASS` — like `lower`, an upper trace
+   reads its pin from the store, the UR's own content hash, and infers
+   `build->verify`; name `--fingerprint`/`--from`/`--to` only to override) and
    `process reconcile --apply` — `process advance` takes an SR. `working-set pull <epic>` lists only the SRs under
     **Members** — pull the UR by id to read its state.
 
@@ -318,8 +319,8 @@ by superseding it with one that can pass:
 1. Hold the piece: `working-set select <epic> --kind epic --phase completion`.
 2. Read the **current** aggregate: `process check --phase completion -v --piece
    <epic>` prints `full packet_fingerprint:`. `process next -v` may answer
-   `no route derived — entry_origin_unavailable` for an epic whose members are
-   all `DONE`; it still prints the aggregate.
+   `no route derived — entry_origin_unavailable` — a member whose evidence is
+   not current has no live entry origin — and it still prints the aggregate.
 3. Record the completion trace at that aggregate (step 9), then open the
    successor naming both: `author gate COMPLETE-<scope>-2 … --prerequisite
    COMPLETE-TRACE-<scope> --supersedes COMPLETE-<scope>`. The old gate reads
@@ -351,13 +352,17 @@ requirement, a hand-edited status or a synthetic failure (`PROCESS.md`
    read from the store. The server invalidates by basis — a defect stales
    the item's own evidence, lower trace and the completion traces and leaves
    the epic's cold review and the user requirement's upper validation
-   standing; a reversed decision stales the plan too — retires the item's own
-   entry inside the shared entry gate (siblings keep theirs), and moves the
-   user requirement and the owning epic that were `IN_REVIEW`/`DONE` on the
-   same gate (the epic to `PROPOSED` for a reversed decision, else
+   standing; a reversed decision stales the plan too. Only a reversed
+   decision retires the item's own entry inside the shared entry gate
+   (siblings keep theirs). Whatever the basis, the apply moves the user
+   requirement and the owning epic that were `IN_REVIEW`/`DONE` on the same
+   gate (the epic to `PROPOSED` for a reversed decision, else
    `IN_PROGRESS`); the verb prints them as `followed:` lines.
-4. Next: a defect is rebuilt red-first and `process complete` re-completes
-   the epic on the siblings' current evidence (§2 step 6); a reversed
+4. Next: a defect is rebuilt red-first, `process advance` returns it to
+   `IN_REVIEW` on its lower trace — with no re-entry, even when no entry
+   gate names it (an epic entered through a legacy approval gate) — and
+   `process complete` re-completes the epic on the siblings' current
+   evidence (§2 step 6); a reversed
    decision is re-planned and cold-reviewed, and `process enter` opens the
    successor entry gate `ENTRY-<scope>-R2` (§1 Entry).
 
@@ -435,7 +440,7 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `you hold several current pieces (…): … — name one with --piece <id>` | cli | a scoped read or write under several held pieces, none named | `--piece <scope>` on the command |
 | `push: re-stamped %d section(s) whose scope context moved` | cli | unchanged sections the server reported stale were re-put for a fresh stamp (not an error) | nothing |
 | `no current selection named %s is held by you` | cli | `working-set pull selection --piece X` for a piece you do not hold; the snapshot is left unchanged | name a held piece |
-| `no route derived — <reason>` | cli | `process next` on a live selection with no phase to route — `entry_origin_unavailable` when every member is already `DONE`; not an error, and `-v` still prints the aggregate | nothing; read the aggregate from it or from `process check --phase completion -v` |
+| `no route derived — <reason>` | cli | `process next` on a live selection with no phase to route — `entry_origin_unavailable` when a member whose evidence is not current has no live entry origin, retired by a demotion or never entered (a scope whose evidence is all current routes to `complete` instead); not an error, and `-v` still prints the aggregate | `process reenter <member-id>` re-establishes that MEMBER's entry (fresh cold review + human approval) — the entry origin is the member's fact, so naming the scope resolves a different gate; `process check --phase build` names the members. For any other reason nothing — read the aggregate from it or from `process check --phase completion -v` |
 | `you hold several current selections (…) — name one with ?scope=<id>` | server | an unscoped scope read or write under several pieces | `--piece <scope>` on the command |
 | `is already held by` | server | a take of a piece someone else holds | take a different piece, or wait for a put-down |
 | `closing … requires stating how it ended` | server | a put-down or displacement with no outcome | add `--outcome done\|obsolete\|returned=<phase>` |
@@ -499,7 +504,7 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `pin_required` | server | `factory release activate` (and the other release lifecycle transitions) without `--pin`, or with a wrong one | the release PIN of the signed-in person is required; it is set in Mission Control — pass it with `--pin`; `pin_locked` says repeated failures locked it for a while — retry later |
 | `does not exist` (`gate <id> does not exist`) | cli | `factory gates <id>` on an id the store does not hold — a mistyped id, or a gate the store never wrote (the active release's `GATE-RELEASE-<slug>` when the release was activated from another system, or before the activation wrote it) | check the id in `your-move --queue` or the epic pull; for the release, `factory status` and `SELECTION.md` name the gate or say `no recorded selection gate on this system` — run `factory release activate <slug> --source USER:…` here to record one |
 | `not served by … (unknown external id)` | cli | `working-set pull <id>` on an id the read surface does not hold | the same checks; an applied gate a pull cannot resolve is a known read gap, not a missing decision |
-| `transition is required for purpose …: give --from and --to` | cli | `author trace --purpose upper` without `--from`/`--to` | add `--from build --to verify`; only cold-review, entry, lower and completion infer their transition |
+| `transition is required for purpose …: give --from and --to` | cli | `author trace` with a purpose outside the inferring set | add `--from <state> --to <state>`; only cold-review, entry, lower, upper and completion infer their transition |
 | `criteria: every stated criterion needs an external_id` | server | `author update --criteria` with an object lacking `external_id` | give every object `external_id`, `given`, `when`, `then` |
 
 ## Reverse-engineering onboarding (store-backed)

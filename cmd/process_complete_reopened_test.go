@@ -122,6 +122,81 @@ func TestProcessCompleteReopenedEpicRecordsTheSuccessorTraceFoldsAndOpensTheSucc
 	if !strings.Contains(out, "IN_REVIEW") || !strings.Contains(out, "COMPLETE-EPIC-A-R2") {
 		t.Fatalf("the fold and the successor gate are reported: %q", out)
 	}
+	// The served facts predate the fold (the epic reads IN_PROGRESS there), so
+	// the epic's own apply recipe expects the state the fold reached.
+	if !strings.Contains(out, "author advance EPIC-A --kind epic --to DONE --expected IN_REVIEW") {
+		t.Fatalf("the epic recipe expects the folded status, not the served IN_PROGRESS: %q", out)
+	}
+}
+
+// A reopened epic whose members an earlier completion already accepted moves
+// nothing but itself: the member recipe has no ids to put in it, so it is
+// replaced rather than printed as "members first ()".
+func TestProcessCompleteReopenedEpicWithNoMembersToMoveSaysSo(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	facts := completeFacts("IN_PROGRESS", []map[string]any{memberWith("REQ-A-1", "sr", "DONE", "passing")})
+	facts["entry_gate"] = map[string]any{"applied": true, "pinned_aggregate": pinAggregate}
+	cs := completeServer(t, facts, true)
+	cs.existingGates["COMPLETE-EPIC-A"] = map[string]any{"external_id": "COMPLETE-EPIC-A", "state": "closed", "applied_state": "applied"}
+	cs.reconcileResp = []map[string]any{
+		{"applied": true, "transitions": []any{map[string]any{"external_id": "EPIC-A", "kind": "epic", "from": "IN_PROGRESS", "to": "IN_REVIEW", "basis": "members_reviewed"}}, "fails": []any{}},
+		{"applied": true, "transitions": []any{}, "fails": []any{}},
+	}
+
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "members first ()") {
+		t.Fatalf("an empty member list is not printed as a recipe: %q", out)
+	}
+	if !strings.Contains(out, "no members to advance") {
+		t.Fatalf("the output says there is nothing to advance before the epic: %q", out)
+	}
+	if !strings.Contains(out, "author advance EPIC-A --kind epic --to DONE --expected IN_REVIEW") {
+		t.Fatalf("the epic still gets its own recipe at the folded status: %q", out)
+	}
+}
+
+// IN_REVIEW is the only state the fold has: reconcile's epic edges are entry
+// -> IN_PROGRESS and IN_PROGRESS -> IN_REVIEW, and completion is human-gated.
+// A fold that lands anywhere else means the server's edges moved under the
+// verb, so it stops there rather than opening a gate and printing an apply
+// recipe (`--to DONE --expected DONE` would be refused 422).
+func TestProcessCompleteReopenedEpicRefusesAFoldToAnUnexpectedState(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	facts := completeFacts("IN_PROGRESS", []map[string]any{memberWith("REQ-A-1", "sr", "IN_REVIEW", "passing")})
+	facts["entry_gate"] = map[string]any{"applied": true, "pinned_aggregate": pinAggregate}
+	cs := completeServer(t, facts, true)
+	cs.existingGates["COMPLETE-EPIC-A"] = map[string]any{"external_id": "COMPLETE-EPIC-A", "state": "closed", "applied_state": "applied"}
+	cs.reconcileResp = []map[string]any{
+		{"applied": true, "transitions": []any{map[string]any{"external_id": "EPIC-A", "kind": "epic", "from": "IN_REVIEW", "to": "DONE", "basis": "members_reviewed"}}, "fails": []any{}},
+		{"applied": true, "transitions": []any{}, "fails": []any{}},
+	}
+
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err == nil {
+		t.Fatalf("a fold to a state other than IN_REVIEW must refuse, got nil\n%s", out)
+	}
+	for _, want := range []string{"unexpected state DONE", "not IN_REVIEW", "COMPLETE-TRACE-EPIC-A"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal must say %q, got %v", want, err)
+		}
+	}
+	for _, o := range cs.order {
+		if o == "author:create" {
+			t.Fatalf("no gate is opened over an unexpected fold: %v", cs.order)
+		}
+	}
+	if strings.Contains(out, "--kind epic --to DONE --expected") {
+		t.Fatalf("no apply recipe is printed for an unexpected fold: %q", out)
+	}
 }
 
 func TestProcessCompleteReopenedEpicRefusesWhenReconcileDoesNotFold(t *testing.T) {
@@ -202,4 +277,193 @@ func TestProcessCompleteStillRefusesAnUnfoldedEpicWithNoEarlierCompletion(t *tes
 		t.Fatalf("an epic never completed before still names reconcile, got %v", err)
 	}
 	assertNoWrites(t, cs)
+}
+
+// reusedTrace is a completion trace that already PASSes at the packet
+// aggregate, carrying the body `process complete` writes — the sentence that
+// names the targets its evidence run covered. The body comes from the writer's
+// own helper, so a reworded body cannot leave the fixtures agreeing with each
+// other while production loses coverage detection.
+// reopenedFactsWithRebuiltMember is an epic an earlier completion already took
+// DONE, reopened by a defect demotion and rebuilt: REQ-A-2 is back IN_REVIEW
+// while its DONE siblings stand. This is the shape a re-completion arrives in
+// — a DONE epic with a member still IN_REVIEW is refused before any write and
+// names this reopen as the remedy.
+func reopenedFactsWithRebuiltMember() map[string]any {
+	facts := completeFacts("IN_PROGRESS", []map[string]any{
+		memberWith("REQ-A-1", "sr", "DONE", "passing"),
+		memberWith("REQ-A-2", "sr", "IN_REVIEW", "passing"),
+		memberWith("UR-A", "ur", "DONE", "passing"),
+	})
+	facts["entry_gate"] = map[string]any{"applied": true, "pinned_aggregate": pinAggregate}
+	return facts
+}
+
+// foldToInReview is the reconcile script that folds the reopened epic back to
+// IN_REVIEW, then reports nothing left to apply.
+func foldToInReview() []map[string]any {
+	return []map[string]any{
+		{"applied": true, "transitions": []any{map[string]any{"external_id": "EPIC-A", "kind": "epic", "from": "IN_PROGRESS", "to": "IN_REVIEW", "basis": "members_reviewed"}}, "fails": []any{}},
+		{"applied": true, "transitions": []any{}, "fails": []any{}},
+	}
+}
+
+func reusedTrace(covered []string) map[string]any {
+	return map[string]any{
+		"external_id": "COMPLETE-TRACE-EPIC-A", "state": "pass", "fingerprint": pinAggregate,
+		"body_md": completionTraceBody("abc1234", "ci", "https://ci/run/1", covered, covered),
+	}
+}
+
+// The writer and the reader are one format: a body completionTraceBody
+// produced reads back as exactly the targets it named. REQ-CROSS-419 rests on
+// that pairing here — a reused trace is immutable, so the only record of what
+// its run covered is the body it carries — and rewording the writer without
+// rewording the parser fails here, where every fixture above would still pass.
+func TestCompletionTraceBodyRoundTripsThroughTraceRunTargets(t *testing.T) {
+	runTargets := []string{"EPIC-A", "UR-A", "REQ-A-1"}
+	got, ok := traceRunTargets(completionTraceBody("abc1234def", "ci", "https://ci/run/1", runTargets, []string{"EPIC-A", "REQ-A-1"}))
+	if !ok {
+		t.Fatalf("the body the writer produces must be readable by the parser, got ok=false")
+	}
+	if strings.Join(got, ",") != strings.Join(runTargets, ",") {
+		t.Fatalf("the body reads back as the targets its run names, want %v, got %v", runTargets, got)
+	}
+}
+
+// BACKLOG-TOOL-100 (defect against REQ-CROSS-419, D4a: the posted run names
+// every member this completion moves). A completion trace that already PASSes
+// at the unchanged aggregate is reused — but the run it cites named the
+// earlier completion's targets, so a member this completion adds got no
+// delivered-revision evidence at all and the completion gate refuses "not yet"
+// for it. The rerun posts the remainder: the targets the reused trace's run
+// does not already name. The scope is a reopened epic — the sanctioned way an
+// already-completed epic takes a rebuilt member, since a DONE epic with a
+// member still IN_REVIEW is refused before any write.
+func TestProcessCompletePostsTheRunForTargetsTheReusedTraceLeavesUncovered(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	cs := completeServer(t, reopenedFactsWithRebuiltMember(), true)
+	cs.existingGates["COMPLETE-EPIC-A"] = map[string]any{"external_id": "COMPLETE-EPIC-A", "state": "closed", "applied_state": "applied"}
+	cs.existingGates["COMPLETE-TRACE-EPIC-A"] = reusedTrace([]string{"EPIC-A", "UR-A", "REQ-A-1"})
+	cs.reconcileResp = foldToInReview()
+
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "https://ci/run/9", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if len(cs.evidence) != 1 {
+		t.Fatalf("exactly one run is posted, for the uncovered remainder, got %v", cs.evidence)
+	}
+	if got := strings.Join(passedTargets(cs.evidence[0]), ","); got != "REQ-A-2" {
+		t.Fatalf("the run names only the target the reused trace's run leaves uncovered, got %v", got)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the trace is reused, so only the gate is created, got %v", cs.authored)
+	}
+	gate, _ := cs.authored[0]["record"].(map[string]any)
+	if gate["external_id"] != "COMPLETE-EPIC-A-R2" {
+		t.Fatalf("the successor gate is opened, got %v", gate["external_id"])
+	}
+	if prereq := stringSlice(gate["prerequisite_gate_external_ids"]); len(prereq) != 1 || prereq[0] != "COMPLETE-TRACE-EPIC-A" {
+		t.Fatalf("the gate names the reused trace, got %v", gate["prerequisite_gate_external_ids"])
+	}
+	if !strings.Contains(out, "naming REQ-A-2") {
+		t.Fatalf("the plan says which targets the new run names: %q", out)
+	}
+	if !strings.Contains(out, "already named by the reused trace") || !strings.Contains(out, "EPIC-A, UR-A") {
+		t.Fatalf("the plan says which targets the reused trace's run already covers: %q", out)
+	}
+	// The remainder run is not recorded on the immutable trace, and the facts
+	// carry no revision-scoped evidence field to read coverage back from, so a
+	// repeat at this aggregate posts it again. The plan discloses that rather
+	// than leaving it to be found.
+	if !strings.Contains(out, "posts the remainder again") {
+		t.Fatalf("the plan says a repeat at this aggregate posts the remainder again: %q", out)
+	}
+}
+
+// Nothing is posted, so there is no repeat to disclose: the caveat is printed
+// only where a run actually goes out against a reused trace.
+func TestProcessCompleteDoesNotWarnAboutARepeatWhenNoRunIsPosted(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	cs := completeServer(t, completeFacts("IN_REVIEW", []map[string]any{
+		memberWith("REQ-A-1", "sr", "IN_REVIEW", "passing"),
+		memberWith("UR-A", "ur", "IN_REVIEW", "passing"),
+	}), true)
+	cs.existingGates["COMPLETE-TRACE-EPIC-A"] = reusedTrace([]string{"EPIC-A", "UR-A", "REQ-A-1"})
+
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "posts the remainder again") {
+		t.Fatalf("no run is posted, so no repeat is disclosed: %q", out)
+	}
+}
+
+// The reused trace's run already names every target this completion would
+// post: nothing is left to record, so no run is posted. REQ-CROSS-419 binds
+// the run to the members this completion moves, and a member already named at
+// this aggregate is one of them only once.
+func TestProcessCompletePostsNoRunWhenTheReusedTraceCoversEveryTarget(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	cs := completeServer(t, completeFacts("IN_REVIEW", []map[string]any{
+		memberWith("REQ-A-1", "sr", "IN_REVIEW", "passing"),
+		memberWith("UR-A", "ur", "IN_REVIEW", "passing"),
+	}), true)
+	cs.existingGates["COMPLETE-TRACE-EPIC-A"] = reusedTrace([]string{"EPIC-A", "UR-A", "REQ-A-1"})
+
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if len(cs.evidence) != 0 {
+		t.Fatalf("no run is posted when the reused trace's run names every target, got %v", cs.evidence)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the trace is reused, so only the gate is created, got %v", cs.authored)
+	}
+}
+
+// The reused trace carries no readable target list — an older trace, or a body
+// written by hand. Coverage that cannot be read is not assumed: the run is
+// posted for every target, which costs one duplicate row and never strands a
+// member without delivered-revision evidence.
+func TestProcessCompletePostsTheWholeRunWhenTheReusedTraceCoverageCannotBeRead(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	cs := completeServer(t, reopenedFactsWithRebuiltMember(), true)
+	cs.existingGates["COMPLETE-EPIC-A"] = map[string]any{"external_id": "COMPLETE-EPIC-A", "state": "closed", "applied_state": "applied"}
+	cs.existingGates["COMPLETE-TRACE-EPIC-A"] = map[string]any{
+		"external_id": "COMPLETE-TRACE-EPIC-A", "state": "pass", "fingerprint": pinAggregate,
+	}
+	cs.reconcileResp = foldToInReview()
+
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if len(cs.evidence) != 1 {
+		t.Fatalf("one run is posted when the reused trace's coverage cannot be read, got %v", cs.evidence)
+	}
+	if got := strings.Join(passedTargets(cs.evidence[0]), ","); got != "EPIC-A,UR-A,REQ-A-2" {
+		t.Fatalf("the run names every target when coverage cannot be read, got %v", got)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the trace is still reused, so only the gate is created, got %v", cs.authored)
+	}
+	if !strings.Contains(out, "could not be read") {
+		t.Fatalf("the plan says the reused trace's coverage could not be read: %q", out)
+	}
 }

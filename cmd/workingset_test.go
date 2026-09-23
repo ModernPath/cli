@@ -44,6 +44,11 @@ type wsFixture struct {
 	lastSelectPost map[string]any // captured POST body
 	selectStatus   int            // POST response status (default 200)
 	selectError    string         // POST error body when selectStatus >= 400
+	// REQ-CROSS-220: the stored row the 200 answers with. Nil echoes the
+	// request body (the shape this fixture has always had); non-nil serves this
+	// row instead, so the success line can be checked against the STORE rather
+	// than against what the client sent.
+	selectResponse map[string]any
 
 	// REQ-CROSS-345: the caller-scoped read. lastSelectGet captures the GET
 	// query (so ?scope= is observable); selectReadStatus/Body serve the
@@ -81,6 +86,12 @@ type wsFixture struct {
 
 	// REQ-CROSS-393: backlog, gap and tooling records served on GET /sync/backlog.
 	backlog []any
+	// REQ-CROSS-430: a non-200 to serve from /sync/backlog (0 = normal 200), so
+	// the by-id pull's diagnostics can be observed when that surface fails.
+	backlogStatus int
+	// REQ-CROSS-423: the captured ?… of the last /sync/backlog request.
+	lastBacklogQuery string
+	backlogHits      int
 
 	// REQ-CROSS-415 (EPIC-CLI-021): the caller-scoped held-work read the
 	// SessionStart brief renders its continuing mode from, served as
@@ -105,6 +116,13 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{key: items}})
 	}
 	mux.HandleFunc("/api/v1/sync/backlog", func(w http.ResponseWriter, r *http.Request) {
+		fx.lastBacklogQuery = r.URL.RawQuery
+		fx.backlogHits++
+		if fx.backlogStatus != 0 && fx.backlogStatus != 200 {
+			w.WriteHeader(fx.backlogStatus)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "backlog store unavailable"}})
+			return
+		}
 		write(w, "backlog", fx.backlog)
 	})
 	mux.HandleFunc("/api/v1/sync/gates", func(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +263,11 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 				json.NewEncoder(w).Encode(map[string]any{"error": fx.selectError})
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"selection": body}})
+			row := any(body)
+			if fx.selectResponse != nil {
+				row = fx.selectResponse
+			}
+			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"selection": row}})
 			return
 		}
 		fx.lastSelectGet = r.URL.RawQuery
@@ -1181,5 +1203,101 @@ func TestPullRendersServedRelationsOwnerAndMembers(t *testing.T) {
 	}
 	if !strings.Contains(string(nulled), "Declared relations:** —") {
 		t.Errorf("served-empty relations must read —:\n%s", string(nulled))
+	}
+}
+
+// --- REQ-CROSS-220/345: the success line reports the STORED row
+// (BACKLOG-TOOL-10) ---
+//
+// `working-set select <SR> --phase verify` on a single_sr piece printed
+// "selection recorded: map[… scope_kind:epic …]": the REQUEST payload, carrying
+// the --kind flag's "epic" default, although the server ignores scope_kind when
+// it advances a held row in place (Core.WorkSelections.advance_attrs) and the
+// stored row is single_sr. The line described the request, not the store.
+//
+// The echo is the whole defect. scope_kind rides every take, because the client
+// cannot know which arm the server will pick: a held read taken before the POST
+// can be stale by the time it lands — the row put down in another shell, claimed
+// by a colleague's --resume --claim, or suspended — and the request then reaches
+// the insert arm (work_selections.ex:315-320), where scope_kind is required
+// (work_selection.ex validate_required). Withholding it turns that race into a
+// 422, so the payload states the kind and the server decides what to do with it.
+
+func TestSelectAdvanceOfAHeldPieceStillPostsScopeKind(t *testing.T) {
+	fx := &wsFixture{
+		held: []any{map[string]any{"scope_external_id": "REQ-CROSS-429", "scope_kind": "single_sr"}},
+		selectResponse: map[string]any{
+			"scope_external_id": "REQ-CROSS-429", "scope_kind": "single_sr",
+			"phase": "verify", "status": "current",
+		},
+	}
+	env := wsEnv(t, wsServe(t, fx))
+
+	// kind carries the flag's "epic" default; the caller never typed --kind.
+	var selErr error
+	out := captureOutput(t, func() {
+		selErr = workingSetSelect(env, wsSelectOpts{scope: "REQ-CROSS-429", kind: "epic", phase: "verify"}, wsNow)
+	})
+	if selErr != nil {
+		t.Fatalf("select --phase on a held piece: %v", selErr)
+	}
+	// The kind rides whatever the caller holds: the arm is the server's to pick,
+	// and the insert arm refuses a row without it.
+	if fx.lastSelectPost["scope_kind"] != "epic" {
+		t.Fatalf("every take must post the kind, got %v", fx.lastSelectPost["scope_kind"])
+	}
+	// The line, though, is the store's: the server discarded that default.
+	if !strings.Contains(out, "single_sr") {
+		t.Fatalf("the line must report the stored kind:\n%s", out)
+	}
+	if strings.Contains(out, "epic") {
+		t.Fatalf("the line must not carry the --kind default the store never held:\n%s", out)
+	}
+	if !strings.Contains(out, "REQ-CROSS-429") || !strings.Contains(out, "verify") {
+		t.Fatalf("the line must name the stored scope and phase:\n%s", out)
+	}
+	if strings.Contains(out, "map[") {
+		t.Fatalf("the line must not echo the request payload as a Go map:\n%s", out)
+	}
+}
+
+// The take decides nothing from a prior read of who holds what: such an answer
+// can be stale by the time the POST lands, and the payload it shaped would then
+// be wrong for the arm the server picks.
+func TestSelectTakesWithoutReadingWhoHoldsTheScope(t *testing.T) {
+	fx := &wsFixture{}
+	env := wsEnv(t, wsServe(t, fx))
+
+	if err := workingSetSelect(env, wsSelectOpts{scope: "EPIC-FRESH", kind: "epic", phase: "plan"}, wsNow); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if fx.lastSelectPost["scope_kind"] != "epic" {
+		t.Fatalf("a take must post the kind, got %v", fx.lastSelectPost["scope_kind"])
+	}
+	for _, r := range fx.requests {
+		if strings.Contains(r, "/work-selection/held") {
+			t.Fatalf("a take must not shape its payload from a held read: %v", fx.requests)
+		}
+	}
+}
+
+// A server that serves no row back (or none this build can read) still gets a
+// truthful line: the scope that was asked for, and no invented kind or phase.
+func TestSelectSaysSoWhenTheServerReturnsNoRow(t *testing.T) {
+	fx := &wsFixture{selectResponse: map[string]any{}}
+	env := wsEnv(t, wsServe(t, fx))
+
+	var selErr error
+	out := captureOutput(t, func() {
+		selErr = workingSetSelect(env, wsSelectOpts{scope: "EPIC-BARE", kind: "epic", phase: "plan"}, wsNow)
+	})
+	if selErr != nil {
+		t.Fatalf("select: %v", selErr)
+	}
+	if !strings.Contains(out, "EPIC-BARE") {
+		t.Fatalf("the line must still name the scope:\n%s", out)
+	}
+	if strings.Contains(out, "map[") || strings.Contains(out, "phase plan") {
+		t.Fatalf("nothing the server did not serve may appear in the line:\n%s", out)
 	}
 }

@@ -432,22 +432,24 @@ var leafDispositions = map[string]disposition{
 	"process findings add":         {kind: dispExecute, args: []string{"process", "findings", "add", "--scope", "epic:SMOKE", "--id", "F-SMOKE", "--body", "smoke"}},
 	"process findings list":        {kind: dispExecute, args: []string{"process", "findings", "list"}},
 	"process findings disposition": {kind: dispExecute, args: []string{"process", "findings", "disposition", "--id", "F-SMOKE", "--disposition", "RESOLVED"}},
-	"context":                      {kind: dispExecute, args: []string{"context", "smoke query"}},
-	"datamodel export":             {kind: dispExecute, args: []string{"datamodel", "export", "--json"}},
-	"docs cleanup":                 {kind: dispExecute},
-	"docs preview":                 {kind: dispExecute},
-	"docs push":                    {kind: dispExecute},
-	"docs refresh":                 {kind: dispExecute},
-	"docs repair":                  {kind: dispExecute},
-	"docs sync":                    {kind: dispExecute},
-	"env test":                     {kind: dispExecute}, // the leaf the hard-coded ten missed
-	"auth status":                  {kind: dispExecute}, // GETs /api/systems to verify the stored credential
-	"factory connect":              {kind: dispExecute},
-	"factory drift":                {kind: dispExecute},
-	"factory evidence":             {kind: dispExecute, args: []string{"factory", "evidence", "report", "--kind", "local_test", "--log", "x", "--totals", "passed=1,failed=0", "--pass", "REQ-X-001"}},
-	"factory gates":                {kind: dispExecute},
-	"factory image":                {kind: dispExecute, args: []string{"factory", "image", "smoke"}},
-	"factory next-id":              {kind: dispExecute, args: []string{"factory", "next-id", "CROSS"}},
+	// REQ-CROSS-423 (EPIC-CLI-023): the backlog list read — GET /sync/backlog.
+	"process backlog list": {kind: dispExecute, args: []string{"process", "backlog", "list"}},
+	"context":              {kind: dispExecute, args: []string{"context", "smoke query"}},
+	"datamodel export":     {kind: dispExecute, args: []string{"datamodel", "export", "--json"}},
+	"docs cleanup":         {kind: dispExecute},
+	"docs preview":         {kind: dispExecute},
+	"docs push":            {kind: dispExecute},
+	"docs refresh":         {kind: dispExecute},
+	"docs repair":          {kind: dispExecute},
+	"docs sync":            {kind: dispExecute},
+	"env test":             {kind: dispExecute}, // the leaf the hard-coded ten missed
+	"auth status":          {kind: dispExecute}, // GETs /api/systems to verify the stored credential
+	"factory connect":      {kind: dispExecute},
+	"factory drift":        {kind: dispExecute},
+	"factory evidence":     {kind: dispExecute, args: []string{"factory", "evidence", "report", "--kind", "local_test", "--log", "x", "--totals", "passed=1,failed=0", "--pass", "REQ-X-001"}},
+	"factory gates":        {kind: dispExecute},
+	"factory image":        {kind: dispExecute, args: []string{"factory", "image", "smoke"}},
+	"factory next-id":      {kind: dispExecute, args: []string{"factory", "next-id", "CROSS"}},
 	// REQ-CROSS-361 (EPIC-CLI-014): `factory pin set` runs factoryEnvLoad first
 	// (the reachability call), then bails at the no-terminal PIN prompt — so it
 	// reaches the server like every other factoryEnvLoad-fronted leaf.

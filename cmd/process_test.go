@@ -191,6 +191,140 @@ func TestREQCROSS317ProcessNextSurfacesEntryOriginUnavailable(t *testing.T) {
 	}
 }
 
+// A reason with a remedy prints it: `entry_origin_unavailable` is cleared by
+// `process reenter` on the MEMBER whose entry is missing. The entry origin is
+// a member fact, and reenter resolves the entry gate of the id it is given —
+// naming the scope resolves the epic's own gate, which is a different (and
+// usually live) decision.
+func TestProcessNextNamesTheStrandedMembersAsTheRemedyTarget(t *testing.T) {
+	srv := dcDataServer(t, map[string]any{
+		"derived_phase":      "",
+		"derived_reason":     "entry_origin_unavailable",
+		"packet_fingerprint": "agg-abcdef012345",
+		"process_revision":   strings.Repeat("a", 40),
+		"facts_state":        "served",
+		"facts": map[string]any{
+			"scope": map[string]any{"external_id": "EPIC-X", "kind": "epic", "status": "IN_PROGRESS"},
+			"members": []any{
+				map[string]any{"external_id": "SR-X-1", "kind": "sr", "status": "IN_PROGRESS", "evidence_state": "absent", "entry_origin": nil},
+				map[string]any{"external_id": "SR-X-2", "kind": "sr", "status": "IN_REVIEW", "evidence_state": "passing", "entry_origin": "TODO"},
+				// Evidence current, entry retired: the server's routing filters
+				// on evidence FIRST, so this member is not why the route is
+				// unavailable and re-entering it would be the wrong decision.
+				map[string]any{"external_id": "SR-X-3", "kind": "sr", "status": "IN_REVIEW", "evidence_state": "passing", "entry_origin": nil},
+			},
+		},
+	})
+	env := &factoryEnv{Root: t.TempDir(), APIURL: srv.URL, SystemID: 4, token: "t"}
+
+	out := captureOut(t, func() {
+		if err := processNext(env); err != nil {
+			t.Fatalf("process next: %v", err)
+		}
+	})
+	for _, want := range []string{"SR-X-1", "process reenter <member-id>", "no live entry origin"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the remedy line must say %q: %q", want, out)
+		}
+	}
+	for _, absent := range []string{"process reenter EPIC-X", "SR-X-2", "SR-X-3"} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("the remedy names only the members that are not current and have no live entry, not %q: %q", absent, out)
+		}
+	}
+}
+
+// REQ-CROSS-435: a member reopened by a defect demotion that no entry gate
+// names returns to review on its own lower trace, so no remedy line sends it
+// to `process reenter`. A never-entered member beside it keeps that remedy.
+func TestTheReenterRemedyLinesSkipAMemberReopenedByADefectWithNoEntry(t *testing.T) {
+	var facts deliveryFacts
+	if err := json.Unmarshal([]byte(`{
+		"scope": {"external_id": "EPIC-X", "kind": "epic", "status": "IN_PROGRESS"},
+		"members": [
+			{"external_id": "SR-X-A", "kind": "sr", "status": "IN_PROGRESS", "evidence_state": "failing",
+			 "red_recorded": true, "entry_origin": null, "defect_reopen_without_entry": true},
+			{"external_id": "SR-X-B", "kind": "sr", "status": "IN_PROGRESS", "evidence_state": "failing",
+			 "red_recorded": true, "entry_origin": null, "defect_reopen_without_entry": false}
+		]
+	}`), &facts); err != nil {
+		t.Fatalf("decode facts: %v", err)
+	}
+
+	if got := membersWithoutLiveEntry(&facts); len(got) != 1 || got[0] != "SR-X-B" {
+		t.Fatalf("the entry_origin_unavailable remedy names only the never-entered member, got %v", got)
+	}
+
+	lines := checkReasonLines(phaseCheck{Name: "member_evidence_current", State: "FAIL"}, &facts)
+	var lineA, lineB string
+	for _, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "SR-X-A"):
+			lineA = l
+		case strings.HasPrefix(l, "SR-X-B"):
+			lineB = l
+		}
+	}
+	if lineA == "" || strings.Contains(lineA, "process reenter") || !strings.Contains(lineA, "reopened by a defect") {
+		t.Fatalf("SR-X-A's evidence line says it was reopened by a defect and names no reenter: %q", lineA)
+	}
+	if !strings.Contains(lineB, "process reenter SR-X-B") {
+		t.Fatalf("SR-X-B's evidence line keeps its reenter remedy: %q", lineB)
+	}
+
+	entry := strings.Join(checkReasonLines(phaseCheck{Name: "entry_applied", State: "FAIL"}, &facts), "\n")
+	if strings.Contains(entry, "SR-X-A") || !strings.Contains(entry, "SR-X-B") {
+		t.Fatalf("the no-live-entry list names SR-X-B only: %q", entry)
+	}
+}
+
+// A server that serves no facts still gets the remedy, phrased for the member
+// the caller has to find with `process check`.
+func TestProcessNextRemedyWithoutFactsStillNamesTheMemberVerb(t *testing.T) {
+	srv := dcDataServer(t, map[string]any{
+		"derived_phase":      "",
+		"derived_reason":     "entry_origin_unavailable",
+		"packet_fingerprint": "agg-abcdef012345",
+		"process_revision":   strings.Repeat("a", 40),
+	})
+	env := &factoryEnv{Root: t.TempDir(), APIURL: srv.URL, SystemID: 4, token: "t"}
+
+	out := captureOut(t, func() {
+		if err := processNext(env); err != nil {
+			t.Fatalf("process next: %v", err)
+		}
+	})
+	for _, want := range []string{"process reenter <member-id>", "process check --phase build"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the remedy line must say %q: %q", want, out)
+		}
+	}
+}
+
+// A reason with no known remedy prints the reason alone — a wrong remedy is
+// worse than none.
+func TestProcessNextPrintsNoRemedyForAnUnknownReason(t *testing.T) {
+	srv := dcDataServer(t, map[string]any{
+		"derived_phase":      "",
+		"derived_reason":     "some_other_reason",
+		"packet_fingerprint": "agg-abcdef012345",
+		"process_revision":   strings.Repeat("a", 40),
+	})
+	env := &factoryEnv{Root: t.TempDir(), APIURL: srv.URL, SystemID: 4, token: "t"}
+
+	out := captureOut(t, func() {
+		if err := processNext(env); err != nil {
+			t.Fatalf("process next: %v", err)
+		}
+	})
+	if !strings.Contains(out, "some_other_reason") {
+		t.Fatalf("the reason is still printed: %q", out)
+	}
+	if strings.Contains(out, "process reenter") {
+		t.Fatalf("no remedy is guessed for an unknown reason: %q", out)
+	}
+}
+
 func TestREQCROSS317ProcessNextStillReportsGenuineAbsence(t *testing.T) {
 	srv := dcDataServer(t, map[string]any{
 		"derived_phase":  "",
@@ -512,6 +646,49 @@ func TestREQCROSS408ProcessCheckNamesTheReasons(t *testing.T) {
 				"completion": map[string]any{"delivered_current_reconciled": false, "gate_answered": false, "members_not_reviewed": []any{"REQ-X-2"}},
 			},
 			want: []string{"REQ-X-2"},
+		},
+		// The build and verify check is the members' own fact: a FAIL that does
+		// not name the member leaves the reader to find it by hand.
+		{
+			name:   "member evidence not current names the member and its proofs",
+			phase:  "build",
+			checks: []any{map[string]any{"name": "member_evidence_current", "state": "FAIL"}},
+			facts: map[string]any{
+				"scope": map[string]any{"external_id": "EPIC-X", "kind": "epic", "status": "IN_PROGRESS"},
+				"members": []any{
+					map[string]any{"external_id": "SR-X-1", "kind": "sr", "status": "IN_PROGRESS", "evidence_state": "claimed", "red_recorded": true, "lower_trace_pass": false, "entry_origin": "TODO"},
+					map[string]any{"external_id": "SR-X-2", "kind": "sr", "status": "IN_REVIEW", "evidence_state": "passing", "red_recorded": true, "lower_trace_pass": true, "entry_origin": "TODO"},
+				},
+			},
+			want:   []string{"SR-X-1", "IN_PROGRESS", "evidence claimed", "RED recorded", "no passing lower trace"},
+			absent: []string{"SR-X-2"},
+		},
+		{
+			name:   "an unavailable member evidence check names the retired entry and its remedy",
+			phase:  "build",
+			checks: []any{map[string]any{"name": "member_evidence_current", "state": "UNAVAILABLE"}},
+			facts: map[string]any{
+				"scope": map[string]any{"external_id": "EPIC-X", "kind": "epic", "status": "IN_PROGRESS"},
+				"members": []any{
+					map[string]any{"external_id": "SR-X-1", "kind": "sr", "status": "IN_PROGRESS", "evidence_state": "absent", "red_recorded": false, "lower_trace_pass": false, "entry_origin": nil},
+				},
+			},
+			want: []string{"SR-X-1", "no live entry origin", "process reenter SR-X-1"},
+		},
+		{
+			name:   "entry not applied names the scope and the members with no live entry",
+			phase:  "entry",
+			checks: []any{map[string]any{"name": "entry_applied", "state": "FAIL"}},
+			facts: map[string]any{
+				"scope": map[string]any{"external_id": "EPIC-X", "kind": "epic", "status": "IN_PROGRESS"},
+				"members": []any{
+					map[string]any{"external_id": "SR-X-1", "kind": "sr", "status": "TODO", "evidence_state": "absent", "entry_origin": nil},
+					map[string]any{"external_id": "SR-X-2", "kind": "sr", "status": "IN_PROGRESS", "evidence_state": "passing", "entry_origin": "TODO"},
+				},
+				"entry_gate": map[string]any{"applied": false},
+			},
+			want:   []string{"no live applied entry gate for EPIC-X", "no live entry: SR-X-1 (TODO)"},
+			absent: []string{"SR-X-2"},
 		},
 		{
 			name:   "pass prints no reason",

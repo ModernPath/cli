@@ -1,6 +1,160 @@
 # Changelog
 
-## Unreleased
+## v0.9.0 — what the loop records, it reads back
+
+### Upgrading from v0.8.0
+
+- Run `modernpath install` after upgrading. The skills, the managed
+  `AGENTS.md` block and `.modernpath/cli-reference.md` are compiled into the
+  binary, and `install --check` reports them as drifted until you do.
+- `working-set check` reports snapshots pulled with v0.8.0 as stale once:
+  acceptance lines now carry their id and kind, and a Gates section can grow.
+  Pull again.
+
+### The records the loop writes read back in full
+
+- `factory gates <trace>` and the gate block in a pull show the verdict, the
+  evaluator and the time, the recording revision, the pin and its class, the
+  scope, purpose, transition and prerequisites (`none` when there are none).
+  `-v` prints any gate's body.
+- Every acceptance line reads `<id> (<kind>) — <line>`, in the flat pull, the
+  review render and the authoring pull alike.
+- `working-set pull WORK-SELECTION` pulls the current work selection. `--piece`
+  on a pull by id is refused before any request, and an unknown id names the
+  places that were searched.
+- `process findings list` lists the findings of the piece you hold — `--piece`
+  picks one when you hold several, `--all` lists the whole system — and `-v`
+  prints each finding's body, source, owner, scope, aggregate and disposition
+  reference. A scope without a kind (`EPIC-X` rather than `epic:EPIC-X`) is
+  refused by the server instead of widening to every finding in the system.
+  `process findings add` refuses an unlisted severity or category before it
+  sends anything.
+- `your-move --domain` filters first, then `--queue` and `--more` page through
+  what is left. The header names the domain, and an empty result says so.
+- A question gate's brief says `names …` for the items its scope names. A
+  question holds nothing, so it no longer reads as `holds` or `unblocks`.
+
+### Backlog records have one vocabulary, a list verb and an editable body
+
+- `process backlog list [--kind backlog|gap|tooling] [--disposition <prefix>]`
+  lists backlog, gap and tooling records.
+- A disposition is `OPEN`, `DEFERRED`, `ROUTED to <id>`,
+  `REJECTED with <source>`, `CLOSED by <id>` or `ACCEPTED with <source>`, and a
+  gap kind is `capability` or `specification`. The file-ledger extractor sends
+  these words. A record stored with the older `routed`, `deferred` or `ledger`
+  is rewritten on its next write, and the `--disposition` filter already
+  matches it in the new form.
+- `author update --kind backlog` takes the body fields `author backlog` files
+  with: `--notes`, `--observed`, `--why-unrouted`, `--candidate-route`,
+  `--affected`, and for a gap `--gap-kind`, `--consequence` and
+  `--affected-trace`. A filed record could only be corrected by filing a
+  second one. A flag left unset keeps the stored value.
+- `--detail`, and every other requirement or epic field, is refused on a
+  backlog record before any request; `--detail` points at `--notes`. It used
+  to be dropped under a success line.
+- The gap-only fields are refused on a backlog or tooling record, where
+  nothing read them.
+
+### Parked work names its holder and can be claimed
+
+- `working-set select <scope> --resume` resumes a parked piece that nobody
+  holds. Another person's parked piece is refused naming them;
+  `--resume --claim` takes it over, and the hand-over is recorded on their
+  row. The suspended table shows each holder, or `claimable`.
+- `working-set select` prints the row the store recorded, not the request it
+  sent.
+- `working-set select --recon-revision <rev>` records the revision the
+  reconnaissance was taken at, which `working-set status` reads back.
+
+### A member added to an entered epic can enter
+
+`process enter <epic>` opens a members-only entry gate for a PROPOSED member
+added to an epic that is already entered (TODO, READY, IN_PROGRESS, IN_REVIEW
+or BLOCKED). The gate is pinned at the epic's aggregate, so the epic's own
+cold review applies to it. It used to be refused as pinned elsewhere. The plan
+block, and so `--dry-run`, states the pin the verb will send.
+
+### `author trace --purpose upper` finds its own pin
+
+Left out, `--fingerprint` resolves to the user requirement's content hash, and
+the transition defaults to `build->verify`, as they do for a lower trace. The
+server now refuses a shortened display pin on an upper trace as it does on a
+lower one: that pin matched nothing.
+
+### `context` and `feedback` report failures instead of hiding them
+
+- `modernpath context` reports a rejected credential as a credential problem,
+  with the command that repairs it, and every failure exits non-zero. "Not
+  relevant" is an answer and exits 0.
+- The context hook still stays silent on a failure, and it no longer refreshes
+  the credential: a hook that hit its deadline mid-refresh could leave a spent
+  refresh token on disk and force a new sign-in.
+- `feedback` writes the line to the interim file when the workspace is not
+  bound, when the credential is rejected, or when the bound system cannot be
+  reached, instead of exiting and losing it.
+- The interactive system picker shows each system's id, so two systems with
+  the same name can be told apart.
+
+### Help and reference corrections
+
+- `author advance --help` names `fingerprint` as the gate value to pass, not
+  `content_fingerprint`.
+- `author update --criteria` documents its shape. Set `position` on every criterion
+  or on none; with none, the order you send is the order stored.
+- `.modernpath/cli-reference.md` lists the flags each verb inherits from its
+  command group.
+- The subagent guard lets a delegated agent read a write verb's `--help`.
+
+### A defect in a legacy-entered epic returns to review on its test proof
+
+- A system requirement reopened by an applied defect demotion, in an epic
+  entered through a legacy approval gate (no entry gate names it), returns to
+  IN_REVIEW through `process advance` on its RED and passing lower trace. It
+  used to be refused with `process reenter`: a cold review of the whole epic
+  and a new approval that PROCESS.md does not ask of a defect. `process next`
+  routes such a member to build, and `process check` no longer names
+  `process reenter` for it. The CLI reads the new `defect_reopen_without_entry`
+  member fact from the server. Any entry gate that names the item, whether
+  current, stale or not yet applied, keeps its guard and its remedy
+  (REQ-CROSS-435).
+
+### The messages name the member, the remedy and the right recipe
+
+Six operator-facing corrections, all in what the tool says:
+
+- `process complete` prints two apply recipes, because `author advance --kind`
+  defaults to `requirement`: one for the members (every SR and the UR) and one
+  for the epic with `--kind epic`. Pasting the single recipe for the epic was
+  refused 422.
+- `process complete` refuses a DONE epic with members still IN_REVIEW **before**
+  it writes anything, and names the sanctioned reopen. The server refuses a
+  members-only completion gate for a done owner, and that refusal used to arrive
+  after the delivered run and the completion trace were already recorded.
+- `process check --phase build|verify` names each member whose evidence is not
+  current — status, evidence state, whether a RED is recorded, whether the lower
+  trace passes — and `--phase entry` names the members with no live entry.
+  Both checks used to fail with no id in sight.
+- `process next` prints the remedy for `entry_origin_unavailable` and names the
+  members it applies to: the entry origin is a member's own fact, so the verb is
+  `process reenter <member-id>`. Other reasons still print the reason alone.
+- `process reconcile --help` states the predicates per kind: a system
+  requirement is entry-gated (an applied entry gate at the current packet
+  aggregate **and** a recorded RED), a user requirement has no entry gate of its
+  own and enters on its RED or a required SR in progress.
+- The context hook — the CLI's and the three shell hooks — labels the injected
+  block as retrieved reference data, not instructions, before the content.
+
+### A reused completion trace no longer skips a member's evidence
+
+`process complete` reuses a completion trace that already passes at the
+unchanged packet aggregate. It used to skip the whole evidence run with it, so
+a member the completion added after that trace was recorded got no evidence at
+the delivered revision and the completion gate refused "not yet" for it. The
+run is now posted for the targets the reused trace's own run did not name —
+none when it named them all, and the whole run when that trace's body carries
+no readable target list, because unread coverage is not taken for coverage. A
+trace is immutable, so the remainder is not recorded on it: a repeat at the
+same aggregate posts the remainder again, and the plan lines say so.
 
 ## v0.8.0 — onboarding reads the code you authorized, and its evidence cannot move
 

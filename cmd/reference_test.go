@@ -74,6 +74,9 @@ func TestCLIReferenceRendersEveryVisibleCommandAndFlag(t *testing.T) {
 		"## `modernpath process findings add`",
 		"## Global flags",
 		"`--api-url`",
+		// BACKLOG-TOOL-26: the --criteria object shape is in the flag table too,
+		// not only in the long help.
+		"Each object needs external_id",
 	} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("reference is missing %q", want)
@@ -84,6 +87,51 @@ func TestCLIReferenceRendersEveryVisibleCommandAndFlag(t *testing.T) {
 	}
 	if strings.Contains(ref, "| `-h, --help`") {
 		t.Error("reference lists cobra's -h flag, which appears only under the executing command")
+	}
+}
+
+// referenceSection returns just the section the reference devotes to one
+// command path, so a flag can be asserted where a reader would look for it
+// rather than anywhere in the document.
+func referenceSection(t *testing.T, ref, path string) string {
+	t.Helper()
+	head := "## `" + path + "`\n"
+	i := strings.Index(ref, head)
+	if i < 0 {
+		t.Fatalf("reference has no section for %q", path)
+	}
+	rest := ref[i+len(head):]
+	if j := strings.Index(rest, "\n## "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
+// BACKLOG-TOOL-68: a group's persistent flag reached only the group's own
+// section, so `--piece` — declared on `process` and on `working-set` — was
+// documented for no verb that takes it. Each subcommand now carries its
+// ancestors' persistent flags under an "Inherited from" table; the root's
+// global flags stay listed once, at the top.
+func TestCLIReferenceListsInheritedGroupFlagsUnderEachSubcommand(t *testing.T) {
+	ref := renderCLIReference(rootCmd)
+	for _, path := range []string{
+		"modernpath working-set pull",
+		"modernpath working-set push",
+		"modernpath working-set check",
+		"modernpath process findings list",
+		"modernpath process next",
+	} {
+		section := referenceSection(t, ref, path)
+		if !strings.Contains(section, "`--piece`") {
+			t.Errorf("%s section never lists --piece, which it accepts", path)
+		}
+	}
+	pull := referenceSection(t, ref, "modernpath working-set pull")
+	if !strings.Contains(pull, "Inherited from `modernpath working-set`") {
+		t.Error("working-set pull does not name the ancestor its inherited flags come from")
+	}
+	if strings.Contains(pull, "`--api-url`") {
+		t.Error("the root's global flags are repeated under a verb; they are listed once under Global flags")
 	}
 }
 
@@ -105,13 +153,27 @@ func TestCLIReferenceIsDeterministic(t *testing.T) {
 // session most often got wrong.
 func TestLoopVerbsCarryTheirPrerequisitesInHelp(t *testing.T) {
 	cases := map[string][]string{
-		"author gate":          {"--prerequisite", "cold-review", "packet aggregate", "members before the epic", "trace first"},
-		"author trace":         {"full packet aggregate", "process next -v", "Fingerprint: line of working-set pull", "--for-review", "bare ids"},
-		"author advance":       {"content-shadow hash", "working-set pull <gate-id>", "Members before the epic"},
+		"author gate":  {"--prerequisite", "cold-review", "packet aggregate", "members before the epic", "trace first"},
+		"author trace": {"full packet aggregate", "process next -v", "Fingerprint: line of working-set pull", "--for-review", "bare ids"},
+		// BACKLOG-TOOL-101: the guard value is served as `fingerprint`; the help
+		// named the row's content_fingerprint, which a reader then could not find.
+		"author advance": {"content-shadow hash", "working-set pull <gate-id>", "Members before the epic",
+			"--json as fingerprint", "do not pass\nthat one"},
 		"working-set select":   {"--replaces", "--suspend", "--resume", "--put-down", "earlier reason stays", "--for-review"},
 		"factory evidence":     {"RED", "never\nlower or upper", "evidence of its own", "delivered (merged) revision", "RED commit"},
 		"process findings add": {"correctness, security, data_loss, contract,\ntraceability and testability", "never defaults to the most blocking pair", "--severity note"},
-		"process reconcile":    {"never applies a human-gated transition", "nothing to do", "--piece", "cascade mode is report"},
+		// The predicates differ by kind and the help stated one of them as
+		// universal. An SR is entry-gated (an applied entry at the current
+		// aggregate AND a recorded RED); a UR has no entry gate at all and
+		// enters on its own RED or a required SR in progress, reaching
+		// IN_REVIEW on its required SRs plus an upper trace.
+		"process reconcile": {"never applies a human-gated transition", "nothing to do", "--piece", "cascade mode is report",
+			"A SYSTEM requirement is entry-gated", "applied entry gate at the current packet aggregate", "AND a recorded RED",
+			"process reenter <SR>",
+			"A USER requirement has no entry gate of its own", "required SR that is already IN_PROGRESS", "upper trace passes",
+			// The epic has two arms, not one: it enters on any member in
+			// progress and only then reviews on all of them.
+			"ANY member is IN_PROGRESS", "EVERY member is"},
 		// REQ-CROSS-413 (BACKLOG-TOOL-22): the recovery verb states the
 		// attestation semantics — it re-pins an applied entry gate to the current
 		// aggregate on a USER: decision that attests the move was immaterial; a
@@ -135,7 +197,12 @@ func TestLoopVerbsCarryTheirPrerequisitesInHelp(t *testing.T) {
 		// 260-character verification method → empty server 500
 		"author requirement": {"255", "422 naming the field", "author update --detail"},
 		"author epic":        {"255", "--description is free text"},
-		"author update":      {"255", "422 naming the field", "--verification-method", "--detail"},
+		// BACKLOG-TOOL-26: --criteria said only "JSON array of criterion/scenario
+		// objects", so the required external_id and the preserve/replace rule
+		// were learnable only from a 422.
+		"author update": {"255", "422 naming the field", "--verification-method", "--detail",
+			"--criteria is a JSON array", "keyed on external_id", "omitting --criteria preserves the stored",
+			"Every object needs an external_id", `"external_id":"AC-1"`},
 		// REQ-CROSS-384 (EPIC-CLI-018): a record patch moves the scope context;
 		// the push re-stamps the sections the server reports stale and says so
 		"working-set push": {"scope context", "re-stamped N section(s)", "--restamp", "reports as stale"},

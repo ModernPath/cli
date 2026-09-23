@@ -191,6 +191,25 @@ func TestProcessCompleteRefusesAMemberNotInReview(t *testing.T) {
 	assertNoWrites(t, cs)
 }
 
+// REQ-CROSS-431 (F-CLI024-R2-03): a user requirement not yet IN_REVIEW is
+// named with its upper trace, without the pin or the transition the CLI reads.
+func TestProcessCompleteNamesTheUpperTraceWithoutItsPin(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	ur := member("UR-A", "IN_PROGRESS")
+	ur["kind"] = "ur"
+	cs := completeServer(t, completeFacts("IN_REVIEW", []map[string]any{member("REQ-A-1", "IN_REVIEW"), ur}), true)
+	err := processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	if err == nil || !strings.Contains(err.Error(), "UR-A") || !strings.Contains(err.Error(), "--purpose upper --scope <UR> --verdict PASS") {
+		t.Fatalf("a UR not IN_REVIEW is named with its upper trace, got %v", err)
+	}
+	for _, typed := range []string{"--fingerprint", "--from", "--to"} {
+		if strings.Contains(err.Error(), typed) {
+			t.Errorf("the remedy must not ask for %s, which the CLI reads, got %v", typed, err)
+		}
+	}
+	assertNoWrites(t, cs)
+}
+
 func TestProcessCompleteExcludesDeferredAndObsoleteMembers(t *testing.T) {
 	root, _ := deliveredRepo(t)
 	cs := completeServer(t, completeFacts("IN_REVIEW", []map[string]any{member("REQ-A-1", "IN_REVIEW"), member("REQ-A-2", "DEFERRED"), member("REQ-A-3", "OBSOLETE")}), true)
@@ -218,6 +237,70 @@ func TestProcessCompleteRefusesWhenTheEpicIsNotInReview(t *testing.T) {
 		t.Fatalf("an epic not yet folded to IN_REVIEW names reconcile as the remedy, got %v", err)
 	}
 	assertNoWrites(t, cs)
+}
+
+// The server refuses a members-only completion gate for a done owner — "does
+// not reach into a done, obsolete or deferred epic; demote or reopen the epic
+// first" — for one stranded member or several. The CLI used to meet that
+// refusal only after the delivered run and the completion trace were written,
+// so the fact is checked here, before the first write, with the sanctioned
+// reopen named.
+func TestProcessCompleteRefusesADoneEpicWithStrandedMembersBeforeAnyWrite(t *testing.T) {
+	for _, members := range [][]map[string]any{
+		{member("REQ-A-1", "IN_REVIEW"), member("REQ-A-2", "DONE")},
+		{member("REQ-A-1", "IN_REVIEW"), member("REQ-A-2", "IN_REVIEW")},
+	} {
+		root, _ := deliveredRepo(t)
+		cs := completeServer(t, completeFacts("DONE", members), true)
+		err := processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+		if err == nil {
+			t.Fatal("a DONE epic with a member still IN_REVIEW must be refused, not posted")
+		}
+		for _, want := range []string{"REQ-A-1", "is DONE", "author demote EPIC-A --kind epic", "--basis defect", "process complete EPIC-A"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal must name %q, got %v", want, err)
+			}
+		}
+		assertNoWrites(t, cs)
+	}
+}
+
+// A DONE epic with nothing stranded is still the quiet no-op it was.
+func TestProcessCompleteDoneEpicWithNothingStrandedStillReportsNothingToDo(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	cs := completeServer(t, completeFacts("DONE", []map[string]any{member("REQ-A-1", "DONE")}), true)
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("a fully DONE epic is not an error: %v", err)
+	}
+	if !strings.Contains(out, "nothing to do") {
+		t.Fatalf("a fully DONE epic reports nothing to do, got %q", out)
+	}
+	assertNoWrites(t, cs)
+}
+
+// `author advance --kind` defaults to requirement, so the one recipe the
+// epilogue printed was refused 422 when it was pasted for the epic. The
+// members and the epic get a line each.
+func TestProcessCompleteEpilogueGivesTheEpicItsOwnKindEpicRecipe(t *testing.T) {
+	root, _ := deliveredRepo(t)
+	cs := completeServer(t, completeFacts("IN_REVIEW", []map[string]any{member("REQ-A-1", "IN_REVIEW")}), true)
+	var err error
+	out := captureOut(t, func() {
+		err = processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true})
+	})
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "author advance EPIC-A --kind epic --to DONE --expected IN_REVIEW --gate COMPLETE-EPIC-A") {
+		t.Fatalf("the epic needs its own --kind epic recipe: %q", out)
+	}
+	if !strings.Contains(out, "members first (REQ-A-1)") {
+		t.Fatalf("the member recipe stays, naming the members: %q", out)
+	}
 }
 
 func TestProcessCompleteRefusesWithoutFacts(t *testing.T) {
@@ -256,13 +339,16 @@ func TestProcessCompleteDryRunPostsNothing(t *testing.T) {
 	assertNoWrites(t, cs)
 }
 
-// Review round 2, nit 9: a rerun after a refused gate must not post a second
-// identical evidence run — an existing completion trace at the aggregate is
-// reused and the evidence it cited stands.
+// REQ-CROSS-419 (D4a) binds the posted run to the members this completion
+// moves: a rerun after a refused gate posts no second identical run, because
+// the completion trace at the aggregate is reused and the evidence it cited
+// stands. What "stands" covers is read off that trace's own body, which names
+// the targets its run recorded, so the fixture carries the body `process
+// complete` writes (BACKLOG-TOOL-100).
 func TestProcessCompleteReusesTheTraceWithoutRepostingEvidence(t *testing.T) {
 	root, _ := deliveredRepo(t)
 	cs := completeServer(t, completeFacts("IN_REVIEW", []map[string]any{member("REQ-A-1", "IN_REVIEW")}), true)
-	cs.existingGates["COMPLETE-TRACE-EPIC-A"] = map[string]any{"external_id": "COMPLETE-TRACE-EPIC-A", "state": "pass", "fingerprint": pinAggregate}
+	cs.existingGates["COMPLETE-TRACE-EPIC-A"] = reusedTrace([]string{"EPIC-A", "REQ-A-1"})
 	if err := processComplete(completeEnv(t, cs, root), "EPIC-A", completeOpts{log: "ci", noFetch: true}); err != nil {
 		t.Fatalf("complete: %v", err)
 	}

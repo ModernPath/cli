@@ -365,3 +365,27 @@ func TestProcessAdvanceRequiresLog(t *testing.T) {
 	}
 	assertNoWrites(t, cs)
 }
+
+// REQ-CROSS-431 (F-CLI024-R1-07): the refusal for a user requirement spells the
+// upper trace without the pin and the transition, which the CLI now reads —
+// typing them from memory is how a display prefix reached an immutable trace.
+func TestProcessAdvanceRefusesAURWithTheUpperTraceItsPinRead(t *testing.T) {
+	facts := advanceFacts("IN_PROGRESS", "passing", true, false)
+	facts["members"] = append(facts["members"].([]map[string]any),
+		map[string]any{"external_id": "UR-A", "kind": "ur", "status": "IN_PROGRESS", "content_fingerprint": strings.Repeat("e", 64)})
+	cs := newCeremonyServer(t, facts, true)
+	env := wsEnv(t, cs.srv)
+
+	err := processAdvance(env, "UR-A", advanceOpts{log: "go test ./cmd", piece: "EPIC-A"})
+	if err == nil || !strings.Contains(err.Error(), "--purpose upper --scope UR-A --verdict PASS") {
+		t.Fatalf("a user requirement must be refused naming its upper trace, got %v", err)
+	}
+	for _, typed := range []string{"--fingerprint", "--from", "--to"} {
+		if strings.Contains(err.Error(), typed) {
+			t.Errorf("the refusal must not ask for %s, which the CLI reads, got %v", typed, err)
+		}
+	}
+	if len(cs.authored)+len(cs.reconciles) != 0 {
+		t.Fatalf("a refusal writes nothing, got %v %v", cs.authored, cs.reconciles)
+	}
+}
