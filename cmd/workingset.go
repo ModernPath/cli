@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/modernpath/cli/internal/authoring"
 	"github.com/modernpath/cli/internal/authoring/diff"
@@ -205,109 +206,126 @@ func yourMoveRun(env *factoryEnv, now time.Time) error {
 
 type wsItem struct {
 	id      string
-	kind    string // "epic" | "requirement"
+	kind    string // "epic" | "system" | "user" | "backlog" | "gate"
 	payload map[string]any
+	gates   []any
 }
 
-// wsIndex fetches the epics, requirements, and gates once and indexes the items
-// by external id. There is no per-id GET on the read surface; an unknown id is a
-// list absence, not a 404.
-//
-// REQ-CROSS-308 (EPIC-CLI-007): with includeCandidates the requirements read
-// asks for candidates (include=candidates), so a just-authored DERIVED
-// candidate is materializable by its author; the default read is unchanged and
-// the rollup the server computes stays candidate-free either way.
-//
-// REQ-CROSS-048/308: the requirements read serves system requirements AND user
-// requirements in one envelope under separate keys — both index as "requirement"
-// items so `working-set pull` resolves either. Indexing only data.requirements
-// left every UR (a DERIVED candidate UR included) reported unknown.
-func wsIndex(env *factoryEnv, includeCandidates bool, preGates []any) (map[string]wsItem, []any, error) {
-	index, gates, _, err := wsIndexSurfaces(env, includeCandidates, preGates)
-	return index, gates, err
-}
+const (
+	maxDirectItemIDs = 100
+	// Bandit defaults to a 10,000-byte request-line limit. Keep the encoded
+	// request target below 7,000 bytes, leaving room for the method/version and
+	// gateway prefix. Count bytes after URL escaping, including any API base path.
+	maxDirectItemRequestTargetBytes = 7_000
+)
 
-// wsSurfaces is what the index searched: the four read surfaces, and the
-// reason the backlog one could not be read when it failed (REQ-CROSS-430).
-// The pull continues over the other three, and a miss says so.
-type wsSurfaces struct {
-	backlogErr error
-}
-
-// searched renders the surfaces for a miss line, naming an unreadable one.
-func (s wsSurfaces) searched() string {
-	backlog := "backlog"
-	if s.backlogErr != nil {
-		backlog = fmt.Sprintf("backlog (unreadable: %v)", s.backlogErr)
+// fetchDirectItems resolves only the supplied external IDs. The server returns
+// canonical item payloads and each item's associated gate history in one
+// bounded response; older servers fail clearly instead of falling back to
+// downloading system collections.
+func fetchDirectItems(env *factoryEnv, ids []string, includeCandidates bool) (map[string]wsItem, error) {
+	unique := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || utf8.RuneCountInString(id) > 255 {
+			return nil, fmt.Errorf("external id must be nonempty and at most 255 characters")
+		}
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
 	}
-	return "searched " + backlog + ", epics, requirements, gates"
-}
-
-func wsIndexSurfaces(env *factoryEnv, includeCandidates bool, preGates []any) (map[string]wsItem, []any, wsSurfaces, error) {
-	var surfaces wsSurfaces
-	epics, err := fetchList(env, fmt.Sprintf("/api/v1/sync/epics?system_id=%d", env.SystemID), "epics")
-	if err != nil {
-		return nil, nil, surfaces, err
-	}
-	reqPath := fmt.Sprintf("/api/v1/sync/requirements?system_id=%d", env.SystemID)
+	index := make(map[string]wsItem, len(unique))
+	baseValues := url.Values{}
+	baseValues.Set("system_id", fmt.Sprint(env.SystemID))
 	if includeCandidates {
-		reqPath += "&include=candidates"
+		baseValues.Set("include", "candidates")
 	}
-	requirements, userRequirements, err := fetchRequirementLists(env, reqPath)
-	if err != nil {
-		return nil, nil, surfaces, err
+	apiBasePath := ""
+	if apiURL, err := url.Parse(env.APIURL); err == nil {
+		apiBasePath = apiURL.EscapedPath()
 	}
-	// REQ-CROSS-219: pull and check read gate HISTORY (state=all, the store's
-	// vocabulary). The your-move projection deliberately keeps the default
-	// open-only fetch — an answered gate is not pending.
-	gates := preGates
-	if gates == nil {
-		gates, err = fetchList(env, fmt.Sprintf("/api/v1/sync/gates?system_id=%d&state=all", env.SystemID), "gates")
-		if err != nil {
-			return nil, nil, surfaces, err
-		}
-	}
-	// REQ-CROSS-393 (EPIC-CLI-019): backlog, gap and tooling records are
-	// pullable by id too. A server without the read (404) serves none.
-	// REQ-CROSS-430: a failed backlog read is kept and reported on a miss,
-	// never swallowed into "unknown external id".
-	backlog, err := fetchList(env, fmt.Sprintf("/api/v1/sync/backlog?system_id=%d", env.SystemID), "backlog")
-	if err != nil {
-		surfaces.backlogErr = err
-		backlog = nil
-	}
-	index := map[string]wsItem{}
-	for _, b := range backlog {
-		m, _ := b.(map[string]any)
-		if id := str(m, "external_id"); id != "" {
-			index[id] = wsItem{id: id, kind: "backlog", payload: m}
-		}
-	}
-	for _, e := range epics {
-		m, _ := e.(map[string]any)
-		if id := str(m, "external_id"); id != "" {
-			index[id] = wsItem{id: id, kind: "epic", payload: m}
-		}
-	}
-	for _, r := range append(append([]any{}, requirements...), userRequirements...) {
-		m, _ := r.(map[string]any)
-		if id := str(m, "external_id"); id != "" {
-			index[id] = wsItem{id: id, kind: "requirement", payload: m}
-		}
-	}
-	// REQ-CROSS-407 (EPIC-CLI-020): a gate is pullable by its own id — the
-	// release-selection gate, an entry or completion gate — with the same block
-	// its owning item renders and the Fingerprint line a gated advance echoes.
-	// A record id wins over a gate of the same name.
-	for _, g := range gates {
-		gm, _ := g.(map[string]any)
-		if id := str(gm, "external_id"); id != "" {
-			if _, taken := index[id]; !taken {
-				index[id] = wsItem{id: id, kind: "gate", payload: gm}
+
+	for start := 0; start < len(unique); {
+		values := cloneURLValues(baseValues)
+		chunkSeen := map[string]bool{}
+		next := start
+		for next < len(unique) && next-start < maxDirectItemIDs {
+			id := unique[next]
+			candidate := cloneURLValues(values)
+			candidate.Add("ids[]", id)
+			candidatePath := "/api/v1/sync/items?" + candidate.Encode()
+			if len(apiBasePath+candidatePath) > maxDirectItemRequestTargetBytes {
+				if next == start {
+					return nil, fmt.Errorf("direct item request target exceeds %d-byte budget for %q", maxDirectItemRequestTargetBytes, id)
+				}
+				break
 			}
+			values = candidate
+			chunkSeen[id] = true
+			next++
 		}
+		path := "/api/v1/sync/items?" + values.Encode()
+		status, body, err := env.call("GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+		if status != 200 {
+			return nil, serverRefusal("named item read", status, body)
+		}
+		rows, err := listFromData(body, "items")
+		if err != nil {
+			return nil, err
+		}
+		for _, raw := range rows {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("server response item is not an object")
+			}
+			payload, ok := entry["item"].(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("server response item has no canonical payload")
+			}
+			id := str(payload, "external_id")
+			kind := str(entry, "kind")
+			if id == "" || !validDirectItemKind(kind) || !chunkSeen[id] {
+				return nil, fmt.Errorf("server response item has an invalid or unrequested identity")
+			}
+			gates, _ := entry["gates"].([]any)
+			index[id] = wsItem{id: id, kind: kind, payload: payload, gates: gates}
+		}
+		start = next
 	}
-	return index, gates, surfaces, nil
+	return index, nil
+}
+
+func cloneURLValues(values url.Values) url.Values {
+	clone := make(url.Values, len(values))
+	for key, entries := range values {
+		clone[key] = append([]string(nil), entries...)
+	}
+	return clone
+}
+
+func validDirectItemKind(kind string) bool {
+	switch kind {
+	case "epic", "system", "user", "backlog", "gate":
+		return true
+	default:
+		return false
+	}
+}
+
+func scopeIndex(env *factoryEnv, ids []string) (map[string]scopeRecord, error) {
+	items, err := fetchDirectItems(env, ids, false)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]scopeRecord, len(items))
+	for id, item := range items {
+		index[id] = scopeRecord{kind: item.kind, payload: item.payload}
+	}
+	return index, nil
 }
 
 func fieldOr(m map[string]any, key, marker string) string {
@@ -1217,34 +1235,6 @@ type scopeRecord struct {
 	payload map[string]any
 }
 
-// scopeIndex fetches the epics and requirements once and indexes them by
-// external id, KEEPING the UR/SR distinction the flat wsIndex collapses — the
-// authoring render needs it to pick the right mutable-field set.
-func scopeIndex(env *factoryEnv) (map[string]scopeRecord, error) {
-	epics, err := fetchList(env, fmt.Sprintf("/api/v1/sync/epics?system_id=%d", env.SystemID), "epics")
-	if err != nil {
-		return nil, err
-	}
-	srs, urs, err := fetchRequirementLists(env, fmt.Sprintf("/api/v1/sync/requirements?system_id=%d", env.SystemID))
-	if err != nil {
-		return nil, err
-	}
-	idx := map[string]scopeRecord{}
-	add := func(list []any, kind string) {
-		for _, r := range list {
-			if m, ok := r.(map[string]any); ok {
-				if id := str(m, "external_id"); id != "" {
-					idx[id] = scopeRecord{kind: kind, payload: m}
-				}
-			}
-		}
-	}
-	add(epics, "epic")
-	add(srs, "system")
-	add(urs, "user")
-	return idx, nil
-}
-
 func newContextID(mode string) string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
@@ -1512,8 +1502,13 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 		return fmt.Errorf("the selection's scope id %q is not a safe path component — refusing to pull", scopeExt)
 	}
 	members := stringSlice(current["members"])
-
-	idx, err := scopeIndex(env)
+	for _, mid := range members {
+		if unsafeSnapshotName(mid) {
+			return fmt.Errorf("selection member id %q is not a safe path component — refusing to pull", mid)
+		}
+	}
+	ids := append([]string{scopeExt}, members...)
+	idx, err := scopeIndex(env, ids)
 	if err != nil {
 		return err
 	}
@@ -1539,9 +1534,6 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 	}
 
 	for _, mid := range members {
-		if unsafeSnapshotName(mid) {
-			return fmt.Errorf("selection member id %q is not a safe path component — refusing to pull", mid)
-		}
 		mr, ok := idx[mid]
 		if !ok {
 			continue // the selection may name a member the read has not caught up to
@@ -1758,11 +1750,12 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		return fmt.Errorf("%s is a --for-review directory (context %s) — review pulls are read-only and never push; pull without --for-review to author", scopeExt, ctxID)
 	}
 
-	idx, err := scopeIndex(env)
+	members := stringSlice(current["members"])
+	ids := append([]string{scopeExt}, members...)
+	idx, err := scopeIndex(env, ids)
 	if err != nil {
 		return err
 	}
-	members := stringSlice(current["members"])
 
 	type itemFile struct{ path, rel, ext string }
 	items := []itemFile{}
@@ -1774,28 +1767,41 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		memberSet[m] = true
 	}
 	entries, _ := os.ReadDir(filepath.Join(dir, "members"))
+	var outOfScopeFiles []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
 		ext := strings.TrimSuffix(e.Name(), ".md")
-		// Push only files for the CURRENT selection's members: a pull never removes a
-		// member file dropped by a later, smaller reselection, and pushing that stale
-		// file would patch a record outside the current scope (#15). A stale file for
-		// a REAL member (still in the store index) is skipped silently; a file for an
-		// id the store never knew falls through to the unknown-file refusal below.
 		if !memberSet[ext] {
-			if _, known := idx[ext]; known {
-				continue
-			}
+			// Resolve only stale local filenames exactly, preserving the existing
+			// skip-known/refuse-unknown behavior without a system-wide index.
+			outOfScopeFiles = append(outOfScopeFiles, ext)
+			continue
 		}
 		items = append(items, itemFile{filepath.Join(dir, "members", e.Name()), filepath.Join("members", e.Name()), ext})
+	}
+	if len(outOfScopeFiles) > 0 {
+		stale, err := scopeIndex(env, outOfScopeFiles)
+		if err != nil {
+			return fmt.Errorf("could not verify out-of-scope member files: %w", err)
+		}
+		for id, record := range stale {
+			idx[id] = record
+		}
+		for _, id := range outOfScopeFiles {
+			if _, known := idx[id]; known {
+				continue
+			}
+			items = append(items, itemFile{filepath.Join(dir, "members", id+".md"), filepath.Join("members", id+".md"), id})
+		}
 	}
 
 	var plan []string
 	var skipped []string
 	var conflicts []string
 	var pushed []itemFile
+	mutationItems := map[string]scopeRecord{}
 
 	// PLAN PASS — read, parse and diff every item and packet section BEFORE any
 	// POST, so a malformed or unreadable later file cannot abort the command after
@@ -1870,6 +1876,17 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 			return serverRefusal(pi.it.ext, status, resp)
 		default:
 			pushed = append(pushed, pi.it)
+			if data, ok := resp["data"].(map[string]any); ok {
+				if item, ok := data["sync_item"].(map[string]any); ok {
+					if payload, ok := item["item"].(map[string]any); ok {
+						id := str(payload, "external_id")
+						kind := str(item, "kind")
+						if id == pi.it.ext && validDirectItemKind(kind) {
+							mutationItems[id] = scopeRecord{kind: kind, payload: payload}
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -1905,19 +1922,34 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 	// markers (a `- withdraw X`) and server-normalized fields do not linger in the
 	// body and re-emit on the next push. One re-fetch reflects every patch.
 	if len(pushed) > 0 {
-		if fresh, ferr := scopeIndex(env); ferr == nil {
-			for _, it := range pushed {
-				rec, ok := fresh[it.ext]
-				if !ok {
-					continue
-				}
-				var r authoring.Record
-				if rec.kind == "epic" {
-					r = recordFromPayload(rec, members)
-				} else {
-					r = recordFromPayload(rec, nil)
-				}
-				_ = atomicWrite(it.path, []byte(scopeItemContent(r, mode, ctxID, false, env, time.Now())))
+		pushedIDs := make([]string, 0, len(pushed))
+		for _, it := range pushed {
+			pushedIDs = append(pushedIDs, it.ext)
+		}
+		fresh := mutationItems
+		// Each mutation response is canonical and fingerprint-current. When
+		// several records changed together, fetch the exact set once more so
+		// later membership/relation writes are reflected in earlier files.
+		if len(pushed) > 1 || len(fresh) != len(pushed) {
+			var ferr error
+			fresh, ferr = scopeIndex(env, pushedIDs)
+			if ferr != nil {
+				return fmt.Errorf("push applied %d record(s), but canonical refresh failed; re-pull before editing again: %w", len(pushed), ferr)
+			}
+		}
+		for _, it := range pushed {
+			rec, ok := fresh[it.ext]
+			if !ok {
+				return fmt.Errorf("push applied %d record(s), but canonical refresh omitted %s; re-pull before editing again", len(pushed), it.ext)
+			}
+			var r authoring.Record
+			if rec.kind == "epic" {
+				r = recordFromPayload(rec, members)
+			} else {
+				r = recordFromPayload(rec, nil)
+			}
+			if err := atomicWrite(it.path, []byte(scopeItemContent(r, mode, ctxID, false, env, time.Now()))); err != nil {
+				return fmt.Errorf("push applied %d record(s), but could not refresh %s; re-pull before editing again: %w", len(pushed), it.rel, err)
 			}
 		}
 	}
@@ -2462,20 +2494,18 @@ func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 		items = append(items, id)
 	}
 	// REQ-CROSS-430: --piece narrows the caller-scoped reads (pull --scope, push,
-	// check); a by-id pull reads the whole system, so the flag is refused
+	// check); direct by-id pulls do not use a caller-scoped selection, so the flag is refused
 	// before any request rather than parsed and ignored.
 	if wsPiece != "" && len(items) > 0 {
-		return fmt.Errorf("--piece applies to pull --scope, push and check; a by-id pull reads the whole system — drop --piece")
+		return fmt.Errorf("--piece applies to pull --scope, push and check; a by-id pull does not use a selected piece — drop --piece")
 	}
 
 	var unknown, conflicts, refused []string
-	var preGates []any
 	if wantSelection {
-		g, conflict, err := pullSelection(env, now, nil)
+		_, conflict, err := pullSelection(env, now, nil)
 		if err != nil {
 			return err
 		}
-		preGates = g
 		if conflict {
 			conflicts = append(conflicts, selectionTarget)
 			fmt.Printf("✗ CONFLICT %s — local edit preserved; fresh pull at %s.pulled; resolve by hand and re-pull\n",
@@ -2490,8 +2520,18 @@ func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 			return nil
 		}
 	}
+	safeItems := make([]string, 0, len(items))
+	for _, id := range items {
+		if unsafeSnapshotName(id + ".md") {
+			refused = append(refused, id)
+			fmt.Printf("✗ %s — refused: an external id must be a plain file name, not a path\n", id)
+			continue
+		}
+		safeItems = append(safeItems, id)
+	}
+	items = safeItems
 
-	index, gates, surfaces, err := wsIndexSurfaces(env, workingSetIncludeCandidates, preGates)
+	index, err := fetchDirectItems(env, items, workingSetIncludeCandidates)
 	if err != nil {
 		return err
 	}
@@ -2499,15 +2539,10 @@ func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 		item, ok := index[id]
 		if !ok {
 			unknown = append(unknown, id)
-			fmt.Printf("✗ %s — not served by %s (unknown external id; %s)\n", id, env.APIURL, surfaces.searched())
+			fmt.Printf("✗ %s — not served by %s (unknown external id)\n", id, env.APIURL)
 			continue
 		}
-		if unsafeSnapshotName(id + ".md") {
-			refused = append(refused, id)
-			fmt.Printf("✗ %s — refused: an external id must be a plain file name, not a path\n", id)
-			continue
-		}
-		conflict, err := writeWorkingSetItem(env, item, gates, now)
+		conflict, err := writeWorkingSetItem(env, item, item.gates, now)
 		if err != nil {
 			return err
 		}
@@ -2546,9 +2581,28 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	index, gates, err := wsIndex(env, workingSetIncludeCandidates, nil)
+	var itemIDs []string
+	needsSelection := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		if entry.Name() == selectionFile {
+			needsSelection = true
+			continue
+		}
+		itemIDs = append(itemIDs, strings.TrimSuffix(entry.Name(), ".md"))
+	}
+	index, err := fetchDirectItems(env, itemIDs, workingSetIncludeCandidates)
 	if err != nil {
 		return err
+	}
+	var gates []any
+	if needsSelection {
+		gates, err = fetchList(env, fmt.Sprintf("/api/v1/sync/gates?system_id=%d&state=all", env.SystemID), "gates")
+		if err != nil {
+			return err
+		}
 	}
 	var stale, vanished []string
 	for _, e := range entries {
@@ -2594,7 +2648,7 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 			fmt.Printf("? %s — no longer served by the store; file left in place (deletion is yours to decide)\n", id)
 			continue
 		}
-		current, err := sourceIdentityFor(item, gates)
+		current, err := sourceIdentityFor(item, item.gates)
 		if err != nil {
 			return err
 		}
@@ -2620,7 +2674,7 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 				printSuccess("refreshed %s", selectionFile)
 				continue
 			}
-			conflict, err := writeWorkingSetItem(env, index[id], gates, now)
+			conflict, err := writeWorkingSetItem(env, index[id], index[id].gates, now)
 			if err != nil {
 				return err
 			}
@@ -2869,7 +2923,7 @@ func init() {
 	// REQ-CROSS-345: the read is caller-scoped; --piece names which of the
 	// caller's own current pieces any read resolves (pull, push, check).
 	workingSetCmd.PersistentFlags().StringVar(&wsPiece, "piece", "",
-		"when you hold several current selections, --piece names which one pull --scope, push and check resolve (a by-id pull reads the whole system and refuses it)")
+		"when you hold several current selections, --piece names which one pull --scope, push and check resolve (by-id pulls do not use a selected piece)")
 
 	workingSetCheckCmd.Flags().BoolVar(&workingSetRefresh, "refresh", false, "re-pull files reported stale")
 	for _, c := range []*cobra.Command{workingSetPullCmd, workingSetCheckCmd} {

@@ -60,17 +60,15 @@ func TestCreateEpicPostsTheFieldTheCoreRequires(t *testing.T) {
 
 	payload := *captured
 	// CODE:apps/storage/lib/storage/schema/epic.ex:changeset —
-	// validate_required([:title, :status]); `name` is not even cast.
+	// validate_required([:title, :process_status]); `name` is not even cast.
 	if got, _ := payload["title"].(string); got != epicTitle("Ledger") {
 		t.Fatalf("Epic must be posted with a `title`, got %#v", payload["title"])
 	}
 	if _, present := payload["name"]; present {
 		t.Fatalf("`name` is not a cast field — sending it is what produced the 422: %#v", payload)
 	}
-	// CODE:apps/storage/lib/storage/repositories/board_column_config_repo.ex:@defaults
-	status, _ := payload["status"].(string)
-	if status != "todo" && status != "in_progress" && status != "blocked" && status != "done" {
-		t.Fatalf("status %q is no board column, so the card lands in none of them", status)
+	if _, present := payload["status"]; present {
+		t.Fatal("Epic creation must not send the retired board status field")
 	}
 }
 

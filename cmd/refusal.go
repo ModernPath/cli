@@ -50,6 +50,9 @@ func refusalBodyText(body map[string]any) string {
 			if sentence := reasonSentence(reason); sentence != "" {
 				parts = append(parts, sentence)
 			}
+			if reason == "release_open" {
+				parts = append(parts, openReleaseRefusal(errVal))
+			}
 		}
 		if message := str(errVal, "message"); message != "" {
 			parts = append(parts, message)
@@ -78,6 +81,34 @@ func refusalBodyText(body map[string]any) string {
 	default:
 		return fmt.Sprint(errVal)
 	}
+}
+
+func openReleaseRefusal(errBody map[string]any) string {
+	var parts []string
+	if releases, ok := errBody["open_releases"].([]any); ok {
+		for _, value := range releases {
+			release, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, slug, status := str(release, "name"), str(release, "slug"), str(release, "status")
+			if name == "" {
+				name = "(unnamed release)"
+			}
+			if slug == "" {
+				slug = "unknown slug"
+			}
+			if status == "" {
+				status = "unknown status"
+			}
+			parts = append(parts, fmt.Sprintf("%s (%s): %s", name, slug, status))
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "no readable incumbent release details were supplied")
+	}
+	parts = append(parts, "Retry `modernpath factory release activate <slug> --close-current` only if you intend to close these releases")
+	return strings.Join(parts, "; ")
 }
 
 func detailLines(details map[string]any) string {

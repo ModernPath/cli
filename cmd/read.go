@@ -58,6 +58,7 @@ Examples:
   modernpath read-doc --id=doc_abc123           # Get specific doc by ID
   modernpath read-doc "Authentication"          # Search by title
   modernpath read-doc --tier=module             # Filter by tier
+  modernpath read-doc --list --tier=subsystem    # List only subsystem docs
   modernpath read-doc --tier=subsystem --angle=architecture`,
 	RunE: runReadDoc,
 }
@@ -71,7 +72,7 @@ func init() {
 	readDocCmd.Flags().StringVar(&readDocID, "id", "", "Document ID to retrieve")
 	readDocCmd.Flags().StringVar(&readDocTier, "tier", "", "Filter by tier (module, subsystem, architecture)")
 	readDocCmd.Flags().StringVar(&readDocAngle, "angle", "", "Filter by angle (e.g., architecture, api, data)")
-	readDocCmd.Flags().BoolVar(&readDocList, "list", false, "List all available documents")
+	readDocCmd.Flags().BoolVar(&readDocList, "list", false, "List available documents, optionally filtered by tier or angle")
 
 	// Add commands to root
 	rootCmd.AddCommand(readFileCmd)
@@ -253,9 +254,9 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 	// Determine request type
 	if readDocID != "" {
 		params.Set("doc_id", readDocID)
-	} else if readDocList {
+	} else if readDocList && readDocTier == "" && readDocAngle == "" {
 		params.Set("list", "true")
-	} else if len(args) > 0 {
+	} else if len(args) > 0 && !readDocList {
 		params.Set("title", strings.Join(args, " "))
 	} else if readDocTier != "" || readDocAngle != "" {
 		// Filter mode

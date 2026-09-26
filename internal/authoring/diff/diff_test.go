@@ -6,6 +6,29 @@ import (
 	"github.com/modernpath/cli/internal/authoring"
 )
 
+func TestDiffAcceptanceOrderDoesNotChangeContent(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		base, edited []string
+		refused      bool
+	}{
+		{"reordered", []string{"C-1 — first", "C-2 — second"}, []string{"C-2 — second", "C-1 — first"}, false},
+		{"text changed", []string{"C-1 — first", "C-2 — second"}, []string{"C-2 — changed", "C-1 — first"}, true},
+		{"duplicate count changed", []string{"first", "first", "second"}, []string{"first", "second", "second"}, true},
+		{"duplicates reordered", []string{"first", "first", "second"}, []string{"second", "first", "first"}, false},
+		{"removed", []string{"first", "second"}, []string{"first"}, true},
+		{"added", []string{"first"}, []string{"first", "second"}, true},
+	} {
+		patch, refusal := Diff(authoring.Record{Kind: "system", Scenarios: tc.base}, authoring.Record{Kind: "system", Scenarios: tc.edited})
+		if (refusal != nil) != tc.refused {
+			t.Errorf("%s: refusal = %v, want refused %v", tc.name, refusal, tc.refused)
+		}
+		if refusal == nil && !patch.Empty() {
+			t.Errorf("%s: unchanged acceptance emitted a patch: %v", tc.name, patch)
+		}
+	}
+}
+
 // External PR #299 review (#20): deleting a mutable scalar or a read-only
 // projection block must be refused (like a deleted relation), not silently
 // ignored while other edits in the same file apply.

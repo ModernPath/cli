@@ -655,20 +655,12 @@ func createEpic(baseURL string, arch *SystemResult) (int, error) {
 	// Build project overview from product definition
 	projectOverview := buildProjectOverview(arch)
 
-	// The Epic's name field is `title`, and it is required —
+	// Epic creation requires title; the server supplies its process_status default.
 	// CODE:apps/storage/lib/storage/schema/epic.ex:changeset
-	// (`validate_required([:title, :status])`). Posting `name` made every
-	// `modernpath new` answer 422 {"errors":{"title":["can't be blank"]}},
-	// so no System ever got its initial Epic.
-	//
-	// `status` must be a board column or the card lands in none of them; the
-	// built-in set is todo · in_progress · blocked · done —
-	// CODE:apps/storage/lib/storage/repositories/board_column_config_repo.ex:@defaults
 	payload := map[string]interface{}{
 		"title":            epicTitle(arch.Name),
 		"description":      arch.Description,
 		"system_id":        arch.ID,
-		"status":           "todo",
 		"priority":         "high",
 		"project_type":     "greenfield",
 		"project_overview": projectOverview,

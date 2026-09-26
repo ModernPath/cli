@@ -191,7 +191,7 @@ func TestReleaseActivateRendersThePinRefusals(t *testing.T) {
 
 	t.Run("pin_required", func(t *testing.T) {
 		env := serve(t, http.StatusForbidden, "pin_required")
-		err := activateRelease(env, "modernpath-v1-09", "USER:2026-09-14:activate", "")
+		err := activateRelease(env, "modernpath-v1-09", "USER:2026-09-14:activate", "", false, "")
 		if err == nil {
 			t.Fatal("a 403 pin_required must refuse")
 		}
@@ -203,7 +203,7 @@ func TestReleaseActivateRendersThePinRefusals(t *testing.T) {
 	})
 	t.Run("pin_locked", func(t *testing.T) {
 		env := serve(t, http.StatusTooManyRequests, "pin_locked")
-		err := activateRelease(env, "modernpath-v1-09", "USER:2026-09-14:activate", "0000")
+		err := activateRelease(env, "modernpath-v1-09", "USER:2026-09-14:activate", "0000", false, "")
 		if err == nil {
 			t.Fatal("a 429 pin_locked must refuse")
 		}
@@ -216,6 +216,88 @@ func TestReleaseActivateRendersThePinRefusals(t *testing.T) {
 			t.Errorf("the refusal must state no duration — the server serves none: %v", err)
 		}
 	})
+}
+
+// REQ-CROSS-407: an activation blocked by open incumbent releases must show
+// the server's complete list and the explicit consent flag needed to hand over.
+func TestReleaseActivateRendersOpenReleaseRefusalAndConsentRecovery(t *testing.T) {
+	var posts int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/sync/author", func(w http.ResponseWriter, r *http.Request) {
+		posts++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode activation request: %v", err)
+		}
+		if body["close_current"] != false {
+			t.Errorf("the first attempt must not imply consent: close_current = %v", body["close_current"])
+		}
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"request_id": "req-release-open-1",
+			"error": map[string]any{
+				"reason": "release_open",
+				"open_releases": []any{
+					map[string]any{"id": 17, "name": "Current stable", "slug": "stable-1", "status": "active", "system_id": 4},
+					map[string]any{"id": 18, "name": "Next validation", "slug": "validation-2", "status": "planned", "system_id": 4},
+				},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	env := wsEnv(t, srv)
+
+	out, err := runCapturing(t, func() error {
+		return activateRelease(env, "target-3", "USER:2026-09-23:activate", "2468", false, "")
+	})
+	if err == nil {
+		t.Fatal("an activation with open incumbent releases must be refused")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"release_open",
+		"Current stable (stable-1): active",
+		"Next validation (validation-2): planned",
+		"--close-current",
+		"req-release-open-1",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal must include %q, got: %v", want, err)
+		}
+	}
+	if strings.Contains(msg, "map[") {
+		t.Errorf("incumbents must render as readable release details, got: %v", err)
+	}
+	if out != "" {
+		t.Errorf("a refused activation must not print success; stdout = %q", out)
+	}
+	if posts != 1 {
+		t.Errorf("one refused activation must produce exactly one author request, got %d", posts)
+	}
+}
+
+func TestReleaseOpenRefusalHandlesEmptyOrMalformedIncumbents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		list any
+	}{
+		{name: "empty", list: []any{}},
+		{name: "malformed entry", list: []any{"unexpected"}},
+		{name: "absent", list: nil},
+	} {
+		body := map[string]any{"error": map[string]any{"reason": "release_open"}}
+		if tc.name != "absent" {
+			body["error"].(map[string]any)["open_releases"] = tc.list
+		}
+		got := refusalBodyText(body)
+		if !strings.Contains(got, "release_open") || !strings.Contains(got, "--close-current") {
+			t.Errorf("case %q: release_open still needs a reason and consent recovery, got %q", tc.name, got)
+		}
+		if strings.Contains(got, "map[") {
+			t.Errorf("case %q: malformed or empty incumbent details must not fall back to Go map syntax: %q", tc.name, got)
+		}
+	}
 }
 
 // C2 — a gate is pullable by its own id, with its Fingerprint line.

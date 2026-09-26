@@ -41,7 +41,7 @@ func TestREQCROSS430ByIdPullRefusesPieceInsteadOfIgnoringIt(t *testing.T) {
 	if err == nil {
 		t.Fatal("--piece on a by-id pull was honoured silently — it applies to pull --scope, push and check")
 	}
-	for _, want := range []string{"--piece", "pull --scope", "push", "check", "whole system"} {
+	for _, want := range []string{"--piece", "pull --scope", "push", "check", "selected piece"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal must say %q, got: %v", want, err)
 		}
@@ -54,7 +54,7 @@ func TestREQCROSS430ByIdPullRefusesPieceInsteadOfIgnoringIt(t *testing.T) {
 	}
 }
 
-func TestREQCROSS430UnknownIdNamesTheFourSurfacesSearched(t *testing.T) {
+func TestREQCROSS430UnknownIdNamesTheExactItemRead(t *testing.T) {
 	fx := &wsFixture{epics: []any{wsEpic("EPIC-A", "A")}}
 	env := wsEnv(t, wsServe(t, fx))
 
@@ -63,27 +63,20 @@ func TestREQCROSS430UnknownIdNamesTheFourSurfacesSearched(t *testing.T) {
 			t.Error("an unknown id must fail the pull")
 		}
 	})
-	for _, want := range []string{"NOPE-1", "not served by", "searched backlog, epics, requirements, gates"} {
+	for _, want := range []string{"NOPE-1", "not served by", "unknown external id"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the miss line must say %q, got:\n%s", want, out)
 		}
 	}
 }
 
-func TestREQCROSS430BacklogReadFailureIsReportedNotSwallowed(t *testing.T) {
-	fx := &wsFixture{epics: []any{wsEpic("EPIC-A", "A")}, backlogStatus: 500}
+func TestREQCROSS430NamedItemReadFailureIsReported(t *testing.T) {
+	fx := &wsFixture{itemsStatus: 500}
 	env := wsEnv(t, wsServe(t, fx))
 
-	// The other three surfaces still serve: an epic pulls.
-	if err := workingSetPull(env, []string{"EPIC-A"}, wsNow); err != nil {
-		t.Fatalf("a backlog failure must not stop an epic pull: %v", err)
-	}
-	// And a miss says the backlog surface could not be read, with the reason.
-	out := captureOut(t, func() { _ = workingSetPull(env, []string{"BACKLOG-TOOL-9"}, wsNow) })
-	for _, want := range []string{"searched backlog (unreadable: ", "backlog store unavailable", "epics, requirements, gates"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the miss line must say %q, got:\n%s", want, out)
-		}
+	err := workingSetPull(env, []string{"BACKLOG-TOOL-9"}, wsNow)
+	if err == nil || !strings.Contains(err.Error(), "named item store unavailable") {
+		t.Fatalf("direct read failure should be reported with the server reason, got %v", err)
 	}
 }
 

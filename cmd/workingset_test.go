@@ -86,6 +86,13 @@ type wsFixture struct {
 
 	// REQ-CROSS-393: backlog, gap and tooling records served on GET /sync/backlog.
 	backlog []any
+	// F3: bounded named-item reads. Each entry is a typed item envelope with
+	// its canonical payload and only its associated gate history.
+	items           []any
+	lastItemsQuery  string
+	itemsHits       int
+	authorSyncItems map[string]any
+	itemsStatus     int
 	// REQ-CROSS-430: a non-200 to serve from /sync/backlog (0 = normal 200), so
 	// the by-id pull's diagnostics can be observed when that surface fails.
 	backlogStatus int
@@ -109,6 +116,99 @@ type wsFixture struct {
 	requests []string
 }
 
+// legacyFixtureItems supplies an exact item response for tests that predate the
+// direct-read contract and still declare their fixtures as collection records.
+// The HTTP handler returns only requested IDs; direct-read tests use fx.items
+// explicitly and therefore never rely on this compatibility adapter.
+func legacyFixtureItems(fx *wsFixture, ids []string) []any {
+	requested := map[string]bool{}
+	for _, id := range ids {
+		requested[id] = true
+	}
+	byID := map[string]map[string]any{}
+	add := func(kind string, values []any) {
+		for _, raw := range values {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			id := str(item, "external_id")
+			if requested[id] {
+				byID[id] = map[string]any{"kind": kind, "item": item, "gates": []any{}}
+			}
+		}
+	}
+	add("backlog", fx.backlog)
+	add("epic", fx.epics)
+	add("system", fx.requirements)
+	add("user", fx.userRequirements)
+	allGates := append([]any{}, fx.gates...)
+	allGates = append(allGates, fx.answeredGates...)
+	allGates = append(allGates, fx.dismissedGates...)
+	allGates = append(allGates, fx.supersededGates...)
+	allGates = append(allGates, fx.closedGates...)
+	for _, raw := range allGates {
+		gate, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := str(gate, "external_id")
+		if requested[id] && byID[id] == nil {
+			byID[id] = map[string]any{"kind": "gate", "item": gate, "gates": []any{}}
+			continue
+		}
+		for externalID, envelope := range byID {
+			if requested[externalID] && (directGateAssociatedForTest(gate, externalID)) {
+				envelope["gates"] = append(envelope["gates"].([]any), gate)
+			}
+		}
+	}
+	result := make([]any, 0, len(requested))
+	for _, id := range ids {
+		if item := byID[id]; item != nil {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func directGateAssociatedForTest(gate map[string]any, id string) bool {
+	for _, scoped := range stringSlice(gate["exact_scope"]) {
+		if scoped == id {
+			return true
+		}
+	}
+	if boundedFixtureID(str(gate, "external_id"), id) || boundedFixtureID(str(gate, "title"), id) {
+		return true
+	}
+	holds, _ := gate["holds"].([]any)
+	for _, raw := range holds {
+		if hold, ok := raw.(map[string]any); ok && str(hold, "held_external_id") == id {
+			return true
+		}
+	}
+	return false
+}
+
+func boundedFixtureID(value, id string) bool {
+	for start := 0; start <= len(value)-len(id); {
+		rel := strings.Index(value[start:], id)
+		if rel < 0 {
+			return false
+		}
+		at := start + rel
+		end := at + len(id)
+		isWord := func(b byte) bool {
+			return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+		}
+		if (at == 0 || !isWord(value[at-1])) && (end == len(value) || !isWord(value[end])) {
+			return true
+		}
+		start = end
+	}
+	return false
+}
+
 func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -124,6 +224,20 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			return
 		}
 		write(w, "backlog", fx.backlog)
+	})
+	mux.HandleFunc("/api/v1/sync/items", func(w http.ResponseWriter, r *http.Request) {
+		fx.lastItemsQuery = r.URL.RawQuery
+		fx.itemsHits++
+		if fx.itemsStatus != 0 && fx.itemsStatus != 200 {
+			w.WriteHeader(fx.itemsStatus)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "named item store unavailable"}})
+			return
+		}
+		items := fx.items
+		if items == nil {
+			items = legacyFixtureItems(fx, r.URL.Query()["ids[]"])
+		}
+		write(w, "items", items)
 	})
 	mux.HandleFunc("/api/v1/sync/gates", func(w http.ResponseWriter, r *http.Request) {
 		fx.lastGatesQuery = r.URL.RawQuery
@@ -221,9 +335,13 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "the content has moved since that fingerprint"}})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+		data := map[string]any{
 			respKey: map[string]any{"external_id": str(rec, "external_id"), "fingerprint": "served-after-" + conflictKey},
-		}})
+		}
+		if item := fx.authorSyncItems[conflictKey]; item != nil {
+			data["sync_item"] = item
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
 	mux.HandleFunc("/api/v1/sync/requirements", func(w http.ResponseWriter, r *http.Request) {
 		fx.lastReqQuery = r.URL.RawQuery
@@ -366,21 +484,21 @@ func TestYourMoveMaterializesTheServedGatesUnderASnapshotHeader(t *testing.T) {
 // materializable; the default read is unchanged. RED first: wsIndex takes no
 // include-candidates argument yet.
 func TestWorkingSetIncludeCandidatesRidesTheReadQuery(t *testing.T) {
-	fx := &wsFixture{requirements: []any{wsReq("SR-1", "x")}}
+	fx := &wsFixture{items: []any{map[string]any{"kind": "system", "item": wsReq("SR-1", "x"), "gates": []any{}}}}
 	env := wsEnv(t, wsServe(t, fx))
 
-	if _, _, err := wsIndex(env, true, nil); err != nil {
-		t.Fatalf("wsIndex(include): %v", err)
+	if _, err := fetchDirectItems(env, []string{"SR-1"}, true); err != nil {
+		t.Fatalf("fetchDirectItems(include): %v", err)
 	}
-	if !strings.Contains(fx.lastReqQuery, "include=candidates") {
-		t.Fatalf("--include-candidates must add include=candidates, got %q", fx.lastReqQuery)
+	if !strings.Contains(fx.lastItemsQuery, "include=candidates") {
+		t.Fatalf("--include-candidates must add include=candidates, got %q", fx.lastItemsQuery)
 	}
 
-	if _, _, err := wsIndex(env, false, nil); err != nil {
-		t.Fatalf("wsIndex(default): %v", err)
+	if _, err := fetchDirectItems(env, []string{"SR-1"}, false); err != nil {
+		t.Fatalf("fetchDirectItems(default): %v", err)
 	}
-	if strings.Contains(fx.lastReqQuery, "include=candidates") {
-		t.Fatalf("the default read must not request candidates, got %q", fx.lastReqQuery)
+	if strings.Contains(fx.lastItemsQuery, "include=candidates") {
+		t.Fatalf("the default read must not request candidates, got %q", fx.lastItemsQuery)
 	}
 }
 
@@ -391,15 +509,15 @@ func TestWorkingSetIncludeCandidatesRidesTheReadQuery(t *testing.T) {
 // materializable — came back unknown to `working-set pull`. RED first: wsIndex
 // does not index user requirements at all.
 func TestWorkingSetIndexesUserRequirements(t *testing.T) {
-	fx := &wsFixture{
-		requirements:     []any{wsReq("SR-1", "a system requirement")},
-		userRequirements: []any{wsUserReq("UR-1", "a user requirement")},
-	}
+	fx := &wsFixture{items: []any{
+		map[string]any{"kind": "system", "item": wsReq("SR-1", "a system requirement"), "gates": []any{}},
+		map[string]any{"kind": "user", "item": wsUserReq("UR-1", "a user requirement"), "gates": []any{}},
+	}}
 	env := wsEnv(t, wsServe(t, fx))
 
-	index, _, err := wsIndex(env, true, nil)
+	index, err := fetchDirectItems(env, []string{"SR-1", "UR-1"}, true)
 	if err != nil {
-		t.Fatalf("wsIndex: %v", err)
+		t.Fatalf("fetchDirectItems: %v", err)
 	}
 	ur, ok := index["UR-1"]
 	if !ok {
@@ -409,8 +527,8 @@ func TestWorkingSetIndexesUserRequirements(t *testing.T) {
 		}
 		t.Fatalf("wsIndex must index the user requirement UR-1 (so pull can resolve it); got keys %v", keys)
 	}
-	if ur.kind != "requirement" {
-		t.Fatalf("a UR indexes as a requirement so pull materializes it, got kind %q", ur.kind)
+	if ur.kind != "user" {
+		t.Fatalf("the typed direct read must preserve a UR as user, got kind %q", ur.kind)
 	}
 	if _, ok := index["SR-1"]; !ok {
 		t.Fatalf("wsIndex must still index the system requirement SR-1 alongside the UR")

@@ -217,7 +217,7 @@ func TestREQCROSS380AnEmptyServerErrorCitesTheRequestReference(t *testing.T) {
 
 func TestREQCROSS380AReadRefusalNeverPrintsNil(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/sync/epics", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/sync/items", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-request-id", "req-2")
 		w.WriteHeader(500)
 	})

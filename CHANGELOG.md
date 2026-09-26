@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.10.0 — exact reads and safer system activation
+
+### Upgrading from v0.9.0
+
+- Run `modernpath install` after upgrading so the embedded process kit,
+  managed `AGENTS.md` block, tooling skills and `.modernpath/cli-reference.md`
+  match this release.
+- This release requires a server with the bounded named-item sync endpoint and
+  system-scoped release activation. The production server was verified before
+  publication.
+
+### Read and update only the requested work
+
+- `working-set pull <id>...` reads only the named records instead of fetching
+  every Epic, requirement, gate and backlog record first. Batches are bounded
+  by item count and encoded request size.
+- Work-selection pulls, local snapshot checks and trace fingerprint lookup use
+  exact reads. Successful single-record edits refresh from the canonical
+  server response.
+- `read-doc --list` now applies `--tier` and `--angle` filters through the
+  server-filtered read path.
+
+### Activate releases for the whole system
+
+- UI and CLI activation use the same system-scoped server operation, so the
+  active release and its approval are shared across users. The server records
+  the signed-in actor instead of trusting a client-provided source.
+- The CLI validates closure consent and preserves the existing approval when
+  retrying activation.
+
 ## v0.9.0 — what the loop records, it reads back
 
 ### Upgrading from v0.8.0

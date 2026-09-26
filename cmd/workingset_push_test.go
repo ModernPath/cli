@@ -119,6 +119,34 @@ func TestREQCROSS314PushEmitsOnePatchWithEveryOpUnderThePulledFingerprint(t *tes
 	}
 }
 
+func TestPushRefreshConsumesCanonicalMutationResponseWithoutAnotherItemRead(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	edit(t, memberPath(dir, "REQ-CROSS-310"), func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+
+	canonical := reqWith("REQ-CROSS-310", "the reads and writes", nil)
+	canonical["fingerprint"] = "canonical-after-patch"
+	fx.authorSyncItems = map[string]any{
+		"REQ-CROSS-310": map[string]any{
+			"kind": "system", "item": canonical, "gates": []any{},
+		},
+	}
+	readsBeforePush := fx.itemsHits
+
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if fx.itemsHits != readsBeforePush+1 {
+		t.Fatalf("single-record push should make only its initial exact read and consume the canonical mutation response; direct item reads=%d before push, %d after", readsBeforePush, fx.itemsHits)
+	}
+	refreshed := readScopeFile(t, memberPath(dir, "REQ-CROSS-310"))
+	if !strings.Contains(refreshed, "canonical-after-patch") || !strings.Contains(refreshed, "the reads and writes") {
+		t.Fatalf("push did not refresh from the canonical mutation response:\n%s", refreshed)
+	}
+}
+
 func TestREQCROSS314DryRunPrintsThePlanAndPostsNothing(t *testing.T) {
 	fx := scopeFixture()
 	env, dir := pulledScope(t, fx)
@@ -300,6 +328,31 @@ func TestREQCROSS314EditingAnAcceptanceScenarioIsRefused(t *testing.T) {
 	}
 	if len(fx.authorPosts) != 0 {
 		t.Fatalf("a refused acceptance edit still posted: %v", fx.authorPosts)
+	}
+}
+
+func TestREQCROSS314PushAcceptsReorderedServerCriteria(t *testing.T) {
+	fx := scopeFixture()
+	req := fx.requirements[0].(map[string]any)
+	first := map[string]any{"external_id": "C-1", "kind": "criterion", "statement": "first criterion"}
+	second := map[string]any{"external_id": "C-2", "kind": "criterion", "statement": "second criterion"}
+	req["criteria"] = []any{first, second}
+	env, dir := pulledScope(t, fx)
+
+	req["criteria"] = []any{second, first}
+	edit(t, memberPath(dir, "REQ-CROSS-310"), func(s string) string {
+		return strings.Replace(s, "the reads", "the reads AND writes", 1)
+	})
+	fx.authorPosts = nil
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("server criterion order must not prevent an unrelated edit: %v", err)
+	}
+	patch := patchPostFor(fx, "REQ-CROSS-310")
+	if patch == nil || str(patch, "boundary") != "the reads AND writes" {
+		t.Fatalf("expected the intended boundary edit: %v", fx.authorPosts)
+	}
+	if _, exists := patch["criteria"]; exists {
+		t.Fatalf("push must not replace acceptance content: %v", patch)
 	}
 }
 

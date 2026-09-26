@@ -94,7 +94,7 @@ func Diff(base, edited authoring.Record) (*Patch, *Refusal) {
 	// pushing an edit would supersede the real criteria with statement-only rows
 	// under synthetic ids (#1). It is visible for review but authored elsewhere —
 	// an edit is refused, never silently wiped.
-	if !equalStrings(base.Scenarios, edited.Scenarios) {
+	if !equalScenarioContent(base.Scenarios, edited.Scenarios) {
 		return nil, &Refusal{Detail: "acceptance content was edited — scenarios/criteria are read-only in the working-set file (visible for review, authored through the acceptance path, not push)"}
 	}
 
@@ -211,6 +211,25 @@ func withdrawTarget(line string) string {
 		return line[len(p):]
 	}
 	return ""
+}
+
+// The store does not guarantee acceptance ordering between pull and push.
+// Preserve multiplicity so duplicate additions or removals still count as edits.
+func equalScenarioContent(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, scenario := range a {
+		counts[scenario]++
+	}
+	for _, scenario := range b {
+		if counts[scenario] == 0 {
+			return false
+		}
+		counts[scenario]--
+	}
+	return true
 }
 
 func equalStrings(a, b []string) bool {

@@ -71,6 +71,22 @@ func pinServer(t *testing.T, aggregate string) *httptest.Server {
 			"user_requirements": []map[string]any{{"external_id": "UR-P", "fingerprint": pinURContentHash}},
 		}})
 	})
+	mux.HandleFunc("/api/v1/sync/items", func(w http.ResponseWriter, r *http.Request) {
+		items := []any{}
+		for _, id := range r.URL.Query()["ids[]"] {
+			switch id {
+			case "REQ-P-1":
+				items = append(items, map[string]any{"kind": "system", "item": map[string]any{
+					"external_id": id, "fingerprint": pinContentHash,
+				}, "gates": []any{}})
+			case "UR-P":
+				items = append(items, map[string]any{"kind": "user", "item": map[string]any{
+					"external_id": id, "fingerprint": pinURContentHash,
+				}, "gates": []any{}})
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": items}})
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv

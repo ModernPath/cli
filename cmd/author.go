@@ -820,18 +820,14 @@ func readAggregateFor(env *factoryEnv, piece string) (string, string) {
 // reason names what is missing when the first token has no hash.
 func readContentHashesFor(env *factoryEnv, scope []string) (map[string]string, string) {
 	out := map[string]string{}
-	srs, urs, err := fetchRequirementLists(env, fmt.Sprintf("/api/v1/sync/requirements?system_id=%d", env.SystemID))
+	items, err := fetchDirectItems(env, scope, false)
 	if err != nil {
-		return out, err.Error()
+		return out, fmt.Sprintf("could not read content hash for %s: %v", strings.Join(scope, ", "), err)
 	}
-	wanted := map[string]bool{}
 	for _, id := range scope {
-		wanted[id] = true
-	}
-	for _, r := range append(append([]any{}, srs...), urs...) {
-		m, _ := r.(map[string]any)
-		if id := str(m, "external_id"); wanted[id] {
-			if fp := str(m, "fingerprint"); fp != "" {
+		item, ok := items[id]
+		if ok && (item.kind == "system" || item.kind == "user") {
+			if fp := str(item.payload, "fingerprint"); fp != "" {
 				out[id] = fp
 			}
 		}

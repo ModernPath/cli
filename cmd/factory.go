@@ -855,8 +855,9 @@ func serverSystemLookup() systemLookup {
 
 var factoryStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show the local binding, what the server serves, and the pending op count",
-	Long: `Show the workspace binding, the active release, the pending op count, the
+	Short: "Show the local sync stamp, server active release, and pending op count",
+	Long: `Show the workspace binding, the local sync-release stamp, the server active
+release, the pending op count, the
 pieces you hold, and one server line: the store revision the bound server is
 serving and the sync contract version it advertises (or why it could not be
 read). The server line is a single read bounded at 2 s and writes nothing —
@@ -880,7 +881,7 @@ after a merge it tells you whether production serves it.`,
 		if release == "" {
 			release = "(none — sync runs unscoped; set one with 'factory release use <slug>')"
 		}
-		fmt.Printf("workspace: %s\nrelease:   %s\n", env.Root, release)
+		fmt.Printf("workspace: %s\nsync stamp: %s\n", env.Root, release)
 		fmt.Printf("server:    %s\n", serverLine(env))
 
 		if ops, warnings, err := env.workspaceOps(); err == nil {
@@ -999,7 +1000,7 @@ func printActiveReleaseSource(env *factoryEnv, selection map[string]any) {
 // factory release use|show|clear — the workspace-level release selector
 // (REQ-CROSS-017). Writes only local config; the server materializes the
 // release (find-or-create by slug) on the first scoped sync. This is the
-// local sync stamp; the tenant-wide active release lives in the store and is
+// local sync stamp; the system-wide active release lives in the store and is
 // set with `factory release activate` (REQ-CROSS-339) — the two never merge.
 var factoryReleaseCmd = &cobra.Command{
 	Use:   "release",
@@ -1023,7 +1024,7 @@ var factoryReleaseUseCmd = &cobra.Command{
 		if err := config.WriteConfig(cfg); err != nil {
 			return err
 		}
-		printSuccess("current release: %s (local sync stamp in .modernpath/config.json; the tenant-wide active release lives in the store — activate one with 'factory release activate <slug>')", slug)
+		printSuccess("current release: %s (local sync stamp in .modernpath/config.json; the system-wide active release lives in the store — activate one with 'factory release activate <slug>')", slug)
 		return nil
 	},
 }
@@ -1063,24 +1064,29 @@ var factoryReleaseClearCmd = &cobra.Command{
 }
 
 // factory release activate <slug> — REQ-CROSS-339 (EPIC-CLI-010): the
-// attributed, tenant-wide activation verb. Unlike `use`, which only stamps
-// local config the bulk sync consumes, `activate` carries a USER: source
-// through the guarded authoring write (REQ-CROSS-338) that actually sets the
-// release active. The two never merge.
+// system-wide activation verb. Unlike `use`, which only stamps local config
+// the bulk sync consumes, `activate` calls the guarded server operation that
+// sets the release active. The server composes an attributable source when the
+// caller does not supply one. The two never merge.
 var (
-	releaseActivateSource string
-	releaseActivatePin    string
+	releaseActivateSource       string
+	releaseActivatePin          string
+	releaseActivateReason       string
+	releaseActivateCloseCurrent bool
+	releaseActivatePinStdin     bool
+	activationPinFromStdin      = func() (string, error) { return readPinStdin(os.Stdin) }
+	activationPinSetup          = func() (string, error) { return readPin(false) }
 )
 
 var factoryReleaseActivateCmd = &cobra.Command{
 	Use:   "activate <slug>",
-	Short: "Activate a delivery release tenant-wide (attributed; distinct from the local `use` stamp)",
-	Long: `Activate a delivery release tenant-wide with an attributable USER: source.
+	Short: "Activate a delivery release on the bound system (distinct from the local `use` stamp)",
+	Long: `Activate or reactivate a delivery release on the bound system.
 
 The activation needs the release PIN of the signed-in person (set in Mission
-Control; pass it with --pin). It records the release-selection gate
-GATE-RELEASE-<slug> on the system it is run from, answered by you with the
-source, so the reads that name the active release find it here. Re-running
+Control; pass it with --pin or --pin-stdin). It records the release-selection gate
+GATE-RELEASE-<slug> on the system it is run from. The server composes an
+attributable source unless --source is supplied. Re-running
 the activation on a system whose release is active but carries no such gate
 records one without changing the release; a gate of that purpose and scope
 that is open or answered otherwise is superseded by the next
@@ -1089,30 +1095,33 @@ GATE-RELEASE-<slug>-<n>, and the reads take the newest approved one.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		slug := strings.TrimSpace(args[0])
 		if slug == "" {
-			return fmt.Errorf("usage: modernpath factory release activate <slug> --source USER:<date>:<why>")
-		}
-		// Validate the source before touching config or the server: activation is a
-		// human decision, not a local stamp, and must not inherit the agent actor.
-		if !strings.HasPrefix(releaseActivateSource, "USER:") {
-			return fmt.Errorf("--source is required and must be an attributable USER: reference (e.g. USER:2026-09-11:why) — activation is a tenant-wide human decision, distinct from the local 'release use' stamp")
+			return fmt.Errorf("usage: modernpath factory release activate <slug>")
 		}
 		env, err := factoryEnvLoad()
 		if err != nil {
 			return err
 		}
-		return activateRelease(env, slug, releaseActivateSource, releaseActivatePin)
+		pin, err := activationPin(env, releaseActivatePin, releaseActivatePinStdin)
+		if err != nil {
+			return err
+		}
+		return activateRelease(env, slug, releaseActivateSource, pin, releaseActivateCloseCurrent, releaseActivateReason)
 	},
 }
 
-// activateRelease posts the attributed release_activate authoring action. The
-// USER: source rides the source field explicitly (never the agent actor); the
-// PIN, when supplied, forwards to the server's reused release-PIN guard
-// (REQ-CROSS-338, D-CLI010-ACTIVATION-AUTHORITY).
-func activateRelease(env *factoryEnv, slug, source, pin string) error {
+// activateRelease posts the server-owned release activation operation. An
+// optional source is preserved; without it the server composes the source.
+func activateRelease(env *factoryEnv, slug, source, pin string, closeCurrent bool, reason string) error {
 	body := map[string]any{
-		"action": "release_activate",
-		"slug":   slug,
-		"source": source,
+		"action":        "release_activate",
+		"slug":          slug,
+		"close_current": closeCurrent,
+	}
+	if source != "" {
+		body["source"] = source
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		body["reason"] = reason
 	}
 	if pin != "" {
 		body["pin"] = pin
@@ -1122,11 +1131,72 @@ func activateRelease(env *factoryEnv, slug, source, pin string) error {
 		return err
 	}
 	if row, ok := data["release_activation"].(map[string]any); ok {
-		printSuccess("release %s is now %s tenant-wide (attributed: %s)", str(row, "slug"), str(row, "status"), source)
+		printSuccess("release %s is now %s on this system (source: %s; closed: %s)", str(row, "slug"), str(row, "status"), str(row, "source"), closedReleaseNames(row))
 	} else {
-		printSuccess("release %s activated (attributed: %s)", slug, source)
+		printSuccess("release %s activated on this system", slug)
 	}
 	return nil
+}
+
+func activationPin(env *factoryEnv, supplied string, fromStdin bool) (string, error) {
+	status, response, err := env.call("GET", "/api/compliance/pin", nil)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("PIN status failed (HTTP %d): %s", status, str(response, "error"))
+	}
+	data, ok := response["data"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("PIN status response is missing data.has_pin")
+	}
+	hasPin, ok := data["has_pin"].(bool)
+	if !ok {
+		return "", fmt.Errorf("PIN status response is missing data.has_pin")
+	}
+	if supplied != "" {
+		if !hasPin {
+			return "", fmt.Errorf("no compliance PIN is set — run 'modernpath factory pin set --pin-stdin' before non-interactive activation")
+		}
+		return supplied, nil
+	}
+	if fromStdin {
+		if !hasPin {
+			return "", fmt.Errorf("no compliance PIN is set — run 'modernpath factory pin set --pin-stdin' before non-interactive activation")
+		}
+		return activationPinFromStdin()
+	}
+	if hasPin {
+		if !stdinIsTerminal() {
+			return "", fmt.Errorf("no terminal for a PIN prompt — pipe the PIN and pass --pin-stdin")
+		}
+		return promptHiddenPin("Compliance PIN: ")
+	}
+	if !stdinIsTerminal() {
+		return "", fmt.Errorf("no compliance PIN is set — run 'modernpath factory pin set --pin-stdin' before non-interactive activation")
+	}
+	pin, err := activationPinSetup()
+	if err != nil {
+		return "", err
+	}
+	if err := setCompliancePin(env, pin); err != nil {
+		return "", err
+	}
+	return pin, nil
+}
+
+func closedReleaseNames(row map[string]any) string {
+	closed, _ := row["closed_releases"].([]any)
+	names := make([]string, 0, len(closed))
+	for _, item := range closed {
+		if release, ok := item.(map[string]any); ok {
+			names = append(names, str(release, "name"))
+		}
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
 }
 
 // ---------------------------------------------------------------- sync
@@ -2429,8 +2499,11 @@ func init() {
 	factoryWatchCmd.Flags().IntVar(&watchInterval, "interval", 120, "seconds between cycles")
 	factoryWatchCmd.Flags().IntVar(&watchCycles, "cycles", 0, "stop after N cycles (0 = forever)")
 
-	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivateSource, "source", "", "attributable USER: source, required (e.g. USER:2026-09-11:why)")
-	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivatePin, "pin", "", "release PIN confirmation (the same guard release lifecycle transitions require)")
+	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivateSource, "source", "", "optional attributable source (the server composes one when omitted)")
+	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivatePin, "pin", "", "existing release PIN confirmation (otherwise prompt or --pin-stdin)")
+	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivateReason, "reason", "", "optional activation reason recorded by the server")
+	factoryReleaseActivateCmd.Flags().BoolVar(&releaseActivateCloseCurrent, "close-current", false, "explicitly close other open releases in this system")
+	factoryReleaseActivateCmd.Flags().BoolVar(&releaseActivatePinStdin, "pin-stdin", false, "read the existing compliance PIN from stdin")
 	factoryReleaseCmd.AddCommand(factoryReleaseUseCmd, factoryReleaseShowCmd, factoryReleaseClearCmd, factoryReleaseActivateCmd)
 
 	factoryPinCmd.AddCommand(factoryPinSetCmd)
