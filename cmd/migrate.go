@@ -2175,14 +2175,6 @@ func firstNonEmpty(vals ...string) string {
 	return "—"
 }
 
-// retiredPathFamilies is the exact list §226.1 freezes at the flip — the
-// tracked process-state files whose authority moves to the server store.
-//
-// One definition, shared with the fidelity report: the report is what proves
-// this population has a carrier before the flip deletes it, so a second copy
-// here would let the proof and the retirement cover different files.
-var retiredPathFamilies = rdd.RetiredPathFamilies
-
 // migrateFlip prepares the authority flip (REQ-CROSS-225 machinery). The
 // flip COMMIT is completion-gate material (§225.5): this tool refuses
 // without an attributable source, re-verifies through the import run
@@ -2202,6 +2194,11 @@ func migrateFlip(env *factoryEnv, gateRef, gateFingerprint, gateAnswer string) e
 	if gateAnswer == "" {
 		return fmt.Errorf("migrate flip: the declaration rides the answer the gate actually carries — pass --gate-answer <the gate's stored answer, verbatim>. Read it back from the gate (working-set pull, or the gates read surface at state=all); a declaration may only ride the answer actually given")
 	}
+	workspaceManifest, _, err := manifest.Load(env.Root)
+	if err != nil {
+		return fmt.Errorf("migrate flip refused before writes: read requirement-ledger retirement paths: %w", err)
+	}
+	families := rdd.RetiredPathFamiliesForManifest(workspaceManifest)
 
 	// A previous flip attempt may have activated server-side and then failed
 	// at the marker write. Activation closes the bulk sync channel, so the
@@ -2283,12 +2280,12 @@ func migrateFlip(env *factoryEnv, gateRef, gateFingerprint, gateAnswer string) e
 	// the writer is shared with `install --store-backed` (REQ-CROSS-406), so a
 	// system that never had ledgers gets the same shape with no retired lines.
 	acceptedTag, _ := dataOf(body)["source_tag"].(string)
-	if err := writeStoreBackedMarker(env.Root, env.APIURL, acceptedTag, gateRef, env.SystemID, retiredPathFamilies); err != nil {
+	if err := writeStoreBackedMarker(env.Root, env.APIURL, acceptedTag, gateRef, env.SystemID, families); err != nil {
 		return err
 	}
 	printSuccess("store-backed declaration active; marker written: process/store-backed.md")
 	fmt.Println("\nThe flip commit is yours to make on the completion gate's answer:")
-	fmt.Println("  git rm -r " + strings.Join(retiredPathFamilies, " ") + " " + kit.LedgerSkillTarget)
+	fmt.Println("  git rm -r " + strings.Join(families, " ") + " " + kit.LedgerSkillTarget)
 	fmt.Println("  (the ledger skill documents a retired file; the installer withholds it under the marker)")
 	fmt.Println("  git add process/store-backed.md && commit — one reviewable flip commit.")
 	return nil

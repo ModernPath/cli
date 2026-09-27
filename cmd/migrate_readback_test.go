@@ -19,8 +19,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/modernpath/cli/internal/rdd"
 )
 
 func TestMigrateRunPreservesAnExactlyAcceptedDismissedGate(t *testing.T) {
@@ -1030,26 +1028,6 @@ func TestServedValueMustContainWhatWasSent(t *testing.T) {
 		sort.Strings(named)
 		if strings.Join(named, ",") != strings.Join(tc.skips, ",") {
 			t.Errorf("%s: disclosed skips %v, want %v", tc.name, named, tc.skips)
-		}
-	}
-}
-
-// The retired list the flip freezes and the population the fidelity report
-// proves a carrier for must be the same list. A second copy is how the proof
-// ends up covering different files than the deletion — so this fails the
-// moment anyone reintroduces a local literal that drifts.
-func TestRetiredPathFamiliesHaveOneDefinition(t *testing.T) {
-	if len(retiredPathFamilies) == 0 {
-		t.Fatal("the flip must know which paths it retires")
-	}
-	if len(retiredPathFamilies) != len(rdd.RetiredPathFamilies) {
-		t.Fatalf("the flip retires %d families, the report measures %d",
-			len(retiredPathFamilies), len(rdd.RetiredPathFamilies))
-	}
-	for i, fam := range retiredPathFamilies {
-		if fam != rdd.RetiredPathFamilies[i] {
-			t.Fatalf("the flip's retired list drifted from the report's population at %d: %q vs %q",
-				i, fam, rdd.RetiredPathFamilies[i])
 		}
 	}
 }

@@ -269,7 +269,7 @@ func archivalFileRels(root string, m *manifest.Manifest) []string {
 			add(rel(root, file))
 		}
 	}
-	for _, r := range retiredFilesOnDisk(root) {
+	for _, r := range retiredFilesOnDisk(root, RetiredPathFamiliesForManifest(m)...) {
 		add(r)
 	}
 	return rels

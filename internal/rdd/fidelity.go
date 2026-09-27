@@ -705,7 +705,7 @@ func BuildFidelityReport(root string, m *manifest.Manifest, data Data, ops []Op)
 	r.scanEpicRecordCoverage(root, epicOps, syncedRecord)
 	r.scanScenarioShapes(data.Epics, records, scenarioOpIDsOf(ops))
 	r.scanLoopStatusCap(root, m)
-	r.scanArchivalCoverage(root, carried)
+	r.scanArchivalCoverage(root, carried, RetiredPathFamiliesForManifest(m)...)
 	r.scanEvidenceCellRaw(data.Reqs, reqPayload)
 	r.scanEpicURMembership(data.Epics, records, epicPayload, userReqOps)
 	// Last of the arms, and deliberately so: it merges its parent entries into

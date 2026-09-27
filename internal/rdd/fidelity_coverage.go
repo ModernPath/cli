@@ -52,6 +52,26 @@ var RetiredPathFamilies = []string{
 	"process/releases.md",
 }
 
+// RetiredPathFamiliesForManifest extends the shared retirement population
+// with the requirement-ledger paths this workspace actually declared. A
+// repo-specific layout must not become a global deletion rule for other repos.
+func RetiredPathFamiliesForManifest(m *manifest.Manifest) []string {
+	families := append([]string(nil), RetiredPathFamilies...)
+	seen := map[string]bool{}
+	for _, family := range families {
+		seen[family] = true
+	}
+	if m != nil {
+		for _, family := range m.Documents[manifest.DocRequirements].Globs() {
+			if !seen[family] {
+				families = append(families, family)
+				seen[family] = true
+			}
+		}
+	}
+	return families
+}
+
 // ---------------------------------------------------------------- epic records on disk
 
 // Section headings, level 2 — the boundary ParseScenarios works in. The
@@ -742,9 +762,12 @@ func (r *FidelityReport) scanLoopStatusCap(root string, m *manifest.Manifest) {
 
 // matchesRetiredFamily reports whether a workspace-relative path falls in the
 // population the flip retires.
-func matchesRetiredFamily(relPath string) bool {
+func matchesRetiredFamily(relPath string, families ...string) bool {
 	relPath = filepath.ToSlash(relPath)
-	for _, fam := range RetiredPathFamilies {
+	if len(families) == 0 {
+		families = RetiredPathFamilies
+	}
+	for _, fam := range families {
 		if strings.HasSuffix(fam, "/**") {
 			if strings.HasPrefix(relPath, strings.TrimSuffix(fam, "**")) {
 				return true
@@ -761,19 +784,22 @@ func matchesRetiredFamily(relPath string) bool {
 // retiredFilesOnDisk enumerates every file the retired-path population matches,
 // as workspace-relative slash paths. It walks only the directories the families
 // name, so it costs nothing in a monorepo whose other trees are irrelevant.
-func retiredFilesOnDisk(root string) []string {
+func retiredFilesOnDisk(root string, families ...string) []string {
+	if len(families) == 0 {
+		families = RetiredPathFamilies
+	}
 	seen := map[string]bool{}
 	var out []string
 	add := func(rel string) {
 		rel = filepath.ToSlash(rel)
-		if seen[rel] || !matchesRetiredFamily(rel) {
+		if seen[rel] || !matchesRetiredFamily(rel, families...) {
 			return
 		}
 		seen[rel] = true
 		out = append(out, rel)
 	}
 
-	for _, fam := range RetiredPathFamilies {
+	for _, fam := range families {
 		switch {
 		case strings.HasSuffix(fam, "/**"):
 			dir := strings.TrimSuffix(fam, "/**")
@@ -785,14 +811,13 @@ func retiredFilesOnDisk(root string) []string {
 				return nil
 			})
 		case strings.ContainsAny(fam, "*?["):
-			dir := path.Dir(fam)
-			entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+			matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(fam)))
 			if err != nil {
 				continue
 			}
-			for _, e := range entries {
-				if !e.IsDir() {
-					add(path.Join(dir, e.Name()))
+			for _, match := range matches {
+				if info, err := os.Stat(match); err == nil && !info.IsDir() {
+					add(rel(root, match))
 				}
 			}
 		default:
@@ -818,8 +843,8 @@ func retiredFilesOnDisk(root string) []string {
 // that no longer exists on disk is a stale carrier, reported so the diff is
 // checkable from both ends rather than only from the side that happens to be
 // shorter.
-func (r *FidelityReport) scanArchivalCoverage(root string, carried map[string]bool) {
-	files := retiredFilesOnDisk(root)
+func (r *FidelityReport) scanArchivalCoverage(root string, carried map[string]bool, families ...string) {
+	files := retiredFilesOnDisk(root, families...)
 	if len(files) == 0 {
 		return
 	}
@@ -846,7 +871,7 @@ func (r *FidelityReport) scanArchivalCoverage(root string, carried map[string]bo
 		onDisk[f] = true
 	}
 	for c := range carried {
-		if matchesRetiredFamily(c) && !onDisk[c] {
+		if matchesRetiredFamily(c, families...) && !onDisk[c] {
 			count.ExtraInOps = append(count.ExtraInOps, c)
 		}
 	}
