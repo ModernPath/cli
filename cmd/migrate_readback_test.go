@@ -95,6 +95,15 @@ func TestMigrateRunPreservesAnExactlyAcceptedDismissedGate(t *testing.T) {
 		t.Fatal("a changed gate allowed a batch write")
 	}
 	st.payloads["upsert_gate|"+id]["fingerprint"] = fingerprint
+	st.gateReads = 0
+	st.failGateReadAt = 2 // manifest validation succeeds; the second pre-write read fails
+	if err := migrateRun(env); err == nil || !strings.Contains(err.Error(), "store gate states could not be read") {
+		t.Fatalf("an unreadable second snapshot must refuse before writes: %v", err)
+	}
+	if len(st.applied) != 0 {
+		t.Fatal("unreadable gate states allowed a batch write")
+	}
+	st.failGateReadAt = 0
 	if err := migrateRun(env); err != nil {
 		t.Fatalf("exact human-accepted residue should import: %v", err)
 	}

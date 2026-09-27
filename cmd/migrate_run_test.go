@@ -22,13 +22,15 @@ import (
 // migrateStore is an in-memory store the fixture server applies batches to —
 // hash-diffed like the real one, so idempotence is observable.
 type migrateStore struct {
-	mu           sync.Mutex
-	hashes       map[string]string         // "type|id" → content_hash
-	payloads     map[string]map[string]any // "type|id" → last applied payload
-	residueGate  map[string]any            // answered human decision served by GET /sync/gates/<id>
-	applied      []map[string]int          // per-batch result counts
-	evidenceRuns []map[string]any
-	declarations []map[string]any // POST /sync/store-backed bodies (REQ-CROSS-227)
+	mu             sync.Mutex
+	hashes         map[string]string         // "type|id" → content_hash
+	payloads       map[string]map[string]any // "type|id" → last applied payload
+	residueGate    map[string]any            // answered human decision served by GET /sync/gates/<id>
+	gateReads      int
+	failGateReadAt int              // one numbered gates-list read fails, exposing fail-open preflight
+	applied        []map[string]int // per-batch result counts
+	evidenceRuns   []map[string]any
+	declarations   []map[string]any // POST /sync/store-backed bodies (REQ-CROSS-227)
 	// declaredState is what GET /sync/store-backed serves as the declaration's
 	// current state. The handler used to answer every method with the POST's
 	// echo and no process_store key at all, so `alreadyActive` was never true
@@ -448,6 +450,14 @@ func serveMigrateStore(t *testing.T, st *migrateStore) *httptest.Server {
 			}
 			st.mu.Lock()
 			defer st.mu.Unlock()
+			if key == "gates" {
+				st.gateReads++
+				if st.gateReads == st.failGateReadAt {
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]any{"error": "gate list temporarily unavailable"})
+					return
+				}
+			}
 			var items []any
 			for k := range st.hashes {
 				parts := strings.SplitN(k, "|", 2)

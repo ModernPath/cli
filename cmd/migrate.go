@@ -267,11 +267,10 @@ func migrateRun(env *factoryEnv) error {
 	if err != nil {
 		return fmt.Errorf("migrate run refused before writes: %w", err)
 	}
-	if drift := gateStateCompare(env, fidelityOps); drift != 0 && len(preserved) == 0 {
-		if drift < 0 {
-			return fmt.Errorf("migrate run refused before writes: store gate states could not be read")
-		}
-		return fmt.Errorf("migrate run refused before writes: %d gate-state difference(s) between corpus and store; reconcile the named decisions through an applied human gate before import", drift)
+	if drift := gateStateCompare(env, fidelityOps); drift < 0 {
+		return fmt.Errorf("migrate run refused before writes: store gate states could not be read")
+	} else if drift != len(preserved) {
+		return fmt.Errorf("migrate run refused before writes: %d gate-state difference(s) between corpus and store, %d accepted at the exact human gate; reconcile before import", drift, len(preserved))
 	}
 	batchOps := omitPreservedGateOps(ops, preserved)
 	var storeOnlyBacklogBefore map[string]string
