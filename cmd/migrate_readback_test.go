@@ -11,6 +11,8 @@ package cmd
 // run naming it, and an intact fixture must stay quiet.
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,94 @@ import (
 
 	"github.com/modernpath/cli/internal/rdd"
 )
+
+func TestMigrateRunPreservesAnExactlyAcceptedDismissedGate(t *testing.T) {
+	st := &migrateStore{hashes: map[string]string{}, payloads: map[string]map[string]any{}}
+	srv := serveMigrateStore(t, st)
+	env := wsEnv(t, srv)
+	migrateCorpus(t, env.Root)
+	p := filepath.Join(env.Root, "WORKLIST.md")
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(raw), "| — | — | **IN_PROGRESS** — building | — |", "| — | LOWER_VERIFIED | **IN_REVIEW** | pending |", 1)
+	if changed == string(raw) {
+		t.Fatal("fixture worklist did not change")
+	}
+	if err := os.WriteFile(p, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, fidelityOps, _, err := migrateFidelity(env.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "APPROVE-EPIC-MR-001"
+	var gatePayload map[string]any
+	for _, op := range fidelityOps {
+		if op.Type == "upsert_gate" && op.Payload["external_id"] == id {
+			gatePayload = op.Payload
+		}
+	}
+	if gatePayload == nil || gatePayload["state"] != "open" {
+		t.Fatalf("fixture must emit an open gate: %v", gatePayload)
+	}
+	fingerprint := strings.Repeat("a", 64)
+	stored := map[string]any{}
+	for k, v := range gatePayload {
+		stored[k] = v
+	}
+	stored["state"] = "dismissed"
+	stored["fingerprint"] = fingerprint
+	st.hashes["upsert_gate|"+id] = "earlier-hash"
+	st.payloads["upsert_gate|"+id] = stored
+	manifest := fmt.Sprintf("# system_id=%d\n# review_count=1\n%s\topen\tdismissed\t%s\n", env.SystemID, id, fingerprint)
+	manifestPath := filepath.Join(env.Root, "residue.tsv")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(manifest)))
+	gateID := "GATE-MIGRATION-RESIDUE-TEST"
+	st.residueGate = map[string]any{
+		"external_id": gateID, "purpose": "migration_residue", "gate_class": "human", "state": "answered",
+		"answerer_kind": "human", "source_tag": "USER:2026-09-27:accept exact residue",
+		"body_md": "SHA-256: " + digest + "\n" + manifest, "chosen_option_keys": []any{"preserve_dismissed"},
+		"answer": "preserve_dismissed", "exact_scope": []any{fmt.Sprintf("system:%d", env.SystemID)},
+	}
+	oldManifest, oldGate := migrateResidueManifest, migrateResidueGate
+	migrateResidueManifest, migrateResidueGate = manifestPath, gateID
+	t.Cleanup(func() { migrateResidueManifest, migrateResidueGate = oldManifest, oldGate })
+	st.residueGate["state"] = "open"
+	if err := migrateRun(env); err == nil || !strings.Contains(err.Error(), "answered, human migration_residue") {
+		t.Fatalf("an open decision cannot authorize import: %v", err)
+	}
+	if len(st.applied) != 0 {
+		t.Fatal("an unanswered gate allowed a batch write")
+	}
+	st.residueGate["state"] = "answered"
+	st.payloads["upsert_gate|"+id]["fingerprint"] = strings.Repeat("b", 64)
+	if err := migrateRun(env); err == nil || !strings.Contains(err.Error(), "no longer matches") {
+		t.Fatalf("a changed historical gate must require new review: %v", err)
+	}
+	if len(st.applied) != 0 {
+		t.Fatal("a changed gate allowed a batch write")
+	}
+	st.payloads["upsert_gate|"+id]["fingerprint"] = fingerprint
+	if err := migrateRun(env); err != nil {
+		t.Fatalf("exact human-accepted residue should import: %v", err)
+	}
+	if st.payloads["upsert_gate|"+id]["state"] != "dismissed" {
+		t.Fatal("historical dismissal was reopened")
+	}
+	if len(st.applied) < 2 {
+		t.Fatal("import did not run two passes")
+	}
+	for _, pass := range st.applied {
+		if pass["updated"] > 0 && st.payloads["upsert_gate|"+id]["state"] != "dismissed" {
+			t.Fatal("gate was updated")
+		}
+	}
+}
 
 // An old dismissed approval remains a store decision even when the current
 // corpus emits a different state under the same id. Name the conflict in the

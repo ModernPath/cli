@@ -25,6 +25,7 @@ type migrateStore struct {
 	mu           sync.Mutex
 	hashes       map[string]string         // "type|id" → content_hash
 	payloads     map[string]map[string]any // "type|id" → last applied payload
+	residueGate  map[string]any            // answered human decision served by GET /sync/gates/<id>
 	applied      []map[string]int          // per-batch result counts
 	evidenceRuns []map[string]any
 	declarations []map[string]any // POST /sync/store-backed bodies (REQ-CROSS-227)
@@ -571,6 +572,13 @@ func serveMigrateStore(t *testing.T, st *migrateStore) *httptest.Server {
 		respond(w, map[string]any{"process_records": items})
 	})
 	mux.HandleFunc("/api/v1/sync/gates", list("upsert_gate", "gates"))
+	mux.HandleFunc("/api/v1/sync/gates/", func(w http.ResponseWriter, r *http.Request) {
+		if st.residueGate == nil || strings.TrimPrefix(r.URL.Path, "/api/v1/sync/gates/") != st.residueGate["external_id"] {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		respond(w, map[string]any{"gate": st.residueGate})
+	})
 	mux.HandleFunc("/api/v1/sync/backlog", list("upsert_backlog_record", "backlog"))
 	mux.HandleFunc("/api/v1/sync/evidence/runs", func(w http.ResponseWriter, r *http.Request) {
 		// The imported-evidence READ surface: runs and their results, every

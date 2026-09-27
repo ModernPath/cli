@@ -28,8 +28,10 @@ import (
 )
 
 var (
-	migrateAcceptPath    string
-	migrateRunAcceptPath string
+	migrateAcceptPath      string
+	migrateRunAcceptPath   string
+	migrateResidueManifest string
+	migrateResidueGate     string
 	// migrateRunFromEmpty asserts the target holds no process rows for this
 	// system, which is what makes the final import self-proving: every gate is
 	// created rather than updated, so its answer block is written from the
@@ -129,14 +131,20 @@ excluded by design never block. The command writes nothing.`,
 func init() {
 	migrateReportCmd.Flags().StringVar(&migrateAcceptPath, "accept", "",
 		"file of accepted residue keys (one RecordID|Field per line, # comments) from an applied gate answer")
+	migrateReportCmd.Flags().StringVar(&migrateResidueManifest, "residue-manifest", "", "exact gate-state residue TSV reviewed by a human decision gate")
+	migrateReportCmd.Flags().StringVar(&migrateResidueGate, "residue-gate", "", "answered human migration_residue gate carrying the exact manifest")
 	migrateRunCmd.Flags().StringVar(&migrateRunAcceptPath, "accept", "",
 		"file of accepted residue keys, the same one the report takes — the import refuses on any blocking loss it does not cover")
+	migrateRunCmd.Flags().StringVar(&migrateResidueManifest, "residue-manifest", "", "exact gate-state residue TSV reviewed by a human decision gate")
+	migrateRunCmd.Flags().StringVar(&migrateResidueGate, "residue-gate", "", "answered human migration_residue gate carrying the exact manifest")
 	migrateRunCmd.Flags().BoolVar(&migrateRunFromEmpty, "from-empty", false,
 		"the final import to a flip target: refuse before writing unless the store holds no process rows for this system")
 	migrateRunCmd.Flags().BoolVar(&migrateNoDocs, "no-docs", false,
 		"skip workspace-document ops (upsert_document); import process state only")
 	migrateFlipCmd.Flags().StringVar(&migrateRunAcceptPath, "accept", "",
 		"file of accepted residue keys, for the flip's re-verification import")
+	migrateFlipCmd.Flags().StringVar(&migrateResidueManifest, "residue-manifest", "", "exact gate-state residue TSV for the flip's re-verification import")
+	migrateFlipCmd.Flags().StringVar(&migrateResidueGate, "residue-gate", "", "answered human migration_residue gate carrying the exact manifest")
 	migrateFlipCmd.Flags().StringVar(&migrateFlipGate, "gate", "",
 		"the ANSWERED completion gate's external id (required)")
 	migrateFlipCmd.Flags().StringVar(&migrateFlipFingerprint, "gate-fingerprint", "",
@@ -255,12 +263,17 @@ func migrateRun(env *factoryEnv) error {
 	}
 	// A lossless op stream can still disagree with a historical gate decision
 	// already in the store. Refuse before writing, not after a long import.
-	if drift := gateStateCompare(env, fidelityOps); drift != 0 {
+	preserved, err := validatedMigrationGateResidue(env, fidelityOps, migrateResidueManifest, migrateResidueGate)
+	if err != nil {
+		return fmt.Errorf("migrate run refused before writes: %w", err)
+	}
+	if drift := gateStateCompare(env, fidelityOps); drift != 0 && len(preserved) == 0 {
 		if drift < 0 {
 			return fmt.Errorf("migrate run refused before writes: store gate states could not be read")
 		}
 		return fmt.Errorf("migrate run refused before writes: %d gate-state difference(s) between corpus and store; reconcile the named decisions through an applied human gate before import", drift)
 	}
+	batchOps := omitPreservedGateOps(ops, preserved)
 
 	// REQ-CROSS-257: which gates the store held answered BEFORE this run. Taken
 	// here, before the first batch pass, because after it every gate this run
@@ -269,11 +282,11 @@ func migrateRun(env *factoryEnv) error {
 
 	// Pass 1: apply. Pass 2: prove idempotence — the hash-diff must make an
 	// immediate rerun a zero-change no-op (§224.1).
-	first, _, err := migrateSyncPass(env, ops)
+	first, _, err := migrateSyncPass(env, batchOps)
 	if err != nil {
 		return err
 	}
-	second, changedIDs, err := migrateSyncPass(env, ops)
+	second, changedIDs, err := migrateSyncPass(env, batchOps)
 	if err != nil {
 		return err
 	}
@@ -286,7 +299,7 @@ func migrateRun(env *factoryEnv) error {
 	// Bidirectional verification (§224.2): every emitted id must read back.
 	// Store-only records are legitimate (server-born gates and the like) and
 	// reported, never failed.
-	missing, storeOnly, err := migrateVerifyIDs(env, ops, preAnswered)
+	missing, storeOnly, err := migrateVerifyIDs(env, ops, preAnswered, preserved)
 	if err != nil {
 		return err
 	}
@@ -387,6 +400,9 @@ func migrateRun(env *factoryEnv) error {
 	// and by-design residue, stated rather than implied.
 	fmt.Printf("residue (must match `migrate report`): %d blocking loss(es), %d accepted\n",
 		len(blocking), len(report.Blocking(nil))-len(blocking))
+	if len(preserved) > 0 {
+		printSuccess("preserved %d historically dismissed gate state(s) on human gate %s", len(preserved), migrateResidueGate)
+	}
 
 	// Run identity (§224.5): durable server-side, as an evidence run.
 	//
@@ -397,9 +413,13 @@ func migrateRun(env *factoryEnv) error {
 	// losses and a run that had none were indistinguishable afterwards, which is
 	// exactly the question the record exists to answer.
 	totals := map[string]any{
-		"ops":              len(ops),
-		"blocking_residue": len(report.Blocking(nil)),
-		"accepted_residue": len(report.Blocking(nil)) - len(blocking),
+		"ops":                   len(ops),
+		"blocking_residue":      len(report.Blocking(nil)),
+		"accepted_residue":      len(report.Blocking(nil)) - len(blocking),
+		"preserved_gate_states": len(preserved),
+	}
+	if len(preserved) > 0 {
+		totals["residue_gate"] = migrateResidueGate
 	}
 	for k, v := range first {
 		totals["applied_"+k] = v
@@ -937,7 +957,11 @@ func migrateOpKind(op map[string]any) string {
 // preAnswered names the gates the store already held answered BEFORE this run
 // (REQ-CROSS-257) — see migrateGateStatesBeforeRun for why the served state is
 // the wrong predicate.
-func migrateVerifyIDs(env *factoryEnv, ops []map[string]any, preAnswered map[string]bool) (missing, storeOnly []string, err error) {
+func migrateVerifyIDs(env *factoryEnv, ops []map[string]any, preAnswered map[string]bool, preserved ...map[string]migrationGateResidue) (missing, storeOnly []string, err error) {
+	var preservedGates map[string]migrationGateResidue
+	if len(preserved) > 0 {
+		preservedGates = preserved[0]
+	}
 	emitted := map[string]map[string]bool{}
 	for _, op := range ops {
 		payload, _ := op["payload"].(map[string]any)
@@ -1070,6 +1094,14 @@ func migrateVerifyIDs(env *factoryEnv, ops []map[string]any, preAnswered map[str
 			if frozenAnswer && gateAnswerBlockField(f) {
 				skippedFields[typ+"."+f+"[frozen]"]++
 				continue
+			}
+			if typ == "upsert_gate" && f == "state" {
+				if approved, ok := preservedGates[id]; ok {
+					if str(row, "state") != approved.StoreState || str(row, "fingerprint") != approved.StoreFingerprint {
+						fieldMismatches = append(fieldMismatches, fmt.Sprintf("%s.state[preserved]", id))
+					}
+					continue
+				}
 			}
 			if frozenArchiveRevision && f == "archive_revision" {
 				skippedFields[typ+"."+f+"[frozen]"]++
@@ -1677,6 +1709,18 @@ func runMigrateReport(cmd *cobra.Command, args []string) error {
 	// emitted ids against what the bound store serves. Unreachable is a
 	// disclosed skip, never a silent one.
 	gateStateDrift := storeCompare(ops)
+	acceptedGateDrift := 0
+	if migrateResidueManifest != "" || migrateResidueGate != "" {
+		env, err := factoryEnvLoad()
+		if err != nil {
+			return err
+		}
+		preserved, err := validatedMigrationGateResidue(env, ops, migrateResidueManifest, migrateResidueGate)
+		if err != nil {
+			return err
+		}
+		acceptedGateDrift = len(preserved)
+	}
 
 	if len(warnings) > 0 {
 		fmt.Printf("\n== Snapshot warnings (%d) ==\n", len(warnings))
@@ -1722,14 +1766,14 @@ func runMigrateReport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n== Verdict ==\n")
 	fmt.Printf("  blocking: %d   accepted residue: %d   excluded by design: %d\n",
 		len(blocking), acceptedCount, len(byCat[rdd.LossExcluded]))
-	fmt.Printf("  store gate-state differences: %d\n", gateStateDrift)
+	fmt.Printf("  store gate-state differences: %d   human-accepted: %d\n", gateStateDrift, acceptedGateDrift)
 	if len(blocking) > 0 {
 		return fmt.Errorf("fidelity: %d blocking loss(es) — the corpus does not survive the op path faithfully yet", len(blocking))
 	}
 	if gateStateDrift < 0 {
 		return fmt.Errorf("fidelity: store gate states could not be read — gate-state reconciliation is unverified")
 	}
-	if gateStateDrift > 0 {
+	if gateStateDrift > acceptedGateDrift {
 		return fmt.Errorf("fidelity: %d gate-state difference(s) — the op path is lossless, but the store's historical decisions need explicit reconciliation before verified import", gateStateDrift)
 	}
 	fmt.Println("  the corpus survives the op path (modulo accepted and by-design residue)")
@@ -2307,7 +2351,20 @@ func migrateReverify(env *factoryEnv) error {
 	// The retry writes nothing, so what the store holds answered now is exactly
 	// what it held answered before this verification — the same snapshot the
 	// import takes before its first batch.
-	missing, storeOnly, err := migrateVerifyIDs(env, ops, migrateGateStatesBeforeRun(env))
+	_, fidelityOps, _, err := migrateFidelity(env.Root)
+	if err != nil {
+		return err
+	}
+	preserved, err := validatedMigrationGateResidue(env, fidelityOps, migrateResidueManifest, migrateResidueGate)
+	if err != nil {
+		return err
+	}
+	if len(preserved) == 0 {
+		if drift := gateStateCompare(env, fidelityOps); drift != 0 {
+			return fmt.Errorf("gate-state reconciliation is not clear: %d difference(s)", drift)
+		}
+	}
+	missing, storeOnly, err := migrateVerifyIDs(env, ops, migrateGateStatesBeforeRun(env), preserved)
 	if err != nil {
 		return err
 	}
