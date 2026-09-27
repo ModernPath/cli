@@ -111,6 +111,28 @@ func TestMigrateRunPreservesAnExactlyAcceptedDismissedGate(t *testing.T) {
 	}
 }
 
+func TestMigrationProvesStoreOnlyBacklogRowsRemainUnchanged(t *testing.T) {
+	st := &migrateStore{
+		hashes: map[string]string{"upsert_backlog_record|BACKLOG-STORE-1": "prior"},
+		payloads: map[string]map[string]any{
+			"upsert_backlog_record|BACKLOG-STORE-1": {"external_id": "BACKLOG-STORE-1", "title": "Retained history"},
+		},
+	}
+	srv := serveMigrateStore(t, st)
+	env := wsEnv(t, srv)
+	before, err := migrationStoreOnlyBacklog(env, nil)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("store-only snapshot: %v, %v", before, err)
+	}
+	if err := verifyMigrationStoreOnlyBacklog(env, nil, before); err != nil {
+		t.Fatal(err)
+	}
+	st.payloads["upsert_backlog_record|BACKLOG-STORE-1"]["title"] = "Changed history"
+	if err := verifyMigrationStoreOnlyBacklog(env, nil, before); err == nil || !strings.Contains(err.Error(), "BACKLOG-STORE-1") {
+		t.Fatalf("a changed store-only row must fail by id: %v", err)
+	}
+}
+
 // An old dismissed approval remains a store decision even when the current
 // corpus emits a different state under the same id. Name the conflict in the
 // read-only inventory and refuse the import before its first batch write.

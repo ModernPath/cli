@@ -274,6 +274,13 @@ func migrateRun(env *factoryEnv) error {
 		return fmt.Errorf("migrate run refused before writes: %d gate-state difference(s) between corpus and store; reconcile the named decisions through an applied human gate before import", drift)
 	}
 	batchOps := omitPreservedGateOps(ops, preserved)
+	var storeOnlyBacklogBefore map[string]string
+	if len(preserved) > 0 {
+		storeOnlyBacklogBefore, err = migrationStoreOnlyBacklog(env, ops)
+		if err != nil {
+			return fmt.Errorf("migrate run refused before writes: %w", err)
+		}
+	}
 
 	// REQ-CROSS-257: which gates the store held answered BEFORE this run. Taken
 	// here, before the first batch pass, because after it every gate this run
@@ -311,6 +318,11 @@ func migrateRun(env *factoryEnv) error {
 			len(missing), strings.Join(missing, ", "))
 	}
 	printSuccess("verified: every emitted id reads back")
+	if len(preserved) > 0 {
+		if err := verifyMigrationStoreOnlyBacklog(env, ops, storeOnlyBacklogBefore); err != nil {
+			return err
+		}
+	}
 
 	// §227.1: the import run seeds the store-backed declaration on the
 	// server it imported — every replica seeded by this run carries the

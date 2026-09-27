@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -170,4 +171,57 @@ func omitPreservedGateOps(ops []map[string]any, approved map[string]migrationGat
 		kept = append(kept, op)
 	}
 	return kept
+}
+
+// The migration is non-deleting, but the selected route explicitly keeps
+// store-born backlog history. Snapshot its IDs and served bytes before the
+// first write, then prove the same rows survived the run unchanged.
+func migrationStoreOnlyBacklog(env *factoryEnv, ops []map[string]any) (map[string]string, error) {
+	emitted := map[string]bool{}
+	for _, op := range ops {
+		if migrateOpKind(op) == "upsert_backlog_record" {
+			payload, _ := op["payload"].(map[string]any)
+			emitted[str(payload, "external_id")] = true
+		}
+	}
+	items, err := fetchList(env, fmt.Sprintf("/api/v1/sync/backlog?system_id=%d", env.SystemID), "backlog")
+	if err != nil {
+		return nil, fmt.Errorf("store-only backlog snapshot unreadable: %w", err)
+	}
+	rows := map[string]string{}
+	for _, item := range items {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := str(row, "external_id")
+		if id == "" || emitted[id] {
+			continue
+		}
+		serialized, err := json.Marshal(row)
+		if err != nil {
+			return nil, err
+		}
+		rows[id] = fmt.Sprintf("%x", sha256.Sum256(serialized))
+	}
+	return rows, nil
+}
+
+func verifyMigrationStoreOnlyBacklog(env *factoryEnv, ops []map[string]any, before map[string]string) error {
+	after, err := migrationStoreOnlyBacklog(env, ops)
+	if err != nil {
+		return err
+	}
+	var changed []string
+	for id, fingerprint := range before {
+		if after[id] != fingerprint {
+			changed = append(changed, id)
+		}
+	}
+	if len(changed) > 0 {
+		sort.Strings(changed)
+		return fmt.Errorf("%d store-only backlog record(s) disappeared or changed during migration: %s", len(changed), strings.Join(capList(changed, 20), ", "))
+	}
+	printSuccess("store-only backlog preserved: %d pre-existing record(s) unchanged", len(before))
+	return nil
 }
