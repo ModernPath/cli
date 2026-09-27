@@ -235,7 +235,7 @@ func migrateRun(env *factoryEnv) error {
 	// alone. Routine `sync` and the hooks stay fire-and-forget: a corpus
 	// author mid-edit must not be stopped by a loss that only matters when
 	// authority moves.
-	report, _, _, err := migrateFidelity(env.Root)
+	report, fidelityOps, _, err := migrateFidelity(env.Root)
 	if err != nil {
 		return err
 	}
@@ -252,6 +252,14 @@ func migrateRun(env *factoryEnv) error {
 		sort.Strings(named)
 		return fmt.Errorf("migrate run refused: %d blocking fidelity loss(es) — the corpus does not survive the op path yet; run `modernpath migrate report` for the full inventory, fix the corpus, or accept the residue at the gate (--accept):\n  %s",
 			len(blocking), strings.Join(capList(named, 20), "\n  "))
+	}
+	// A lossless op stream can still disagree with a historical gate decision
+	// already in the store. Refuse before writing, not after a long import.
+	if drift := gateStateCompare(env, fidelityOps); drift != 0 {
+		if drift < 0 {
+			return fmt.Errorf("migrate run refused before writes: store gate states could not be read")
+		}
+		return fmt.Errorf("migrate run refused before writes: %d gate-state difference(s) between corpus and store; reconcile the named decisions through an applied human gate before import", drift)
 	}
 
 	// REQ-CROSS-257: which gates the store held answered BEFORE this run. Taken
@@ -1668,7 +1676,7 @@ func runMigrateReport(cmd *cobra.Command, args []string) error {
 	// Store direction (§221.1, "when a server is reachable"): compare the
 	// emitted ids against what the bound store serves. Unreachable is a
 	// disclosed skip, never a silent one.
-	storeCompare(ops)
+	gateStateDrift := storeCompare(ops)
 
 	if len(warnings) > 0 {
 		fmt.Printf("\n== Snapshot warnings (%d) ==\n", len(warnings))
@@ -1714,8 +1722,15 @@ func runMigrateReport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n== Verdict ==\n")
 	fmt.Printf("  blocking: %d   accepted residue: %d   excluded by design: %d\n",
 		len(blocking), acceptedCount, len(byCat[rdd.LossExcluded]))
+	fmt.Printf("  store gate-state differences: %d\n", gateStateDrift)
 	if len(blocking) > 0 {
 		return fmt.Errorf("fidelity: %d blocking loss(es) — the corpus does not survive the op path faithfully yet", len(blocking))
+	}
+	if gateStateDrift < 0 {
+		return fmt.Errorf("fidelity: store gate states could not be read — gate-state reconciliation is unverified")
+	}
+	if gateStateDrift > 0 {
+		return fmt.Errorf("fidelity: %d gate-state difference(s) — the op path is lossless, but the store's historical decisions need explicit reconciliation before verified import", gateStateDrift)
 	}
 	fmt.Println("  the corpus survives the op path (modulo accepted and by-design residue)")
 	return nil
@@ -1724,12 +1739,12 @@ func runMigrateReport(cmd *cobra.Command, args []string) error {
 // storeCompare adds the store-direction reconciliation when the bound server
 // answers. Every skip states its reason — a report that silently omits the
 // store arm would read as "compared and clean".
-func storeCompare(ops []rdd.Op) {
+func storeCompare(ops []rdd.Op) int {
 	fmt.Println("\n== Store direction ==")
 	env, err := factoryEnvLoad()
 	if err != nil {
 		fmt.Printf("  skipped: no usable binding (%v)\n", err)
-		return
+		return 0
 	}
 	compare := func(label, apiPath, key, opType, kindFilter string) {
 		items, err := fetchList(env, apiPath, key)
@@ -1776,6 +1791,48 @@ func storeCompare(ops []rdd.Op) {
 	compare("requirements", fmt.Sprintf("/api/v1/sync/requirements?system_id=%d", env.SystemID), "requirements", "upsert_requirement", "system")
 	compare("epics", fmt.Sprintf("/api/v1/sync/epics?system_id=%d", env.SystemID), "epics", "upsert_epic", "")
 	compare("gates", fmt.Sprintf("/api/v1/sync/gates?system_id=%d&state=all", env.SystemID), "gates", "upsert_gate", "")
+	return gateStateCompare(env, ops)
+}
+
+// gateStateCompare reports existing gate decisions that an import cannot
+// silently replace. Presence-only reconciliation misses these conflicts:
+// sync shadow hashes may leave a dismissed store gate untouched even when the
+// corpus still emits an open gate with the same external id.
+func gateStateCompare(env *factoryEnv, ops []rdd.Op) int {
+	items, err := fetchList(env, fmt.Sprintf("/api/v1/sync/gates?system_id=%d&state=all", env.SystemID), "gates")
+	if err != nil {
+		fmt.Printf("  gate states: skipped (%v)\n", err)
+		return -1
+	}
+	served := map[string]string{}
+	for _, it := range items {
+		row, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, _ := row["external_id"].(string); id != "" {
+			served[id] = str(row, "state")
+		}
+	}
+	var drift []string
+	for _, op := range ops {
+		if op.Type != "upsert_gate" {
+			continue
+		}
+		id, _ := op.Payload["external_id"].(string)
+		want, _ := op.Payload["state"].(string)
+		got, exists := served[id]
+		if !exists || want == got {
+			continue
+		}
+		drift = append(drift, fmt.Sprintf("%s | corpus %s | store %s   reconciliation-key: %s|state", id, want, got, id))
+	}
+	sort.Strings(drift)
+	fmt.Printf("  gate states: %d corpus/store difference(s) (store decisions are not changed by this report)\n", len(drift))
+	for _, item := range drift {
+		fmt.Printf("    %s\n", item)
+	}
+	return len(drift)
 }
 
 // acceptKeyMarker precedes the accept-file key on every line that names a

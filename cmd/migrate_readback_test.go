@@ -21,6 +21,36 @@ import (
 	"github.com/modernpath/cli/internal/rdd"
 )
 
+// An old dismissed approval remains a store decision even when the current
+// corpus emits a different state under the same id. Name the conflict in the
+// read-only inventory and refuse the import before its first batch write.
+func TestMigrateRunRefusesDismissedGateBeforeWrites(t *testing.T) {
+	id := "APPROVE-EPIC-MR-001"
+	st := &migrateStore{
+		hashes: map[string]string{"upsert_gate|" + id: "an-earlier-store-hash"},
+		payloads: map[string]map[string]any{
+			"upsert_gate|" + id: {"external_id": id, "state": "dismissed"},
+		},
+	}
+	srv := serveMigrateStore(t, st)
+	env := wsEnv(t, srv)
+	migrateCorpus(t, env.Root)
+	migrateCorpusAnsweredApproval(t, env.Root)
+	_, ops, _, err := migrateFidelity(env.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := gateStateCompare(env, ops); n != 1 {
+		t.Fatalf("expected one gate-state conflict, got %d", n)
+	}
+	if err := migrateRun(env); err == nil || !strings.Contains(err.Error(), "before writes: 1 gate-state difference") {
+		t.Fatalf("import must refuse before writes, got: %v", err)
+	}
+	if len(st.applied) != 0 {
+		t.Fatalf("gate-state conflict must prevent every batch, got %d", len(st.applied))
+	}
+}
+
 // The byte archive is emitted by every run and must read back like every
 // other kind (§225.6 successor). An archived file the store does not serve
 // must fail the run naming it.
