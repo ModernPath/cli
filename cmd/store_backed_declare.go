@@ -27,8 +27,8 @@ func writeStoreBackedMarker(root, apiURL, sourceTag, gateRef string, systemID in
 	b.WriteString("# Store-backed declaration\n\n")
 	b.WriteString("This workspace's process store is the server. The files below are\n")
 	b.WriteString("retired: read state via `modernpath working-set pull` and `your-move`,\n")
-	b.WriteString("write via `modernpath author`. The dual-authority guard\n")
-	b.WriteString("(scripts/check-store-backed.sh) gates on this list.\n\n")
+	b.WriteString("write via `modernpath author`. Retire the listed files in the\n")
+	b.WriteString("reviewable authority-flip commit; the marker disables file-backed sync.\n\n")
 	fmt.Fprintf(&b, "- **Accepted:** %s (gate %s)\n", sourceTag, gateRef)
 	fmt.Fprintf(&b, "- **Server:** %s · system %d\n\n", apiURL, systemID)
 	for _, p := range families {
