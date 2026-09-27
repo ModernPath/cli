@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modernpath/cli/internal/manifest"
 )
 
 // migrateFlipDeclaration registers the genuine flip gate in the fixture store
@@ -33,6 +35,13 @@ func TestMigrateFlipVerifiesActivatesAndWritesMarker(t *testing.T) {
 	srv := serveMigrateStore(t, st)
 	env := wsEnv(t, srv)
 	migrateCorpus(t, env.Root)
+	m := manifest.Default()
+	m.Documents[manifest.DocRequirements] = manifest.DocSpec{
+		Paths: []string{"tasks/*-REQUIREMENTS.md", "libs/*/REQUIREMENTS.md"}, Format: "rdd-ledger-v1",
+	}
+	if err := m.Write(env.Root); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := migrateFlip(env, "", "", ""); err == nil || !strings.Contains(err.Error(), "--gate") {
 		t.Fatalf("the flip must refuse without the completion gate reference, got: %v", err)
@@ -59,6 +68,7 @@ func TestMigrateFlipVerifiesActivatesAndWritesMarker(t *testing.T) {
 	}
 	for _, want := range []string{
 		"retired: tasks/*-REQUIREMENTS.md",
+		"retired: libs/*/REQUIREMENTS.md",
 		"retired: WORKLIST.md",
 		"retired: PROGRESS.md",
 		"retired: BACKLOG.md",

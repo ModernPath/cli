@@ -99,6 +99,7 @@ func writeArchivalCorpus(t *testing.T, root string) map[string]string {
 			"| ID | Title | Stage | Status | UR | Source | Tests | Code |\n" +
 			"|---|---|---|---|---|---|---|---|\n" +
 			"| REQ-AR-001 | A row | MVP | PROPOSED | UR-AR-001 | doc-a | — | — |\n",
+		"libs/ar/REQUIREMENTS.md": "# Historical AR requirements\n\nA byte-exact local ledger.\n",
 		"WORKLIST.md":             "# WORKLIST\n",
 		"BACKLOG.md":              "# Backlog\n\nA discovery nobody routed yet.\n",
 		"PROGRESS.md":             "# Progress\n\n| Context | Done |\n|---|---|\n| AR | 1 |\n",
@@ -131,11 +132,38 @@ func writeArchivalCorpus(t *testing.T, root string) map[string]string {
 	return files
 }
 
+func TestNestedLegacyLedgerRetirementDoesNotRetireContextLog(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"libs/ar/REQUIREMENTS.md", "libs/ar/LOG.md"} {
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := retiredFilesOnDisk(root); len(got) != 0 {
+		t.Fatalf("a repository without the nested-ledger mapping must not retire it: %v", got)
+	}
+	m := manifest.Default()
+	m.Documents[manifest.DocRequirements] = manifest.DocSpec{
+		Paths: []string{"libs/*/REQUIREMENTS.md"}, Format: "rdd-ledger-v1",
+	}
+	got := retiredFilesOnDisk(root, RetiredPathFamiliesForManifest(m)...)
+	if len(got) != 1 || got[0] != "libs/ar/REQUIREMENTS.md" {
+		t.Fatalf("retire only the requirement ledger, not the context log: %v", got)
+	}
+}
+
 func TestEveryRetiredFileRidesTheBatchByteForByte(t *testing.T) {
 	root := t.TempDir()
 	files := writeArchivalCorpus(t, root)
 
 	m := manifest.Default()
+	m.Documents[manifest.DocRequirements] = manifest.DocSpec{
+		Paths: []string{"tasks/*-REQUIREMENTS.md", "libs/*/REQUIREMENTS.md"}, Format: "rdd-ledger-v1",
+	}
 	data, _ := Snapshot(root, m)
 	ops := BuildOps(data, func(rel string) string { return ReadEpicRecord(root, rel) }, "2026-08-22")
 
@@ -157,7 +185,7 @@ func TestEveryRetiredFileRidesTheBatchByteForByte(t *testing.T) {
 	}
 
 	var uncarried, doubleCarried, wrongContent []string
-	for _, rel := range retiredFilesOnDisk(root) {
+	for _, rel := range retiredFilesOnDisk(root, RetiredPathFamiliesForManifest(m)...) {
 		want, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)

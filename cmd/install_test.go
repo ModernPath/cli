@@ -120,8 +120,8 @@ func goldenMarker(apiURL string) string {
 	return "# Store-backed declaration\n\n" +
 		"This workspace's process store is the server. The files below are\n" +
 		"retired: read state via `modernpath working-set pull` and `your-move`,\n" +
-		"write via `modernpath author`. The dual-authority guard\n" +
-		"(scripts/check-store-backed.sh) gates on this list.\n\n" +
+		"write via `modernpath author`. Retire the listed files in the\n" +
+		"reviewable authority-flip commit; the marker disables file-backed sync.\n\n" +
 		"- **Accepted:** " + declareSource + " (gate GATE-STORE-BACKED)\n" +
 		"- **Server:** " + apiURL + " · system 7\n\n"
 }
