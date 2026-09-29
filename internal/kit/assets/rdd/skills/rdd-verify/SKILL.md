@@ -1,9 +1,9 @@
 ---
 name: rdd-verify
-description: Verify human-confirmed PENDING_VERIFICATION URs and SRs against real behavior, add missing tests, and advance only evidence-backed state. Use after an as-built requirement has been confirmed and needs current UR upper or SR lower evidence. Repeat verification inside the AI TDD loop without bypassing approval or delivery. Never use for DERIVED requirements or new behavior; run confirmation or the normal red-first build loop instead.
+description: Establish regression-sensitive UR upper or SR lower evidence for existing behavior after normal development entry, adding or strengthening tests as needed. Use for approved TODO or IN_PROGRESS verification work. Eligible source-scoped baselines with existing proof use rdd-reverse-engineer-verify; DERIVED candidates require confirmation and changed behavior uses rdd-build.
 ---
 
-# Verify confirmed as-built requirements
+# Verify entered existing-behavior work
 
 Turn behavior described from shipped code into current direct UR upper or SR
 lower evidence.
@@ -15,29 +15,32 @@ completion meanings.
 
 ## Keep the transition honest
 
-This skill verifies confirmed as-built behavior. It does not grant human
-approval or prove delivery.
+This skill verifies existing behavior after normal entry. Eligible source-scoped
+baselines with existing proof use `rdd-reverse-engineer-verify` instead. Test
+additions or behavior changes on that path require an explicit normal-development
+handoff. This skill does not grant human approval or prove delivery.
 
 - Never run this skill for a `DERIVED` requirement. `DERIVED` means no human has
   confirmed that the requirement exists; its proposed links are candidate
   context and all downstream work is held. Apply its confirmation gate first.
-- `PENDING_VERIFICATION` means the requirement and as-built description were
-  already confirmed, but current direct test evidence is missing. It still
-  needs human entry approval and must become `TODO` before tests change.
+- Before tests change, current applied entry approval must cover the whole
+  selected delivery scope under `PROCESS.md`, including the Epic when selected.
+  The requirement being verified must be `TODO` or `IN_PROGRESS`.
 - For an SR, record `LOWER_VERIFIED` and move it to `IN_REVIEW` only when its
   lower trace is current. For a UR, record `UPPER_VALIDATED` and move it to
   `IN_REVIEW` only when its upper trace and required-SR conditions are current.
 - Never move a requirement to `DONE` from test evidence alone.
   `DONE` also requires the applicable approval, authoritative-source
   delivery, and reconciliation conditions.
-- If the implementation contradicts the row, record the discovery and route a
-  separate red-first change. Do not silently change behavior during a
-  verification pass.
+- If the implementation contradicts approved behavior, retain the failing
+  evidence and hand the same entered SR to `rdd-build`. Route through planning
+  only when satisfying it requires changed scope or a material decision. Do
+  not silently change behavior during a verification pass.
 
 ## Enter through the same gate as any other change
 
-A `PENDING_VERIFICATION` row is a description someone accepted. It is not an
-entry permit, and this skill adds tests — which is implementation.
+An authoritative as-built requirement is not itself permission to change tests.
+For this normal-development path, apply the entry gate before adding tests.
 
 If the row is `DERIVED`, if a requirement it actually depends on is `DERIVED`,
 or if an applicable relation is candidate-only, stop. Do not inspect tests as
@@ -67,13 +70,14 @@ introduces a cross-cutting decision, return it to Epic-scoped planning. In
 either scope, fulfill the current planning, reconnaissance, cold-review,
 test-strategy, work-selection, and entry-brief facts.
 
-Then obtain strict human entry approval for every selected requirement and
-Epic. An already approved related entity does not return to `TODO` merely
-because another requirement starts. Move the selected requirement to `TODO`
-before changing a test. If the Entry packet is incomplete or the entry answer
-is absent, stop and route the entry first.
-Verification outside the authoritative work selection is invisible to planning,
-and a test written before the gate cannot be traced to approved intent.
+Check the existing entry approval for the exact selected scope. Reuse current
+applied approval and preserve `TODO` or `IN_PROGRESS`; resuming verification
+does not reopen entry or move work backwards. If entry is missing or stale,
+route to planning and entry before changing tests. Missing entry does not
+authorize an additional demotion or a hand-edited status.
+Verification stays within the authoritative work selection. The diagnosed-defect
+exception in `PROCESS.md` permits a failing test before entry; it does not
+authorize this verification pass or implementation.
 
 ## Establish the evidence bar
 
@@ -121,7 +125,7 @@ assertion remains unverified.
    leave it at the strongest supported non-final state.
 7. Repeat for every approved scenario or clause lacking current evidence. Do
    not request human input for an evidence failure within the approved
-   fingerprint. Route changed intent or scope through `rdd-triage`; record an
+   scope. Route changed intent or scope through `rdd-triage`; record an
    external impediment as a blocker.
 8. Run the project's deterministic process checks. Deliver and reconcile before
    soliciting completion acceptance; only the subsequent human gate may move a
@@ -154,10 +158,12 @@ assertion remains unverified.
 
 Do not weaken a test to promote a row.
 
-- If the row is only an inference that no human confirmed as a requirement,
-  move it to `DERIVED`, record candidate links, and emit its confirmation gate.
-- If the implementation cannot satisfy the row, record the contradiction and
-  route the required new or changed SR through planning.
+- If the row lacks authoritative requirement support, stop verification and
+  route the inconsistent authority through `rdd-triage`. Do not silently rewrite
+  its lifecycle, approvals, or relationships.
+- If the implementation contradicts approved behavior, retain the failing
+  evidence and hand the same entered SR to `rdd-build`. Route through planning
+  only when satisfying it requires changed scope or a material decision.
 - If verification needs unavailable infrastructure, keep the row
   `PENDING_VERIFICATION` before entry; after entry, use `BLOCKED` and record the
   suspended `TODO` or `IN_PROGRESS` state.

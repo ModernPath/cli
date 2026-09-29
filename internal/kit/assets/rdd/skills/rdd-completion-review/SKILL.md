@@ -14,10 +14,19 @@ records, and derived views.
 
 1. Treat completion as unproven. Audit every scoped requirement clause,
    acceptance scenario, declared relation, gate, evidence result, and
-   completion condition against direct current sources.
+   completion condition against direct current sources. Already DONE members
+   are proof dependencies; keep them DONE when their evidence is current and
+   exclude them from new acceptance transitions. Obtain an independent code
+   review of the built change for Epic scope. For single-SR scope, obtain one
+   when required by project gates or requested by the user. Use a context
+   independent of implementation; record the reviewer, reviewed revision,
+   findings, and verdict separately from planning review. Verify fixes against
+   their commits and test evidence.
 2. Stop for any `DERIVED` dependency, candidate link counted as authoritative,
-   stale or inherited-unverified evidence, missing RED observation, material
-   cold-review finding, undisclosed gap, or incomplete reconciliation.
+   stale or inherited-unverified evidence, missing required RED observation,
+   missing required independent code review, unresolved material finding from
+   planning or implementation review, undisclosed gap, or incomplete
+   reconciliation.
 3. If the pre-delivery audit passes, deliver through the project's authorized
    integration path while keeping awaiting entities `IN_REVIEW`.
 4. Re-run or confirm evidence against the delivered revision — the revision
@@ -31,7 +40,11 @@ records, and derived views.
    `STALE` member-scoped cold-review trace from an earlier round blocks an
    epic's completion until it is re-evaluated at the current fingerprint; an
    epic-scoped pass does not stand in for it. Only then make the scoped human
-   completion gate `OPEN` and present its brief.
+   completion gate `OPEN` and present its brief and linked list of relevant
+   working-set files before asking for acceptance, following `PROCESS.md` §Gates.
+   Small changes may be completed together in one lane-batch gate that lists
+   each change with its evidence and review verdict; the human may reject
+   single items, which stay `IN_REVIEW`.
 6. Do not answer the gate for the human. If the authorized human answers,
    record the real actor, role, exact scope, answer, and `USER:` source.
 7. Apply `DONE` only to accepted named entities that independently satisfy the

@@ -29,6 +29,7 @@ func TestDownloadExportUsesCanonicalSystemJobPaths(t *testing.T) {
 	withFastExportPolling(t)
 
 	var sawSystemPoll bool
+	var sawSystemLink bool
 	var sawSystemDownload bool
 
 	client := newTestClient(func(w http.ResponseWriter, r *http.Request) {
@@ -45,19 +46,28 @@ func TestDownloadExportUsesCanonicalSystemJobPaths(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{
-				"id": "job-123",
+				"export_id": "job-123",
 				"status": "queued",
 				"poll_path": "/api/architectures/42/export/jobs/job-123",
-				"download_path": "/api/architectures/42/export/jobs/job-123/file"
+				"link_path": "/api/architectures/42/export/jobs/job-123/link"
 			}`))
 
 		case "/api/systems/42/export/jobs/job-123":
 			sawSystemPoll = true
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
-				"id": "job-123",
+				"export_id": "job-123",
 				"status": "ready",
-				"download_path": "/api/architectures/42/export/jobs/job-123/file"
+				"error": null
+			}`))
+
+		case "/api/systems/42/export/jobs/job-123/link":
+			sawSystemLink = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"url": "/api/systems/42/export/jobs/job-123/file",
+				"filename": "demo.modernpath.zip",
+				"expires_at": "2026-09-28T12:15:00Z"
 			}`))
 
 		case "/api/systems/42/export/jobs/job-123/file":
@@ -68,8 +78,8 @@ func TestDownloadExportUsesCanonicalSystemJobPaths(t *testing.T) {
 		case "/api/architectures/42/export/jobs/job-123":
 			t.Fatalf("client followed legacy architecture poll path")
 
-		case "/api/architectures/42/export/jobs/job-123/file":
-			t.Fatalf("client followed legacy architecture download path")
+		case "/api/architectures/42/export/jobs/job-123/link":
+			t.Fatalf("client followed legacy architecture link path")
 
 		default:
 			t.Fatalf("unexpected request path: %s", r.URL.Path)
@@ -85,6 +95,9 @@ func TestDownloadExportUsesCanonicalSystemJobPaths(t *testing.T) {
 	}
 	if !sawSystemPoll {
 		t.Fatalf("client did not poll canonical system path")
+	}
+	if !sawSystemLink {
+		t.Fatalf("client did not ask the canonical system link path")
 	}
 	if !sawSystemDownload {
 		t.Fatalf("client did not download from canonical system path")
@@ -105,17 +118,18 @@ func TestDownloadExportReportsTerminalNonFailedStatus(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{
-				"id": "job-cancelled",
+				"export_id": "job-cancelled",
 				"status": "queued",
 				"poll_path": "/api/systems/7/export/jobs/job-cancelled",
-				"download_path": "/api/systems/7/export/jobs/job-cancelled/file"
+				"link_path": "/api/systems/7/export/jobs/job-cancelled/link"
 			}`))
 
 		case "/api/systems/7/export/jobs/job-cancelled":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
-				"id": "job-cancelled",
-				"status": "cancelled"
+				"export_id": "job-cancelled",
+				"status": "cancelled",
+				"error": null
 			}`))
 
 		default:

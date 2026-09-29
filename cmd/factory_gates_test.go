@@ -101,7 +101,7 @@ func TestBreakdownOrderIsStable(t *testing.T) {
 
 // REQ-CROSS-109 — a gate's state is readable from the CLI, so "answered" and
 // "never existed" are different observations rather than the same empty output.
-// The seam is factoryGatesRun(env, state, kind, jsonOut, id, out, errOut); both
+// The seam is factoryGatesRun(env, state, kind, jsonOut, id, out, errOut, false); both
 // writers are injected so the stdout-only claim under --json is assertable.
 
 func req109AnsweredGate() map[string]any {
@@ -124,6 +124,116 @@ func req109ClosedGate() map[string]any {
 	}
 }
 
+// SR-CLI-GATE-BRIEF-001: readable details expose the server's decision brief.
+func gateBriefFixture() map[string]any {
+	gate := req109AnsweredGate()
+	gate["brief"] = map[string]any{
+		"what":                "Show the decision explanation.",
+		"why_now":             "Readers currently need another JSON read.",
+		"changes_if_approved": "Display the stored fields.",
+		"risk_if_wrong":       "Existing details could become harder to read.",
+		"recommendation":      "Approve the bounded change.",
+	}
+	return gate
+}
+
+func assertGateBriefOrder(t *testing.T, output, prefix string) {
+	t.Helper()
+	previous := -1
+	for _, line := range []string{
+		"What: Show the decision explanation.",
+		"Why now: Readers currently need another JSON read.",
+		"Changes if approved: Display the stored fields.",
+		"Risk if wrong: Existing details could become harder to read.",
+		"Recommendation: Approve the bounded change.",
+	} {
+		at := strings.Index(output, prefix+line)
+		if at <= previous {
+			t.Fatalf("missing or unordered brief field %q:\n%s", line, output)
+		}
+		previous = at
+	}
+}
+
+func TestSRCLIGateBrief001FactoryShowsDecisionBrief(t *testing.T) {
+	fx := &wsFixture{gate: gateBriefFixture()}
+	env := wsEnv(t, wsServe(t, fx))
+	var out bytes.Buffer
+	if err := factoryGateShow(env, "APPROVE-EPIC-X", false, &out, false); err != nil {
+		t.Fatal(err)
+	}
+	assertGateBriefOrder(t, out.String(), "  ")
+	for _, detail := range []string{"state: answered", "answer: Ok, specs approved. Continue.", "Jussi Rajala"} {
+		if !strings.Contains(out.String(), detail) {
+			t.Fatalf("lost existing detail %q:\n%s", detail, out.String())
+		}
+	}
+	for _, request := range fx.requests {
+		if !strings.HasPrefix(request, "GET ") {
+			t.Fatalf("show must only read: %s", request)
+		}
+	}
+}
+
+func TestSRCLIGateBrief001FactoryShowsPartialMultilineBrief(t *testing.T) {
+	gate := req109AnsweredGate()
+	gate["brief"] = map[string]any{"what": "First line.\nSecond line.", "why_now": " \t\n", "risk_if_wrong": nil}
+	fx := &wsFixture{gate: gate}
+	env := wsEnv(t, wsServe(t, fx))
+	var out bytes.Buffer
+	if err := factoryGateShow(env, "APPROVE-EPIC-X", false, &out, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "  What: First line.\n    Second line.") {
+		t.Fatalf("partial brief must preserve multiline content:\n%s", out.String())
+	}
+	for _, absent := range []string{"Why now:", "Changes if approved:", "Risk if wrong:", "Recommendation:"} {
+		if strings.Contains(out.String(), absent) {
+			t.Fatalf("fabricated empty field %s:\n%s", absent, out.String())
+		}
+	}
+}
+
+func TestSRCLIGateBrief001EmptyBriefPreservesFactoryOutput(t *testing.T) {
+	var baseline bytes.Buffer
+	renderGate(&baseline, req109AnsweredGate())
+	for _, brief := range []any{nil, "invalid", map[string]any{}, map[string]any{"what": " \n", "why_now": nil, "recommendation": 12}} {
+		gate := req109AnsweredGate()
+		gate["brief"] = brief
+		var out bytes.Buffer
+		renderGate(&out, gate)
+		if out.String() != baseline.String() {
+			t.Fatalf("empty brief changed legacy output:\n%s", out.String())
+		}
+	}
+}
+
+func TestSRCLIGateBrief001JSONAndListingsStayUnchanged(t *testing.T) {
+	gate := gateBriefFixture()
+	fx := &wsFixture{gate: gate, gates: []any{gate}, answeredGates: []any{gate}}
+	env := wsEnv(t, wsServe(t, fx))
+	var out, errOut bytes.Buffer
+	if err := factoryGateShow(env, "APPROVE-EPIC-X", true, &out, false); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := json.MarshalIndent(map[string]any{"gate": gate}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bytes.TrimSpace(out.Bytes()), expected) {
+		t.Fatalf("JSON envelope changed: %s", out.String())
+	}
+	for _, state := range []string{"", "answered"} {
+		out.Reset()
+		if err := factoryGatesRun(env, state, "", false, "", &out, &errOut, false); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "Show the decision explanation.") {
+			t.Fatalf("compact listing expanded the brief:\n%s", out.String())
+		}
+	}
+}
+
 func TestREQCROSS109GatesOffersAStateFlag(t *testing.T) {
 	if factoryGatesCmd.Flags().Lookup("state") == nil {
 		t.Fatal("an answered gate can only be reached by grepping the event stream — there is no --state flag")
@@ -134,7 +244,7 @@ func TestREQCROSS109ShowRendersAnAnsweredGateWithSourceAndAnswerer(t *testing.T)
 	fx := &wsFixture{gate: req109AnsweredGate()}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-X", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-X", &out, &errOut, false); err != nil {
 		t.Fatalf("show: %v", err)
 	}
 	s := out.String()
@@ -169,7 +279,7 @@ func TestREQCROSS109AnUnresolvedAnswererKeepsTheNumericUserID(t *testing.T) {
 	fx := &wsFixture{gate: req109NamelessAnswererGate()}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-Z", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-Z", &out, &errOut, false); err != nil {
 		t.Fatalf("show: %v", err)
 	}
 	s := out.String()
@@ -186,7 +296,7 @@ func TestREQCROSS109HistoryKeepsTheNumericUserID(t *testing.T) {
 	fx := &wsFixture{answeredGates: []any{req109NamelessAnswererGate()}}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "answered", "", false, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "answered", "", false, "", &out, &errOut, false); err != nil {
 		t.Fatalf("history: %v", err)
 	}
 	s := out.String()
@@ -200,7 +310,7 @@ func TestREQCROSS109AClosedGateShowsItsAnswerAndListsUnderAll(t *testing.T) {
 	fx := &wsFixture{gate: closed, closedGates: []any{closed}}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-Y", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-Y", &out, &errOut, false); err != nil {
 		t.Fatalf("show closed: %v", err)
 	}
 	if s := out.String(); !strings.Contains(s, "closed") || !strings.Contains(s, "approved") || !strings.Contains(s, "applied") {
@@ -208,7 +318,7 @@ func TestREQCROSS109AClosedGateShowsItsAnswerAndListsUnderAll(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if err := factoryGatesRun(env, "all", "", false, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "all", "", false, "", &out, &errOut, false); err != nil {
 		t.Fatalf("list all: %v", err)
 	}
 	if s := out.String(); !strings.Contains(s, "APPROVE-EPIC-Y") || !strings.Contains(s, "closed") {
@@ -220,7 +330,7 @@ func TestREQCROSS109ShowDistinguishesNotFoundFromAnswered(t *testing.T) {
 	// A served "no such gate" is absence: the id is named, the exit is non-zero.
 	env := wsEnv(t, wsServe(t, &wsFixture{}))
 	var out, errOut bytes.Buffer
-	err := factoryGatesRun(env, "", "", false, "NOPE", &out, &errOut)
+	err := factoryGatesRun(env, "", "", false, "NOPE", &out, &errOut, false)
 	if err == nil {
 		t.Fatal("a missing gate must be a non-zero exit")
 	}
@@ -233,7 +343,7 @@ func TestREQCROSS109ShowDistinguishesNotFoundFromAnswered(t *testing.T) {
 	fx2 := &wsFixture{gatesStatus: 404, gatesBody: map[string]any{"errors": map[string]any{"detail": "Not Found"}}}
 	env2 := wsEnv(t, wsServe(t, fx2))
 	var out2, errOut2 bytes.Buffer
-	err = factoryGatesRun(env2, "", "", false, "GATE-1", &out2, &errOut2)
+	err = factoryGatesRun(env2, "", "", false, "GATE-1", &out2, &errOut2, false)
 	if err == nil {
 		t.Fatal("a routeless 404 must be an error")
 	}
@@ -248,7 +358,7 @@ func TestREQCROSS109ShowDistinguishesNotFoundFromAnswered(t *testing.T) {
 func TestREQCROSS109AnEmptyAnsweredListingDoesNotSayTheQueueIsClear(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{}))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "answered", "", false, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "answered", "", false, "", &out, &errOut, false); err != nil {
 		t.Fatalf("list answered: %v", err)
 	}
 	s := out.String()
@@ -264,7 +374,7 @@ func TestREQCROSS109UnknownStateIsRefusedBeforeAnyRequest(t *testing.T) {
 	fx := &wsFixture{}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	err := factoryGatesRun(env, "bogus", "", false, "", &out, &errOut)
+	err := factoryGatesRun(env, "bogus", "", false, "", &out, &errOut, false)
 	if err == nil {
 		t.Fatal("an unknown --state must be refused")
 	}
@@ -282,7 +392,7 @@ func TestREQCROSS109AServer422IsSurfacedNotRenderedEmpty(t *testing.T) {
 	fx := &wsFixture{gatesStatus: 422, gatesBody: map[string]any{"error": "unknown state: whatever"}}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	err := factoryGatesRun(env, "answered", "", false, "", &out, &errOut)
+	err := factoryGatesRun(env, "answered", "", false, "", &out, &errOut, false)
 	if err == nil {
 		t.Fatal("a server 422 must surface as an error, not an empty list")
 	}
@@ -299,7 +409,7 @@ func TestREQCROSS109JSONOwnsStdout(t *testing.T) {
 	fx := &wsFixture{gates: []any{wsGate("A-1", "approval_request")}}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", true, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", true, "", &out, &errOut, false); err != nil {
 		t.Fatalf("list --json: %v", err)
 	}
 	var listEnv struct {
@@ -319,7 +429,7 @@ func TestREQCROSS109JSONOwnsStdout(t *testing.T) {
 	fxE := &wsFixture{}
 	envE := wsEnv(t, wsServe(t, fxE))
 	var outE, errE bytes.Buffer
-	if err := factoryGatesRun(envE, "", "", true, "", &outE, &errE); err != nil {
+	if err := factoryGatesRun(envE, "", "", true, "", &outE, &errE, false); err != nil {
 		t.Fatalf("empty --json: %v", err)
 	}
 	var emptyEnv struct {
@@ -339,7 +449,7 @@ func TestREQCROSS109JSONOwnsStdout(t *testing.T) {
 	fxG := &wsFixture{gate: req109AnsweredGate()}
 	envG := wsEnv(t, wsServe(t, fxG))
 	var outG, errG bytes.Buffer
-	if err := factoryGatesRun(envG, "", "", true, "APPROVE-EPIC-X", &outG, &errG); err != nil {
+	if err := factoryGatesRun(envG, "", "", true, "APPROVE-EPIC-X", &outG, &errG, false); err != nil {
 		t.Fatalf("by-id --json: %v", err)
 	}
 	var gateEnv struct {
@@ -357,15 +467,15 @@ func TestREQCROSS109ListingFlagsWithAnIdAreRefused(t *testing.T) {
 	fx := &wsFixture{gate: req109AnsweredGate()}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "answered", "", false, "APPROVE-EPIC-X", &out, &errOut); err == nil {
+	if err := factoryGatesRun(env, "answered", "", false, "APPROVE-EPIC-X", &out, &errOut, false); err == nil {
 		t.Fatal("--state with a gate id must be refused")
 	}
-	if err := factoryGatesRun(env, "", "approval_request", false, "APPROVE-EPIC-X", &out, &errOut); err == nil {
+	if err := factoryGatesRun(env, "", "approval_request", false, "APPROVE-EPIC-X", &out, &errOut, false); err == nil {
 		t.Fatal("--kind with a gate id must be refused")
 	}
 	// --json combines with the by-id form.
 	var o2, e2 bytes.Buffer
-	if err := factoryGatesRun(env, "", "", true, "APPROVE-EPIC-X", &o2, &e2); err != nil {
+	if err := factoryGatesRun(env, "", "", true, "APPROVE-EPIC-X", &o2, &e2, false); err != nil {
 		t.Fatalf("--json with an id must be allowed: %v", err)
 	}
 }
@@ -376,7 +486,7 @@ func TestREQCROSS109DefaultListingSendsNoStateParameter(t *testing.T) {
 	fx := &wsFixture{gates: []any{wsGate("A-1", "approval_request")}}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "", &out, &errOut, false); err != nil {
 		t.Fatalf("default listing: %v", err)
 	}
 	if strings.Contains(fx.lastGatesQuery, "state=") {
@@ -384,7 +494,7 @@ func TestREQCROSS109DefaultListingSendsNoStateParameter(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if err := factoryGatesRun(env, "open", "", false, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "open", "", false, "", &out, &errOut, false); err != nil {
 		t.Fatalf("--state open: %v", err)
 	}
 	if !strings.Contains(fx.lastGatesQuery, "state=open") {
@@ -399,7 +509,7 @@ func TestREQCROSS109DefaultRenderingIsUnchanged(t *testing.T) {
 	}}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "", &out, &errOut, false); err != nil {
 		t.Fatalf("default render: %v", err)
 	}
 	want := "\nA-1  [approval_request]  Approve one\n" +
@@ -412,10 +522,68 @@ func TestREQCROSS109DefaultRenderingIsUnchanged(t *testing.T) {
 	// The empty open queue keeps its banner.
 	envE := wsEnv(t, wsServe(t, &wsFixture{}))
 	var outE, errE bytes.Buffer
-	if err := factoryGatesRun(envE, "", "", false, "", &outE, &errE); err != nil {
+	if err := factoryGatesRun(envE, "", "", false, "", &outE, &errE, false); err != nil {
 		t.Fatalf("empty render: %v", err)
 	}
 	if outE.String() != "✓ no open gates — the queue is clear\n" {
 		t.Fatalf("empty open-queue banner changed: %q", outE.String())
+	}
+}
+
+func TestGateAuditReadsByIDAndPreservesJSONAndTextFacts(t *testing.T) {
+	if factoryGatesCmd.Flags().Lookup("audit") == nil {
+		t.Fatal("missing --audit flag")
+	}
+	for _, jsonOut := range []bool{false, true} {
+		gate := req109AnsweredGate()
+		gate["audit"] = map[string]any{
+			"answer": map[string]any{"ready": false, "blockers": []any{
+				map[string]any{"code": "scope_pin", "message": "Stale packet", "next_action": "Review current scope"},
+				map[string]any{"code": "prerequisites", "message": "Missing review", "next_action": "Record current trace"},
+			}},
+			"application": map[string]any{"status": "blocked", "remaining_scope": []any{"REQ-2"}, "blockers": []any{}},
+			"reviews":     []any{map[string]any{"external_id": "CR-1", "state": "stale", "review_context_id": "ctx-1", "independent": false, "independence_reason": "authored_section"}},
+		}
+		fx := &wsFixture{gate: gate}
+		env := wsEnv(t, wsServe(t, fx))
+		var out, errOut bytes.Buffer
+		if err := factoryGatesRun(env, "", "", jsonOut, "APPROVE-EPIC-X", &out, &errOut, true); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(fx.lastGatesQuery, "audit=true") {
+			t.Fatal(fx.lastGatesQuery)
+		}
+		for _, want := range []string{"scope_pin", "prerequisites", "Review current scope", "blocked", "REQ-2", "ctx-1", "authored_section"} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("missing %q: %s", want, out.String())
+			}
+		}
+		if jsonOut {
+			var decoded map[string]any
+			if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded["gate"].(map[string]any)["audit"] == nil {
+				t.Fatal("missing audit envelope")
+			}
+		}
+		if errOut.Len() != 0 {
+			t.Fatal(errOut.String())
+		}
+	}
+}
+
+func TestGateAuditRefusesListingAndOlderServer(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := factoryGatesRun(nil, "", "", false, "", &out, &errOut, true); err == nil || !strings.Contains(err.Error(), "external_id") {
+		t.Fatalf("listing must fail before HTTP: %v", err)
+	}
+	fx := &wsFixture{gate: req109AnsweredGate()}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := factoryGatesRun(env, "", "", true, "APPROVE-EPIC-X", &out, &errOut, true); err == nil || !strings.Contains(err.Error(), "audit") {
+		t.Fatalf("old server must report missing diagnostics: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("no partial success output: %s", out.String())
 	}
 }

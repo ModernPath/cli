@@ -4,6 +4,7 @@
     "author.advance": ["advance_gate_ref"],
     "author.backlog": ["backlog_record"],
     "author.evaluate_trace": ["review_context", "trace_pin_default"],
+    "author.finding": ["finding_resolution"],
     "author.gate": ["entry_gate_members"],
     "author.update": ["edit_fingerprint"],
     "batch": ["batch_multi_status"],
@@ -13,6 +14,9 @@
     "reverse_engineering.capture": ["source_scoped_onboarding"],
     "reverse_engineering.publish": ["source_scoped_onboarding"],
     "candidate_set.decide": ["exact_candidate_set"],
-    "work_selection": ["selection_piece"]
+    "work_selection": ["selection_piece"],
+    "reverse_engineering.proof_preview": ["exact_as_built_proof"],
+    "reverse_engineering.acceptance_open": ["exact_as_built_proof"],
+    "reverse_engineering.acceptance_apply": ["exact_as_built_proof"]
   }
 }

@@ -22,11 +22,17 @@ packet, cold-review findings, current gate records, and relevant sources.
    gate opened without a named passing trace cannot be answered. Keep the
    human gate `DRAFT` when the trace does not pass.
 4. After a current trace `PASS`, make only the exact scoped human gate `OPEN`
-   and present its brief and recommendation in **plain product language** — see
+   and present its brief, recommendation, and linked list of relevant working-set
+   files before asking, in **plain product language** — see
    `PROCESS.md` §Gates: self-contained for a reader who has not seen the packet,
    with every referenced decision, correction, or finding stated by its
    substance and not its code. Before presenting, reread the brief as that
    reader and expand any bare identifier or jargon.
+   For a small change there is no per-change human gate: after its narrow pass
+   is `PASS` and its eligibility holds, record its entry as an application of
+   the current lane authorization, which names the human who answered it; a
+   missing, expired, exhausted or non-covering authorization stops here and the
+   change follows the single-SR entry.
 5. Do not answer the gate for the human. If the authorized human answers,
    record the real actor, role, scope, answer, and `USER:` source; apply only
    named transitions and reconcile all affected records. The answer and its
@@ -34,7 +40,9 @@ packet, cold-review findings, current gate records, and relevant sources.
    and report an answer that is recorded but not yet applied as exactly that.
 6. Move approved named `PROPOSED` or `PENDING_VERIFICATION` requirements and
    any named proposed epic to `TODO`. Otherwise retain the strongest honest
-   state and route requested changes.
+   state and route requested changes. Report any remaining entry approvals
+   needed for the selected delivery scope; partial approval does not permit
+   development to start on the approved subset.
 7. Report and stop. The entry pass ends with the applied transitions, not
    with the first build step: the answer was a decision about the gate, not
    an instruction to build (`PROCESS.md` §Gates). The build begins with a

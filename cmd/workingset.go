@@ -209,6 +209,9 @@ type wsItem struct {
 	kind    string // "epic" | "system" | "user" | "backlog" | "gate"
 	payload map[string]any
 	gates   []any
+	// REQ-CROSS-489: the served `traces` key ({from, to, truncated}), read-only
+	// and outside the canonical payload; nil when the read did not serve it.
+	traces map[string]any
 }
 
 const (
@@ -222,8 +225,9 @@ const (
 // fetchDirectItems resolves only the supplied external IDs. The server returns
 // canonical item payloads and each item's associated gate history in one
 // bounded response; older servers fail clearly instead of falling back to
-// downloading system collections.
-func fetchDirectItems(env *factoryEnv, ids []string, includeCandidates bool) (map[string]wsItem, error) {
+// downloading system collections. includeTraces asks for each requirement's
+// trace links (REQ-CROSS-489); only the by-id pull and check set it.
+func fetchDirectItems(env *factoryEnv, ids []string, includeCandidates, includeTraces bool) (map[string]wsItem, error) {
 	unique := make([]string, 0, len(ids))
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -240,6 +244,9 @@ func fetchDirectItems(env *factoryEnv, ids []string, includeCandidates bool) (ma
 	baseValues.Set("system_id", fmt.Sprint(env.SystemID))
 	if includeCandidates {
 		baseValues.Set("include", "candidates")
+	}
+	if includeTraces {
+		baseValues.Set("include_traces", "true")
 	}
 	apiBasePath := ""
 	if apiURL, err := url.Parse(env.APIURL); err == nil {
@@ -292,7 +299,8 @@ func fetchDirectItems(env *factoryEnv, ids []string, includeCandidates bool) (ma
 				return nil, fmt.Errorf("server response item has an invalid or unrequested identity")
 			}
 			gates, _ := entry["gates"].([]any)
-			index[id] = wsItem{id: id, kind: kind, payload: payload, gates: gates}
+			traces, _ := entry["traces"].(map[string]any)
+			index[id] = wsItem{id: id, kind: kind, payload: payload, gates: gates, traces: traces}
 		}
 		start = next
 	}
@@ -317,7 +325,7 @@ func validDirectItemKind(kind string) bool {
 }
 
 func scopeIndex(env *factoryEnv, ids []string) (map[string]scopeRecord, error) {
-	items, err := fetchDirectItems(env, ids, false)
+	items, err := fetchDirectItems(env, ids, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -571,6 +579,9 @@ func renderItemBody(item wsItem, gates []any) string {
 		if d := str(m, "detail_md"); d != "" {
 			b.WriteString("\n### Detail\n\n" + strings.TrimRight(d, "\n") + "\n")
 		}
+		if item.kind == "system" || item.kind == "user" {
+			writeTraceLinks(&b, item.traces)
+		}
 	}
 
 	b.WriteString("\n### Gates\n")
@@ -587,6 +598,70 @@ func renderItemBody(item wsItem, gates []any) string {
 		b.WriteString("\nNo gates reference this item at this snapshot.\n")
 	}
 	return b.String()
+}
+
+// hasTraceLinks is true when a served traces value holds a link in either
+// direction.
+func hasTraceLinks(traces map[string]any) bool {
+	from, _ := traces["from"].([]any)
+	to, _ := traces["to"].([]any)
+	return len(from) > 0 || len(to) > 0
+}
+
+// writeTraceLinks renders a requirement's served trace links (REQ-CROSS-489),
+// read-only: outgoing then incoming, one line per link as
+// `<type> <external id or label> — <label> · <link kind> · <authority>`, with
+// "(stale)" when the code moved under it. A link whose record has no external
+// id (a code file) is named by its label alone. An empty list reads "—"; an
+// absent key reads the not-served marker.
+func writeTraceLinks(b *strings.Builder, traces map[string]any) {
+	b.WriteString("\n### Trace links\n\n")
+	if traces == nil {
+		b.WriteString(notServed + "\n")
+		return
+	}
+	for i, dir := range []struct{ heading, key, end string }{
+		{"Outgoing", "from", "target"},
+		{"Incoming", "to", "source"},
+	} {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(b, "**%s**\n\n", dir.heading)
+		links, _ := traces[dir.key].([]any)
+		if len(links) == 0 {
+			b.WriteString("—\n")
+			continue
+		}
+		for _, raw := range links {
+			link, _ := raw.(map[string]any)
+			b.WriteString("- " + traceLinkLine(link, dir.end) + "\n")
+		}
+	}
+	if truncated, _ := traces["truncated"].(bool); truncated {
+		b.WriteString("\nShowing the first 50 links per direction; more are stored.\n")
+	}
+}
+
+func traceLinkLine(link map[string]any, end string) string {
+	label := str(link, "label")
+	name := str(link, "external_id")
+	line := str(link, end+"_type") + " "
+	switch {
+	case name != "" && label != "":
+		line += name + " — " + label
+	case name != "":
+		line += name
+	case label != "":
+		line += label
+	default:
+		line += str(link, end+"_id")
+	}
+	line += " · " + fieldOr(link, "link_kind", notServed) + " · " + fieldOr(link, "authority", notServed)
+	if stale, _ := link["stale"].(bool); stale {
+		line += " (stale)"
+	}
+	return line
 }
 
 // writeGateBlock renders one served gate: under an item's Gates section, and
@@ -631,6 +706,12 @@ func writeGateBlock(b *strings.Builder, gm map[string]any) {
 	fmt.Fprintf(b, "- **Fingerprint:** %s\n", servedOr(gm, "fingerprint", notServed))
 	fmt.Fprintf(b, "- **Application:** %s\n", fieldOr(gm, "applied_state", notServed))
 	fmt.Fprintf(b, "- **Predecessor / successor:** %s\n", gateLineage(gm))
+	if lines := gateBriefLines(gm); len(lines) > 0 {
+		b.WriteString("\n**Brief:**\n\n")
+		for _, line := range lines {
+			fmt.Fprintf(b, "- %s\n", strings.ReplaceAll(line, "\n", "\n  "))
+		}
+	}
 }
 
 func prerequisitesOr(gm map[string]any) string {
@@ -727,9 +808,16 @@ func associatedGates(item wsItem, gates []any) []map[string]any {
 // the hash covers the item payload AND its associated gate payloads, so a
 // gate flipping state makes the materialized file stale — with the item
 // payload alone, gate history went stale invisibly.
+//
+// REQ-CROSS-489: served trace links join the hash only when a list is
+// non-empty, so an untraced snapshot keeps the identity it had before the
+// server served the key.
 func sourceIdentityFor(item wsItem, gates []any) (string, error) {
 	assoc := associatedGates(item, gates)
 	canonical := map[string]any{"item": item.payload, "gates": assoc}
+	if hasTraceLinks(item.traces) {
+		canonical["traces"] = item.traces
+	}
 	raw, err := json.Marshal(canonical)
 	if err != nil {
 		return "", err
@@ -749,32 +837,69 @@ func renderWorkingSetFile(env *factoryEnv, item wsItem, gates []any, now time.Ti
 	return header + body, nil
 }
 
-// headerValue extracts the hex value following key on its own header line.
-func headerValue(content, key string) string {
-	idx := strings.Index(content, key)
-	if idx < 0 {
-		return ""
-	}
-	rest := content[idx+len(key):]
-	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
-		rest = rest[:nl]
-	}
-	return strings.TrimSpace(rest)
+type workingSetSnapshot struct {
+	sourceIdentity string
+	writtenBody    string
+	body           string
 }
 
-// bodyOf returns the hashed region: everything after the blank line that
-// closes the header block (the line after the Written-body entry).
-func bodyOf(content string) (string, bool) {
-	idx := strings.Index(content, writtenBodyKey)
-	if idx < 0 {
-		return "", false
+// parseWorkingSetSnapshot reads only the title and metadata blocks. The
+// second blank-line delimiter closes metadata regardless of which fields it
+// contains, so missing keys can never be recovered from body text.
+func parseWorkingSetSnapshot(filename, content string) (workingSetSnapshot, error) {
+	blocks := strings.SplitN(content, "\n\n", 3)
+	if len(blocks) != 3 {
+		return workingSetSnapshot{}, fmt.Errorf("missing snapshot header/body framing")
 	}
-	rest := content[idx:]
-	sep := strings.Index(rest, "\n\n")
-	if sep < 0 {
-		return "", false
+	name := strings.TrimSuffix(filename, ".md")
+	if blocks[0] != "# "+name+" — working-set snapshot" {
+		return workingSetSnapshot{}, fmt.Errorf("snapshot title does not match %s", filename)
 	}
-	return rest[sep+2:], true
+	var source, written string
+	var sourceCount, writtenCount int
+	metadataLines := strings.Split(blocks[1], "\n")
+	for _, line := range metadataLines {
+		sourceLabel := strings.TrimSuffix(sourceIdentityKey, " sha256:")
+		writtenLabel := strings.TrimSuffix(writtenBodyKey, " sha256:")
+		if strings.HasPrefix(line, sourceLabel) {
+			sourceCount++
+			value := strings.TrimSpace(strings.TrimPrefix(line, sourceLabel))
+			source = strings.TrimPrefix(value, "sha256:")
+			if source == value {
+				source = ""
+			}
+		}
+		if strings.HasPrefix(line, writtenLabel) {
+			writtenCount++
+			value := strings.TrimSpace(strings.TrimPrefix(line, writtenLabel))
+			written = strings.TrimPrefix(value, "sha256:")
+			if written == value {
+				written = ""
+			}
+		}
+	}
+	if sourceCount != 1 || writtenCount != 1 {
+		return workingSetSnapshot{}, fmt.Errorf("snapshot metadata must contain one Source identity and one Written body")
+	}
+	if !strings.HasPrefix(metadataLines[len(metadataLines)-1], writtenBodyKey) {
+		return workingSetSnapshot{}, fmt.Errorf("Written body must close the snapshot metadata block")
+	}
+	if !validSnapshotHash(source) || !validSnapshotHash(written) {
+		return workingSetSnapshot{}, fmt.Errorf("snapshot metadata contains an invalid SHA256")
+	}
+	return workingSetSnapshot{sourceIdentity: source, writtenBody: written, body: blocks[2]}, nil
+}
+
+func validSnapshotHash(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func snapshotBodyMatches(snapshot workingSetSnapshot) bool {
+	return strings.EqualFold(sha256Hex([]byte(snapshot.body)), snapshot.writtenBody)
 }
 
 // writeWorkingSetItem enforces REQ-CROSS-218: a file whose current body
@@ -809,9 +934,8 @@ func writeWorkingSetSnapshot(env *factoryEnv, filename, fresh string) (conflict 
 	path := filepath.Join(env.Root, workingSetDir, filename)
 	existing, readErr := os.ReadFile(path)
 	if readErr == nil {
-		recorded := headerValue(string(existing), writtenBodyKey)
-		body, ok := bodyOf(string(existing))
-		if !ok || recorded == "" || sha256Hex([]byte(body)) != recorded {
+		snapshot, parseErr := parseWorkingSetSnapshot(filename, string(existing))
+		if parseErr != nil || !snapshotBodyMatches(snapshot) {
 			if err := atomicWrite(path+".pulled", []byte(fresh)); err != nil {
 				return true, err
 			}
@@ -831,9 +955,16 @@ const selectionFile = "WORK-SELECTION.md"
 func fetchWorkSelection(env *factoryEnv) (map[string]any, error) {
 	// REQ-CROSS-345: the read is caller-scoped. --piece names which of the
 	// caller's own current pieces to resolve, carried as ?scope=.
+	return fetchWorkSelectionFor(env, wsPiece)
+}
+
+// fetchWorkSelectionFor reads the caller's selection for one named piece
+// (empty: the sole current piece). `process enter` reads the piece it is
+// entering this way for its reconnaissance revision (SR-CLI-028-002).
+func fetchWorkSelectionFor(env *factoryEnv, piece string) (map[string]any, error) {
 	path := fmt.Sprintf("/api/v1/sync/work-selection?system_id=%d", env.SystemID)
-	if wsPiece != "" {
-		path += "&scope=" + url.QueryEscape(wsPiece)
+	if piece != "" {
+		path += "&scope=" + url.QueryEscape(piece)
 	}
 	status, body, err := env.call("GET", path, nil)
 	if err != nil {
@@ -1338,6 +1469,11 @@ func recordFromPayload(rec scopeRecord, members []string) authoring.Record {
 				out.Projections = append(out.Projections, authoring.Projection{Name: f, Content: c})
 			}
 		}
+		// REQ-CROSS-471: what the chat that created the epic found, as a
+		// read-only list a planner or reviewer reads without the JSON.
+		if found := foundInChat(m); len(found) > 0 {
+			out.Projections = append(out.Projections, authoring.Projection{Name: "found_in_chat", Content: dashList(found)})
+		}
 	}
 	return out
 }
@@ -1440,6 +1576,8 @@ func packetFileName(sectionKey string) string {
 	switch {
 	case sectionKey == "reconnaissance":
 		return "10-recon.md"
+	case sectionKey == "state_inventory":
+		return "15-state-inventory.md"
 	case sectionKey == "red_strategy":
 		return "30-red-strategy.md"
 	case sectionKey == "decisions":
@@ -1456,12 +1594,12 @@ func packetFileName(sectionKey string) string {
 // and being misread as the canonical key on push (#25).
 func reservedPacketCollision(key string) bool {
 	switch {
-	case key == "reconnaissance", key == "red_strategy", key == "decisions",
+	case key == "reconnaissance", key == "state_inventory", key == "red_strategy", key == "decisions",
 		strings.HasPrefix(key, "enrichment:"):
 		return false
 	}
 	switch packetFileName(key) {
-	case "10-recon.md", "30-red-strategy.md", "40-decisions.md":
+	case "10-recon.md", "15-state-inventory.md", "30-red-strategy.md", "40-decisions.md":
 		return true
 	}
 	return strings.HasPrefix(packetFileName(key), "20-enrichment-")
@@ -1483,6 +1621,12 @@ func scopeItemContent(rec authoring.Record, mode, ctxID string, forReview bool, 
 // push is a draft, not a `.pulled` conflict — so scope files are written whole
 // (push carries the server-side 409, SR-CLI-0085).
 func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
+	return workingSetPullScopeSince(env, forReview, "", now)
+}
+
+// workingSetPullScopeSince is the scope pull; with since (a previous
+// cold-review trace, REQ-CROSS-464) a review pull writes the delta bundle.
+func workingSetPullScopeSince(env *factoryEnv, forReview bool, since string, now time.Time) error {
 	payload, err := fetchWorkSelection(env)
 	if err != nil {
 		return err
@@ -1507,10 +1651,23 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 			return fmt.Errorf("selection member id %q is not a safe path component — refusing to pull", mid)
 		}
 	}
-	ids := append([]string{scopeExt}, members...)
-	idx, err := scopeIndex(env, ids)
-	if err != nil {
+	var idx map[string]scopeRecord
+	if forReview {
+		// REQ-CROSS-449: a review reads the epic's served membership — the
+		// frozen selection list can be empty while the epic holds members.
+		if idx, members, err = reviewScopeIndex(env, scopeExt, members); err != nil {
+			return err
+		}
+	} else if idx, err = scopeIndex(env, append([]string{scopeExt}, members...)); err != nil {
 		return err
+	}
+	// REQ-CROSS-464: the previous review is read and checked before anything
+	// is written, so a refused --since leaves the directory as it was.
+	var prior map[string]any
+	if since != "" {
+		if prior, err = readSinceTrace(env, since, scopeExt); err != nil {
+			return err
+		}
 	}
 
 	mode := "authoring"
@@ -1558,7 +1715,8 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 	if !forReview {
 		required = requiredSectionKeys(env, scopeExt, str(current, "scope_kind"), members, idx)
 	}
-	if err := pullPacketSections(env, dir, str(current, "scope_kind"), scopeExt, !forReview, required); err != nil {
+	sections, err := pullPacketSections(env, dir, str(current, "scope_kind"), scopeExt, !forReview, required)
+	if err != nil {
 		return err
 	}
 
@@ -1569,6 +1727,42 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 
 	stamp := fmt.Sprintf("# working-set context\n\nmode: %s\ncontext_id: %s\nscope: %s:%s\npulled_at: %s\n",
 		mode, ctxID, str(current, "scope_kind"), scopeExt, now.Format(time.RFC3339))
+	bundlePath := filepath.Join(dir, reviewBundleFile)
+	if forReview {
+		// REQ-CROSS-449: one read of the aggregate the review is pinned to; the
+		// stamp is what `process review record` refuses drift against.
+		agg := ""
+		if dc, err := readDeliveryContextFor(env, scopeExt); err == nil {
+			agg = dc.Data.PacketFingerprint
+		}
+		if agg == "" {
+			printWarning("the delivery context of %s serves no packet aggregate — REVIEW.md names none and `process review record` will refuse this pull", scopeExt)
+		} else {
+			stamp += "aggregate: " + agg + "\n"
+		}
+		// REQ-CROSS-464: each record's and section's fingerprint, so the
+		// trace records what this review read and a later round can pull
+		// only what changed.
+		reviewed := reviewedFingerprints(scopeExt, idx, members, sections)
+		for _, r := range reviewed {
+			stamp += reviewedStampPrefix + r.key + " " + r.fingerprint + "\n"
+		}
+		var bundle string
+		if prior != nil {
+			bundle = renderDeltaReviewBundle(env, deltaInput{
+				scopeKind: str(current, "scope_kind"), scopeExt: scopeExt, aggregate: agg, ctxID: ctxID, now: now,
+				idx: idx, members: members, sections: sections, reviewed: reviewed, prior: prior, head: gitHead(env.Root),
+			})
+		} else {
+			bundle = renderReviewBundle(str(current, "scope_kind"), scopeExt, agg, ctxID, now, idx, members, sections)
+		}
+		if err := atomicWrite(bundlePath, []byte(bundle)); err != nil {
+			return err
+		}
+	} else if err := os.Remove(bundlePath); err != nil && !os.IsNotExist(err) {
+		// A bundle a previous review pull left is not this authoring context's.
+		return err
+	}
 	if err := atomicWrite(filepath.Join(dir, contextFile), []byte(stamp)); err != nil {
 		return err
 	}
@@ -1578,7 +1772,8 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 }
 
 // requiredPacketKeys is the canonical section keys the phase table requires for
-// a scope: the fixed three, plus enrichment:<SR> for each selected system-
+// a scope: the fixed four (reconnaissance, state_inventory, red_strategy,
+// decisions — SR-CLI-028-001), plus enrichment:<SR> for each selected system-
 // requirement member the store index knows (for a single_sr scope, its own SR).
 // A user-requirement member and a member the index does not know get none —
 // mirroring the server, which never requires them (REQ-CROSS-332 PD-5).
@@ -1597,7 +1792,7 @@ func requiredSectionKeys(env *factoryEnv, scopeExt, scopeKind string, members []
 // requiredPacketKeys derives the canonical keys from the frozen selection
 // members — the fallback when the server serves no required list.
 func requiredPacketKeys(scopeKind, scopeExt string, members []string, idx map[string]scopeRecord) []string {
-	keys := []string{"reconnaissance", "red_strategy", "decisions"}
+	keys := []string{"reconnaissance", "state_inventory", "red_strategy", "decisions"}
 	isSR := func(id string) bool {
 		r, ok := idx[id]
 		return ok && r.kind == "system"
@@ -1616,7 +1811,9 @@ func requiredPacketKeys(scopeKind, scopeExt string, members []string, idx map[st
 	return keys
 }
 
-func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffold bool, requiredKeys []string) error {
+// pullPacketSections writes the served sections and returns them, so the
+// review bundle renders the same read the files hold.
+func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffold bool, requiredKeys []string) ([]map[string]any, error) {
 	scope := scopeKind + ":" + scopeExt
 	status, body, err := env.call("GET",
 		fmt.Sprintf("/api/v1/sync/packet-sections?system_id=%d&scope=%s", env.SystemID, scope), nil)
@@ -1624,37 +1821,39 @@ func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffo
 		// A transport failure is a FAILED pull, not honest absence — swallowing it
 		// left a reused scope dir's prior packet files in place, stamped into the
 		// new context.
-		return err
+		return nil, err
 	}
 	if status == 404 {
 		// A genuinely absent endpoint (an older server): honest absence. Remove any
 		// packet files a prior pull into this reused scope dir left, so stale
 		// content is never carried into the new context.
-		return os.RemoveAll(filepath.Join(dir, "packet"))
+		return nil, os.RemoveAll(filepath.Join(dir, "packet"))
 	}
 	if status != 200 {
-		return serverRefusal("packet-sections read", status, body)
+		return nil, serverRefusal("packet-sections read", status, body)
 	}
 	sections, err := listFromData(body, "packet_sections")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	served := map[string]string{}
+	rows := []map[string]any{}
 	for _, s := range sections {
 		sm, _ := s.(map[string]any)
 		key := str(sm, "section_key")
 		if key == "" {
 			continue
 		}
+		rows = append(rows, sm)
 		fname := packetFileName(key)
 		if unsafeSnapshotName(fname) {
-			return fmt.Errorf("packet section key %q maps to an unsafe file name %q — refusing to pull", key, fname)
+			return nil, fmt.Errorf("packet section key %q maps to an unsafe file name %q — refusing to pull", key, fname)
 		}
 		if reservedPacketCollision(key) {
-			return fmt.Errorf("extra packet section key %q maps to the reserved canonical file name %q — rename the extra section", key, fname)
+			return nil, fmt.Errorf("extra packet section key %q maps to the reserved canonical file name %q — rename the extra section", key, fname)
 		}
 		if err := atomicWrite(filepath.Join(dir, "packet", fname), []byte(str(sm, "content"))); err != nil {
-			return err
+			return nil, err
 		}
 		served[key] = str(sm, "content_fingerprint")
 	}
@@ -1664,7 +1863,7 @@ func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffo
 	// served-fingerprint header. A dotfile, skipped by push's `.md` scan.
 	blob, _ := json.Marshal(served)
 	if err := atomicWrite(packetFingerprintManifest(dir), blob); err != nil {
-		return err
+		return nil, err
 	}
 
 	// REQ-CROSS-332: on an authoring pull, lay down a stub for every canonical
@@ -1686,11 +1885,11 @@ func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffo
 				continue // never overwrite a local file
 			}
 			if err := atomicWrite(path, []byte(packetStubMarker(key, scopeKind, scopeExt)+"\n")); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return rows, nil
 }
 
 func packetFingerprintManifest(dir string) string {
@@ -1767,7 +1966,7 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		memberSet[m] = true
 	}
 	entries, _ := os.ReadDir(filepath.Join(dir, "members"))
-	var outOfScopeFiles []string
+	var outOfScopeFiles, outOfScopeSkips []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -1791,6 +1990,9 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		}
 		for _, id := range outOfScopeFiles {
 			if _, known := idx[id]; known {
+				// A record the store holds outside the selection is not pushed
+				// through this scope; say so rather than drop it silently.
+				outOfScopeSkips = append(outOfScopeSkips, id)
 				continue
 			}
 			items = append(items, itemFile{filepath.Join(dir, "members", id+".md"), filepath.Join("members", id+".md"), id})
@@ -1807,43 +2009,47 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 	// POST, so a malformed or unreadable later file cannot abort the command after
 	// an earlier file's mutation has already committed. No write happens until the
 	// whole working set validates.
-	type plannedItem struct {
-		it   itemFile
-		kind string
-		fp   string
-		p    *diff.Patch
-	}
-	var plannedItems []plannedItem
+	var writes []*recordWrite
+	fileOf := map[string]itemFile{}
 	for _, it := range items {
 		raw, err := os.ReadFile(it.path)
 		if err != nil {
 			return err
 		}
+		// REQ-CROSS-442: push never creates a record; `author apply` is the only
+		// create path. An unknown id stops the push here, before any write.
 		base, known := idx[it.ext]
 		if !known {
-			return fmt.Errorf("%s names %s, which the store does not know — push births nothing; create it first with `author create`", it.rel, it.ext)
+			return fmt.Errorf("%s names %s, which the store does not know — push never creates a record. Create it with `author apply --file <plan>`, then pull and push. Nothing was written", it.rel, it.ext)
 		}
-		fp := servedFingerprint(string(raw))
+		var fallback []string
+		if base.kind == "epic" {
+			fallback = members
+		}
 		editedRec, perr := authoring.Parse(base.kind, itemBody(string(raw)))
 		if perr != nil {
 			return fmt.Errorf("%s: cannot parse the authoring grammar (%v)", it.rel, perr)
 		}
-		var baseRec authoring.Record
-		if base.kind == "epic" {
-			baseRec = recordFromPayload(base, members)
-		} else {
-			baseRec = recordFromPayload(base, nil)
+		editedRec.ExternalID = it.ext
+		w, werr := planRecordWrite(it.rel, &base, editedRec, fallback)
+		if werr != nil {
+			return werr
 		}
-		p, ref := diff.Diff(baseRec, editedRec)
-		if ref != nil {
-			return fmt.Errorf("%s (%s): %s", it.ext, it.rel, ref.Error())
-		}
-		if p.Empty() {
+		if !w.changes() {
 			continue
 		}
-		plan = append(plan, describePatch(it.ext, p))
-		plannedItems = append(plannedItems, plannedItem{it: it, kind: base.kind, fp: fp, p: p})
+		// The CAS expectation is the fingerprint recorded at pull.
+		w.expected = servedFingerprint(string(raw))
+		plan = append(plan, w.describe())
+		writes = append(writes, w)
+		fileOf[it.ext] = it
 	}
+
+	var servedScopeMembers []string
+	if sr, ok := idx[scopeExt]; ok {
+		servedScopeMembers = servedMembers(sr.payload, nil)
+	}
+	defer printOutOfScopeSkips(scopeExt, outOfScopeSkips, servedScopeMembers)
 
 	plannedSections, err := planPacketSections(env, dir, scopeKind, scopeExt, &plan, &skipped)
 	if err != nil {
@@ -1863,30 +2069,19 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 	}
 
 	// APPLY PASS — every file validated; now issue the writes.
-	for _, pi := range plannedItems {
-		status, resp, perr := postAuthor(env, map[string]any{"action": "patch",
-			"record": buildPatchRecord(pi.kind, pi.it.ext, pi.fp, ctxID, pi.p)})
-		if perr != nil {
-			return fmt.Errorf("%s: %v", pi.it.ext, perr)
+	results, wconf, werr := applyRecordWrites(env, ctxID, writes)
+	if werr != nil {
+		return werr
+	}
+	conflicts = append(conflicts, wconf...)
+	for _, w := range writes {
+		res := results[w.ext]
+		if res.conflict || (!res.created && !res.patched) {
+			continue
 		}
-		switch {
-		case status == 409:
-			conflicts = append(conflicts, pi.it.ext)
-		case status != 200:
-			return serverRefusal(pi.it.ext, status, resp)
-		default:
-			pushed = append(pushed, pi.it)
-			if data, ok := resp["data"].(map[string]any); ok {
-				if item, ok := data["sync_item"].(map[string]any); ok {
-					if payload, ok := item["item"].(map[string]any); ok {
-						id := str(payload, "external_id")
-						kind := str(item, "kind")
-						if id == pi.it.ext && validDirectItemKind(kind) {
-							mutationItems[id] = scopeRecord{kind: kind, payload: payload}
-						}
-					}
-				}
-			}
+		pushed = append(pushed, fileOf[w.ext])
+		if res.item != nil && res.patched {
+			mutationItems[w.ext] = *res.item
 		}
 	}
 
@@ -2038,6 +2233,26 @@ func staleUnchangedSections(env *factoryEnv, dir, scopeKind, scopeExt string, ex
 	return out, nil
 }
 
+// readContextAggregate reads the packet aggregate a review pull stamped in the
+// scope directory's `.context` (REQ-CROSS-449); empty when there is none.
+func readContextAggregate(dir string) string {
+	for _, line := range strings.Split(readContextFile(dir), "\n") {
+		if strings.HasPrefix(line, "aggregate: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "aggregate: "))
+		}
+	}
+	return ""
+}
+
+// readContextFile is the scope directory's `.context` stamp; empty when absent.
+func readContextFile(dir string) string {
+	raw, err := os.ReadFile(filepath.Join(dir, contextFile))
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 func readContextStamp(dir string) (mode, ctxID string) {
 	raw, err := os.ReadFile(filepath.Join(dir, contextFile))
 	if err != nil {
@@ -2098,6 +2313,9 @@ func buildPatchRecord(kind, ext, fp, ctxID string, p *diff.Patch) map[string]any
 	if p.CitationsSet {
 		rec["source_citations"] = citationMaps(p.Citations)
 	}
+	if p.CriteriaSet {
+		rec["criteria"] = p.Criteria
+	}
 	if len(p.Relations) > 0 {
 		ops := make([]any, len(p.Relations))
 		for i, r := range p.Relations {
@@ -2125,8 +2343,17 @@ func postAuthor(env *factoryEnv, body map[string]any) (int, map[string]any, erro
 // unfilled packet stub (REQ-CROSS-332) and `working-set push` strips before
 // sending (REQ-CROSS-331). It names the section and the scope so an agent
 // opening the file learns what belongs there, and says an unfilled stub is
-// never pushed. One line, so the strip is a first-line comparison.
+// never pushed. One line, so the strip is a first-line comparison. The state
+// inventory's marker also names the table's columns and the one-line form a
+// change that touches no persisted or shared state writes instead
+// (SR-CLI-028-001 C2) — still one line, so REQ-CROSS-331's strip and
+// unfilled test hold unchanged.
 func packetStubMarker(key, scopeKind, scopeExt string) string {
+	if key == "state_inventory" {
+		return fmt.Sprintf(
+			"<!-- packet stub — state_inventory for %s:%s — replace this line with the section: one row per piece of state — columns: state; writers today / after, and each write shape; readers that branch on it; crash mid-write leaves; stale when; recovery; ending closed / residual / decided — or, for a change that touches no persisted or shared state, the one line 'No persisted or shared state is added or touched: <why>.'; an unfilled stub is never pushed -->",
+			scopeKind, scopeExt)
+	}
 	return fmt.Sprintf(
 		"<!-- packet stub — %s for %s:%s — replace this line with the section; an unfilled stub is never pushed -->",
 		key, scopeKind, scopeExt)
@@ -2271,6 +2498,8 @@ func sectionKeyFromFile(name string) string {
 	switch name {
 	case "10-recon.md":
 		return "reconnaissance"
+	case "15-state-inventory.md":
+		return "state_inventory"
 	case "30-red-strategy.md":
 		return "red_strategy"
 	case "40-decisions.md":
@@ -2295,6 +2524,9 @@ func describePatch(ext string, p *diff.Patch) string {
 	if p.CitationsSet {
 		parts = append(parts, "source citations")
 	}
+	if p.CriteriaSet {
+		parts = append(parts, "criteria")
+	}
 	for _, r := range p.Relations {
 		parts = append(parts, fmt.Sprintf("relation %s %s", r.Mode, r.Target))
 	}
@@ -2302,6 +2534,24 @@ func describePatch(ext string, p *diff.Patch) string {
 		parts = append(parts, fmt.Sprintf("member %s %s", m.Mode, m.Target))
 	}
 	return fmt.Sprintf("patch %s: %s", ext, strings.Join(parts, "; "))
+}
+
+// printOutOfScopeSkips names each members/ file push left alone because the
+// frozen selection does not hold its record. The scope's served membership
+// may hold it (a member declared after the selection was taken), so the line
+// says which, and never that a served member is not one.
+func printOutOfScopeSkips(scopeExt string, ids, served []string) {
+	isServed := map[string]bool{}
+	for _, m := range served {
+		isServed[m] = true
+	}
+	for _, id := range ids {
+		what := id + " is not in the frozen selection"
+		if isServed[id] {
+			what = id + " is a member of " + scopeExt + " but not in the frozen selection"
+		}
+		fmt.Printf("push: skipped members/%s.md — %s; re-select %s with it among `--members` (`working-set select`), then pull the scope, to push it\n", id, what, scopeExt)
+	}
 }
 
 func printPlan(plan, skipped []string, dryRun bool) {
@@ -2531,7 +2781,7 @@ func workingSetPull(env *factoryEnv, ids []string, now time.Time) error {
 	}
 	items = safeItems
 
-	index, err := fetchDirectItems(env, items, workingSetIncludeCandidates)
+	index, err := fetchDirectItems(env, items, workingSetIncludeCandidates, true)
 	if err != nil {
 		return err
 	}
@@ -2593,7 +2843,7 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 		}
 		itemIDs = append(itemIDs, strings.TrimSuffix(entry.Name(), ".md"))
 	}
-	index, err := fetchDirectItems(env, itemIDs, workingSetIncludeCandidates)
+	index, err := fetchDirectItems(env, itemIDs, workingSetIncludeCandidates, true)
 	if err != nil {
 		return err
 	}
@@ -2604,7 +2854,10 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 			return err
 		}
 	}
-	var stale, vanished []string
+	staleSet := map[string]bool{}
+	localSet := map[string]bool{}
+	unverifiedSet := map[string]bool{}
+	vanished := []string{}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".md") {
@@ -2627,11 +2880,21 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 			if err != nil {
 				return err
 			}
-			recorded := headerValue(string(raw), sourceIdentityKey)
-			if current != recorded {
-				stale = append(stale, selectionFile)
-				fmt.Printf("✗ %s — stale (recorded %.12s…, current %.12s…)\n", selectionFile, recorded, current)
+			snapshot, parseErr := parseWorkingSetSnapshot(name, string(raw))
+			if parseErr != nil {
+				unverifiedSet[name] = true
+				fmt.Printf("? %s — unverified (%v)\n", name, parseErr)
 			} else {
+				if !snapshotBodyMatches(snapshot) {
+					localSet[name] = true
+					fmt.Printf("✗ %s — local body edit (written-body hash does not match)\n", name)
+				}
+				if !strings.EqualFold(current, snapshot.sourceIdentity) {
+					staleSet[name] = true
+					fmt.Printf("✗ %s — stale (recorded %.12s…, current %.12s…)\n", name, snapshot.sourceIdentity, current)
+				}
+			}
+			if parseErr == nil && !localSet[name] && !staleSet[name] {
 				printSuccess("current: %s", selectionFile)
 			}
 			continue
@@ -2641,7 +2904,6 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		recorded := headerValue(string(raw), sourceIdentityKey)
 		item, ok := index[id]
 		if !ok {
 			vanished = append(vanished, id)
@@ -2652,44 +2914,77 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		if current != recorded {
-			stale = append(stale, id)
-			fmt.Printf("✗ %s — stale (recorded %.12s…, current %.12s…)\n", id, recorded, current)
+		snapshot, parseErr := parseWorkingSetSnapshot(name, string(raw))
+		if parseErr != nil {
+			unverifiedSet[name] = true
+			fmt.Printf("? %s — unverified (%v)\n", name, parseErr)
 			continue
 		}
-		printSuccess("current: %s", id)
+		changed := false
+		if !snapshotBodyMatches(snapshot) {
+			localSet[name] = true
+			changed = true
+			fmt.Printf("✗ %s — local body edit (written-body hash does not match)\n", name)
+		}
+		if !strings.EqualFold(current, snapshot.sourceIdentity) {
+			staleSet[name] = true
+			changed = true
+			fmt.Printf("✗ %s — stale (recorded %.12s…, current %.12s…)\n", id, snapshot.sourceIdentity, current)
+		}
+		if !changed {
+			printSuccess("current: %s", id)
+		}
 	}
-	sort.Strings(stale)
 
-	if refresh && len(stale) > 0 {
-		for _, id := range stale {
-			if id == selectionFile {
+	if refresh {
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".md") || (!staleSet[name] && !localSet[name] && !unverifiedSet[name]) {
+				continue
+			}
+			if name == selectionFile {
 				_, conflict, err := pullSelection(env, now, gates)
 				if err != nil {
 					return err
 				}
 				if conflict {
-					return fmt.Errorf("refresh conflict on %s — local edit preserved", selectionFile)
+					fmt.Printf("✗ CONFLICT %s — local snapshot preserved; fresh copy at %s.pulled\n", name, filepath.Join(workingSetDir, name))
+				} else {
+					delete(staleSet, name)
+					printSuccess("refreshed %s", selectionFile)
 				}
-				printSuccess("refreshed %s", selectionFile)
 				continue
 			}
-			conflict, err := writeWorkingSetItem(env, index[id], index[id].gates, now)
+			id := strings.TrimSuffix(name, ".md")
+			item, ok := index[id]
+			if !ok {
+				continue
+			}
+			conflict, err := writeWorkingSetItem(env, item, item.gates, now)
 			if err != nil {
 				return err
 			}
 			if conflict {
-				return fmt.Errorf("refresh conflict on %s — local edit preserved; fresh pull at %s.md.pulled", id,
-					filepath.Join(workingSetDir, id))
+				fmt.Printf("✗ CONFLICT %s — original preserved; fresh copy at %s.pulled\n", id, filepath.Join(workingSetDir, name))
+				continue
 			}
+			delete(staleSet, name)
 			printSuccess("refreshed %s", id)
 		}
-		stale = nil
 	}
 
 	var problems []string
+	stale := sortedSetKeys(staleSet)
+	local := sortedSetKeys(localSet)
+	unverified := sortedSetKeys(unverifiedSet)
 	if len(stale) > 0 {
 		problems = append(problems, "stale: "+strings.Join(stale, ", "))
+	}
+	if len(local) > 0 {
+		problems = append(problems, "local edits: "+strings.Join(local, ", "))
+	}
+	if len(unverified) > 0 {
+		problems = append(problems, "unverified: "+strings.Join(unverified, ", "))
 	}
 	if len(vanished) > 0 {
 		problems = append(problems, "vanished from store: "+strings.Join(vanished, ", "))
@@ -2698,6 +2993,15 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 		return fmt.Errorf("working set not current — %s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func sortedSetKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // wsSelectOpts carries what `working-set select` records (REQ-CROSS-220).
@@ -2779,6 +3083,7 @@ var workingSetCmd = &cobra.Command{
 var (
 	wsPullScope     bool
 	wsPullForReview bool
+	wsPullSince     string
 	// REQ-CROSS-345: names which of the caller's own current pieces a read
 	// resolves, carried as ?scope=. Empty reads the sole current (or asks the
 	// caller to name one when they hold several).
@@ -2794,11 +3099,26 @@ var workingSetPullCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if wsPullSince != "" {
+			// REQ-CROSS-464: a delta bundle is a later round of an epic's
+			// review; the narrow review is one pass with no rounds.
+			if !wsPullScope && wsPullForReview {
+				return fmt.Errorf("--since is refused with a by-id pull: the small-change lane's narrow review is one pass with no later rounds — pull the scope with --scope --for-review --since")
+			}
+			if !wsPullScope || !wsPullForReview {
+				return fmt.Errorf("--since renders a later review round: use it with --scope --for-review")
+			}
+		}
 		if wsPullScope {
-			return workingSetPullScope(env, wsPullForReview, time.Now().UTC())
+			return workingSetPullScopeSince(env, wsPullForReview, wsPullSince, time.Now().UTC())
 		}
 		if wsPullForReview {
-			return fmt.Errorf("--for-review applies to a scope pull; add --scope")
+			// REQ-CROSS-458: a by-id review pull renders one system
+			// requirement for the small-change lane's narrow review.
+			if len(args) == 0 {
+				return fmt.Errorf("--for-review needs --scope (an epic's review) or a system requirement's id (a small change's narrow review)")
+			}
+			return workingSetPullForReview(env, args, time.Now().UTC())
 		}
 		if len(args) == 0 {
 			return fmt.Errorf("name at least one external id, or use --scope to pull the current selection")
@@ -2809,7 +3129,7 @@ var workingSetPullCmd = &cobra.Command{
 
 var workingSetCheckCmd = &cobra.Command{
 	Use:   "check",
-	Short: "Report stale working-set files; --refresh re-pulls them",
+	Short: "Check snapshot source and local body integrity; --refresh updates safely",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
 		if err != nil {
@@ -2925,15 +3245,17 @@ func init() {
 	workingSetCmd.PersistentFlags().StringVar(&wsPiece, "piece", "",
 		"when you hold several current selections, --piece names which one pull --scope, push and check resolve (by-id pulls do not use a selected piece)")
 
-	workingSetCheckCmd.Flags().BoolVar(&workingSetRefresh, "refresh", false, "re-pull files reported stale")
+	workingSetCheckCmd.Flags().BoolVar(&workingSetRefresh, "refresh", false, "refresh stale files; preserve edited or unverified originals and write fresh .pulled copies")
 	for _, c := range []*cobra.Command{workingSetPullCmd, workingSetCheckCmd} {
 		c.Flags().BoolVar(&workingSetIncludeCandidates, "include-candidates", false,
 			"include DERIVED candidates in the requirements read (materialize a just-authored candidate)")
 	}
 	workingSetPullCmd.Flags().BoolVar(&wsPullScope, "scope", false,
-		"pull the current work selection's scope as an editable directory (authoring render)")
+		"pull the current work selection's scope as an editable directory (authoring render); packet/ is scaffolded with the required sections — reconnaissance, state inventory, red strategy, decisions, one enrichment per SR")
 	workingSetPullCmd.Flags().BoolVar(&wsPullForReview, "for-review", false,
-		"render the scope read-only for cold review, stamping a review context (with --scope)")
+		"render the scope read-only for cold review, stamping a review context (with --scope); with a system requirement's id, render it for the small-change lane's narrow review")
+	workingSetPullCmd.Flags().StringVar(&wsPullSince, "since", "",
+		"with --scope --for-review: write REVIEW.md as the delta since this previous cold-review trace — what changed in full, the open findings, the previous verdict, the rest as id and fingerprint")
 	workingSetPushCmd.Flags().BoolVar(&wsPushRestamp, "restamp", false,
 		"re-put every filled canonical section unchanged so the server re-stamps it at the current scope context")
 	workingSetPushCmd.Flags().BoolVar(&wsPushDryRun, "dry-run", false,

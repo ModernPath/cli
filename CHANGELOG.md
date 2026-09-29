@@ -1,5 +1,486 @@
 # Changelog
 
+## Unreleased
+
+## v0.12.0 — find by meaning, a small-change lane, and fewer calls per phase
+
+### Upgrading from v0.11.1
+
+- Run `modernpath install` after upgrading so the embedded process kit
+  (now with the `rdd-autopilot` skill), the managed `AGENTS.md` block and
+  `.modernpath/cli-reference.md` match this release.
+- Release repository history: v0.11.0 and v0.11.1 were made directly in
+  `ModernPath/cli`; their migration fixes are listed first below.
+- The search commands need a server that has the new search routes.
+
+### Migration fixes first shipped in v0.11.0 and v0.11.1
+
+These changes were made directly in `ModernPath/cli` and are imported here so
+this release keeps them.
+
+- `migrate report` and `migrate run` compare gate state before writing and
+  stop if the gates read from the store changed between reads.
+- A dismissed store gate that the corpus still holds open can be preserved with
+  `--residue-manifest` and `--residue-gate`. The gate must be an answered human
+  `migration_residue` decision that carries the exact manifest, its SHA-256 and
+  a `USER:` source. Only the listed gate ops are skipped.
+- The retired-file check also covers the requirement ledger paths the workspace
+  declared, and matches nested globs.
+- The store-backed marker no longer names `scripts/check-store-backed.sh`.
+
+### Find requirements and epics by name or meaning
+
+Run `modernpath install` after upgrading: `.modernpath/cli-reference.md`
+changes. Both commands need a server with the new search routes.
+
+- `requirements search <query>` finds user requirements, system requirements
+  and test cases of the bound system by id, display reference (`UR-5`,
+  `SR-12-0`, `TC-8`), title, description or meaning, in one ranked list.
+  Each hit shows its external id (or display reference), kind, work status,
+  name and how it matched; `DERIVED` requirements and unconfirmed test cases
+  are marked `candidate`, and `OBSOLETE` rows are never returned. It runs
+  the same server search as MCP's `search_requirements` and chat
+  (REQ-PLN-192, REQ-CROSS-472).
+- `epics search <query>` finds epics the same way, on the engine behind
+  MCP's `search_epics`, and shows each epic's code, process status, name and
+  how it matched (REQ-PLN-192).
+- Both take `--limit` (10 by default, at most 25) and `--json`. A 404 says
+  whether the system is unknown to the server or the server has no search
+  route. The subagent guard lets a delegated agent run both, as reads.
+- Server: MCP offers `search_requirements` next to `search_epics`
+  (REQ-CROSS-473); chat's `search_requirements` uses the same engine
+  (REQ-PLN-191); a daily job embeds eligible requirements and confirmed test
+  cases whose embedding failed (REQ-CROSS-474).
+
+### ask covers patterns and capabilities; the review packet shows what a chat found
+
+- `ask`'s help says that the agentic search also covers the curated patterns
+  and capabilities the system uses. The server names each source's kind and
+  id; `--format=json` sources keep the keys title, type and path
+  (REQ-CROSS-469, REQ-CROSS-470, server change).
+- An epic created from a chat carries what the chat's agentic search found.
+  `working-set pull --scope` shows these in a read-only `found_in_chat` block
+  in the epic file, and `--for-review` lists them under "Found in chat" in
+  `REVIEW.md`, each as its kind and name (REQ-CROSS-471).
+
+### search finds code files; ask names its sources and answers within 90 s
+
+- `search --files-only` returns the code files that match again: the
+  server kept a code result's path and classified it as code, and a files
+  search no longer spends its limit on source documents or data-model rows
+  (REQ-CROSS-466).
+- `ask` prints a file source's path when it has no title, in every format,
+  and lists each source once. `--format=json` sources keep the keys title,
+  type and path (REQ-CROSS-467).
+- The server's agentic search behind `ask` runs on the fast model, starts
+  from code files as well as documents, and answers within 90 s. When the
+  model cannot answer in time, the answer is what the search gathered, and
+  it says it is partial (REQ-CROSS-468, server change).
+
+### Reopen several requirements at once; re-review only what changed
+
+Run `modernpath install` after upgrading: the `mp-process-cli` skill, the
+`rdd-cold-reviewer` agent and `.modernpath/cli-reference.md` change. The
+reviewed fingerprints need a server that serves them on the gate read
+(REQ-CROSS-463).
+
+- `author demote --ids A,B,C` (or `--file`, one id per line) opens one
+  demotion gate over every item, with one basis and one USER: reason. All
+  items must be IN_REVIEW, or all DONE: a mixed batch is refused before any
+  write, naming both groups, the group holding user requirements first. The
+  gate's title names the items (the first ids and "and N more" within 255
+  characters) and its brief lists every item and the user requirements and
+  epics that follow. The gate id is `DEMOTE-<first id>`, or the next free
+  `-R<n>` in its series when the earlier gates are closed or withdrawn; an
+  open or answered gate in the series is refused and named (REQ-CROSS-462).
+- `author demote --gate-id <gate> --apply` takes no id and advances every
+  item of the answered gate, user requirements first, re-reading the gate
+  before each item. An item with its own applied entry is skipped. An item a
+  follow on another gate already moved is reported with that gate and passed
+  over, and the gate that cannot then close names `author gate-withdraw`. Any
+  other refusal stops the run, lists what was applied and what remains, and
+  exits non-zero; a re-run resumes. `author demote <id> --apply` without
+  `--gate-id` applies the newest gate in the `DEMOTE-<id>` series, every item
+  on it. The printed apply hint names `--gate-id` for a batch and for a gate
+  that is not at the default id (REQ-CROSS-462).
+- `working-set pull --scope --for-review` stamps each record's and packet
+  section's fingerprint in `.context` (`reviewed: <key> <fingerprint>`), and
+  `process review record` sends them on the cold-review trace as
+  `reviewed_fingerprints`. The trace still pins the full packet aggregate
+  (REQ-CROSS-464).
+- `working-set pull --scope --for-review --since <trace>` writes `REVIEW.md`
+  as a later round: the previous trace's code revision beside HEAD (with a
+  note to re-verify the citations of unchanged items when they differ), what
+  changed since that review in full with the old and new fingerprints, the
+  open findings, the previous verdict, and the unchanged ids with their
+  fingerprints only. It refuses a trace that is not a cold review, belongs to
+  another scope, or carries no reviewed fingerprints (a trace recorded before
+  this release: run a full review once), and `--since` with the by-id narrow
+  review (REQ-CROSS-464).
+- Server side (REQ-CROSS-463): the gate read serves `reviewed_fingerprints`
+  for a cold-review trace, from what was recorded at its birth, and null
+  otherwise.
+### Findings name how they resolved (EPIC-CLI-027)
+
+- The batch files take the resolution fields (EPIC-CLI-027 on EPIC-CLI-TURNS):
+  a `process findings add --file` entry takes `introduced_by`, and a
+  `process findings disposition --file` or `process review record` /
+  small-change lane review disposition takes `resolution`
+  (`packet-edit|scope|decision`) and `widens`, with the rules of the flags —
+  a RESOLVED entry without its kind, `scope` without `ref`, `decision`
+  without a `USER:` ref, `widens` outside a packet edit, and a kind or link
+  a server without `finding_resolution` would drop are refused before any
+  write: per entry in the batch verbs, for the whole file in a review.
+  `findings list` keeps its paging across the per-scope groups of `--all`:
+  `--limit`/`--offset` page the rows, the round summary counts every row,
+  and `--json` adds `total` and `has_more`.
+
+- `process findings list --json` and a per-scope `--all` (SR-CLI-027-004,
+  EPIC-CLI-027, BACKLOG-TOOL-203, BACKLOG-TOOL-225): `--json` writes one
+  object to stdout and nothing else — `findings` (the served rows, each
+  with `material`, `independent` and its `round`) and `rounds` (one object
+  per scope and round with its counts and flags, `document` and
+  `earlier_resolutions`, computed per round); an empty result is the same
+  object with empty arrays and `-v` adds nothing. `--all` groups the rows
+  and the round summary by scope with a heading per group, so round
+  numbering and the flags never cross scopes; a single-scope listing
+  renders as before with no heading. The output goes through the command
+  writer.
+
+- A finding names the earlier resolution it falls on (SR-CLI-027-003,
+  EPIC-CLI-027): `process findings add --introduced-by <F-id>` records the
+  earlier finding of the same scope whose resolution introduced the
+  mechanism the new finding faults — the server refuses an id it does not
+  hold on the scope or the finding itself, and a server that does not
+  advertise `finding_resolution` is refused before any request. Each round
+  line of `findings list` gains `widened` and `on earlier resolutions`, and
+  a round whose material findings all fall on earlier resolutions is
+  flagged: the packet was reviewed incomplete (PROCESS.md §Entry packet).
+
+- A packet edit does not change a member (SR-CLI-027-002, EPIC-CLI-027):
+  when a finding is raised the server stores the served content hash of
+  each scoped member — the epic's stored membership, the SR itself for a
+  `single_sr` — and a `packet-edit` resolution is refused naming every
+  member whose content moved since, unless `process findings disposition
+  --widens USER:<date>:<why>` states the widening on the human's word; the
+  server stores that source and `findings list -v` prints it. The snapshot
+  is the server's (a supplied one is refused on a create and on any
+  update), a widening source rides a packet-edit resolution into RESOLVED
+  only, and a finding raised before the change, or already RESOLVED, is
+  not compared.
+
+- A RESOLVED finding names how it resolved (SR-CLI-027-001, EPIC-CLI-027,
+  BACKLOG-TOOL-218): `process findings disposition --disposition RESOLVED`
+  requires `--resolution packet-edit|scope|decision` — `scope` names its
+  record in `--ref`, `decision` its `USER:` source — refused before any
+  request, as is a kind with any other disposition; the server stores the
+  kind, refuses a transition into RESOLVED without it (an update of an
+  OPEN/DEFERRED row or a create born RESOLVED) and a kind on any other final
+  disposition, and `findings list` prints `RESOLVED/<kind>`. A finding
+  already RESOLVED changes only its reference: `--ref` with
+  `--expected-fingerprint` and no `--disposition`, so a row resolved before
+  the change keeps its null kind. The server advertises
+  `finding_resolution` under `author.finding`: a build before this change is
+  refused on `findings add` too (USER:2026-09-27), and a new build refuses a
+  server that does not advertise it (a 404 contract read reads the same)
+  before any request, while a failed contract read names its status. The
+  server deploys first.
+
+### The state inventory and entry drift (EPIC-CLI-028)
+
+- `process enter`'s reconnaissance drift check reads a citation written with
+  a space after the prefix (`CODE: <path>`, `TEST: <path>`) as it already read
+  `CODE:<path>` (SR-CLI-028-002). Such a citation used to be skipped, so a
+  packet that cited that way entered past a changed cited file while the
+  check printed "no cited path changed".
+
+- `process enter` refuses on reconnaissance drift (SR-CLI-028-002,
+  EPIC-CLI-028, BACKLOG-TOOL-219): it reads the selection's reconnaissance
+  revision (refusing before the facts read when none is recorded), fetches
+  the remote default branch (`--no-fetch` for offline fixtures), and when
+  the tip moved past that revision and a path the packet cites as `CODE:`
+  or `TEST:` changed from the merge-base to the tip, refuses naming the tip
+  and the paths. A tip equal to or an ancestor of the revision is current.
+  `--allow-drift USER:<date>:<why>` accepts the drift and the gate body
+  records the source, the tip and the paths; both calls of a two-call entry
+  run the check.
+
+- The state inventory is a canonical packet section (SR-CLI-028-001,
+  EPIC-CLI-028): `process check --phase plan` requires `state_inventory`
+  beside reconnaissance, red strategy and decisions, `working-set pull
+  --scope` scaffolds `15-state-inventory.md` as one marker line naming the
+  table's columns and the no-state declaration, an untouched stub is never
+  pushed, and a present section counts in the packet aggregate. Scopes still
+  in planning read incomplete until the section is pushed. The server
+  deploys first: an older server serves the three-key list and the CLI
+  fallback names the fourth only when no list is served.
+
+### Fixes from the PR #694 review
+
+Run `modernpath install` and `modernpath hooks install` after upgrading: the
+`mp-process-cli` skill and `.modernpath/cli-reference.md` change.
+
+- `author apply` is now an input format for `working-set push`'s write
+  engine. The whole plan is checked before the first write, and one invalid
+  record stops the call with nothing written. A missing record is created,
+  then patched. Each record's fields, criteria, relations and membership go
+  in one atomic patch that carries the authoring context, so a review
+  recorded from the same context is not counted as independent.
+  **Pull first, or pin fingerprints:** an existing record the plan would
+  change is guarded by its `expected_fingerprint` or else by its
+  `working-set pull`. Without either it is refused, and a record that moved
+  since is refused rather than overwritten. The fingerprint is never read at
+  run time. `--from-pull` is deprecated and has no effect. Each updated
+  record's line shows `<replaced> -> <new>` (REQ-CROSS-442).
+- `author apply` reports a partial run truthfully. A fingerprint conflict is
+  reported for that record and the rest continue; any other refusal stops the
+  run and names the records written, those not written, and each record
+  created whose patch never ran — its line reads `created, not patched` and
+  the error names the `working-set pull <id>` that recovers it. A create the
+  store answers 409 reads `already exists`, with no empty fingerprint. The
+  call exits non-zero when any record did not apply (REQ-CROSS-442).
+- After `author apply` updates a record, its by-id `working-set pull`
+  snapshot carries the fingerprint the write returned, so a second apply from
+  the same pull is no longer refused as changed since the pull. Only the
+  fingerprint line and the written-body hash change; `working-set check`
+  still reports the snapshot stale. A scope pull's file is left alone — push
+  diffs it, and a moved fingerprint would let the next push revert the
+  write — and the line says to re-pull the scope (REQ-CROSS-442).
+- `working-set push` never creates a record; `author apply` is the only
+  create path. An item file whose id the store does not know is refused
+  before any write, and the refusal names `author apply`. A `members/` file
+  whose record the store holds outside the frozen selection is named as
+  skipped rather than dropped without a word; the line says it is not in the
+  frozen selection (and, when the scope's served membership holds it, that it
+  is a member) and to re-select to push it (REQ-CROSS-442).
+- The line of a record whose by-id pull snapshot apply moved to the new
+  fingerprint says the snapshot's content is from before the write: re-pull
+  it before copying from it (REQ-CROSS-442).
+- A pulled SR shows its `lane_class` and push can change it. The CLI's
+  mutable-field set is checked against the server's own definition, so a new
+  server field fails a test instead of drifting (REQ-CROSS-442).
+- The subagent guard no longer reads a here-document body as commands unless
+  the here-document feeds a shell (`bash`, `sh`, `zsh`, `eval`), and a
+  variable whose value ends in `/modernpath` counts as the binary only when it
+  is run as a command (REQ-CROSS-451).
+- `process findings disposition --scope` needs `--from`, the disposition you
+  saw, and writes only while the finding is still in it; a fingerprint read
+  just before the write guarded nothing (REQ-CROSS-443). The findings,
+  dispositions, review and lane authorization files refuse a key they do not
+  know and name it, instead of dropping it (REQ-CROSS-443, REQ-CROSS-450).
+- `author advance --gate` no longer advances the epic past a member it
+  skipped. A member already past the transition is done; any other member
+  that did not advance keeps the epic where it is, and the call exits
+  non-zero naming it (REQ-CROSS-444).
+- The subagent guard is default-deny: a delegated agent may run only the
+  verbs listed as reads, and any other subcommand is denied, so a new write
+  verb is denied until it is listed as a read. It reads the command as the
+  shell runs it, so `process lane "approve"` is denied, and denies a
+  subcommand it cannot read literally (`$VAR`, `$(…)`, `eval`, `xargs`
+  input, an indirect path to the binary) (REQ-CROSS-451).
+- The lane's help texts use plain words and no internal names
+  (REQ-CROSS-458). `process lane complete` tells the approver that the
+  `--log` run is the run the agent reported, not a verified one
+  (REQ-CROSS-456).
+- `--json` listings of `process backlog list` and `factory gates` carry
+  `total` and `has_more` (REQ-CROSS-447).
+- Server side (REQ-CROSS-453, 455, 456): a lane authorization's answerer is
+  judged by the roles in the sign-in token, with the workspace role table only
+  as the fallback for a caller without claims; the approver reads the terms as
+  the server wrote them from what it enforces; `process lane check` refuses a
+  DONE or OBSOLETE SR and a narrower re-report of the same commit, and its
+  verdict says the file list was reported by the CLI; the excluded areas match
+  without regard to case and also cover `*auth*`, `*token*`,
+  `config/runtime.exs`, `.github/workflows/**` and the bulk sync path; an
+  answered lane batch is pinned to its approved members only, so fixing a
+  rejected change never blocks them.
+
+### The small-change lane
+
+Run `modernpath install` after upgrading: the embedded process kit, the
+`mp-process-cli` skill and `.modernpath/cli-reference.md` change, and
+`install --check` reports them as drifted until you do. The lane needs a
+server that serves it (REQ-CROSS-453..457).
+
+A small change is one SR in no epic, of a class a current lane authorization
+covers, with at most five non-test source files and no excluded area. It
+takes one narrow independent review, enters by the standing authorization
+instead of a per-change human gate, and completes in a batch. A one-line
+defect goes from its record to IN_REVIEW in five writing calls and the review
+pull.
+
+- `process lane authorize --classes … --appliers … --expires … --cap …
+  [--exclude <glob>]…` (or `--file lane.json`) opens a lane authorization for
+  the System and prints its id, and names the next step. A workspace admin
+  answers it in the web app or with `process lane approve <gate>`. `process
+  lane` shows the current authorization.
+- `process lane approve <gate> [--text <decision>]` answers a lane
+  authorization with approve in one call, through the server's `lane_approve`
+  action, as the signed-in admin; `--text` is the USER: decision. It refuses
+  before any write when the gate is not a `lane_authorization`. `factory
+  answer` on a lane authorization is refused by the server, and so is any
+  client other than the web app and the CLI.
+- `working-set pull <SR> --for-review` renders one system requirement
+  read-only for the narrow review. It stamps a review context and the SR's
+  content in `.context`, and writes `REVIEW.md`.
+- `process lane review <SR> --file review.json` records the narrow review in
+  one call: a cold-review trace on PROPOSED->TODO at the SR's single-SR
+  aggregate, with a `LANE:narrow` source. It refuses without the review stamp,
+  without a lane class, or when the SR changed since the pull.
+- `process lane enter <SR>` posts one advance PROPOSED->TODO with the current
+  authorization as `lane_ref`. On an entered SR that changed afterwards, it
+  re-applies the authorization.
+- `process lane check <SR> --commit <sha> [--base <sha>]` posts the delivered
+  file list over `<sha>^1..<sha>`, or `<base>..<sha>` for a rebase delivery,
+  and prints the server's eligibility verdict. A FAIL names each offending
+  file and exits non-zero.
+- `process lane complete --log <run>` opens one lane-batch gate over the
+  IN_REVIEW small changes with a passing eligibility, listing each change's
+  files. `--apply` advances the members the answer approved; a rejected one
+  stays IN_REVIEW.
+- `author update --lane-class <class>` sets an SR's lane class. `author apply`
+  takes `lane_class` and `sources` on a requirement.
+- The verbs that read the single-SR aggregate take the SR as a `single_sr`
+  work selection when you do not hold it, because the server serves the
+  aggregate only for a held piece.
+- The subagent guard denies `process lane authorize`, `approve`, `review`,
+  `enter`, `check` and `complete` to delegated agents. The kit's permission
+  rules allow them as routine writes, except `authorize` and `approve`, which
+  ask; no allow rule covers `approve`. Run `modernpath hooks install` to add
+  the new ask rule.
+- The embedded process kit is synced from req-driven-dev `d027476` on the
+  `feat/small-change-lane` branch (ModernPath/req-driven-dev#31). Re-sync the
+  pin to req-driven-dev `main` with `scripts/sync-rdd-assets.sh` once that
+  pull request merges.
+
+### Three `process advance` and review-pull edge fixes
+
+- `process advance` judges a TODO or READY member by its own entry, as
+  reconcile does: a member entered through its own members-only gate at the
+  current packet aggregate advances even when the epic's entry gate is pinned
+  at an older aggregate. A member with no live entry of its own, under an
+  epic entry gate that is current, is refused before any write; the refusal
+  names the member and points to `process reconcile --piece <piece>`. This
+  needs a server that serves the per-member `entry_current` fact; with an
+  older server, the check and its message are unchanged (REQ-CROSS-459).
+- `process advance <SR>` and `process reenter <SR>` no longer need `--piece`
+  when you hold several selections and the SR is itself one of them. An item
+  that is not one of the held pieces is still refused, naming the pieces and
+  `--piece` (REQ-CROSS-460).
+- `REVIEW.md` shows a `Sources` line for the scope requirement and for every
+  member requirement: the served citations, `—` when there are none, and the
+  not-served marker when the read does not serve them. The epic block is
+  unchanged (REQ-CROSS-461).
+
+### Fewer calls per delivery phase
+
+Run `modernpath install` after upgrading. The `mp-process-cli` skill and
+`.modernpath/cli-reference.md` now give each phase with the batch verbs below,
+and `install --check` reports them as drifted until you do. A four-SR epic
+from planning to IN_REVIEW takes 11 calls this way, instead of 46 one record
+at a time. The single-record verbs still work and remain the fallback.
+
+- `author apply --file <plan.yaml|json>` records an epic, its user and system
+  requirements with their prose and criteria, the relations and the membership
+  in one call. It writes only fields that differ and reports each record. A
+  rerun writes nothing; `--dry-run` prints the plan.
+- `working-set pull --scope --for-review` also writes `REVIEW.md`: the whole
+  packet in one file, each record under an `id · fingerprint` heading. It
+  stamps the packet aggregate in `.context`.
+- `process review record --file <review.json>` records a delegated cold
+  review in one call: its findings, its dispositions and the cold-review
+  trace at the stamped aggregate. It refuses before any write when the pull
+  has no review stamp, when the aggregate has moved, or when a PASS would
+  leave a material finding open.
+- `process findings add --file` records a list of findings.
+  `process findings disposition --file` sets several dispositions, each only
+  while the finding is still in its `from` disposition.
+  `process findings disposition --scope <kind>:<id>` reads the finding's
+  fingerprint itself, so `--expected-fingerprint` is no longer required.
+- `author advance --gate <GATE>` reads the gate's fingerprint, transition and
+  `approve` answer when they are omitted. Without a record id, it advances
+  every record the gate names, members first, then the epic.
+- `factory evidence --file <runs.json>` records several runs in one call. Each
+  run ID is derived from its entry, so rerunning the file updates the same
+  runs.
+- `process advance --all --piece <EPIC> --log <run>` advances every system
+  requirement of the piece and says why any one was not moved.
+- `process next` with several held pieces prints one block per piece (scope,
+  phase, why, the skill to run, the gates waiting on it) and exits 0, instead
+  of refusing.
+- `process enter` re-stamps sections whose content is unchanged but whose
+  context moved, instead of refusing them. `--brief-file` also takes the
+  markdown brief bullets.
+- `process backlog list`, `factory gates` and `process findings list` print at
+  most 50 records in text output. Use `--limit` and `--offset` to page;
+  `process backlog list` gains `--json`.
+- The kit's permission rules allow `author apply`, `process review record` and
+  `process advance` as routine writes. `modernpath hooks install` adds the
+  rules where the workspace has not placed them itself. The subagent guard
+  still denies them, `process enter`, `process complete` and
+  `process review record` to delegated agents.
+
+- The managed `AGENTS.md` block now states what the loop covers: product
+  work goes through the loop, meta-work (repository layout, CI/CD, deployment
+  infrastructure, developer tooling, agent instructions, the process material)
+  goes through the project's normal review path with the reason stated. The
+  rule used to live only in the ModernPath workspace's own instructions, so
+  every other installed repository was pushed to run meta-work through the
+  loop. Run `modernpath install` to refresh the agent instructions.
+
+- `author update --citations-file` refuses non-string `ref` values before
+  posting, even when another valid source identity is supplied.
+
+- Plain `factory gates <id>` details and pulled gate snapshots show the stored
+  decision brief: What, Why now, Changes if approved, Risk if wrong and
+  Recommendation. Partial briefs omit empty fields and preserve multiline text;
+  JSON and compact gate listings keep their existing output.
+
+- `author update --citations-file` replaces an existing requirement's complete
+  typed citation set while preserving supplied provenance metadata and legacy
+  process-source identities. An empty array clears citations; omission preserves
+  them. Existing fingerprint checks and lifecycle restrictions still apply.
+
+- `feedback` writes tooling issues only to the verified ModernPath
+  tenant and bound workspace. Customer credentials and customer workspace
+  bindings are refused rather than rerouted; local tooling-gap fallback files are
+  no longer created. Run `modernpath install` to refresh the agent instructions.
+- `process prepare-inputs` checks delivery context with one request and reports
+  held-piece count, local documentation last synced, and server documentation
+  last updated. It leaves documents unchanged; use `docs sync` explicitly to
+  refresh them. The server must provide the new preparation endpoint.
+- Agent instructions prefer local `rg` and file reads, with live search/read-doc
+  for missing material or a current server answer.
+- Human approval instructions require a decision brief and a listing of the
+  relevant working-set files, with full absolute paths as clickable links.
+  File contents are shown on request. Run `modernpath install` to refresh the
+  process snapshot and approval procedure skills.
+
+### Export downloads go through the export link
+
+- `init` and `docs sync` ask the export's link for the zip. A signed storage
+  URL is fetched straight from the bucket, without your credential; the API's
+  own file route is fetched with it. This needs a server with the export link
+  (REQ-OBAN-018); older servers answer `invalid start export response`.
+- An export whose zip has expired says so and asks you to run the export again.
+- The export wait reports the job's status and the elapsed-time heartbeat; the
+  server's progress text is gone.
+
+### Keep an uploaded system current from your own network
+
+- `modernpath source push` (REQ-SYS-211, EPIC-ANALYSIS-009) re-packs the
+  working directory with exactly the `import --local` filters, computes the
+  content revision the server uses and, only when it changed, uploads the
+  archive to the bound system's upload repository; the server supersedes the
+  previous source and queues an incremental refresh of the knowledge core.
+  The same tree is a no-op after a completed refresh and a re-queue after a
+  stopped one; the checkout's git head, branch and dirty flag travel as
+  metadata. The verb never prompts and exits non-zero on a server refusal
+  with its code, message and, when the repository is busy, the time since.
+- `import --local` records the created repository id in the working
+  directory's `.modernpath/config.json`, preserving the file's other fields;
+  the git-URL import option is no longer labelled as recommended.
+
 ## v0.10.0 — exact reads and safer system activation
 
 ### Upgrading from v0.9.0

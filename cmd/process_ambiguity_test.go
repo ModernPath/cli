@@ -47,12 +47,26 @@ func assertNamesPieces(t *testing.T, err error, out string) {
 	}
 }
 
+// REQ-CROSS-446 (DC-7, USER:2026-09-27): process next no longer refuses when
+// several pieces are held — it lists each held piece and names the --piece
+// remedy, and exits 0. Even when no per-piece read answers, every held piece
+// and the remedy are named, and nothing reads as absent.
 func TestREQCROSS379ProcessNextNamesTheHeldPieces(t *testing.T) {
 	srv := ambiguityServer(t, []string{"EPIC-A", "EPIC-B"})
 	env := &factoryEnv{Root: t.TempDir(), APIURL: srv.URL, SystemID: 4, token: "t"}
 	var err error
 	out := captureOut(t, func() { err = processNext(env) })
-	assertNamesPieces(t, err, out)
+	if err != nil {
+		t.Fatalf("several held pieces are summarized, not refused: %v\n%s", err, out)
+	}
+	for _, want := range []string{"EPIC-A", "EPIC-B", "--piece"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("process next must name the held pieces and the remedy (%q):\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "no current selection") || strings.Contains(out, "nothing to do") {
+		t.Fatalf("several held pieces must never read as absent or idle:\n%s", out)
+	}
 }
 
 func TestREQCROSS379ProcessCheckNamesTheHeldPieces(t *testing.T) {

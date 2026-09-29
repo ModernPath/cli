@@ -18,7 +18,7 @@ func TestProcessEnterAsBuiltMembersEnterFirst(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{
 		verifyMember("REQ-A-1", "PROPOSED"), verifyMember("REQ-A-2", "PENDING_VERIFICATION"), verifyMember("REQ-A-3", "PENDING_VERIFICATION"),
 	}, "PROPOSED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
@@ -57,7 +57,7 @@ func TestProcessEnterEnteredEpicOpensTheVerificationGateAlone(t *testing.T) {
 		cs := enterServer(t, enterFacts([]map[string]any{
 			verifyMember("REQ-A-1", "DONE"), verifyMember("REQ-A-2", "PENDING_VERIFICATION"),
 		}, status, "pass", true, "CR-A", nil), true)
-		env := wsEnv(t, cs.srv)
+		env := enterEnv(t, cs)
 		var err error
 		out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
 		if err != nil {
@@ -80,7 +80,7 @@ func TestProcessEnterEnteredEpicOpensTheVerificationGateAlone(t *testing.T) {
 func TestProcessEnterRefusesAsBuiltMembersOfADoneEpic(t *testing.T) {
 	for _, status := range []string{"DONE", "OBSOLETE"} {
 		cs := enterServer(t, enterFacts([]map[string]any{verifyMember("REQ-A-2", "PENDING_VERIFICATION")}, status, "pass", true, "CR-A", nil), true)
-		env := wsEnv(t, cs.srv)
+		env := enterEnv(t, cs)
 		err := processEnter(env, "EPIC-A", enterOpts{})
 		if err == nil || !strings.Contains(err.Error(), status) || !strings.Contains(err.Error(), "demote") {
 			t.Fatalf("%s: a done epic's as-built member is refused naming the state and the remedy, got %v", status, err)
@@ -93,7 +93,7 @@ func TestProcessEnterVerificationDryRunPostsNothing(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{
 		verifyMember("REQ-A-1", "PROPOSED"), verifyMember("REQ-A-2", "PENDING_VERIFICATION"),
 	}, "PROPOSED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
 	if err != nil {
@@ -109,7 +109,7 @@ func TestProcessEnterVerificationDryRunPostsNothing(t *testing.T) {
 func TestProcessEnterVerificationSuccessorId(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{verifyMember("REQ-A-2", "PENDING_VERIFICATION")}, "IN_PROGRESS", "pass", true, "CR-A", nil), true)
 	cs.existingGates["ENTRY-EPIC-A-VERIFY"] = map[string]any{"external_id": "ENTRY-EPIC-A-VERIFY", "state": "closed"}
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	if err := processEnter(env, "EPIC-A", enterOpts{}); err != nil {
 		t.Fatalf("enter: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestProcessEnterGateIDDoesNotBypassAnOpenPrimaryId(t *testing.T) {
 	for _, state := range []string{"open", "answered"} {
 		cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
 		cs.existingGates["ENTRY-EPIC-A"] = map[string]any{"external_id": "ENTRY-EPIC-A", "state": state}
-		env := wsEnv(t, cs.srv)
+		env := enterEnv(t, cs)
 		err := processEnter(env, "EPIC-A", enterOpts{gateID: "ENTRY-EPIC-A-AGAIN"})
 		if err == nil || !strings.Contains(err.Error(), "already "+state) {
 			t.Fatalf("%s: the primary id is named, never rotated past under --gate-id, got %v", state, err)
@@ -141,7 +141,7 @@ func TestProcessEnterGateIDDoesNotBypassAnOpenPrimaryId(t *testing.T) {
 func TestProcessReenterOpensForAMemberUnderTheEpicPiece(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{verifyMember("REQ-A-1", "IN_PROGRESS"), verifyMember("REQ-A-2", "DONE")}, "IN_PROGRESS", "pass", true, "CR-A", nil), true)
 	cs.factsOnlyFor = "EPIC-A"
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 
 	var err error
 	out := captureOut(t, func() { err = processReenterOpen(env, "REQ-A-1") })
@@ -168,7 +168,7 @@ func TestProcessAdvanceNamesThePieceToReapply(t *testing.T) {
 	facts := advanceFacts("TODO", "passing", true, false)
 	facts["entry_gate"] = map[string]any{"applied": true, "pinned_aggregate": strings.Repeat("9", 64)}
 	cs := newCeremonyServer(t, facts, true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	err := processAdvance(env, "REQ-A-1", advanceOpts{log: "go test ./cmd"})
 	if err == nil || !strings.Contains(err.Error(), "process reapply-entry EPIC-A") || !strings.Contains(err.Error(), "REQ-A-1") {
 		t.Fatalf("the remedy names the piece (and the member for a members-only gate), got %v", err)

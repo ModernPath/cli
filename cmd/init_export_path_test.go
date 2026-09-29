@@ -13,14 +13,14 @@ func TestRemapExportPath(t *testing.T) {
 		want string
 	}{
 		{
-			name: "flattens module angle markdown",
+			name: "preserves module angle markdown path",
 			in:   ".modernpath/my-app/architecture/configuration/modules/core-config/code_structure/code-structure-core-config-configuration.md",
-			want: ".modernpath/my-app/architecture/configuration/modules/core-config/code-structure-core-config-configuration.md",
+			want: ".modernpath/my-app/architecture/configuration/modules/core-config/code_structure/code-structure-core-config-configuration.md",
 		},
 		{
-			name: "flattens module overview-angle markdown",
+			name: "preserves module overview-angle markdown path",
 			in:   ".modernpath/my-app/architecture/configuration/modules/core-config/overview/overview-core-config-configuration.md",
-			want: ".modernpath/my-app/architecture/configuration/modules/core-config/overview-core-config-configuration.md",
+			want: ".modernpath/my-app/architecture/configuration/modules/core-config/overview/overview-core-config-configuration.md",
 		},
 		{
 			name: "keeps module overview in place",

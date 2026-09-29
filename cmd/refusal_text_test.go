@@ -32,7 +32,7 @@ func TestREQCROSS372AuthorRefusalDetailsRenderAsFieldLines(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorCreate(env, "gate", "ENTRY-X", map[string]any{"title": "Entry"})
+	_, err := authorCreate(env, "gate", "ENTRY-X", map[string]any{"title": "Entry"})
 	if err == nil {
 		t.Fatal("a 422 must surface as an error")
 	}
@@ -111,7 +111,7 @@ func TestREQCROSS372AnUndecodableRefusalBodyIsPrintedRaw(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorCreate(env, "gate", "ENTRY-Z", map[string]any{"title": "Entry"})
+	_, err := authorCreate(env, "gate", "ENTRY-Z", map[string]any{"title": "Entry"})
 	if err == nil {
 		t.Fatal("a 503 must surface as an error")
 	}
@@ -184,7 +184,7 @@ func TestREQCROSS372ATopLevelGatewayMessageIsPrinted(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorCreate(env, "gate", "ENTRY-GW", map[string]any{"title": "Entry"})
+	_, err := authorCreate(env, "gate", "ENTRY-GW", map[string]any{"title": "Entry"})
 	if err == nil {
 		t.Fatal("a 502 must surface as an error")
 	}
@@ -206,7 +206,7 @@ func TestREQCROSS380AnEmptyServerErrorCitesTheRequestReference(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorCreate(env, "gate", "ENTRY-Z", map[string]any{"title": "Entry"})
+	_, err := authorCreate(env, "gate", "ENTRY-Z", map[string]any{"title": "Entry"})
 	if err == nil {
 		t.Fatal("a 500 must surface as an error")
 	}

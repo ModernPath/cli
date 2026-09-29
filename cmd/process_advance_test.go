@@ -41,6 +41,18 @@ type ceremonyServer struct {
 	// other scope reads "unavailable", as the live server answers for an id
 	// that names no held selection (a member, for one).
 	factsOnlyFor string
+	// factsAfterWrite, when set, is served once any author write has landed —
+	// REQ-CROSS-446: the facts process enter re-reads after re-stamping.
+	factsAfterWrite map[string]any
+	// workSelectionGet, when set, answers GET /work-selection by the ?scope=
+	// it is asked for (REQ-CROSS-460: the several-held 422 without a scope).
+	workSelectionGet func(scope string) (int, map[string]any)
+	// reconRevision, when set, is served as the selection's recon_revision
+	// (SR-CLI-028-002: the revision `process enter` compares the default
+	// branch against). reads logs every store read in order, so a test can
+	// say which read a refusal came before.
+	reconRevision string
+	reads         []string
 }
 
 func newCeremonyServer(t *testing.T, facts map[string]any, serveFacts bool) *ceremonyServer {
@@ -56,22 +68,37 @@ func newCeremonyServer(t *testing.T, facts map[string]any, serveFacts bool) *cer
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"selection": body}})
 			return
 		}
+		cs.reads = append(cs.reads, "work-selection")
+		if cs.workSelectionGet != nil {
+			status, body := cs.workSelectionGet(r.URL.Query().Get("scope"))
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(body)
+			return
+		}
+		current := map[string]any{
+			"scope_external_id": "EPIC-A", "scope_kind": "epic",
+			"members": []string{"REQ-A-1", "REQ-A-2"}, "phase": "build",
+		}
+		if cs.reconRevision != "" {
+			current["recon_revision"] = cs.reconRevision
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"active_release": []any{map[string]any{"slug": "r", "status": "active"}},
-			"current": map[string]any{
-				"scope_external_id": "EPIC-A", "scope_kind": "epic",
-				"members": []string{"REQ-A-1", "REQ-A-2"}, "phase": "build",
-			},
-			"suspended": []any{}, "history": []any{},
+			"current":        current,
+			"suspended":      []any{}, "history": []any{},
 		}})
 	})
 	mux.HandleFunc("/api/v1/sync/delivery-context", func(w http.ResponseWriter, r *http.Request) {
+		cs.reads = append(cs.reads, "delivery-context")
 		data := map[string]any{
 			"packet_fingerprint": pinAggregate, "process_revision": strings.Repeat("c", 40),
 			"checks": map[string]any{}, "derived_phase": "build", "declared_phase": "build",
 		}
 		if serveFacts && (cs.factsOnlyFor == "" || r.URL.Query().Get("scope") == cs.factsOnlyFor) {
 			data["facts"] = facts
+			if cs.factsAfterWrite != nil && len(cs.authored) > 0 {
+				data["facts"] = cs.factsAfterWrite
+			}
 			data["facts_state"] = "served"
 		} else if serveFacts {
 			data["facts"] = nil
@@ -388,4 +415,154 @@ func TestProcessAdvanceRefusesAURWithTheUpperTraceItsPinRead(t *testing.T) {
 	if len(cs.authored)+len(cs.reconciles) != 0 {
 		t.Fatalf("a refusal writes nothing, got %v %v", cs.authored, cs.reconciles)
 	}
+}
+
+// REQ-CROSS-459 (EPIC-CLI-EDGES): the facts serve, per member, whether its
+// own entry is current at the aggregate by reconcile's test. A member entered
+// through its own members-only gate at the current aggregate advances even
+// while the epic's gate is pinned at an older one (BACKLOG-TOOL-271).
+func TestREQCROSS459AdvancesAMemberServedEntryCurrentUnderAStaleEpicPin(t *testing.T) {
+	facts := advanceFacts("TODO", "passing", true, false)
+	facts["entry_gate"] = map[string]any{"applied": true, "pinned_aggregate": strings.Repeat("0", 64)}
+	facts["members"].([]map[string]any)[0]["entry_current"] = true
+	cs := newCeremonyServer(t, facts, true)
+	cs.reconcileResp = []map[string]any{
+		{"applied": true, "transitions": []any{transition("REQ-A-1", "TODO", "IN_PROGRESS")}, "fails": []any{}},
+		{"applied": true, "transitions": []any{transition("REQ-A-1", "IN_PROGRESS", "IN_REVIEW")}, "fails": []any{}},
+	}
+	env := wsEnv(t, cs.srv)
+
+	var err error
+	out := captureOut(t, func() { err = processAdvance(env, "REQ-A-1", advanceOpts{log: "go test ./cmd"}) })
+	if err != nil {
+		t.Fatalf("a member whose own entry is current must advance under a stale epic pin: %v\n%s", err, out)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the lower trace is recorded, got %v", cs.authored)
+	}
+	if record, _ := cs.authored[0]["record"].(map[string]any); record["purpose"] != "lower" || record["fingerprint"] != advHash {
+		t.Fatalf("the lower trace pins to the member's content hash, got %v", record)
+	}
+	if len(cs.reconciles) == 0 {
+		t.Fatalf("the advance reconciles after the trace")
+	}
+}
+
+// REQ-CROSS-459: the epic pin is current but the member's own entry is not —
+// reconcile would move nothing, so the verb refuses before any write, stating
+// the member's missing entry and pointing at `process reconcile`.
+func TestREQCROSS459RefusesAMemberServedEntryNotCurrentUnderACurrentEpicPin(t *testing.T) {
+	facts := advanceFacts("TODO", "passing", true, false)
+	facts["members"].([]map[string]any)[0]["entry_current"] = false
+	cs := newCeremonyServer(t, facts, true)
+	env := wsEnv(t, cs.srv)
+
+	err := processAdvance(env, "REQ-A-1", advanceOpts{log: "go test ./cmd"})
+	if err == nil {
+		t.Fatalf("a member without its own current entry must be refused")
+	}
+	for _, want := range []string{"REQ-A-1", "no live entry of its own", "`process reconcile --piece EPIC-A`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must name %q, got %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "reapply-entry") {
+		t.Errorf("the epic pin is current: the refusal must not send the caller to reapply-entry, got %v", err)
+	}
+	assertNoWrites(t, cs)
+}
+
+// REQ-CROSS-459 guard: without the key, or with the epic pin stale and the
+// member served false, the check and its text are today's (REQ-CROSS-413).
+func TestREQCROSS459KeepsTodaysRefusalWithoutTheKeyOrUnderAStaleEpicPin(t *testing.T) {
+	for name, served := range map[string]any{"absent": nil, "false": false} {
+		facts := advanceFacts("TODO", "passing", true, false)
+		facts["entry_gate"] = map[string]any{"applied": true, "pinned_aggregate": strings.Repeat("0", 64)}
+		if served != nil {
+			facts["members"].([]map[string]any)[0]["entry_current"] = served
+		}
+		cs := newCeremonyServer(t, facts, true)
+		env := wsEnv(t, cs.srv)
+		err := processAdvance(env, "REQ-A-1", advanceOpts{log: "go test ./cmd"})
+		if err == nil || !strings.Contains(err.Error(), "its entry gate is not applied at the current packet aggregate") ||
+			!strings.Contains(err.Error(), "process reapply-entry EPIC-A") {
+			t.Fatalf("%s: today's refusal and remedy stand, got %v", name, err)
+		}
+		assertNoWrites(t, cs)
+	}
+}
+
+// REQ-CROSS-460 (EPIC-CLI-EDGES): an SR that is itself one of several held
+// selections resolves to its own piece without --piece; the 422 is the live
+// server's shape (sync_api_controller: error + pieces).
+func severalHeld(single string) func(scope string) (int, map[string]any) {
+	return func(scope string) (int, map[string]any) {
+		switch scope {
+		case "":
+			return 422, map[string]any{
+				"error":  "you hold several current selections (EPIC-A, " + single + ") — name one with ?scope=<id>",
+				"pieces": []string{"EPIC-A", single},
+			}
+		case single:
+			return 200, map[string]any{"data": map[string]any{
+				"active_release": []any{map[string]any{"slug": "r", "status": "active"}},
+				"current": map[string]any{
+					"scope_external_id": single, "scope_kind": "single_sr", "members": []string{}, "phase": "build",
+				},
+				"suspended": []any{}, "history": []any{},
+			}}
+		default:
+			return 200, map[string]any{"data": map[string]any{
+				"current": map[string]any{
+					"scope_external_id": "EPIC-A", "scope_kind": "epic",
+					"members": []string{"REQ-A-1", "REQ-A-2"}, "phase": "build",
+				},
+			}}
+		}
+	}
+}
+
+func TestREQCROSS460AdvancesAHeldSingleSRWithoutPiece(t *testing.T) {
+	facts := advanceFacts("IN_PROGRESS", "passing", true, false)
+	facts["scope"] = map[string]any{"external_id": "REQ-B-1", "kind": "requirement", "status": "IN_PROGRESS"}
+	facts["members"] = []map[string]any{{"external_id": "REQ-B-1", "kind": "sr", "status": "IN_PROGRESS",
+		"content_fingerprint": advHash, "evidence_state": "passing", "red_recorded": true, "lower_trace_pass": false}}
+	cs := newCeremonyServer(t, facts, true)
+	cs.factsOnlyFor = "REQ-B-1"
+	cs.workSelectionGet = severalHeld("REQ-B-1")
+	cs.reconcileResp = []map[string]any{
+		{"applied": true, "transitions": []any{transition("REQ-B-1", "IN_PROGRESS", "IN_REVIEW")}, "fails": []any{}},
+	}
+	env := wsEnv(t, cs.srv)
+
+	var err error
+	out := captureOut(t, func() { err = processAdvance(env, "REQ-B-1", advanceOpts{log: "go test ./cmd"}) })
+	if err != nil {
+		t.Fatalf("a held single SR resolves to its own piece: %v\n%s", err, out)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the lower trace is recorded, got %v", cs.authored)
+	}
+	for _, rc := range cs.reconciles {
+		if rc["scope"] != "REQ-B-1" {
+			t.Fatalf("reconcile runs against the SR's own piece, got %v", rc)
+		}
+	}
+}
+
+func TestREQCROSS460StillRefusesAnItemNotAmongTheHeldPieces(t *testing.T) {
+	cs := newCeremonyServer(t, advanceFacts("IN_PROGRESS", "passing", true, false), true)
+	cs.workSelectionGet = severalHeld("REQ-B-1")
+	env := wsEnv(t, cs.srv)
+
+	err := processAdvance(env, "REQ-A-1", advanceOpts{log: "go test ./cmd"})
+	if err == nil || !strings.Contains(err.Error(), "EPIC-A") || !strings.Contains(err.Error(), "--piece") {
+		t.Fatalf("an item not held itself is refused naming the held pieces and --piece, got %v", err)
+	}
+	for _, never := range []string{"no current selection", "nothing to do"} {
+		if strings.Contains(err.Error(), never) {
+			t.Errorf("REQ-CROSS-379: the refusal never reads %q, got %v", never, err)
+		}
+	}
+	assertNoWrites(t, cs)
 }

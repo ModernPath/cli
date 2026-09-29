@@ -10,9 +10,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,6 +63,8 @@ var (
 	authorBoundary           string
 	authorRationale          string
 	authorVerificationMethod string
+	// REQ-CROSS-458: the small-change lane class, set before the narrow review.
+	authorLaneClass string
 	// EPIC-CLI-007: `author relate --mode` reaches the server's
 	// declare/withdraw/confirm; `author member` authors epic membership.
 	authorRelateMode string
@@ -74,6 +78,7 @@ var (
 	// the brief block PROCESS requires on a human gate, plus recommendation,
 	// sources and prerequisite gate ids.
 	authorSources               []string
+	authorCitationsFile         string
 	authorGateBriefWhat         string
 	authorGateBriefWhyNow       string
 	authorGateBriefChanges      string
@@ -128,7 +133,7 @@ is unbounded.`,
 		if err != nil {
 			return err
 		}
-		return authorCreate(env, "requirement", args[0], fields)
+		return errOnly(authorCreate(env, "requirement", args[0], fields))
 	},
 }
 
@@ -198,7 +203,7 @@ Examples:
 		if err != nil {
 			return err
 		}
-		return authorCreate(env, "backlog", args[0], fields)
+		return errOnly(authorCreate(env, "backlog", args[0], fields))
 	},
 }
 
@@ -295,7 +300,7 @@ then working-set push).`,
 		if err != nil {
 			return err
 		}
-		return authorCreate(env, "epic", args[0], authorEpicFields())
+		return errOnly(authorCreate(env, "epic", args[0], authorEpicFields()))
 	},
 }
 
@@ -385,7 +390,7 @@ fragment is refused before any write.`,
 		}
 		inferred := transition != "" && authorGateTransition == "" && authorTransFrom == ""
 		authorGateTransition = transition
-		return withEntrySourceHint(authorCreate(env, "gate", args[0], authorGateFields()), inferred)
+		return withEntrySourceHint(errOnly(authorCreate(env, "gate", args[0], authorGateFields())), inferred)
 	},
 }
 
@@ -515,7 +520,7 @@ func parseGateOptions(raw []string) ([]map[string]any, error) {
 }
 
 var authorAdvanceCmd = &cobra.Command{
-	Use:   "advance <external-id>",
+	Use:   "advance [<external-id>]",
 	Short: "Advance a requirement or epic under server-enforced transition legality",
 	Long: `Apply a lifecycle transition. Automatic transitions (TODO -> IN_PROGRESS ->
 IN_REVIEW) are normally applied by process reconcile from trace proofs; this
@@ -530,21 +535,176 @@ shadow's hash, falling back to the gate row's own when no shadow exists.
 That read also carries content_fingerprint, the row's column — do not pass
 that one. A stale hash conflicts instead of applying.
 
+With --gate the verb reads the gate itself: an omitted --gate-fingerprint is
+the gate's fingerprint, an omitted --to and --expected are the TO and FROM
+states of the gate's transition, and an omitted --gate-answer is approve when
+the gate's chosen options are exactly approve (any other answer must be
+echoed). --kind is read from the record. Explicit flags always win. A gate
+that carries no transition is refused unless --to and --expected are given.
+
 Members before the epic: apply each member the gate names, then the epic;
 the gate closes and reads applied once every named scope has its
 application. The server does not enforce that order — the recipe does, so
-an epic advanced first leaves its members to remember. DEFERRED needs
---decision USER:<date>:<why> instead of a gate. --expected is the record's current status, so two concurrent advances
-conflict rather than overwrite.`,
-	Args: cobra.ExactArgs(1),
+an epic advanced first leaves its members to remember. --gate <GATE> with no
+id does it in one call: every record the gate's exact scope names that is
+still in the FROM state, members first, then the epic when the gate names
+it; it prints each result, skips a record already past, and stops before the
+epic when a member is refused.
+
+DEFERRED needs --decision USER:<date>:<why> instead of a gate. --expected is
+the state the transition starts from (the gate's FROM state, never a fresh
+read of the record), so two concurrent advances conflict rather than
+overwrite.`,
+	Args: cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 && authorGateRef == "" {
+			return fmt.Errorf("name the record to advance, or --gate <GATE> to advance every record its scope names")
+		}
 		env, err := authorEnv()
 		if err != nil {
 			return err
 		}
-		return authorAdvance(env, authorKind, args[0], authorTo, authorExpected,
-			authorGateRef, authorGateFinger, authorGateAnswer, authorDecisionRef)
+		return runAuthorAdvance(env, cmd, args)
 	},
+}
+
+// runAuthorAdvance fills what the caller left out from one gate read and one
+// item read (REQ-CROSS-444), following authorDemoteApply's gate read: the
+// gate's fingerprint, its transition's FROM and TO, and an approve answer;
+// the record's kind. Explicit flags win. Without an id it advances the gate's
+// exact scope, members first.
+func runAuthorAdvance(env *factoryEnv, cmd *cobra.Command, args []string) error {
+	to, expected, gateFP, answer := authorTo, authorExpected, authorGateFinger, authorGateAnswer
+	var scope []string
+	if authorGateRef != "" && (len(args) == 0 || to == "" || expected == "" || gateFP == "" || answer == "") {
+		status, body, err := env.call("GET",
+			fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", url.PathEscape(authorGateRef), env.SystemID), nil)
+		if err != nil {
+			return err
+		}
+		if status != 200 {
+			return gateShowError(status, body, authorGateRef)
+		}
+		gate, _ := dataOf(body)["gate"].(map[string]any)
+		if gateFP == "" {
+			// The shadow value advance guards on; the row's content_fingerprint
+			// only for a server that predates it (as authorDemoteApply reads it).
+			gateFP = str(gate, "fingerprint")
+			if gateFP == "" {
+				gateFP = str(gate, "content_fingerprint")
+			}
+		}
+		if keys := stringSlice(gate["chosen_option_keys"]); answer == "" && len(keys) == 1 && keys[0] == "approve" {
+			answer = "approve"
+		}
+		if len(args) == 0 || to == "" || expected == "" {
+			from, gateTo, ok := strings.Cut(str(gate, "transition"), "->")
+			if !ok {
+				return fmt.Errorf("%s carries no FROM->TO transition — pass --to and --expected with the record id; nothing was advanced", authorGateRef)
+			}
+			if expected == "" {
+				expected = strings.TrimSpace(from)
+			}
+			if to == "" {
+				to = strings.TrimSpace(gateTo)
+			}
+		}
+		scope, _ = normalizeScopeTokens(gate["exact_scope"])
+	}
+
+	ids := args
+	if len(args) == 0 {
+		ids = scope
+	}
+	var items map[string]wsItem
+	if len(args) == 0 || !cmd.Flags().Changed("kind") {
+		var err error
+		if items, err = fetchDirectItems(env, ids, false, false); err != nil {
+			return err
+		}
+	}
+	kindOf := func(id string) string {
+		if cmd.Flags().Changed("kind") {
+			return authorKind
+		}
+		if item, ok := items[id]; ok && item.kind == "epic" {
+			return "epic"
+		}
+		return "requirement"
+	}
+	advance := func(id string) error {
+		return authorAdvance(env, kindOf(id), id, to, expected, authorGateRef, gateFP, answer, authorDecisionRef)
+	}
+	if len(args) == 1 {
+		return advance(args[0])
+	}
+
+	// The gate's whole scope: members in scope order, then the epic. A member
+	// already past the transition is done; any other member that cannot
+	// advance keeps the epic where it is (PR #694 review, #9).
+	var members, epics, held []string
+	for _, id := range scope {
+		item, ok := items[id]
+		if !ok {
+			printWarning("skipped %s: not a record in this system", id)
+			held = append(held, id+" (not a record in this system)")
+			continue
+		}
+		current := str(item.payload, "work_status")
+		if item.kind == "epic" {
+			current = str(item.payload, "process_status")
+		}
+		if current != expected {
+			printInfo("skipped %s: %s, not %s", id, presentPin(current), expected)
+			if item.kind != "epic" && !pastTransition(current, to) {
+				held = append(held, fmt.Sprintf("%s (%s, not %s)", id, presentPin(current), expected))
+			}
+			continue
+		}
+		if item.kind == "epic" {
+			epics = append(epics, id)
+		} else {
+			members = append(members, id)
+		}
+	}
+	if len(members) == 0 && len(epics) == 0 && len(held) == 0 {
+		printInfo("nothing to advance: no record %s names is in %s", authorGateRef, expected)
+		return nil
+	}
+	for i, id := range members {
+		if err := advance(id); err != nil {
+			if rest := append(members[i+1:], epics...); len(rest) > 0 {
+				return fmt.Errorf("%s: %w\n  stopped; not advanced: %s", id, err, strings.Join(rest, ", "))
+			}
+			return fmt.Errorf("%s: %w", id, err)
+		}
+	}
+	if len(held) > 0 {
+		if len(epics) > 0 {
+			return fmt.Errorf("%s not advanced: %d member(s) of %s did not advance — %s; move them to %s (or past it) and run the same command again",
+				strings.Join(epics, ", "), len(held), authorGateRef, strings.Join(held, "; "), expected)
+		}
+		return fmt.Errorf("%d record(s) %s names did not advance — %s", len(held), authorGateRef, strings.Join(held, "; "))
+	}
+	for _, id := range epics {
+		if err := advance(id); err != nil {
+			return fmt.Errorf("%s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// workLifecycle is the main line a requirement moves along.
+var workLifecycle = []string{"PROPOSED", "TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"}
+
+// pastTransition reports whether a member in status current has already made
+// the move to `to`: it is at `to`, later on the main line, or OBSOLETE.
+func pastTransition(current, to string) bool {
+	if current == to || current == "OBSOLETE" {
+		return true
+	}
+	ci, ti := slices.Index(workLifecycle, current), slices.Index(workLifecycle, to)
+	return ci >= 0 && ti >= 0 && ci > ti
 }
 
 var authorTraceCmd = &cobra.Command{
@@ -698,6 +858,10 @@ func resolveTransition(kind, purpose, transition, from, to string) (string, erro
 // PROPOSED, and a PENDING_VERIFICATION scope is refused by the server for not
 // being in that state — a true refusal whose remedy the operator should not
 // have to guess (N-CLI017-R1-06).
+// errOnly drops the fingerprint an author helper returns, for a caller that
+// only reports the helper's own printed lines.
+func errOnly(_ string, err error) error { return err }
+
 func withEntrySourceHint(err error, inferred bool) error {
 	if err == nil || !inferred || !strings.Contains(err.Error(), "FROM state") {
 		return err
@@ -820,7 +984,7 @@ func readAggregateFor(env *factoryEnv, piece string) (string, string) {
 // reason names what is missing when the first token has no hash.
 func readContentHashesFor(env *factoryEnv, scope []string) (map[string]string, string) {
 	out := map[string]string{}
-	items, err := fetchDirectItems(env, scope, false)
+	items, err := fetchDirectItems(env, scope, false, false)
 	if err != nil {
 		return out, fmt.Sprintf("could not read content hash for %s: %v", strings.Join(scope, ", "), err)
 	}
@@ -861,6 +1025,12 @@ as a 422 naming the field and the limit, and nothing is written. Prose
 belongs in --detail, which is unbounded; --description, --boundary,
 --rationale and --verification-method take a paragraph.
 
+--citations-file replaces the source citation set with typed JSON objects.
+It preserves captured-source identities and code/test kinds. It is mutually
+exclusive with --source; omitting both preserves the existing citations.
+The file must contain a JSON array; an empty array clears the stored set.
+Legacy process_source citations may use source_tag or id as their identity.
+
 --criteria is a JSON array — inline when the value starts with '[',
 otherwise a path to a file holding the same array. It replaces the stored
 set whole, keyed on external_id: omitting --criteria preserves the stored
@@ -896,7 +1066,7 @@ there, and prose goes in --notes.`,
 		if err != nil {
 			return err
 		}
-		return authorUpdate(env, authorUpdateKind, args[0], record)
+		return errOnly(authorUpdate(env, authorUpdateKind, args[0], record))
 	},
 }
 
@@ -930,11 +1100,19 @@ func authorUpdateRecord(cmd *cobra.Command) (map[string]any, error) {
 	setStr("boundary", "boundary", authorBoundary)
 	setStr("rationale", "rationale", authorRationale)
 	setStr("verification-method", "verification_method", authorVerificationMethod)
+	setStr("lane-class", "lane_class", authorLaneClass)
 	// REQ-CROSS-310 (SR-CLI-0081): --context and repeatable --source ride the
 	// edit — the server accepts both, and a working-set pull renders them.
 	setStr("context", "context", authorContext)
 	if cmd.Flags().Changed("source") {
 		record["source_citations"] = sourceCitations(authorSources)
+	}
+	if cmd.Flags().Changed("citations-file") {
+		citations, err := readTypedCitations(authorCitationsFile)
+		if err != nil {
+			return nil, err
+		}
+		record["source_citations"] = citations
 	}
 	if cmd.Flags().Changed("criteria") {
 		criteria, err := parseCriteria(authorCriteria)
@@ -949,9 +1127,45 @@ func authorUpdateRecord(cmd *cobra.Command) (map[string]any, error) {
 	return record, nil
 }
 
+// readTypedCitations preserves immutable source identities for candidate repairs.
+func readTypedCitations(path string) ([]map[string]any, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--citations-file: %w", err)
+	}
+	var citations []map[string]any
+	if err := json.Unmarshal(body, &citations); err != nil || citations == nil {
+		return nil, fmt.Errorf("--citations-file: expected a JSON array of citation objects")
+	}
+	for i, citation := range citations {
+		kind, _ := citation["kind"].(string)
+		if strings.TrimSpace(kind) == "" {
+			return nil, fmt.Errorf("--citations-file: citation %d needs kind", i+1)
+		}
+		if ref, present := citation["ref"]; present {
+			if _, ok := ref.(string); !ok {
+				return nil, fmt.Errorf("--citations-file: citation %d ref must be a string", i+1)
+			}
+		}
+		identityKeys := []string{"ref", "source_file_id", "system_doc_id", "path"}
+		if kind == "process_source" {
+			identityKeys = append(identityKeys, "source_tag", "id")
+		}
+		hasIdentity := false
+		for _, key := range identityKeys {
+			value, _ := citation[key].(string)
+			hasIdentity = hasIdentity || strings.TrimSpace(value) != ""
+		}
+		if !hasIdentity {
+			return nil, fmt.Errorf("--citations-file: citation %d needs ref or a source identity", i+1)
+		}
+	}
+	return citations, nil
+}
+
 // requirementOnlyFlags are the author update flags a backlog record has no
 // field for.
-var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "context", "criteria"}
+var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "lane-class", "context", "criteria", "citations-file"}
 
 // refuseRequirementFieldsOnBacklog refuses, before any request, a requirement
 // or epic field on a backlog record. The server reads only the backlog content
@@ -1075,7 +1289,7 @@ var authorRelateCmd = &cobra.Command{
 		if !cmd.Flags().Changed("parent") {
 			authorParents = nil
 		}
-		return authorRelate(env, args[0], authorRelateFields())
+		return errOnly(authorRelate(env, args[0], authorRelateFields()))
 	},
 }
 
@@ -1110,11 +1324,11 @@ var authorMemberCmd = &cobra.Command{
 		// Membership is a relation mutation, so it is fingerprint-guarded and
 		// moves the epic's fingerprint like every other edit — the guard is the
 		// server's, and the CLI has to name the fingerprint it read.
-		return authorMember(env, args[0], map[string]any{
+		return errOnly(authorMember(env, args[0], map[string]any{
 			"member_external_ids":  authorMembers,
 			"mode":                 authorMemberMode,
 			"expected_fingerprint": authorExpectedFingerprint,
-		})
+		}))
 	},
 }
 
@@ -1172,6 +1386,7 @@ func init() {
 	authorAdvanceCmd.Flags().StringVar(&authorGateFinger, "gate-fingerprint", "", "the gate's current content-shadow hash")
 	authorAdvanceCmd.Flags().StringVar(&authorGateAnswer, "gate-answer", "", "the gate's stored answer OR a stable option key it recorded (or that key's label), echoed — a transition rides only an answer the gate actually holds")
 	authorAdvanceCmd.Flags().StringVar(&authorDecisionRef, "decision", "", "attributable USER:… reference, for DEFERRED")
+	authorUpdateCmd.Flags().StringVar(&authorCitationsFile, "citations-file", "", "JSON file of typed source citations; replaces the stored set, preserving immutable source identities")
 	authorUpdateCmd.Flags().StringVar(&authorTitle, "title", "", "new title")
 	authorUpdateCmd.Flags().StringVar(&authorDescription, "description", "", "new description")
 	authorUpdateCmd.Flags().StringVar(&authorStage, "stage", "", "new stage")
@@ -1181,6 +1396,7 @@ func init() {
 	authorUpdateCmd.Flags().StringVar(&authorBoundary, "boundary", "", "new change boundary (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorRationale, "rationale", "", "new rationale (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorVerificationMethod, "verification-method", "", "new verification method (system requirement)")
+	authorUpdateCmd.Flags().StringVar(&authorLaneClass, "lane-class", "", "the small-change lane class, set before the narrow review: defect_with_failing_test, wording, presentation or dependency_patch (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorCriteria, "criteria", "",
 		"JSON array of criterion/scenario objects — inline when it starts with '[', otherwise a file path. "+
 			"Each object needs external_id (the replace-set keys on it) and takes position "+
@@ -1215,6 +1431,7 @@ func init() {
 	// REQ-CROSS-310 (SR-CLI-0081): --context and repeatable --source ride the edit.
 	authorUpdateCmd.Flags().StringVar(&authorContext, "context", "", "new bounded-context code")
 	authorUpdateCmd.Flags().StringArrayVar(&authorSources, "source", nil, "source citation (e.g. USER:2026-09-01:x), repeatable")
+	authorUpdateCmd.MarkFlagsMutuallyExclusive("source", "citations-file")
 	authorRelateCmd.Flags().StringArrayVar(&authorParents, "parent", nil,
 		"parent user-requirement external id, repeatable (at least one required)")
 	authorRelateCmd.Flags().StringVar(&authorExpectedFingerprint, "expected-fingerprint", "",

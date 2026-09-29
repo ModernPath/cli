@@ -19,6 +19,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/modernpath/cli/internal/api"
+	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/platform"
 	"github.com/modernpath/cli/internal/zitadel"
 )
@@ -106,6 +107,15 @@ func newInitPlatformFakeServer(t *testing.T, systems ...map[string]any) *initFak
 	return f
 }
 
+// initCorePath is core's own path for a request the platform edge received
+// under `/api/ex`.
+func initCorePath(p string) string {
+	if strings.HasPrefix(p, "/api/ex/") {
+		return "/api" + strings.TrimPrefix(p, "/api/ex")
+	}
+	return p
+}
+
 func (f *initFakeServer) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, r.Method+" "+r.URL.Path)
@@ -150,22 +160,46 @@ func (f *initFakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasSuffix(p, "/export/jobs") && r.Method == http.MethodPost:
 		if authorized() {
-			base := p + "/job1"
-			reply(http.StatusAccepted, map[string]string{"id": "job1", "status": "queued", "poll_path": base, "download_path": base + "/file"})
+			// Core answers its own `/api/...` paths, whatever prefix the edge
+			// added; the client resolves them against its API base (REQ-OBAN-018).
+			base := initCorePath(p) + "/job1"
+			reply(http.StatusAccepted, map[string]string{"export_id": "job1", "status": "queued", "poll_path": base, "link_path": base + "/link"})
 		}
 	case strings.HasSuffix(p, "/export/jobs/job1"):
 		if authorized() {
-			reply(http.StatusOK, map[string]string{"id": "job1", "status": "ready", "download_path": p + "/file"})
+			reply(http.StatusOK, map[string]any{"export_id": "job1", "status": "ready", "error": nil})
+		}
+	case strings.HasSuffix(p, "/export/jobs/job1/link"):
+		if authorized() {
+			// The filesystem store's link is the API's own file route.
+			reply(http.StatusOK, map[string]string{
+				"url":        strings.TrimSuffix(initCorePath(p), "/link") + "/file",
+				"filename":   "demo-system.modernpath.zip",
+				"expires_at": "2026-09-28T12:15:00Z",
+			})
 		}
 	case strings.HasSuffix(p, "/export/jobs/job1/file"):
 		if authorized() {
 			var buf bytes.Buffer
 			zw := zip.NewWriter(&buf)
-			entry, _ := zw.Create(".modernpath/modernpath/README.md")
+			slug, _ := f.systems[0]["slug"].(string)
+			entry, _ := zw.Create(".modernpath/" + slug + "/README.md")
 			_, _ = entry.Write([]byte("# demo\n"))
+			manifest, _ := zw.Create(".modernpath/" + slug + "/docs_push_manifest.json")
+			_, _ = manifest.Write([]byte(`{"version":1,"system_doc_files":{},"generated_at":"2026-09-20T12:00:00.123456Z"}`))
 			_ = zw.Close()
 			w.Header().Set("Content-Type", "application/zip")
 			_, _ = w.Write(buf.Bytes())
+		}
+	case p == "/api/v1/sync/prepare-inputs":
+		if authorized() {
+			reply(http.StatusOK, map[string]any{"data": map[string]any{
+				"system":           map[string]any{"id": 1, "name": "Demo System", "slug": f.systems[0]["slug"]},
+				"contract_version": 1, "held_piece_count": 0,
+				"documents_updated_at": "2026-09-21T09:00:00Z",
+				"active_releases":      []any{map[string]any{"slug": "release-1", "status": "active", "source_tag": "USER:2026-09-20"}},
+				"pending_decisions":    []any{},
+			}})
 		}
 	case p == "/api/search" || p == "/api/docs/read" || p == "/api/files/read":
 		if authorized() {
@@ -191,6 +225,18 @@ func (f *initFakeServer) requestCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.requests)
+}
+
+func (f *initFakeServer) matchingRequests(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, request := range f.requests {
+		if strings.HasPrefix(request, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
 // initTestSetup enters a fresh temp workspace, points the global --api-url at
@@ -318,6 +364,94 @@ func TestInitSignedInWithOneSystemBindsIt(t *testing.T) {
 	}
 	if !strings.Contains(status, "System:  Demo System (ID: 1)") {
 		t.Fatalf("factory status must print the bound system, got:\n%s", status)
+	}
+}
+
+func TestInitExportTimestampFeedsPrepareInputsWithoutRedownload(t *testing.T) {
+	srv := newInitFakeServer(t)
+	root := initTestSetup(t, srv)
+	writeInitAuth(t, root, initGoodToken, time.Now().Add(time.Hour))
+	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	cfg, err := config.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const serverGeneratedAt = "2026-09-20T12:00:00.123456Z"
+	if cfg.LastSyncAt != serverGeneratedAt {
+		t.Fatalf("init config timestamp = %q, want server timestamp %q", cfg.LastSyncAt, serverGeneratedAt)
+	}
+	if got := srv.matchingRequests("POST /api/systems/1/export/jobs"); got != 1 {
+		t.Fatalf("init export downloads = %d, want one", got)
+	}
+	out, err = runPrepareInputs(t)
+	if err != nil {
+		t.Fatalf("prepare-inputs after init: %v\n%s", err, out)
+	}
+	var report prepareInputsReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.LocalDocumentsLastSyncedAt == nil || *report.LocalDocumentsLastSyncedAt != serverGeneratedAt {
+		t.Fatalf("prepare-inputs timestamp = %v, want server timestamp %q", report.LocalDocumentsLastSyncedAt, serverGeneratedAt)
+	}
+	if got := srv.matchingRequests("POST /api/systems/1/export/jobs"); got != 1 {
+		t.Fatalf("prepare-inputs caused another export download; count = %d", got)
+	}
+}
+
+func TestInitReservedSlugUsesNestedRootAndPreservesCLIState(t *testing.T) {
+	srv := newInitFakeServer(t, map[string]any{"id": 1, "name": "Runtime", "slug": "runtime"})
+	root := initTestSetup(t, srv)
+	writeInitAuth(t, root, initGoodToken, time.Now().Add(time.Hour))
+	if err := os.MkdirAll(filepath.Join(root, ".modernpath", "runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "cli-owned state"
+	if err := os.WriteFile(filepath.Join(root, ".modernpath", "runtime", "state.json"), []byte(sentinel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("init reserved slug: %v\n%s", err, out)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, ".modernpath", "runtime", "state.json")); err != nil || string(got) != sentinel {
+		t.Fatalf("CLI state = %q, %v; want preserved sentinel", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".modernpath", "docs", "runtime", "README.md")); err != nil {
+		t.Fatalf("reserved export was not installed under docs/runtime: %v", err)
+	}
+}
+
+func TestInitForceRefreshesLegacyRootInPlace(t *testing.T) {
+	srv := newInitFakeServer(t)
+	root := initTestSetup(t, srv)
+	writeInitAuth(t, root, initGoodToken, time.Now().Add(time.Hour))
+	legacy := filepath.Join(root, ".modernpath", "docs", "demo-system")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "blueprint.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "stale.md"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	force = true
+	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("forced init: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "stale.md")); !os.IsNotExist(err) {
+		t.Fatalf("force init left stale legacy file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "README.md")); err != nil {
+		t.Fatalf("force init did not refresh legacy root in place: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".modernpath", "demo-system")); !os.IsNotExist(err) {
+		t.Fatalf("force init created a duplicate flat root: %v", err)
 	}
 }
 

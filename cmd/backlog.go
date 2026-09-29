@@ -31,6 +31,8 @@ var (
 type backlogListOpts struct {
 	kind        string
 	disposition string
+	json        bool
+	page        listPage
 }
 
 var backlogListFlags backlogListOpts
@@ -50,7 +52,11 @@ kind, disposition, who raised it, when, title — newest first.
 disposition prefix (OPEN, DEFERRED, ROUTED to <id>, REJECTED with <source>,
 CLOSED by <id>, ACCEPTED with <source>). A value outside the vocabulary is
 refused before any request. Read one record with working-set pull <id>;
-change its disposition with author update --kind backlog … --source USER:…`,
+change its disposition with author update --kind backlog … --source USER:…
+
+Text output prints at most --limit records (default 50) from --offset, and
+says how to see more; --json prints every record as {"backlog": [...]}
+unless --limit is given.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := authorEnv()
 		if err != nil {
@@ -64,6 +70,8 @@ func init() {
 	processBacklogListCmd.Flags().StringVar(&backlogListFlags.kind, "kind", "", "backlog | gap | tooling")
 	processBacklogListCmd.Flags().StringVar(&backlogListFlags.disposition, "disposition", "",
 		"a disposition or its prefix: "+backlogDispositionShape)
+	processBacklogListCmd.Flags().BoolVar(&backlogListFlags.json, "json", false, "print the records as JSON on stdout and nothing else")
+	addPageFlags(processBacklogListCmd, &backlogListFlags.page)
 	processBacklogCmd.AddCommand(processBacklogListCmd)
 	processCmd.AddCommand(processBacklogCmd)
 }
@@ -93,6 +101,9 @@ func processBacklogList(env *factoryEnv, opts backlogListOpts, out io.Writer) er
 	}
 	if !validBacklogDispositionFilter(opts.disposition) {
 		return fmt.Errorf("--disposition %q: expected one of %s, or a prefix of one", opts.disposition, backlogDispositionShape)
+	}
+	if err := opts.page.validate(); err != nil {
+		return err
 	}
 	path := fmt.Sprintf("/api/v1/sync/backlog?system_id=%d", env.SystemID)
 	if opts.kind != "" {
@@ -124,7 +135,11 @@ func processBacklogList(env *factoryEnv, opts backlogListOpts, out io.Writer) er
 		}
 		return str(rows[i], "external_id") < str(rows[j], "external_id")
 	})
-	for _, r := range rows {
+	start, end := opts.page.window(len(rows), opts.json)
+	if opts.json {
+		return emitPagedJSON(out, "backlog", rows[start:end], end, len(rows))
+	}
+	for _, r := range rows[start:end] {
 		kind := str(r, "kind")
 		if gk := str(r, "gap_kind"); kind == "gap" && gk != "" {
 			kind = "gap/" + gk
@@ -134,6 +149,7 @@ func processBacklogList(env *factoryEnv, opts backlogListOpts, out io.Writer) er
 			fieldOr(r, "raised_by", "—"), dateOf(str(r, "raised_at")), str(r, "title"))
 	}
 	fmt.Fprintf(out, "%d record(s) — read one with working-set pull <id>\n", len(rows))
+	fmt.Fprint(out, pageFooter(start, end, len(rows)))
 	return nil
 }
 

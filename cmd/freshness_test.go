@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/modernpath/cli/internal/api"
 )
 
 // TestMain pins the freshness seams for the whole package: no brief test runs
@@ -29,6 +31,9 @@ func TestMain(m *testing.M) {
 	freshnessKitCheck = func(root string) ([]string, error) { return nil, nil }
 	releaseLookupURL = "http://127.0.0.1:1/releases/latest"
 	releaseHTTPClient = &http.Client{Timeout: 200 * time.Millisecond}
+	// The fake export servers answer "ready" on the first poll; the 2 s
+	// production interval only made every docs sync and init test wait.
+	api.SetExportPollInterval(time.Millisecond)
 	os.Exit(m.Run())
 }
 
@@ -58,14 +63,35 @@ func pinFreshnessFresh(t *testing.T) {
 func releaseServer(t *testing.T, status int, tag string, delay time.Duration) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if delay > 0 {
-			time.Sleep(delay)
+		if delay > 0 && !waitOrClientGone(r, delay) {
+			return
 		}
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": tag})
 	}))
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { closeNow(srv) })
 	return srv.URL
+}
+
+// waitOrClientGone holds a fake server's answer for d, or until the client
+// has gone (its timeout fired or the test closed the connection). It reports
+// whether the client is still there to answer. A plain Sleep kept every
+// "server hangs" test waiting out the full hang in httptest.Server.Close.
+func waitOrClientGone(r *http.Request, d time.Duration) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-r.Context().Done():
+		return false
+	}
+}
+
+// closeNow shuts a fake server down without waiting for a handler that is
+// still holding a deliberately slow answer: dropping the connections cancels
+// the handlers' request contexts, and Close then returns at once.
+func closeNow(srv *httptest.Server) {
+	srv.CloseClientConnections()
+	srv.Close()
 }
 
 func writeReleaseCache(t *testing.T, root, tag string, fetchedAt time.Time) {

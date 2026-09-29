@@ -63,6 +63,12 @@ func TestProcessCliSkillNamesEveryLoopVerb(t *testing.T) {
 		"--replaces", "--aggregate", "-v",
 		// the retire-and-reopen recipe and the piece-holding it relies on
 		"--supersedes", "--suspend", "--resume", "--waiting-on",
+		// REQ-CROSS-448: the batch verbs each phase block runs, with the
+		// single-record verbs above kept as the fallback
+		"author apply --file", "process review record --file", "process enter",
+		"author advance --gate", "factory evidence --file", "process advance --all",
+		"process findings add --file", "process findings disposition --file",
+		"REVIEW.md",
 	} {
 		if !strings.Contains(s, verb) {
 			t.Errorf("the tooling skill never names %q", verb)

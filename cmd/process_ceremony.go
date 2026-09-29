@@ -11,11 +11,16 @@ package cmd
 // REQ-CROSS-375: `process complete <scope>`.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -85,6 +90,11 @@ type factMember struct {
 	// gate names it — its lower trace returns it to review, so no remedy line
 	// sends it to `process reenter`. False on a server that predates the key.
 	DefectReopenWithoutEntry bool `json:"defect_reopen_without_entry"`
+	// REQ-CROSS-459: whether the member's own entry is current at the
+	// aggregate, by reconcile's own test (a live applied entry at the
+	// aggregate, or a current lane entry). nil on a server that predates the
+	// key: the verb then keeps the epic-level pin check.
+	EntryCurrent *bool `json:"entry_current"`
 }
 
 type advanceOpts struct {
@@ -96,10 +106,11 @@ type advanceOpts struct {
 var (
 	advanceLog  string
 	advanceBody string
+	advanceAll  bool
 )
 
 var processAdvanceCmd = &cobra.Command{
-	Use:   "advance <SR>",
+	Use:   "advance <SR> | --all --piece <EPIC>",
 	Short: "Record the SR's lower trace from its recorded evidence and reconcile it to IN_REVIEW",
 	Long: `Take one system requirement from recorded evidence to IN_REVIEW in one call.
 The verb reads the store facts (the delivery-context read of the piece that
@@ -112,19 +123,77 @@ and the epic's own step when its members allow it.
 It refuses before any write, naming the fact: no RED recorded (record it
 with factory evidence --fail <SR> --role RED at the RED commit, or with
 --revision); evidence not passing (failing, claimed, stale); the SR not a
-member of a piece you hold (--piece names one when you hold several); a
-server that serves no delivery facts. A second call on an SR already
+member of a piece you hold (--piece names one when you hold several; an
+SR that is itself one of the pieces you hold needs none); a TODO SR with no
+live entry of its own at the current packet aggregate; a server that serves
+no delivery facts. A second call on an SR already
 IN_REVIEW at its current hash reports nothing to do. Transitions and FAILs
 of sibling members are printed as information and never fail the advance;
-a FAIL naming the SR itself does, after the trace is recorded.`,
-	Args: cobra.ExactArgs(1),
+a FAIL naming the SR itself does, after the trace is recorded.
+
+--all --piece <EPIC> --log <RUN> does the same for every system requirement
+of the piece in one call, each through the same path: it prints each SR it
+moved and, for each one it did not, the refusal above that names why. It
+exits non-zero when any SR was not advanced; the ones that were stay moved.`,
+	Args: cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		o := advanceOpts{piece: processPiece, log: advanceLog, body: advanceBody}
+		if advanceAll != (len(args) == 0) {
+			return fmt.Errorf("name one system requirement, or --all --piece <EPIC> for every one the piece holds")
+		}
 		env, err := authorEnv()
 		if err != nil {
 			return err
 		}
-		return processAdvance(env, args[0], advanceOpts{piece: processPiece, log: advanceLog, body: advanceBody})
+		if advanceAll {
+			return processAdvanceAll(env, o)
+		}
+		return processAdvance(env, args[0], o)
 	},
+}
+
+func init() {
+	processAdvanceCmd.Flags().BoolVar(&advanceAll, "all", false, "advance every system requirement of the --piece, reporting each one moved or why not")
+}
+
+// processAdvanceAll runs the per-SR advance for every system requirement of
+// the piece (REQ-CROSS-445). A refusal is reported and the rest continue.
+func processAdvanceAll(env *factoryEnv, o advanceOpts) error {
+	if o.log == "" {
+		return fmt.Errorf("--log is required: the passing run's command or report is what the lower trace cites as its RUN: source")
+	}
+	if o.piece == "" {
+		return fmt.Errorf("--all needs --piece <EPIC>: the piece whose system requirements to advance")
+	}
+	resp, err := readDeliveryContextFor(env, o.piece)
+	if err != nil {
+		return err
+	}
+	if resp.Data.Facts == nil {
+		return errNoFacts(o.piece, resp.Data.FactsState)
+	}
+	var srs []string
+	for _, m := range resp.Data.Facts.Members {
+		if m.Kind != "ur" {
+			srs = append(srs, m.ExternalID)
+		}
+	}
+	if len(srs) == 0 {
+		fmt.Printf("nothing to do: %s holds no system requirement\n", o.piece)
+		return nil
+	}
+	var notAdvanced []string
+	for _, sr := range srs {
+		fmt.Printf("── %s\n", sr)
+		if err := processAdvance(env, sr, o); err != nil {
+			fmt.Printf("✗ %s not advanced: %v\n", sr, err)
+			notAdvanced = append(notAdvanced, sr)
+		}
+	}
+	if len(notAdvanced) > 0 {
+		return fmt.Errorf("%d of %d system requirements not advanced (%s) — each reason is printed above", len(notAdvanced), len(srs), strings.Join(notAdvanced, ", "))
+	}
+	return nil
 }
 
 // REQ-CROSS-413 (BACKLOG-TOOL-22): `process reapply-entry <scope> --decision
@@ -280,7 +349,7 @@ func processReenterOpen(env *factoryEnv, scope string) error {
 			"recommendation":      "Approve if the fresh cold review is sound.",
 		},
 	}
-	if err := authorCreate(env, "gate", gateID, fields); err != nil {
+	if _, err := authorCreate(env, "gate", gateID, fields); err != nil {
 		return err
 	}
 	printInfo("answer it in Mission Control or with `factory answer %s --options approve --text \"USER:<date>: …\"`, then run `process reenter %s --apply`", gateID, scope)
@@ -318,7 +387,8 @@ func errNoFacts(piece, state string) error {
 // resolvePiece finds the caller's current piece that holds `item`: the piece
 // itself, or an epic piece whose members include it. --piece names one when
 // the caller holds several; the server's "several selections" refusal is
-// surfaced as is.
+// surfaced as is — unless the item is itself one of the held pieces
+// (REQ-CROSS-460), which is then read as its own piece.
 func resolvePiece(env *factoryEnv, item, piece string) (string, error) {
 	path := fmt.Sprintf("/api/v1/sync/work-selection?system_id=%d", env.SystemID)
 	if piece != "" {
@@ -327,6 +397,12 @@ func resolvePiece(env *factoryEnv, item, piece string) (string, error) {
 	status, body, err := env.call("GET", path, nil)
 	if err != nil {
 		return "", err
+	}
+	if status == 422 && piece == "" && slices.Contains(stringSlice(body["pieces"]), item) {
+		path += "&scope=" + url.QueryEscape(item)
+		if status, body, err = env.call("GET", path, nil); err != nil {
+			return "", err
+		}
 	}
 	if status != 200 {
 		if msg, ok := body["error"].(string); ok && msg != "" {
@@ -477,10 +553,18 @@ func processAdvance(env *factoryEnv, sr string, o advanceOpts) error {
 			return nil
 		}
 	case "TODO", "READY":
-		// Reconcile promotes TODO -> IN_PROGRESS only when the entry gate is
-		// applied at the CURRENT aggregate; a trace recorded before that would
-		// advance nothing.
-		if !facts.EntryGate.Applied || facts.EntryGate.PinnedAggregate != facts.Aggregate {
+		// Reconcile promotes TODO -> IN_PROGRESS only when the member's entry is
+		// current at the CURRENT aggregate; a trace recorded before that would
+		// advance nothing. REQ-CROSS-459: a served per-member fact is reconcile's
+		// own test and decides; without it the epic-level pin stands in.
+		epicPinCurrent := facts.EntryGate.Applied && facts.EntryGate.PinnedAggregate == facts.Aggregate
+		if member.EntryCurrent != nil && *member.EntryCurrent {
+			break
+		}
+		if member.EntryCurrent != nil && epicPinCurrent {
+			return fmt.Errorf("%s is %s and has no live entry of its own at the current packet aggregate %s — the entry gate of %s is applied there, but no applied entry names %s at this aggregate, so reconcile would not move it and a lower trace would advance nothing; read `process reconcile --piece %s` (dry run) for what the store holds for it. Nothing was written", sr, member.Status, facts.Aggregate, piece, sr, piece)
+		}
+		if !epicPinCurrent {
 			return fmt.Errorf("%s is %s but its entry gate is not applied at the current packet aggregate %s (pinned at %s) — run `process reapply-entry %s --decision USER:…` (or `process reapply-entry %s --decision USER:…` when %s entered through its own members-only gate) to attest the move was immaterial and re-pin the entry approval at this aggregate before a lower trace can advance it", sr, member.Status, facts.Aggregate, presentPin(facts.EntryGate.PinnedAggregate), piece, sr, sr)
 		}
 	case "IN_PROGRESS":
@@ -590,15 +674,19 @@ func processAdvance(env *factoryEnv, sr string, o advanceOpts) error {
 // ---------------------------------------------------------------- enter (REQ-CROSS-373)
 
 type enterOpts struct {
-	gateID    string // --gate-id: a successor id when ENTRY-<scope> is taken
-	briefFile string // --brief-file: overrides the packet's entry_brief section
-	dryRun    bool   // --dry-run: print the plan, post nothing
+	gateID     string // --gate-id: a successor id when ENTRY-<scope> is taken
+	briefFile  string // --brief-file: overrides the packet's entry_brief section
+	dryRun     bool   // --dry-run: print the plan, post nothing
+	allowDrift string // --allow-drift: the USER: source accepting reconnaissance drift (SR-CLI-028-002)
+	noFetch    bool   // --no-fetch: skip the fetch of the default branch (offline fixtures only)
 }
 
 var (
-	enterGateID    string
-	enterBriefFile string
-	enterDryRun    bool
+	enterGateID     string
+	enterBriefFile  string
+	enterDryRun     bool
+	enterAllowDrift string
+	enterNoFetch    bool
 )
 
 var processEnterCmd = &cobra.Command{
@@ -614,13 +702,36 @@ packet's entry_brief section (the PROCESS.md brief shape: - What:, - Why now:,
 its transition is PROPOSED->TODO. The selection then moves to phase entry.
 
 It refuses before any write, naming the fact: no delivery facts served (deploy
-the server first); packet sections missing or stale (working-set push); no
-independent passing cold-review trace at the aggregate (rdd-cold-review, then
-author trace --purpose cold-review); an incomplete brief; a DONE or OBSOLETE
-epic whose as-built members would enter (demote or reopen it first). --dry-run
-prints the plan and posts nothing. The verb records no trace of its own: it
+the server first); no independent passing cold-review trace at the aggregate
+(rdd-cold-review, then author trace --purpose cold-review); packet sections
+missing (working-set push); an incomplete brief; a DONE or OBSOLETE epic whose
+as-built members would enter (demote or reopen it first). --dry-run prints the
+plan and posts nothing.
+
+A section whose content is unchanged but whose scope context moved (a record
+edit moves it) is re-stamped rather than refused: once the cold review
+passes, the verb re-puts the section's served content under its served
+fingerprint, so a concurrent edit conflicts, then re-reads and refuses only
+the sections still missing, by name. --dry-run names the sections it would
+re-stamp and writes nothing. --brief-file takes a JSON brief object or the
+markdown brief bullets; a file that is neither is refused with the parse
+error. The verb records no trace of its own: it
 names the cold-review trace the store already holds, so a gate can never be
 born before its prerequisite.
+
+Reconnaissance drift (SR-CLI-028-002): the selection must record the
+revision the packet was reconnoitred at (working-set select --recon-revision;
+missing, the verb refuses before the facts read). The verb fetches the remote
+default branch (--no-fetch skips the fetch, offline fixtures only) and compares
+its tip: a tip equal to the revision, or an ancestor of it (a packet
+reconnoitred on a branch ahead of main), is current; otherwise the paths
+changed from the merge-base to the tip are intersected with the paths the
+packet cites as CODE: or TEST:, and a non-empty intersection refuses naming
+the tip and each path. --allow-drift USER:<date>:<why> accepts the drift on
+the human's word and the gate body records the source, the tip and the paths;
+in a two-call entry both calls run the check. Material drift makes the packet
+and its reviews stale (PROCESS.md): re-reconnoitre rather than accept by
+habit.
 
 As-built members first: an epic whose members split between PROPOSED and
 PENDING_VERIFICATION enters in two steps. The first call opens
@@ -643,7 +754,10 @@ overrides the id only.`,
 		if err != nil {
 			return err
 		}
-		return processEnter(env, args[0], enterOpts{gateID: enterGateID, briefFile: enterBriefFile, dryRun: enterDryRun})
+		return processEnter(env, args[0], enterOpts{
+			gateID: enterGateID, briefFile: enterBriefFile, dryRun: enterDryRun,
+			allowDrift: enterAllowDrift, noFetch: enterNoFetch,
+		})
 	},
 }
 
@@ -708,15 +822,22 @@ func parseBriefSection(content string) (map[string]any, error) {
 }
 
 // readBrief returns the gate brief: --brief-file when given, else the named
-// packet section of the scope.
+// packet section of the scope. A brief file is a JSON object or the
+// PROCESS.md markdown bullets (REQ-CROSS-446); anything else is refused with
+// the parse error, never ignored.
 func readBrief(env *factoryEnv, scopeKind, scope, sectionKey, briefFile string) (map[string]any, error) {
 	if briefFile != "" {
-		saved := authorGateBriefFile
-		authorGateBriefFile = briefFile
-		brief := authorGateBrief()
-		authorGateBriefFile = saved
-		if brief == nil {
-			return nil, fmt.Errorf("--brief-file %s holds no brief object", briefFile)
+		raw, err := os.ReadFile(filepath.Clean(briefFile))
+		if err != nil {
+			return nil, fmt.Errorf("--brief-file: %w", err)
+		}
+		var brief map[string]any
+		if json.Unmarshal(raw, &brief) == nil && len(brief) > 0 {
+			return brief, nil
+		}
+		brief, err = parseBriefSection(string(raw))
+		if err != nil {
+			return nil, fmt.Errorf("--brief-file %s is neither a JSON brief object nor the markdown brief: %w", briefFile, err)
 		}
 		return brief, nil
 	}
@@ -811,6 +932,68 @@ func freeGateID(env *factoryEnv, base string) (free, predecessor string, err err
 	return "", "", fmt.Errorf("no free id in the %s series after 50 successors", base)
 }
 
+// passingColdReview refuses a scope with no independent passing cold-review
+// trace at the current packet aggregate.
+func passingColdReview(facts *deliveryFacts, scope string) error {
+	cr := facts.ColdReview
+	if cr.Verdict != "pass" || !cr.Independent || cr.TraceExternalID == "" {
+		return fmt.Errorf("no independent passing cold-review trace at the current packet aggregate %s for %s (verdict %s, independent %v) — run rdd-cold-review and record its verdict with `author trace --purpose cold-review`", facts.Aggregate, scope, presentPin(cr.Verdict), cr.Independent)
+	}
+	return nil
+}
+
+// staleServedSections is the missing sections the store serves with content:
+// unchanged, but stamped under a scope context that has since moved
+// (REQ-CROSS-446). A section the store does not serve, or serves as an
+// unfilled stub, is genuinely missing and is not among them.
+func staleServedSections(env *factoryEnv, scopeKind, scope string, missing []string) ([]map[string]any, error) {
+	sections, err := fetchList(env,
+		fmt.Sprintf("/api/v1/sync/packet-sections?system_id=%d&scope=%s:%s", env.SystemID, scopeKind, url.QueryEscape(scope)),
+		"packet_sections")
+	if err != nil {
+		return nil, err
+	}
+	var out []map[string]any
+	for _, sec := range sections {
+		m, _ := sec.(map[string]any)
+		key, content := str(m, "section_key"), str(m, "content")
+		if !slices.Contains(missing, key) || strings.TrimSpace(content) == "" || unfilledPacketSection(content, key, scopeKind, scope) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// restampSections re-puts each section's SERVED content under its served
+// content fingerprint and authoring context, so the store re-stamps it at the
+// current scope context; a concurrent edit conflicts instead of being
+// overwritten.
+func restampSections(env *factoryEnv, scopeKind, scope string, sections []map[string]any) error {
+	for _, m := range sections {
+		record := map[string]any{"kind": "packet_section", "scope_kind": scopeKind, "scope_external_id": scope,
+			"section_key": str(m, "section_key"), "content": str(m, "content"),
+			"expected_fingerprint": str(m, "content_fingerprint"), "authoring_context_id": str(m, "authoring_context_id")}
+		status, body, err := postAuthor(env, map[string]any{"action": "update", "record": record})
+		if err != nil {
+			return fmt.Errorf("re-stamping packet section %s: %w", str(m, "section_key"), err)
+		}
+		if status != 200 {
+			return serverRefusal("re-stamping packet section "+str(m, "section_key"), status, body)
+		}
+	}
+	fmt.Printf("re-stamped %d section(s) whose content is unchanged but whose scope context moved: %s\n", len(sections), strings.Join(sectionKeys(sections), ", "))
+	return nil
+}
+
+func sectionKeys(sections []map[string]any) []string {
+	keys := make([]string, 0, len(sections))
+	for _, m := range sections {
+		keys = append(keys, str(m, "section_key"))
+	}
+	return keys
+}
+
 // selectionKind maps the facts' scope kind to the selection vocabulary.
 func selectionKind(factsKind string) string {
 	if factsKind == "epic" {
@@ -832,6 +1015,21 @@ func enteredEpic(status string) bool { return slices.Contains(enteredEpicStates,
 // any unmet fact before writing, open the gate naming the cold-review trace,
 // move the selection to phase entry.
 func processEnter(env *factoryEnv, scope string, o enterOpts) error {
+	// SR-CLI-028-002 C3: a drift acceptance is the human's word — refused
+	// before any request when it is not a USER: source.
+	if o.allowDrift != "" && !strings.HasPrefix(o.allowDrift, "USER:") {
+		return fmt.Errorf("--allow-drift accepts reconnaissance drift on the human's word: pass a USER:<date>:<why> source, got %q", o.allowDrift)
+	}
+	// SR-CLI-028-002 C1: the selection's reconnaissance revision is read
+	// before the facts — a packet with no recorded revision cannot be
+	// compared, so entry refuses naming the verb that records one.
+	recon, err := selectionReconRevision(env, scope)
+	if err != nil {
+		return err
+	}
+	if recon == "" {
+		return fmt.Errorf("the selection records no reconnaissance revision — `working-set select %s --recon-revision <sha>` records the revision the packet was reconnoitred at; enter again after", scope)
+	}
 	resp, err := readDeliveryContextFor(env, scope)
 	if err != nil {
 		return err
@@ -840,13 +1038,47 @@ func processEnter(env *factoryEnv, scope string, o enterOpts) error {
 	if facts == nil {
 		return errNoFacts(scope, resp.Data.FactsState)
 	}
+	// REQ-CROSS-446: the cold review is checked before anything is written —
+	// the re-stamp below is the only write before the gate, and it happens
+	// only for a scope that has passed its review.
+	if err := passingColdReview(facts, scope); err != nil {
+		return err
+	}
+	// SR-CLI-028-002 C2: the default branch is compared against the
+	// reconnaissance revision before any write — the section re-stamp below
+	// included; in a two-call entry (REQ-CROSS-422) each call runs it.
+	driftLine, err := reconDrift(env, scope, selectionKind(facts.Scope.Kind), recon, o.allowDrift, o.noFetch)
+	if err != nil {
+		return err
+	}
 	if !facts.Sections.Complete {
-		return fmt.Errorf("packet sections missing or stale for %s: %s — author them and `working-set push` before entry", scope, strings.Join(facts.Sections.Missing, ", "))
+		stale, err := staleServedSections(env, selectionKind(facts.Scope.Kind), scope, facts.Sections.Missing)
+		if err != nil {
+			return err
+		}
+		if len(stale) > 0 && o.dryRun {
+			fmt.Printf("would re-stamp %d section(s) whose content is unchanged but whose scope context moved: %s\n", len(stale), strings.Join(sectionKeys(stale), ", "))
+			facts.Sections.Missing = slices.DeleteFunc(slices.Clone(facts.Sections.Missing), func(k string) bool { return slices.Contains(sectionKeys(stale), k) })
+			facts.Sections.Complete = len(facts.Sections.Missing) == 0
+		} else if len(stale) > 0 {
+			if err := restampSections(env, selectionKind(facts.Scope.Kind), scope, stale); err != nil {
+				return err
+			}
+			if resp, err = readDeliveryContextFor(env, scope); err != nil {
+				return err
+			}
+			if facts = resp.Data.Facts; facts == nil {
+				return errNoFacts(scope, resp.Data.FactsState)
+			}
+			if err := passingColdReview(facts, scope); err != nil {
+				return err
+			}
+		}
+		if !facts.Sections.Complete {
+			return fmt.Errorf("packet sections missing or stale for %s: %s — author them and `working-set push` before entry", scope, strings.Join(facts.Sections.Missing, ", "))
+		}
 	}
 	cr := facts.ColdReview
-	if cr.Verdict != "pass" || !cr.Independent || cr.TraceExternalID == "" {
-		return fmt.Errorf("no independent passing cold-review trace at the current packet aggregate %s for %s (verdict %s, independent %v) — run rdd-cold-review and record its verdict with `author trace --purpose cold-review`", facts.Aggregate, scope, presentPin(cr.Verdict), cr.Independent)
-	}
 
 	var proposed, pending, entered []string
 	for _, m := range facts.Members {
@@ -974,12 +1206,21 @@ func processEnter(env *factoryEnv, scope string, o enterOpts) error {
 	if pin != "" {
 		fields["evaluated_scope_fingerprint"] = pin
 	}
+	var body []string
 	if predecessor != "" {
 		// A closed or withdrawn gate cannot be superseded (its answer entered
 		// application), so the link is prose: the successor names it.
-		fields["body_md"] = fmt.Sprintf("Successor of %s, which is closed or withdrawn: the scope re-enters at the current packet aggregate %s (after a demotion to PROPOSED and re-planning, or because the earlier id stays reserved).", predecessor, facts.Aggregate)
+		body = append(body, fmt.Sprintf("Successor of %s, which is closed or withdrawn: the scope re-enters at the current packet aggregate %s (after a demotion to PROPOSED and re-planning, or because the earlier id stays reserved).", predecessor, facts.Aggregate))
 	}
-	if err := authorCreate(env, "gate", gateID, fields); err != nil {
+	if driftLine != "" {
+		// SR-CLI-028-002 C3: the accepted drift is recorded on the gate the
+		// human answers, with its source, the tip and the changed paths.
+		body = append(body, driftLine)
+	}
+	if len(body) > 0 {
+		fields["body_md"] = strings.Join(body, "\n\n")
+	}
+	if _, err := authorCreate(env, "gate", gateID, fields); err != nil {
 		return err
 	}
 	if err := workingSetSelect(env, wsSelectOpts{scope: scope, kind: selectionKind(facts.Scope.Kind), phase: "entry"}, time.Now()); err != nil {
@@ -1078,16 +1319,9 @@ answered id in the series is still refused.`,
 // stale origin ref that happens to equal HEAD is the same mistake by another
 // door. --no-fetch exists for offline fixtures only.
 func deliveredHead(root string, noFetch bool) (string, error) {
-	branch := "main"
-	if ref := gitOut(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); ref != "" {
-		branch = strings.TrimPrefix(ref, "origin/")
-	}
-	if !noFetch {
-		cmd := exec.Command("git", "fetch", "--quiet", "origin", branch)
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("could not fetch origin/%s to confirm the delivered tip: %s — completion runs at the merged revision; use --no-fetch only for offline fixtures", branch, strings.TrimSpace(string(out)))
-		}
+	branch, err := remoteDefaultBranch(root, noFetch, "to confirm the delivered tip", "completion runs at the merged revision")
+	if err != nil {
+		return "", err
 	}
 	head := gitOut(root, "rev-parse", "HEAD")
 	tip := gitOut(root, "rev-parse", "origin/"+branch)
@@ -1108,6 +1342,163 @@ func deliveredHead(root string, noFetch bool) (string, error) {
 		return "", fmt.Errorf("HEAD %s is %s %s behind the delivered tip origin/%s %s — pull before completing", head[:7], behind, unit, branch, tip[:7])
 	}
 	return "", fmt.Errorf("HEAD %s is not on the delivered branch origin/%s (tip %s) — merge and check out the merged revision before completing", head[:7], branch, tip[:7])
+}
+
+// remoteDefaultBranch resolves the remote default branch (refs/remotes/
+// origin/HEAD, fallback main) and fetches it unless noFetch — the part of
+// deliveredHead that `process enter` shares (SR-CLI-028-002). A failed fetch
+// is a refusal: a stale origin ref is the wrong tip by another door.
+func remoteDefaultBranch(root string, noFetch bool, purpose, consequence string) (string, error) {
+	branch := "main"
+	if ref := gitOut(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); ref != "" {
+		branch = strings.TrimPrefix(ref, "origin/")
+	}
+	if !noFetch {
+		cmd := exec.Command("git", "fetch", "--quiet", "origin", branch)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("could not fetch origin/%s %s: %s — %s; use --no-fetch only for offline fixtures", branch, purpose, strings.TrimSpace(string(out)), consequence)
+		}
+	}
+	return branch, nil
+}
+
+// selectionReconRevision reads the caller's selection for the scope and
+// returns its recon_revision ("" when the take recorded none).
+func selectionReconRevision(env *factoryEnv, scope string) (string, error) {
+	payload, err := fetchWorkSelectionFor(env, scope)
+	if err != nil {
+		return "", err
+	}
+	current, _ := payload["current"].(map[string]any)
+	return str(current, "recon_revision"), nil
+}
+
+// gitIsAncestor reports whether a is an ancestor of (or equal to) b. Exit 1
+// is "not an ancestor"; any other failure (128: an unknown revision) is
+// reported as an error so the caller can name the revision.
+func gitIsAncestor(root, a, b string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", a, b)
+	cmd.Dir = root
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// citationRe matches a CODE:/TEST: citation in packet text: the token after
+// the prefix — spaces or tabs between them skipped, since packet text writes
+// `CODE: <path>` as well as `CODE:<path>` — up to whitespace, a quote, a
+// bracket or a separator. The auditor's regex (audit-citations.mjs) requires a
+// known extension; this extractor is the CLI's own, so an extension-less path
+// (VERSION, Makefile) is matched too.
+var citationRe = regexp.MustCompile("(?:CODE|TEST):[ \\t]*([^\\s`'\"<>()\\[\\]{},;]+)")
+
+// repoQualifierRe strips a `repo@rev:` qualifier from a cited path.
+var repoQualifierRe = regexp.MustCompile(`^[^/:@\s]+@[^/:\s]+:`)
+
+// lineSuffixRe strips a `:12`, `:L12`, `:12-14` or `:12–14` line suffix.
+var lineSuffixRe = regexp.MustCompile(`:L?\d+(?:[-–]\d+)?$`)
+
+// citedPaths returns the distinct repository paths the given packet sections
+// cite as CODE: or TEST:, with an optional :line (or :line-line) suffix and a
+// repo@rev: qualifier stripped, and trailing sentence punctuation dropped.
+func citedPaths(sections []any) map[string]bool {
+	paths := map[string]bool{}
+	for _, sec := range sections {
+		m, _ := sec.(map[string]any)
+		for _, match := range citationRe.FindAllStringSubmatch(str(m, "content"), -1) {
+			p := strings.TrimRight(match[1], ".:")
+			p = repoQualifierRe.ReplaceAllString(p, "")
+			p = lineSuffixRe.ReplaceAllString(p, "")
+			p = strings.TrimRight(p, ".:")
+			if p != "" && !strings.Contains(p, "…") {
+				paths[p] = true
+			}
+		}
+	}
+	return paths
+}
+
+// reconDrift compares the remote default branch against the selection's
+// reconnaissance revision (SR-CLI-028-002 C2, C3). A tip equal to the
+// revision, or an ancestor of it, is current. Otherwise the paths changed
+// from the merge-base to the tip (`recon...tip`, so a branch's own commits
+// are not drift) are intersected with the paths the scope's stored packet
+// sections cite; an empty intersection proceeds, a non-empty one refuses
+// unless allow carries the human's USER: source, in which case the returned
+// line is recorded on the gate body.
+func reconDrift(env *factoryEnv, scope, scopeKind, recon, allow string, noFetch bool) (string, error) {
+	root := env.Root
+	// F-PR697-04: the revision comes from the store as a plain string; one
+	// shaped like an option must not reach git as one.
+	if strings.HasPrefix(recon, "-") || strings.ContainsAny(recon, " \t\n") {
+		return "", fmt.Errorf("reconnaissance revision %q is not a revision — re-select with `working-set select %s --recon-revision <sha>`", recon, scope)
+	}
+	branch, err := remoteDefaultBranch(root, noFetch, "to compare the reconnaissance against", "entry compares its tip with the reconnaissance revision")
+	if err != nil {
+		return "", err
+	}
+	tip := gitOut(root, "rev-parse", "--verify", "--quiet", "origin/"+branch+"^{commit}")
+	if tip == "" {
+		return "", fmt.Errorf("could not resolve origin/%s — entry compares its tip with the reconnaissance revision %s", branch, recon)
+	}
+	full := gitOut(root, "rev-parse", "--verify", "--quiet", recon+"^{commit}")
+	if full == "" {
+		return "", fmt.Errorf("reconnaissance revision %s is not present in the repository — fetch it, or re-reconnoitre and record the revision with `working-set select %s --recon-revision <sha>`", recon, scope)
+	}
+	current := full == tip
+	if !current {
+		current, err = gitIsAncestor(root, tip, full)
+		if err != nil {
+			return "", fmt.Errorf("could not compare origin/%s %s with the reconnaissance revision %s: %v", branch, tip, recon, err)
+		}
+	}
+	if current {
+		fmt.Printf("reconnaissance %s current (origin/%s at %s)\n", recon, branch, tip[:7])
+		if allow != "" {
+			fmt.Println("  --allow-drift given but the reconnaissance is current — nothing to accept, nothing recorded")
+		}
+		return "", nil
+	}
+	// F-PR697-01: a diff that fails (no merge base — an orphan revision, a
+	// shallow clone cut below it) is a refusal, never "no cited path changed".
+	diffCmd := exec.Command("git", "diff", "--name-only", full+"..."+tip)
+	diffCmd.Dir = root
+	changed, err := diffCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("could not diff the reconnaissance revision %s against origin/%s %s: %s — the two share no history the check can compare; re-reconnoitre and record the revision with `working-set select %s --recon-revision <sha>`", recon, branch, tip, strings.TrimSpace(string(changed)), scope)
+	}
+	changedOut := string(changed)
+	sections, err := fetchList(env,
+		fmt.Sprintf("/api/v1/sync/packet-sections?system_id=%d&scope=%s:%s", env.SystemID, scopeKind, url.QueryEscape(scope)),
+		"packet_sections")
+	if err != nil {
+		return "", err
+	}
+	cited := citedPaths(sections)
+	var drifted []string
+	for _, line := range strings.Split(changedOut, "\n") {
+		if path := strings.TrimSpace(line); path != "" && cited[path] {
+			drifted = append(drifted, path)
+		}
+	}
+	sort.Strings(drifted)
+	if len(drifted) == 0 {
+		fmt.Printf("origin/%s moved to %s; no cited path changed since the reconnaissance %s\n", branch, tip, recon)
+		return "", nil
+	}
+	if allow == "" {
+		return "", fmt.Errorf("reconnaissance at %s is stale: origin/%s %s changed %d cited path(s): %s — re-reconnoitre and record the revision (`working-set select %s --recon-revision %s`) or accept the drift with --allow-drift USER:<date>:<why>", recon, branch, tip, len(drifted), strings.Join(drifted, ", "), scope, tip)
+	}
+	line := fmt.Sprintf("Reconnaissance drift accepted (%s): origin/%s %s; changed cited paths: %s", allow, branch, tip, strings.Join(drifted, ", "))
+	fmt.Println(line)
+	return line, nil
 }
 
 // processComplete records delivered-revision evidence, the completion trace
@@ -1390,7 +1781,7 @@ func processComplete(env *factoryEnv, scope string, o completeOpts) error {
 		// application), so the link is prose: the successor names it.
 		gateFields["body_md"] = fmt.Sprintf("Successor of %s, which is closed or withdrawn: %s completes on %s at the current packet aggregate %s.", predecessor, scope, traceID, facts.Aggregate)
 	}
-	if err := authorCreate(env, "gate", gateID, gateFields); err != nil {
+	if _, err := authorCreate(env, "gate", gateID, gateFields); err != nil {
 		return fmt.Errorf("%w\n  the completion trace %s is recorded; fix the fact the refusal names and rerun — the trace is reused", err, traceID)
 	}
 	if err := workingSetSelect(env, wsSelectOpts{scope: scope, kind: selectionKind(facts.Scope.Kind), phase: "completion"}, time.Now()); err != nil {

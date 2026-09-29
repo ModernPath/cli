@@ -32,19 +32,26 @@ func TestDownloadExportHeartbeatsDuringLongUnchangedStatus(t *testing.T) {
 		case r.Method == "POST" && strings.Contains(r.URL.Path, "/export/jobs"):
 			w.WriteHeader(http.StatusAccepted)
 			json.NewEncoder(w).Encode(map[string]string{
-				"id":            "job1",
-				"poll_path":     "/api/systems/7/export/jobs/job1",
-				"download_path": "/api/systems/7/export/jobs/job1/file",
+				"export_id": "job1",
+				"status":    "queued",
+				"poll_path": "/api/systems/7/export/jobs/job1",
+				"link_path": "/api/systems/7/export/jobs/job1/link",
+			})
+		case strings.HasSuffix(r.URL.Path, "/link"):
+			json.NewEncoder(w).Encode(map[string]string{
+				"url":        "/api/systems/7/export/jobs/job1/file",
+				"filename":   "demo.modernpath.zip",
+				"expires_at": "2026-09-28T12:15:00Z",
 			})
 		case strings.HasSuffix(r.URL.Path, "/file"):
 			w.Write([]byte("PK\x03\x04zip"))
 		default:
 			polls++
-			st := "generating"
+			st := "running"
 			if polls > 8 {
 				st = "ready"
 			}
-			json.NewEncoder(w).Encode(map[string]string{"status": st})
+			json.NewEncoder(w).Encode(map[string]any{"export_id": "job1", "status": st, "error": nil})
 		}
 	}))
 	defer srv.Close()
@@ -57,18 +64,18 @@ func TestDownloadExportHeartbeatsDuringLongUnchangedStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	generating := 0
+	running := 0
 	elapsed := false
 	for _, c := range calls {
-		if strings.HasPrefix(c, "generating|") {
-			generating++
+		if strings.HasPrefix(c, "running|") {
+			running++
 			if strings.Contains(c, "elapsed") {
 				elapsed = true
 			}
 		}
 	}
-	if generating < 2 {
-		t.Fatalf("progress reported %d time(s) during 8 polls of one unchanged status — silence reads as a hang (calls: %v)", generating, calls)
+	if running < 2 {
+		t.Fatalf("progress reported %d time(s) during 8 polls of one unchanged status — silence reads as a hang (calls: %v)", running, calls)
 	}
 	if !elapsed {
 		t.Fatalf("no heartbeat carries the elapsed time — the reader cannot tell waiting from dead (calls: %v)", calls)

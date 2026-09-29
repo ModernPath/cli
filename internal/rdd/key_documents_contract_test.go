@@ -3,6 +3,7 @@ package rdd
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -15,7 +16,7 @@ import (
 // ADRs, and the NFR ledger — is the flagship client deliverable, and its
 // definition lives in two places that must agree:
 //
-//	the skill      — rdd-reverse-engineer §D1/D2/D3 tells an agent what to write
+//	the skill      — rdd-reverse-engineer links scoped document and file-backed instructions
 //	the collector  — documents.go decides what actually reaches the platform
 //
 // Neither one checks the other. Edit the skill alone and a pass dutifully writes
@@ -36,10 +37,10 @@ import (
 
 // keyDocumentSet is what the skill promises, read from the skill itself.
 type keyDocumentSet struct {
-	d1        []string // workspace-relative paths from the §D1 table, in table order
-	adrDir    string   // from the §D2 heading
-	nfrLedger string   // from the §D3 heading
-	guidesDir string   // the input lens the skill tells a pass to READ
+	d1        []string // workspace-relative paths from the full-system table, in table order
+	adrDir    string   // from the document reference
+	nfrLedger string   // from the file-backed reference
+	guidesDir string   // collector default for the maintained project guides
 	body      string   // the whole skill, for "does the skill name this at all"
 }
 
@@ -58,12 +59,14 @@ func readKeyDocumentSet(t *testing.T) keyDocumentSet {
 			"the key document set has no second definition to check against, so this guard is blind (REQ-CROSS-184)",
 			skillPath(), err)
 	}
-	body := string(raw)
+	documents := readSkillReference(t, skillPath(), "recovered-documents.md")
+	legacy := readSkillReference(t, skillPath(), "file-backed.md")
+	body := string(raw) + "\n" + documents + "\n" + legacy
 
 	set := keyDocumentSet{
-		d1:        d1TablePaths(t, body),
-		adrDir:    dirOfHeadingPath(t, body, "## D2."),
-		nfrLedger: headingPath(t, body, "## D3."),
+		d1:        d1TablePaths(t, documents),
+		adrDir:    filepath.ToSlash(filepath.Dir(inlinePath(t, documents, "docs/adr/"))),
+		nfrLedger: inlinePath(t, legacy, "tasks/"),
 		guidesDir: "docs/guides",
 		body:      body,
 	}
@@ -71,27 +74,26 @@ func readKeyDocumentSet(t *testing.T) keyDocumentSet {
 	// A parser that quietly finds nothing turns every containment check below
 	// into a tautology, which is worse than no guard at all. Pin the shape.
 	if len(set.d1) != 5 {
-		t.Fatalf("parsed %d document paths from the skill's §D1 table (%v), want 5 — "+
+		t.Fatalf("parsed %d document paths from the skill's full-system table (%v), want 5 — "+
 			"either the table's shape changed or the set did. This guard can no longer tell the collector "+
 			"whether it covers the deliverable; fix the parse or the table before trusting any green here (REQ-CROSS-184)",
 			len(set.d1), set.d1)
 	}
 	if set.adrDir != "docs/adr" {
-		t.Fatalf("§D2 names decision records under %q, want docs/adr — "+
+		t.Fatalf("the document reference names decision records under %q, want docs/adr — "+
 			"the collector reads docs/adr, so every ADR a pass writes would land somewhere the sync never looks (REQ-CROSS-084)", set.adrDir)
 	}
 	if set.nfrLedger != "tasks/NFR-REQUIREMENTS.md" {
-		t.Fatalf("§D3 names the NFR ledger %q, want tasks/NFR-REQUIREMENTS.md — "+
+		t.Fatalf("the file-backed reference names the NFR ledger %q, want tasks/NFR-REQUIREMENTS.md — "+
 			"the quality-attribute rows reach the platform through the requirement-ledger glob, not the document collector (REQ-CROSS-084)", set.nfrLedger)
 	}
-	if !strings.Contains(body, set.guidesDir+"/") {
-		t.Fatalf("the skill no longer names %s/ — the collector still carries those files as provenance %q, "+
-			"so the platform would show a lens nobody is told to write or read (REQ-CROSS-084)", set.guidesDir, "guide")
+	if !strings.Contains(body, "maintained project guides") {
+		t.Fatalf("the skill no longer names maintained project guides — the collector still carries %s/ as provenance %q (REQ-CROSS-084)", set.guidesDir, "guide")
 	}
 	return set
 }
 
-// d1TablePaths reads the first cell of every markdown table row in §D1, taking
+// d1TablePaths reads the first cell of every markdown table row in the full-system output section, taking
 // the backticked paths. The section ends at the next heading, which keeps the
 // later "Document said / Reality" table out.
 func d1TablePaths(t *testing.T, body string) []string {
@@ -99,7 +101,7 @@ func d1TablePaths(t *testing.T, body string) []string {
 	var out []string
 	inSection := false
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "## D1.") {
+		if strings.HasPrefix(line, "## Full-system output roles") {
 			inSection = true
 			continue
 		}
@@ -127,29 +129,32 @@ func d1TablePaths(t *testing.T, body string) []string {
 	return out
 }
 
-// headingPath takes the backticked path out of a "## Dn. … — <path>" heading.
-func headingPath(t *testing.T, body, prefix string) string {
+// Resolve the references through the entrypoint: an unlinked document is not
+// part of the instructions an agent following the skill would discover.
+func readSkillReference(t *testing.T, entrypoint, name string) string {
 	t.Helper()
-	for _, line := range strings.Split(body, "\n") {
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		open := strings.Index(line, "`")
-		shut := strings.LastIndex(line, "`")
-		if open < 0 || shut <= open {
-			t.Fatalf("the %q heading no longer states its path in backticks: %q — "+
-				"this guard reads the deliverable's definition from the skill and can no longer find it (REQ-CROSS-184)", prefix, line)
-		}
-		return line[open+1 : shut]
+	entry, err := os.ReadFile(entrypoint)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("the skill has no %q section — a phase of the key document set has been dropped from the instructions "+
-		"while the collector still expects it (REQ-CROSS-184)", prefix)
-	return ""
+	relative := "references/" + name
+	if !strings.Contains(string(entry), "]("+relative+")") {
+		t.Fatalf("skill does not link %s", relative)
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(entrypoint), filepath.FromSlash(relative)))
+	if err != nil {
+		t.Fatalf("broken skill reference %s: %v", relative, err)
+	}
+	return string(body)
 }
 
-func dirOfHeadingPath(t *testing.T, body, prefix string) string {
+func inlinePath(t *testing.T, body, prefix string) string {
 	t.Helper()
-	return filepath.ToSlash(filepath.Dir(headingPath(t, body, prefix)))
+	match := regexp.MustCompile("`(" + regexp.QuoteMeta(prefix) + "[^`]+)`").FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("skill references no longer declare a path under %s", prefix)
+	}
+	return match[1]
 }
 
 // The forward direction: everything the skill tells an agent to write must have
@@ -190,12 +195,12 @@ func TestCollectorExpectsNoDocumentTheSkillDoesNotName(t *testing.T) {
 		if named[base] {
 			continue
 		}
-		t.Errorf("the collector expects docs/%s but the skill's §D1 table never names it — "+
+		t.Errorf("the collector expects docs/%s but the skill's full-system table never names it — "+
 			"no pass will ever write that file, so the collector hunts for a document that cannot exist and the "+
 			"platform shows a gap it can never close (REQ-CROSS-084)", base)
 	}
 
-	// The non-primary architecture candidates exist because §D1 says to ADOPT a
+	// The non-primary architecture candidates exist because the document reference says to ADOPT a
 	// maintained architecture document rather than write a competing one
 	// (REQ-CROSS-088). A candidate spelling the skill never mentions is a
 	// filename only the collector believes in.
@@ -204,12 +209,12 @@ func TestCollectorExpectsNoDocumentTheSkillDoesNotName(t *testing.T) {
 			continue
 		}
 		t.Errorf("the collector would adopt %s as the architecture document, but the skill never mentions that filename — "+
-			"a reviewer reading §D1 cannot tell which file plays the architecture role, which is the two-answers-to-one-question "+
+			"a reviewer reading the document reference cannot tell which file plays the architecture role, which is the two-answers-to-one-question "+
 			"failure the adopt rule exists to prevent (REQ-CROSS-088)", c)
 	}
 
 	if got := filepath.ToSlash(architectureCandidates[0]); got != set.d1[0] {
-		t.Errorf("the collector's first architecture candidate is %s but §D1 leads with %s — "+
+		t.Errorf("the collector's first architecture candidate is %s but the document reference leads with %s — "+
 			"first match wins, so phase D's own document would lose to an adopted one and the reader gets the stale answer (REQ-CROSS-088)",
 			got, set.d1[0])
 	}

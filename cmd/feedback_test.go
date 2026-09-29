@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,18 +10,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fatih/color"
+	"github.com/modernpath/cli/internal/api"
+	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/zitadel"
 )
 
 // REQ-CROSS-387 (EPIC-CLI-019) — `modernpath feedback "<line>"` files a
 // tooling gap as a BACKLOG-TOOL-<n> record with the CLI build captured,
-// attaches the previous user command with --last, and falls back to the
-// interim file only when no token is stored or the server is unreachable.
+// attaches the previous user command with --last, and refuses without writes
+// when the ModernPath destination cannot be verified.
 
 func feedbackServer(t *testing.T, existing []any, authorStatus int) (*httptest.Server, *map[string]any) {
 	t.Helper()
 	var got map[string]any
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/systems", feedbackSystems)
 	mux.HandleFunc("/api/v1/sync/backlog", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"backlog": existing}})
 	})
@@ -55,7 +57,7 @@ func toolRows(ids ...string) []any {
 // a tooling create carrying the line and the build; the id is printed.
 func TestFeedbackFilesAToolingRecordWithTheBuildCaptured(t *testing.T) {
 	srv, got := feedbackServer(t, toolRows("BACKLOG-TOOL-1", "BACKLOG-TOOL-2"), 200)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 
 	out, err := runRoot(t, "feedback", "process check prints only a check name")
 	if err != nil {
@@ -83,7 +85,7 @@ func TestFeedbackFilesAToolingRecordWithTheBuildCaptured(t *testing.T) {
 // (b) --last attaches the previous user-run command and its output.
 func TestFeedbackLastAttachesThePreviousCommand(t *testing.T) {
 	srv, got := feedbackServer(t, nil, 200)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 	previous := historyEntry{Argv: []string{"process", "check", "--phase", "plan"}, Started: time.Now(), Exit: 1, Output: "FAIL canonical_sections\n"}
 	writeHistory(t, ".", previous)
 
@@ -99,152 +101,66 @@ func TestFeedbackLastAttachesThePreviousCommand(t *testing.T) {
 	}
 }
 
-// (c) No stored token: the line lands in the interim file and the output
-// names it; exit 0.
-func TestFeedbackWithoutATokenAppendsToTheInterimFile(t *testing.T) {
-	srv, got := feedbackServer(t, nil, 200)
-	cobraWorkspace(t, srv)
-	_ = os.Remove(filepath.Join(".modernpath", "auth.json"))
+func feedbackSystems(w http.ResponseWriter, r *http.Request) {
+	_ = json.NewEncoder(w).Encode([]api.System{{ID: 7, Slug: "modernpath"}})
+}
 
-	out, err := runRoot(t, "feedback", "the pull refuses the release gate")
+func feedbackWorkspace(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	cobraWorkspace(t, srv)
+	feedbackAuth(t, "371734807656268047", zitadel.ProdProfile.Issuer)
+	cfg, err := config.ReadConfig()
 	if err != nil {
-		t.Fatalf("offline feedback must succeed: %v", err)
+		t.Fatal(err)
 	}
-	raw, readErr := os.ReadFile(filepath.Join("process", "tooling-gaps.md"))
-	if readErr != nil {
-		t.Fatalf("the interim file must be written: %v", readErr)
-	}
-	if !strings.Contains(string(raw), "the pull refuses the release gate") {
-		t.Errorf("the row must carry the line:\n%s", raw)
-	}
-	if !strings.Contains(out, "tooling-gaps.md") {
-		t.Errorf("the output must name the file:\n%s", out)
-	}
-	if *got != nil {
-		t.Errorf("nothing may be posted without a token, posted %v", *got)
+	cfg.SystemID = 7
+	cfg.SystemSlug = "modernpath"
+	if err := config.WriteConfig(cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// (c″) REQ-CROSS-434: the same fallback for a workspace that names no
-// system. `feedback` promises the interim file "without a stored credential,
-// or when the server cannot be reached", but an unbound workspace is a plain
-// error — so the one command that exists to surface a gap exited on one,
-// losing the line, in exactly the situation a newcomer meets it.
-func TestFeedbackWithoutABindingAppendsToTheInterimFile(t *testing.T) {
-	for _, c := range []struct {
-		name, config, want string
-	}{
-		{"config names no system", `{"api_url":"http://127.0.0.1:1"}`, "system"},
-		{"no config at all", "", "connect"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
+func TestFeedbackWithoutCredentialsOrBindingWritesNothing(t *testing.T) {
+	for _, name := range []string{"no token", "no system", "no config"} {
+		t.Run(name, func(t *testing.T) {
 			srv, got := feedbackServer(t, nil, 200)
-			cobraWorkspace(t, srv)
-			if c.config == "" {
+			feedbackWorkspace(t, srv)
+			switch name {
+			case "no token":
+				_ = os.Remove(filepath.Join(".modernpath", "auth.json"))
+			case "no system":
+				_ = os.WriteFile(filepath.Join(".modernpath", "config.json"), []byte(`{"api_url":"`+srv.URL+`"}`), 0o644)
+			case "no config":
 				_ = os.RemoveAll(".modernpath")
-			} else {
-				_ = os.WriteFile(filepath.Join(".modernpath", "config.json"), []byte(c.config), 0o644)
 			}
-
-			// The "why" rides printWarning, which writes to color.Error — a
-			// writer captureOutput does not swap. Capture it here so the whole
-			// message the operator sees is under test.
-			var warnings bytes.Buffer
-			savedErr := color.Error
-			color.Error = &warnings
-			out, err := runRoot(t, "feedback", "the gap met before the workspace was bound")
-			color.Error = savedErr
-
-			if err != nil {
-				t.Fatalf("an unbound workspace must still keep the line: %v", err)
-			}
-			raw, readErr := os.ReadFile(filepath.Join("process", "tooling-gaps.md"))
-			if readErr != nil {
-				t.Fatalf("the interim file must be written: %v", readErr)
-			}
-			if !strings.Contains(string(raw), "the gap met before the workspace was bound") {
-				t.Errorf("the row must carry the line:\n%s", raw)
-			}
-			if !strings.Contains(out, "tooling-gaps.md") {
-				t.Errorf("the output must name the file:\n%s", out)
-			}
-			said := out + warnings.String()
-			if !strings.Contains(said, c.want) {
-				t.Errorf("the output must say why the store was not written, got:\n%s", said)
+			if _, err := runRoot(t, "feedback", "a tooling defect"); err == nil {
+				t.Fatal("unavailable credential or binding must be refused")
 			}
 			if *got != nil {
-				t.Errorf("nothing may be posted by an unbound workspace, posted %v", *got)
+				t.Fatalf("nothing may be posted: %v", *got)
+			}
+			if _, err := os.Stat(filepath.Join("process", "tooling-gaps.md")); !os.IsNotExist(err) {
+				t.Fatalf("no local fallback may be written: %v", err)
 			}
 		})
 	}
 }
 
-// (c‴) REQ-CROSS-434: a credential the server rejects, and a binding to a
-// system this user cannot reach, leave the store unwritable just as a missing
-// credential or binding does. Both are fixed by another command (`auth`,
-// `factory connect`), not by retrying, so the line goes to the interim file
-// instead of being lost with the exit.
-func TestFeedbackKeepsTheLineWhenTheStoreCannotBeWritten(t *testing.T) {
-	for _, c := range []struct {
-		name, want, notWant string
-		setup               func(t *testing.T)
-	}{
-		{"the server rejects the credential", "rejected the session token", "", func(t *testing.T) {
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/v1/sync/backlog", func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-			})
-			srv := httptest.NewServer(mux)
-			t.Cleanup(srv.Close)
-			cobraWorkspace(t, srv)
-		}},
-		// REQ-CROSS-434 (F-CLI024-R1-05): the same 401 on the create, after a
-		// read that succeeded.
-		{"the server rejects the credential on the create", "rejected the session token", "", func(t *testing.T) {
-			srv, _ := feedbackServer(t, nil, http.StatusUnauthorized)
-			cobraWorkspace(t, srv)
-		}},
-		{"the bound system is not reachable", "bound system is not reachable", "no workspace binding", func(t *testing.T) {
-			srv, _ := feedbackServer(t, nil, 200)
-			cobraWorkspace(t, srv) // bound to system 1
-			stubSystems(t)         // this user reaches system 7 only
-		}},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			c.setup(t)
-
-			var warnings bytes.Buffer
-			savedErr := color.Error
-			color.Error = &warnings
-			out, err := runRoot(t, "feedback", "a gap the store cannot take")
-			color.Error = savedErr
-
-			if err != nil {
-				t.Fatalf("the line must be kept, not lost with an exit: %v", err)
-			}
-			raw, readErr := os.ReadFile(filepath.Join("process", "tooling-gaps.md"))
-			if readErr != nil {
-				t.Fatalf("the interim file must be written: %v", readErr)
-			}
-			if !strings.Contains(string(raw), "a gap the store cannot take") {
-				t.Errorf("the row must carry the line:\n%s", raw)
-			}
-			said := out + warnings.String()
-			if !strings.Contains(said, c.want) {
-				t.Errorf("the output must say why the store was not written (%q), got:\n%s", c.want, said)
-			}
-			if c.notWant != "" && strings.Contains(said, c.notWant) {
-				t.Errorf("the output must not say %q, got:\n%s", c.notWant, said)
-			}
-		})
+func TestFeedbackRejectedCredentialWritesNoFallback(t *testing.T) {
+	srv, _ := feedbackServer(t, nil, http.StatusUnauthorized)
+	feedbackWorkspace(t, srv)
+	if _, err := runRoot(t, "feedback", "a tooling defect"); err == nil {
+		t.Fatal("rejected credential must be refused")
+	}
+	if _, err := os.Stat(filepath.Join("process", "tooling-gaps.md")); !os.IsNotExist(err) {
+		t.Fatalf("no local fallback may be written: %v", err)
 	}
 }
 
 // (c′) A refused create is reported verbatim and fails; no row is written.
 func TestFeedbackReportsARefusedCreate(t *testing.T) {
 	srv, _ := feedbackServer(t, nil, 422)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 
 	_, err := runRoot(t, "feedback", "a line the server refuses")
 	if err == nil {
@@ -274,17 +190,18 @@ func writeHistory(t *testing.T, root string, entries ...historyEntry) {
 }
 
 // A server that answers — a 500 on the backlog read here — is not
-// unreachable: the error is returned and nothing lands in the interim file
+// unreachable: the error is returned and no local fallback is written
 // (F-CLI019-PR-05).
 func TestFeedbackReportsARefusedBacklogRead(t *testing.T) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/systems", feedbackSystems)
 	mux.HandleFunc("/api/v1/sync/backlog", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"reason": "backlog read exploded"}})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 
 	_, err := runRoot(t, "feedback", "a line behind a broken read")
 	if err == nil {
@@ -313,7 +230,7 @@ func seedThreeCommands(t *testing.T) {
 // S1 — the third entry is shown before the record id, and attached.
 func TestFeedbackLastShowsTheEntryBeforeWriting(t *testing.T) {
 	srv, got := feedbackServer(t, nil, 200)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 	seedThreeCommands(t)
 
 	out, err := runRoot(t, "feedback", "--last", "install check said nothing about the gate")
@@ -338,7 +255,7 @@ func TestFeedbackLastShowsTheEntryBeforeWriting(t *testing.T) {
 // S2 — --ref 2 attaches the second most recent; --ref 5 refuses naming three.
 func TestFeedbackRefPicksAnEarlierCommand(t *testing.T) {
 	srv, got := feedbackServer(t, nil, 200)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 	seedThreeCommands(t)
 
 	out, err := runRoot(t, "feedback", "--ref", "2", "activation refused without saying whose PIN")
@@ -367,7 +284,7 @@ func TestFeedbackRefPicksAnEarlierCommand(t *testing.T) {
 // S3 — without --last nothing is attached and no history line is printed.
 func TestFeedbackWithoutLastPrintsNoHistory(t *testing.T) {
 	srv, got := feedbackServer(t, nil, 200)
-	cobraWorkspace(t, srv)
+	feedbackWorkspace(t, srv)
 	seedThreeCommands(t)
 
 	out, err := runRoot(t, "feedback", "a plain line")

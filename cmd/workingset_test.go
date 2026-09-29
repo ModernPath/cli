@@ -114,6 +114,10 @@ type wsFixture struct {
 	// SCN-BRIEF-005: every request the fixture answered, "METHOD path" — the
 	// reads-only assertion is that none of them is a write.
 	requests []string
+
+	// REQ-CROSS-464: the findings read, served on GET /sync/findings when
+	// non-nil (unserved, 404, otherwise — the shape older tests expect).
+	findings []any
 }
 
 // legacyFixtureItems supplies an exact item response for tests that predate the
@@ -236,6 +240,16 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 		items := fx.items
 		if items == nil {
 			items = legacyFixtureItems(fx, r.URL.Query()["ids[]"])
+			// REQ-CROSS-489: like the server, a requirement entry carries its
+			// (here empty) trace links only when the read asks for them.
+			if r.URL.Query().Get("include_traces") == "true" {
+				for _, raw := range items {
+					entry := raw.(map[string]any)
+					if kind := str(entry, "kind"); kind == "system" || kind == "user" {
+						entry["traces"] = map[string]any{"from": []any{}, "to": []any{}, "truncated": false}
+					}
+				}
+			}
 		}
 		write(w, "items", items)
 	})
@@ -301,6 +315,13 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 		w.WriteHeader(404)
 		json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "no such gate: " + id}})
 	})
+	mux.HandleFunc("/api/v1/sync/findings", func(w http.ResponseWriter, r *http.Request) {
+		if fx.findings == nil {
+			http.NotFound(w, r)
+			return
+		}
+		write(w, "findings", fx.findings)
+	})
 	mux.HandleFunc("/api/v1/sync/epics", func(w http.ResponseWriter, r *http.Request) { write(w, "epics", fx.epics) })
 	mux.HandleFunc("/api/v1/sync/delivery-context", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"data": fx.deliveryContext})
@@ -340,6 +361,12 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 		}
 		if item := fx.authorSyncItems[conflictKey]; item != nil {
 			data["sync_item"] = item
+			// A record born by this create is one the store now serves.
+			if str(body, "action") == "create" && str(rec, "kind") == "requirement" {
+				if payload, ok := item.(map[string]any)["item"]; ok {
+					fx.requirements = append(fx.requirements, payload)
+				}
+			}
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
@@ -357,8 +384,8 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 	})
 	mux.HandleFunc("/api/v1/feed", func(w http.ResponseWriter, r *http.Request) {
 		fx.lastFeedQuery = r.URL.RawQuery
-		if fx.feedDelay > 0 {
-			time.Sleep(fx.feedDelay)
+		if fx.feedDelay > 0 && !waitOrClientGone(r, fx.feedDelay) {
+			return
 		}
 		if fx.failFeed {
 			w.WriteHeader(500)
@@ -404,8 +431,8 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 		write(w, "pieces", pieces)
 	})
 	mux.HandleFunc("/api/v1/sync/contract", func(w http.ResponseWriter, r *http.Request) {
-		if fx.contractDelay > 0 {
-			time.Sleep(fx.contractDelay)
+		if fx.contractDelay > 0 && !waitOrClientGone(r, fx.contractDelay) {
+			return
 		}
 		if fx.contractVersion == 0 {
 			http.NotFound(w, r)
@@ -423,7 +450,7 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 		}
 		mux.ServeHTTP(w, r)
 	}))
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { closeNow(srv) })
 	return srv
 }
 
@@ -487,14 +514,14 @@ func TestWorkingSetIncludeCandidatesRidesTheReadQuery(t *testing.T) {
 	fx := &wsFixture{items: []any{map[string]any{"kind": "system", "item": wsReq("SR-1", "x"), "gates": []any{}}}}
 	env := wsEnv(t, wsServe(t, fx))
 
-	if _, err := fetchDirectItems(env, []string{"SR-1"}, true); err != nil {
+	if _, err := fetchDirectItems(env, []string{"SR-1"}, true, false); err != nil {
 		t.Fatalf("fetchDirectItems(include): %v", err)
 	}
 	if !strings.Contains(fx.lastItemsQuery, "include=candidates") {
 		t.Fatalf("--include-candidates must add include=candidates, got %q", fx.lastItemsQuery)
 	}
 
-	if _, err := fetchDirectItems(env, []string{"SR-1"}, false); err != nil {
+	if _, err := fetchDirectItems(env, []string{"SR-1"}, false, false); err != nil {
 		t.Fatalf("fetchDirectItems(default): %v", err)
 	}
 	if strings.Contains(fx.lastItemsQuery, "include=candidates") {
@@ -515,7 +542,7 @@ func TestWorkingSetIndexesUserRequirements(t *testing.T) {
 	}}
 	env := wsEnv(t, wsServe(t, fx))
 
-	index, err := fetchDirectItems(env, []string{"SR-1", "UR-1"}, true)
+	index, err := fetchDirectItems(env, []string{"SR-1", "UR-1"}, true, false)
 	if err != nil {
 		t.Fatalf("fetchDirectItems: %v", err)
 	}
@@ -1417,5 +1444,557 @@ func TestSelectSaysSoWhenTheServerReturnsNoRow(t *testing.T) {
 	}
 	if strings.Contains(out, "map[") || strings.Contains(out, "phase plan") {
 		t.Fatalf("nothing the server did not serve may appear in the line:\n%s", out)
+	}
+}
+
+// REQ-CROSS-217 RED: a local-only item edit must not be reported current when
+// the server identity remains unchanged.
+func TestCheckReportsLocalBodyEditWhenStoreIdentityIsCurrent(t *testing.T) {
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-LOCAL", "server truth")}}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"EPIC-LOCAL"}, wsNow); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, "EPIC-LOCAL.md")
+	raw := string(mustReadFile(t, path))
+	local := strings.Replace(raw, "server truth", "my local draft", 1)
+	if local == raw {
+		t.Fatal("precondition: expected server text in pulled body")
+	}
+	if err := os.WriteFile(path, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureWorkingSetCheck(t, env, false)
+	report := out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "local") {
+		t.Fatalf("local-only edit must be reported as local divergence, got err=%v output:\n%s", err, out)
+	}
+	if strings.Contains(strings.ToLower(report), "stale") {
+		t.Fatalf("unchanged store identity must not be reported store-stale:\n%s", out)
+	}
+}
+
+// REQ-CROSS-217 RED: server and body divergence are distinct conditions.
+func TestCheckReportsStoreAndLocalStalenessIndependently(t *testing.T) {
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-BOTH", "old server truth")}}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"EPIC-BOTH"}, wsNow); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, "EPIC-BOTH.md")
+	original := string(mustReadFile(t, path))
+	local := strings.Replace(original, "old server truth", "local draft", 1)
+	if err := os.WriteFile(path, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fx.epics = []any{wsEpic("EPIC-BOTH", "new server truth")}
+
+	out, err := captureWorkingSetCheck(t, env, false)
+	report := out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "stale") || !strings.Contains(strings.ToLower(report), "local") {
+		t.Fatalf("both dimensions must be named independently, got err=%v output:\n%s", err, out)
+	}
+}
+
+// REQ-CROSS-217 RED: refresh must preserve a local edit and create a fresh
+// comparison copy even though the store identity did not change.
+func TestCheckRefreshPreservesLocalEditAndWritesPulledWhenStoreIdentityIsCurrent(t *testing.T) {
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-REFRESH-LOCAL", "server truth")}}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"EPIC-REFRESH-LOCAL"}, wsNow); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, "EPIC-REFRESH-LOCAL.md")
+	original := string(mustReadFile(t, path))
+	local := strings.Replace(original, "server truth", "local draft", 1)
+	if err := os.WriteFile(path, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureWorkingSetCheck(t, env, true)
+	report := out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "local") {
+		t.Errorf("refresh must return a local conflict, got err=%v output:\n%s", err, out)
+	}
+	if got := string(mustReadFile(t, path)); got != local {
+		t.Errorf("refresh overwrote the local file:\n%s", got)
+	}
+	pulled, readErr := os.ReadFile(path + ".pulled")
+	if readErr != nil {
+		t.Errorf("refresh must write a fresh .pulled file: %v", readErr)
+	} else if !strings.Contains(string(pulled), "server truth") || strings.Contains(string(pulled), "local draft") {
+		t.Errorf(".pulled must contain fresh server content:\n%s", pulled)
+	}
+}
+
+// REQ-CROSS-217 RED: selection-only body edits are local divergence.
+func TestCheckVerifiesWorkSelectionWrittenBody(t *testing.T) {
+	fx := &wsFixture{workSelection: wsSelectionPayload()}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"selection"}, wsNow); err != nil {
+		t.Fatalf("pull selection: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, selectionFile)
+	original := string(mustReadFile(t, path))
+	local := strings.Replace(original, "EPIC-B3", "LOCAL-EPIC-B3", 1)
+	if err := os.WriteFile(path, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureWorkingSetCheck(t, env, false)
+	report := out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "local") {
+		t.Fatalf("selection body edit must be reported, got err=%v output:\n%s", err, out)
+	}
+}
+
+// REQ-CROSS-217 RED for CR-CLI002-CHECK-R1-SELECTION: both dimensions must be
+// reported, and refresh must preserve the selection while writing its fresh
+// server snapshot beside it.
+func TestCheckSelectionReportsStoreAndLocalStalenessAndPreservesOnRefresh(t *testing.T) {
+	fx := &wsFixture{workSelection: wsSelectionPayload()}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"selection"}, wsNow); err != nil {
+		t.Fatalf("pull selection: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, selectionFile)
+	original := string(mustReadFile(t, path))
+	local := strings.Replace(original, "EPIC-B3", "LOCAL-EPIC-B3", 1)
+	if err := os.WriteFile(path, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fx.workSelection["current"].(map[string]any)["phase"] = "completion"
+
+	out, err := captureWorkingSetCheck(t, env, false)
+	report := out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "stale") || !strings.Contains(strings.ToLower(report), "local") {
+		t.Errorf("selection must report both changed identities, got err=%v output:\n%s", err, out)
+	}
+	out, err = captureWorkingSetCheck(t, env, true)
+	report = out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "local") {
+		t.Errorf("selection refresh must remain a local conflict, got err=%v output:\n%s", err, out)
+	}
+	if got := string(mustReadFile(t, path)); got != local {
+		t.Errorf("selection refresh overwrote local bytes:\n%s", got)
+	}
+	pulledPath := path + ".pulled"
+	pulled, readErr := os.ReadFile(pulledPath)
+	if readErr != nil {
+		t.Errorf("selection refresh must write %s: %v", filepath.Base(pulledPath), readErr)
+	} else if !strings.Contains(string(pulled), "completion") || strings.Contains(string(pulled), "LOCAL-EPIC-B3") {
+		t.Errorf("selection .pulled must contain fresh server state:\n%s", pulled)
+	}
+}
+
+// REQ-CROSS-217 RED for CR-CLI002-CHECK-R1-FRAMING: malformed headers are unverified.
+func TestCheckRejectsMalformedOrDuplicateSnapshotHeaders(t *testing.T) {
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-HEADER", "server truth")}}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"EPIC-HEADER"}, wsNow); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, "EPIC-HEADER.md")
+	original := string(mustReadFile(t, path))
+	source := sourceIdentityKey + headerValue(original, sourceIdentityKey)
+	written := writtenBodyKey + headerValue(original, writtenBodyKey)
+	writtenAt := strings.Index(original, writtenBodyKey)
+	separator := strings.Index(original[writtenAt:], "\n\n")
+	bodyStart := writtenAt + separator + 2
+	header, body := original[:bodyStart], original[bodyStart:]
+
+	cases := []struct {
+		name string
+		file string
+	}{
+		{"missing source identity must not be recovered from body", strings.Replace(header, source+"\n", "", 1) + source + "\n" + body},
+		{"missing written body must not be recovered from body", strings.Replace(header, written+"\n", "", 1) + written + "\n" + body},
+		{"duplicate source identity", strings.Replace(header, source+"\n", source+"\n"+source+"\n", 1) + body},
+		{"duplicate written body", strings.Replace(header, written+"\n", written+"\n"+written+"\n", 1) + body},
+		{"duplicate empty source identity", strings.Replace(header, source+"\n", source+"\n- **Source identity:**\n", 1) + body},
+		{"duplicate empty written body", strings.Replace(header, written+"\n", written+"\n- **Written body:**\n", 1) + body},
+		{"wrong source algorithm duplicate", strings.Replace(header, source+"\n", source+"\n- **Source identity:** md5:abc\n", 1) + body},
+		{"missing source hash value", strings.Replace(header, source, "- **Source identity:** sha256:", 1) + body},
+		{"malformed source sha256", strings.Replace(header, source, sourceIdentityKey+"not-a-hash", 1) + body},
+		{"malformed body sha256", strings.Replace(header, written, writtenBodyKey+"not-a-hash", 1) + body},
+		{"non-hex source sha256", strings.Replace(header, source, sourceIdentityKey+strings.Repeat("g", 64), 1) + body},
+		{"non-hex body sha256", strings.Replace(header, written, writtenBodyKey+strings.Repeat("g", 64), 1) + body},
+		{"wrong snapshot title", strings.Replace(header, "# EPIC-HEADER — working-set snapshot", "# WRONG — working-set snapshot", 1) + body},
+		{"missing header body delimiter", strings.Replace(original, written+"\n\n", written+"\n", 1)},
+	}
+	for _, tc := range cases {
+		if err := os.WriteFile(path, []byte(tc.file), 0o644); err != nil {
+			t.Fatalf("write %s: %v", tc.name, err)
+		}
+		out, err := captureWorkingSetCheck(t, env, false)
+		report := out
+		if err != nil {
+			report += err.Error()
+		}
+		if err == nil || !strings.Contains(strings.ToLower(report), "unverified") {
+			t.Errorf("%s: want non-zero unverified result, got err=%v output:\n%s", tc.name, err, out)
+		}
+	}
+}
+
+// REQ-CROSS-217 RED: one local conflict must not prevent later clean remote
+// snapshots from being refreshed during the same check.
+func TestCheckRefreshProcessesEverySnapshotAfterAConflict(t *testing.T) {
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-A-EDIT", "old edited record"), wsEpic("EPIC-Z-CLEAN", "old clean record")}}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"EPIC-A-EDIT", "EPIC-Z-CLEAN"}, wsNow); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	editedPath := filepath.Join(env.Root, workingSetDir, "EPIC-A-EDIT.md")
+	edited := strings.Replace(string(mustReadFile(t, editedPath)), "old edited record", "local edited record", 1)
+	if err := os.WriteFile(editedPath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fx.epics = []any{wsEpic("EPIC-A-EDIT", "new edited record"), wsEpic("EPIC-Z-CLEAN", "new clean record")}
+
+	out, err := captureWorkingSetCheck(t, env, true)
+	report := out
+	if err != nil {
+		report += err.Error()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(report), "local") {
+		t.Errorf("refresh must report the local conflict, got err=%v output:\n%s", err, out)
+	}
+	if got := string(mustReadFile(t, editedPath)); got != edited {
+		t.Errorf("refresh overwrote the edited snapshot")
+	}
+	if pulled, readErr := os.ReadFile(editedPath + ".pulled"); readErr != nil {
+		t.Errorf("edited snapshot fresh copy missing: %v", readErr)
+	} else if !strings.Contains(string(pulled), "new edited record") {
+		t.Errorf("edited snapshot .pulled lacks fresh server content:\n%s", pulled)
+	}
+	cleanPath := filepath.Join(env.Root, workingSetDir, "EPIC-Z-CLEAN.md")
+	if got := string(mustReadFile(t, cleanPath)); !strings.Contains(got, "new clean record") {
+		t.Errorf("refresh stopped at the first conflict instead of refreshing the later clean file:\n%s", got)
+	}
+	if _, statErr := os.Stat(cleanPath + ".pulled"); statErr == nil {
+		t.Errorf("clean remote-only snapshot should refresh in place, without .pulled")
+	}
+}
+
+// REQ-CROSS-217 regression: correctly hashed body text cannot alter metadata parsing.
+func TestCheckDoesNotParseMetadataLikeBodyText(t *testing.T) {
+	fake := strings.Repeat("0", 64)
+	title := "server truth\n\n- **Source identity:** sha256:" + fake + "\n- **Written body:** sha256:" + fake
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-BODY-META", title)}}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{"EPIC-BODY-META"}, wsNow); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	out, err := captureWorkingSetCheck(t, env, false)
+	if err != nil || !strings.Contains(out, "current: EPIC-BODY-META") {
+		t.Fatalf("metadata-like lines in a correctly hashed body remain ordinary content, got err=%v output:\n%s", err, out)
+	}
+}
+
+// REQ-CROSS-217 RED: guarded refresh preserves malformed source metadata.
+func TestCheckRefreshPreservesMalformedSnapshot(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(string) string
+	}{
+		{"duplicate source identity", func(raw string) string {
+			line := sourceIdentityKey + headerValue(raw, sourceIdentityKey)
+			return strings.Replace(raw, line+"\n", line+"\n"+line+"\n", 1)
+		}},
+		{"invalid source identity with valid body", func(raw string) string {
+			line := sourceIdentityKey + headerValue(raw, sourceIdentityKey)
+			return strings.Replace(raw, line, sourceIdentityKey+"not-a-hash", 1)
+		}},
+	}
+	for _, tc := range cases {
+		fx := &wsFixture{epics: []any{wsEpic("EPIC-MALFORMED", "old server truth")}}
+		env := wsEnv(t, wsServe(t, fx))
+		if err := workingSetPull(env, []string{"EPIC-MALFORMED"}, wsNow); err != nil {
+			t.Fatalf("%s: pull: %v", tc.name, err)
+		}
+		path := filepath.Join(env.Root, workingSetDir, "EPIC-MALFORMED.md")
+		original := tc.mutate(string(mustReadFile(t, path)))
+		if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+			t.Fatalf("%s: write malformed snapshot: %v", tc.name, err)
+		}
+		fx.epics = []any{wsEpic("EPIC-MALFORMED", "new server truth")}
+
+		out, err := captureWorkingSetCheck(t, env, true)
+		report := out
+		if err != nil {
+			report += err.Error()
+		}
+		if err == nil || !strings.Contains(strings.ToLower(report), "unverified") {
+			t.Errorf("%s: want malformed snapshot conflict, got err=%v output:\n%s", tc.name, err, out)
+		}
+		if got := string(mustReadFile(t, path)); got != original {
+			t.Errorf("%s: refresh overwrote malformed original", tc.name)
+		}
+		pulled, readErr := os.ReadFile(path + ".pulled")
+		if readErr != nil {
+			t.Errorf("%s: fresh .pulled file missing: %v", tc.name, readErr)
+		} else if !strings.Contains(string(pulled), "new server truth") {
+			t.Errorf("%s: .pulled does not contain the fresh server state:\n%s", tc.name, pulled)
+		}
+	}
+}
+
+func TestCheckNoWorkRemainsSuccessful(t *testing.T) {
+	env := wsEnv(t, wsServe(t, &wsFixture{}))
+	if err := workingSetCheck(env, false, wsNow); err != nil {
+		t.Fatalf("empty working set is a successful no-work check: %v", err)
+	}
+}
+
+func TestCheckIgnoresEditableScopedDirectories(t *testing.T) {
+	env := wsEnv(t, wsServe(t, &wsFixture{}))
+	scopeFile := filepath.Join(env.Root, workingSetDir, "EPIC-SCOPE", "members", "REQ-1.md")
+	if err := os.MkdirAll(filepath.Dir(scopeFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scopeFile, []byte("locally edited scoped content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := workingSetCheck(env, false, wsNow); err != nil {
+		t.Fatalf("root named-snapshot check must ignore editable scoped directories: %v", err)
+	}
+}
+
+func captureWorkingSetCheck(t *testing.T, env *factoryEnv, refresh bool) (string, error) {
+	t.Helper()
+	var err error
+	out := captureOutput(t, func() { err = workingSetCheck(env, refresh, wsNow) })
+	return out, err
+}
+
+// headerValue is a fixture helper that reads only rendered title/metadata
+// blocks so tests can make targeted mutations without relying on production
+// parsing behavior.
+func headerValue(content, key string) string {
+	blocks := strings.SplitN(content, "\n\n", 3)
+	if len(blocks) > 2 {
+		blocks = blocks[:2]
+	}
+	for _, block := range blocks {
+		for _, line := range strings.Split(block, "\n") {
+			if strings.HasPrefix(line, key) {
+				return strings.TrimSpace(strings.TrimPrefix(line, key))
+			}
+		}
+	}
+	return ""
+}
+
+// REQ-CROSS-217 regression: hexadecimal hash casing does not change identity
+// or make the guarded writer treat a valid snapshot as a local edit.
+func TestCheckAcceptsUppercaseSnapshotHashes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+		file string
+	}{
+		{name: "item", id: "EPIC-UPPER-HASH", file: "EPIC-UPPER-HASH.md"},
+		{name: "selection", id: selectionTarget, file: selectionFile},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := &wsFixture{epics: []any{wsEpic("EPIC-UPPER-HASH", "server truth")}, workSelection: wsSelectionPayload()}
+			env := wsEnv(t, wsServe(t, fx))
+			if err := workingSetPull(env, []string{tc.id}, wsNow); err != nil {
+				t.Fatalf("initial pull: %v", err)
+			}
+			path := filepath.Join(env.Root, workingSetDir, tc.file)
+			for _, key := range []string{sourceIdentityKey, writtenBodyKey} {
+				raw := string(mustReadFile(t, path))
+				value := headerValue(raw, key)
+				upper := strings.ToUpper(value)
+				if upper == value {
+					t.Fatalf("fixture hash has no lowercase hex digits to exercise casing: %s", value)
+				}
+				updated := strings.Replace(raw, key+value, key+upper, 1)
+				if updated == raw {
+					t.Fatalf("could not uppercase %s", key)
+				}
+				if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				out, err := captureWorkingSetCheck(t, env, false)
+				if err != nil || !strings.Contains(out, "current:") {
+					t.Fatalf("uppercase %s hash must remain current, got err=%v output:\n%s", key, err, out)
+				}
+				var pullErr error
+				_ = captureOutput(t, func() { pullErr = workingSetPull(env, []string{tc.id}, wsNow) })
+				if pullErr != nil {
+					t.Fatalf("guarded pull must accept uppercase %s hash: %v", key, pullErr)
+				}
+				if _, statErr := os.Stat(path + ".pulled"); !os.IsNotExist(statErr) {
+					t.Fatalf("uppercase %s hash was mistaken for a conflict; .pulled stat error=%v", key, statErr)
+				}
+			}
+		})
+	}
+}
+
+// REQ-CROSS-217 regression: an unchanged selection with malformed framing is
+// unverified, and refresh preserves it beside a fresh valid comparison copy.
+func TestCheckRefreshPreservesMalformedSelectionWhenSourceIsUnchanged(t *testing.T) {
+	env := wsEnv(t, wsServe(t, &wsFixture{workSelection: wsSelectionPayload()}))
+	if err := workingSetPull(env, []string{selectionTarget}, wsNow); err != nil {
+		t.Fatalf("initial pull: %v", err)
+	}
+	path := filepath.Join(env.Root, workingSetDir, selectionFile)
+	original := string(mustReadFile(t, path))
+	originalSnapshot, parseErr := parseWorkingSetSnapshot(selectionFile, original)
+	if parseErr != nil {
+		t.Fatalf("initial selection snapshot invalid: %v", parseErr)
+	}
+	malformed := strings.Replace(original, writtenBodyKey+headerValue(original, writtenBodyKey), writtenBodyKey+"not-a-hash", 1)
+	if malformed == original {
+		t.Fatal("fixture mutation did not corrupt Written body hash")
+	}
+	if err := os.WriteFile(path, []byte(malformed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureWorkingSetCheck(t, env, false)
+	if err == nil || !strings.Contains(strings.ToLower(out+err.Error()), "unverified") {
+		t.Fatalf("malformed selection must be unverified, got err=%v output:\n%s", err, out)
+	}
+	if strings.Contains(strings.ToLower(out), "current") || strings.Contains(strings.ToLower(out), "local body edit") {
+		t.Fatalf("malformed selection must not be called current or a known local edit:\n%s", out)
+	}
+
+	out, err = captureWorkingSetCheck(t, env, true)
+	if err == nil || !strings.Contains(strings.ToLower(out+err.Error()), "unverified") {
+		t.Fatalf("refresh of malformed selection must remain non-zero and unverified, got err=%v output:\n%s", err, out)
+	}
+	if strings.Contains(strings.ToLower(out), "current") || strings.Contains(strings.ToLower(out), "local body edit") {
+		t.Fatalf("refresh must not misdiagnose malformed selection:\n%s", out)
+	}
+	if got := string(mustReadFile(t, path)); got != malformed {
+		t.Fatalf("refresh changed malformed original bytes")
+	}
+	pulled, readErr := os.ReadFile(path + ".pulled")
+	if readErr != nil {
+		t.Fatalf("refresh did not write fresh comparison snapshot: %v", readErr)
+	}
+	fresh, parseErr := parseWorkingSetSnapshot(selectionFile, string(pulled))
+	if parseErr != nil {
+		t.Fatalf("fresh .pulled selection is not a valid snapshot: %v", parseErr)
+	}
+	if fresh.body != originalSnapshot.body {
+		t.Fatalf("fresh .pulled body differs from unchanged server snapshot")
+	}
+	if !strings.EqualFold(fresh.sourceIdentity, originalSnapshot.sourceIdentity) {
+		t.Fatalf("fresh .pulled source hash differs from unchanged server snapshot")
+	}
+	if !strings.EqualFold(fresh.writtenBody, originalSnapshot.writtenBody) {
+		t.Fatalf("fresh .pulled Written body hash differs from unchanged server snapshot")
+	}
+}
+
+// UR-CLI-002 / SCN-CLI-002-LOCAL-BODY upper RED: exercise the installed root
+// command surface, including its exit code and files, rather than only the
+// checker function.
+func TestSCNCLI002LocalBody(t *testing.T) {
+	fx := &wsFixture{epics: []any{wsEpic("EPIC-UPPER", "server truth")}}
+	srv := wsServe(t, fx)
+	cobraWorkspace(t, srv)
+	if out, err := runRoot(t, "working-set", "pull", "EPIC-UPPER"); err != nil {
+		t.Fatalf("root pull failed: %v output:\n%s", err, out)
+	}
+	path := filepath.Join(".modernpath", "working-set", "EPIC-UPPER.md")
+	original := string(mustReadFile(t, path))
+	local := strings.Replace(original, "server truth", "upper local draft", 1)
+	if err := os.WriteFile(path, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRoot(t, "working-set", "check")
+	if err == nil || !strings.Contains(strings.ToLower(out), "local") {
+		t.Errorf("root check must fail for and name a local edit, got err=%v output:\n%s", err, out)
+	}
+	out, err = runRoot(t, "working-set", "check", "--refresh")
+	if err == nil || !strings.Contains(strings.ToLower(out), "local") {
+		t.Errorf("root refresh must retain a non-zero local conflict, got err=%v output:\n%s", err, out)
+	}
+	if got := string(mustReadFile(t, path)); got != local {
+		t.Errorf("root refresh overwrote the local edit")
+	}
+	pulled, readErr := os.ReadFile(path + ".pulled")
+	if readErr != nil {
+		t.Errorf("root refresh must materialize a fresh .pulled file: %v", readErr)
+	} else if !strings.Contains(string(pulled), "server truth") || strings.Contains(string(pulled), "upper local draft") {
+		t.Errorf("root refresh .pulled must contain fresh server state:\n%s", pulled)
+	}
+}
+
+// SR-CLI-028-001 C1 (EPIC-CLI-028): `state_inventory` is a fixed canonical
+// section key everywhere the CLI holds the key set — the file mapping both
+// ways, the frozen-list fallback (second, after reconnaissance), and the
+// reserved-name collision guard over served extra keys.
+func TestSRCLI028001StateInventoryIsACanonicalPacketKey(t *testing.T) {
+	if got := packetFileName("state_inventory"); got != "15-state-inventory.md" {
+		t.Fatalf("packetFileName(state_inventory) = %q, want 15-state-inventory.md", got)
+	}
+	if got := sectionKeyFromFile("15-state-inventory.md"); got != "state_inventory" {
+		t.Fatalf("sectionKeyFromFile(15-state-inventory.md) = %q, want state_inventory", got)
+	}
+	want := []string{"reconnaissance", "state_inventory", "red_strategy", "decisions"}
+	if got := requiredPacketKeys("epic", "EPIC-X", nil, nil); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("requiredPacketKeys fallback = %v, want %v", got, want)
+	}
+	if reservedPacketCollision("state_inventory") {
+		t.Fatal("the canonical key itself must not collide")
+	}
+	if !reservedPacketCollision("15-state-inventory") {
+		t.Fatal("a served extra key that maps to the reserved file 15-state-inventory.md must collide")
+	}
+}
+
+// SR-CLI-028-001 C2: the stub `working-set pull` scaffolds for the inventory
+// is exactly one marker line — the shape stripPacketStub and
+// unfilledPacketSection already recognise (REQ-CROSS-331) — whose text names
+// the table's columns and the one-line form a change with no state writes.
+func TestSRCLI028001StateInventoryStubIsOneMarkerLineNamingTheColumns(t *testing.T) {
+	marker := packetStubMarker("state_inventory", "epic", "EPIC-X")
+	if strings.Contains(marker, "\n") {
+		t.Fatalf("the stub must be one line, got:\n%s", marker)
+	}
+	if strings.TrimRight(marker, " \t\r") != marker {
+		t.Fatal("the marker must carry no trailing whitespace (the strip compares the first line exactly)")
+	}
+	for _, col := range []string{"state", "writers", "readers", "crash mid-write", "stale when", "recovery", "closed", "residual", "decided"} {
+		if !strings.Contains(marker, col) {
+			t.Fatalf("the stub must name the column %q, got:\n%s", col, marker)
+		}
+	}
+	if !strings.Contains(marker, "No persisted or shared state is added or touched") {
+		t.Fatalf("the stub must name the no-state declaration form, got:\n%s", marker)
+	}
+	if !unfilledPacketSection(marker+"\n", "state_inventory", "epic", "EPIC-X") {
+		t.Fatal("the untouched stub must read as unfilled")
+	}
+	if got := stripPacketStub(marker+"\n| s | w |\n", "state_inventory", "epic", "EPIC-X"); got != "| s | w |\n" {
+		t.Fatalf("a filled stub must be sent minus the marker line only, got %q", got)
 	}
 }

@@ -25,9 +25,10 @@ Derived requirement hold, Gates, and Discoveries/releases/conflicts.
    it as a fact, decision, defect report, new outcome, change request, or
    ambiguity and route it to planning or triage.
 6. Evaluate the candidate-packet trace. Only after it passes, open the exact
-   human confirmation gate and present its brief. Apply an attributable answer
-   as `PROPOSED`, `PENDING_VERIFICATION`, or `OBSOLETE`; otherwise stop at the
-   open gate. Proposed relations remain candidate-only until separately
+   human confirmation gate and present its brief and linked list of candidate
+   packet files before asking for confirmation, following `PROCESS.md` §Gates. Apply an attributable
+   answer as `PROPOSED`, `PENDING_VERIFICATION`, or `OBSOLETE`; otherwise stop
+   at the open gate. Proposed relations remain candidate-only until separately
    authorized.
 7. Reconcile the source and candidate records. Do not create tests,
    implementation records, or release commitments in this pass.

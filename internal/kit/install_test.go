@@ -1,8 +1,12 @@
 package kit
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -156,6 +160,122 @@ func TestCheckDetectsAnEditedGeneratedFile(t *testing.T) {
 	}
 }
 
+// A released package may stop embedding a reference after its upstream source
+// removes it. Keep the previous install's ownership inventory so --check can
+// still identify that leftover while leaving adjacent client files alone.
+func TestCheckDetectsUpstreamRemovedManagedReference(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	managed := filepath.Join(root, ".modernpath/skill-references.json")
+	prior, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatalf("install must write the managed-reference inventory: %v", err)
+	}
+	var paths []string
+	if err := json.Unmarshal(prior, &paths); err != nil {
+		t.Fatalf("managed-reference inventory must be a JSON string array: %v", err)
+	}
+	for _, prefix := range []string{".modernpath/rdd/skills/", ".claude/skills/"} {
+		found := false
+		for _, target := range paths {
+			found = found || strings.HasPrefix(target, prefix)
+		}
+		if !found {
+			t.Fatalf("managed-reference inventory must include targets under %s; got %v", prefix, paths)
+		}
+	}
+	paths = append(paths, ".claude/skills/rdd-reverse-engineer/references/removed-upstream.md")
+	prior, err = json.Marshal(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, prior, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removed := filepath.Join(root, ".claude/skills/rdd-reverse-engineer/references/removed-upstream.md")
+	custom := filepath.Join(root, ".claude/skills/rdd-reverse-engineer/references/local-notes.md")
+	for name, body := range map[string]string{removed: "old package reference", custom: "client notes"} {
+		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drift, err := Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(drift, ".claude/skills/rdd-reverse-engineer/references/removed-upstream.md (retired managed target)") {
+		t.Fatalf("removed managed reference must be reported as drift, got %v", drift)
+	}
+	if slices.Contains(drift, ".claude/skills/rdd-reverse-engineer/references/local-notes.md (retired managed target)") {
+		t.Fatalf("unlisted client file must not be claimed, got %v", drift)
+	}
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(removed); !os.IsNotExist(err) {
+		t.Fatalf("upgrade must remove the stale managed reference, stat err=%v", err)
+	}
+	if body, err := os.ReadFile(custom); err != nil || string(body) != "client notes" {
+		t.Fatalf("upgrade must preserve the unlisted client file, body=%q err=%v", body, err)
+	}
+}
+
+func TestInstallRejectsUnsafeManagedReferenceManifestBeforeWriting(t *testing.T) {
+	for _, invalid := range []string{
+		".claude/skills/rdd-reverse-engineer/references/../../../../outside.md",
+		".modernpath/rdd/skills/rdd-reverse-engineer/private.md",
+	} {
+		t.Run(invalid, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := Install(root); err != nil {
+				t.Fatal(err)
+			}
+			agentsPath := filepath.Join(root, "AGENTS.md")
+			agentsBefore, err := os.ReadFile(agentsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(root, ".modernpath/skill-references.json")
+			body, err := json.Marshal([]string{invalid})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(manifestPath, body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Install(root); err == nil {
+				t.Fatal("unsafe or non-reference manifest path must be rejected")
+			}
+			agentsAfter, err := os.ReadFile(agentsPath)
+			if err != nil || !bytes.Equal(agentsBefore, agentsAfter) {
+				t.Fatalf("install wrote before validating the manifest: err=%v", err)
+			}
+		})
+	}
+}
+
+func TestInstallWithoutHistoricalReferenceManifestPreservesExistingReferences(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, ".claude/skills/rdd-reverse-engineer/references/old.md")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("pre-manifest user file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(legacy); err != nil || string(body) != "pre-manifest user file" {
+		t.Fatalf("without a historical inventory ownership is unknown, body=%q err=%v", body, err)
+	}
+}
+
 // REQ-CROSS-029: a real client repository already had a 403-line CLAUDE.md —
 // its own process manual, with project-specific non-negotiables the kit does
 // not contain. The installer would have deleted it. Any file a client may
@@ -302,6 +422,46 @@ func TestInstallMigratesKnownLegacyProcessFilesOnly(t *testing.T) {
 	}
 }
 
+func TestInstallRetiresRemovedPackageAdapters(t *testing.T) {
+	root := t.TempDir()
+	retired := []string{
+		".modernpath/rdd/CLAUDE.md",
+		".claude/rdd/CLAUDE.md",
+		".modernpath/rdd/skills/rdd-start/agents/openai.yaml",
+		".claude/rdd/skills/rdd-start/agents/openai.yaml",
+	}
+	custom := ".modernpath/rdd/skills/rdd-start/agents/custom.yaml"
+	for _, target := range append(append([]string{}, retired...), custom) {
+		file := filepath.Join(root, target)
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("existing\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drift, err := Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range retired {
+		if !slices.Contains(drift, target+" (retired managed target)") {
+			t.Fatalf("retired adapter is missing from drift: %s", target)
+		}
+	}
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range retired {
+		if _, err := os.Stat(filepath.Join(root, target)); !os.IsNotExist(err) {
+			t.Fatalf("retired adapter remains: %s (%v)", target, err)
+		}
+	}
+	if body, err := os.ReadFile(filepath.Join(root, custom)); err != nil || string(body) != "existing\n" {
+		t.Fatalf("custom adapter must be preserved: %q (%v)", body, err)
+	}
+}
+
 func TestEmbeddedProcessSnapshotRecordsItsSourceRevision(t *testing.T) {
 	body, err := assets.ReadFile("assets/rdd-source.txt")
 	if err != nil {
@@ -319,10 +479,7 @@ func TestEmbeddedProcessSnapshotRecordsItsSourceRevision(t *testing.T) {
 }
 
 // REQ-CROSS-039 (`USER:2026-08-11`): every agent that reads AGENTS.md must know
-// the knowledge core exists and how to reach it. The two paths do different
-// jobs — the API finds, the local export reads — and an agent told only about
-// one of them either pays a round trip for a file it already has, or trusts a
-// cache that can lag.
+// where the knowledge core lives and when a live read is needed.
 func TestAgentsBlockPointsAtTheKnowledgeCore(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Install(root); err != nil {
@@ -336,9 +493,11 @@ func TestAgentsBlockPointsAtTheKnowledgeCore(t *testing.T) {
 	agents := string(raw)
 
 	for _, want := range []string{
-		"modernpath search",       // find
-		".modernpath/modernpath/", // read
-		"modernpath docs sync",    // repair, when the export was never run
+		"modernpath process prepare-inputs", // refresh before sourced work
+		"rg -n",                             // find locally
+		".modernpath/<system-slug>/",        // read locally
+		"modernpath search",                 // live fallback
+		"modernpath read-doc",               // live fallback
 	} {
 		if !strings.Contains(agents, want) {
 			t.Fatalf("AGENTS.md never mentions %q:\n%s", want, agents)
@@ -353,7 +512,7 @@ func TestAgentsBlockPointsAtTheKnowledgeCore(t *testing.T) {
 
 	// It has to live inside the managed region, or an upgrade cannot refresh it.
 	managed := agents[strings.Index(agents, BeginMarker):strings.Index(agents, EndMarker)]
-	if !strings.Contains(managed, "modernpath search") {
+	if !strings.Contains(managed, "modernpath process prepare-inputs") {
 		t.Fatal("the knowledge section must be inside the managed block")
 	}
 }
@@ -550,7 +709,7 @@ func TestInstallPlacesTheReverseEngineeringSkill(t *testing.T) {
 	if !strings.Contains(skill, "name: rdd-reverse-engineer") {
 		t.Fatalf("skill needs its frontmatter name:\n%s", skill[:min(400, len(skill))])
 	}
-	for _, want := range []string{"Baseline ready for use", "DERIVED additions for approval", "source-scoped", "Never overwrite existing approval/content"} {
+	for _, want := range []string{"Baseline ready for use", "DERIVED additions for approval", "source-scoped", "without overwriting approved content"} {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("the method never mentions %q — the decisions it encodes are missing", want)
 		}
@@ -597,18 +756,14 @@ func TestReverseEngineerSkillCarriesTheThreePhases(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "rdd-reverse-engineer", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill := string(raw)
+	skill := installedReverseEngineeringInstructions(t, root)
 
 	for _, want := range []struct{ token, why string }{
 		{"aggregate ownership", "D-ONB-8: contexts come from who writes which table, not route-file layout"},
 		{"role gate", "D-ONB-10: a user requirement cites the gate that admits its actor"},
-		{"join report", "D-ONB-11: views calling nothing and endpoints no view reaches are findings"},
+		{"Report missing joins", "D-ONB-11: views calling nothing and endpoints no view reaches are findings"},
 		{"actor/outcome URs", "surfaces produce user outcomes, not only system requirements"},
-		{"Do not create Epics", "SR-RDD-ONBOARD-004: discovery must not fabricate delivery groupings"},
+		{"Create an Epic only when the user requested a real grouping", "SR-RDD-ONBOARD-004: discovery must not fabricate delivery groupings"},
 	} {
 		if !strings.Contains(skill, want.token) {
 			t.Fatalf("skill is missing %q — %s", want.token, want.why)
@@ -638,11 +793,7 @@ func TestReverseEngineerSkillCarriesPhaseDAndItsDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "rdd-reverse-engineer", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill := string(raw)
+	skill := installedReverseEngineeringInstructions(t, root)
 
 	for _, want := range []struct{ token, why string }{
 		{"03-architecture", "D-ARCH-2: the document a reader opens first — subsystems, interfaces, datastores"},
@@ -653,7 +804,7 @@ func TestReverseEngineerSkillCarriesPhaseDAndItsDocuments(t *testing.T) {
 		{"docs/adr/", "D-ARCH-2: decisions the code already made"},
 		{"observed", "D-ARCH-2: an ADR may not claim a ratification the repository never performed"},
 		{"unreachable", "SCN-ARCH-002: the column a dependency list cannot give you"},
-		{"docs/guides/", "D-ARCH-5: human-written lenses, read before the pass walks anything"},
+		{"maintained project guides", "D-ARCH-5: human-written lenses, read before the pass walks anything"},
 		{"lens", "REQ-CROSS-083: a guide directs attention and never supplies evidence"},
 	} {
 		if !strings.Contains(skill, want.token) {
@@ -669,11 +820,7 @@ func TestReverseEngineerSkillCarriesTheNFRRules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "rdd-reverse-engineer", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill := string(raw)
+	skill := installedReverseEngineeringInstructions(t, root)
 
 	for _, want := range []struct{ token, why string }{
 		{"NFR-REQUIREMENTS.md", "D-ARCH-1: quality attributes get their own context, not a contract kind"},
@@ -702,17 +849,13 @@ func TestReverseEngineerSkillMakesPhaseDRunnable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "rdd-reverse-engineer", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill := string(raw)
+	skill := installedReverseEngineeringInstructions(t, root)
 
 	for _, want := range []struct{ token, why string }{
-		{"actual\npublication readbacks", "recovered design has a persisted exit criterion"},
-		{"system-wide set once", "design is system-wide rather than duplicated per context"},
-		{"Recovered design", "the run order includes recovered design after behavior"},
-		{"Invoke `rdd-audit`", "design citations must be checked"},
+		{"verify the published revision and content", "recovered design has a persisted exit criterion"},
+		{"one system-wide account per applicable role", "design is system-wide rather than duplicated per context"},
+		{"| Design |", "the run order includes recovered design after behavior"},
+		{"Use `rdd-audit`", "design citations must be checked"},
 	} {
 		if !strings.Contains(skill, want.token) {
 			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
@@ -736,25 +879,85 @@ func TestReverseEngineerSkillRefusesToDuplicateWhatExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "rdd-reverse-engineer", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill := string(raw)
+	skill := installedReverseEngineeringInstructions(t, root)
 
 	// REQ-CROSS-086 records three hazards from the first real phase-D run, all
 	// three found in the first ten minutes against a repository nobody wrote the
 	// skill for. Two were pinned here; the third was not, and it is the one that
 	// fabricates rather than duplicates.
 	for _, want := range []struct{ token, why string }{
-		{"Reuse or\nextend existing documents", "adopt equivalent documents rather than competing with them"},
-		{"Check existing requirement ownership", "avoid duplicate quality requirements"},
-		{"read the whole expression", "a grep hit stopping at the line start turned " +
+		{"Adopt or extend existing documents", "adopt equivalent documents rather than competing with them"},
+		{"check existing ownership", "avoid duplicate quality requirements"},
+		{"read complete configuration expressions and units", "a grep hit stopping at the line start turned " +
 			"`MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB` into \"50 bytes\" — a fabricated " +
 			"absurdity in an architecture document costs more trust than the row was worth"},
 	} {
 		if !strings.Contains(skill, want.token) {
 			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
+		}
+	}
+}
+
+// Read the installed entrypoint and only the references it actually links, so
+// moving detail out of the entrypoint cannot leave an unusable instruction set.
+func installedReverseEngineeringInstructions(t *testing.T, root string) string {
+	t.Helper()
+	dir := filepath.Join(root, ".claude", "skills", "rdd-reverse-engineer")
+	body, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions := string(body)
+	for _, link := range regexp.MustCompile(`\]\((references/[^)]+\.md)\)`).FindAllStringSubmatch(instructions, -1) {
+		reference, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(link[1])))
+		if err != nil {
+			t.Fatalf("broken installed skill reference %s: %v", link[1], err)
+		}
+		instructions += "\n" + string(reference)
+	}
+	return strings.Join(strings.Fields(instructions), " ")
+}
+
+func TestInstallAndCheckSkillReferences(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"coverage.md", "file-backed.md", "recovered-documents.md"} {
+		relative := "rdd-reverse-engineer/references/" + name
+		want, err := assets.ReadFile("assets/rdd/skills/" + relative)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, prefix := range []string{".modernpath/rdd/skills/", ".claude/skills/"} {
+			t.Run(prefix+name, func(t *testing.T) {
+				rel := prefix + relative
+				target := filepath.Join(root, filepath.FromSlash(rel))
+				got, err := os.ReadFile(target)
+				if err != nil || string(got) != string(want) {
+					t.Fatalf("reference not installed byte-identically: %s: %v", rel, err)
+				}
+				for _, remove := range []bool{false, true} {
+					if remove {
+						err = os.Remove(target)
+					} else {
+						err = os.WriteFile(target, []byte("stale reference"), 0o644)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					drift, err := Check(root)
+					if err != nil || !strings.Contains(strings.Join(drift, "\n"), rel) {
+						t.Fatalf("reference drift not reported for %s: %v, %v", rel, drift, err)
+					}
+					if _, err := Install(root); err != nil {
+						t.Fatal(err)
+					}
+					if drift, err := Check(root); err != nil || len(drift) != 0 {
+						t.Fatalf("reinstall did not repair reference: %v, %v", drift, err)
+					}
+				}
+			})
 		}
 	}
 }

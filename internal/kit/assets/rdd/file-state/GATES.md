@@ -9,17 +9,17 @@
 - **Source store/revision:** «database revision or repository SHA»
 - **Context / release:** «scope»
 
-Trace gates and human gates are recorded in the same file because a human gate
-is addressable only through the trace gates that gate it. A human gate with no
-recorded prerequisite trace gate is unreadable, not implicitly open.
+Human gates name every prerequisite required by their transition. A gate with
+missing required prerequisites cannot open. An empty prerequisite set is valid
+only where `PROCESS.md` explicitly permits it, such as an attributable demotion.
 
 ## GATE-«AREA»-«NNN» — «Transition or decision purpose»
 
 - **Kind:** trace or human / «confirmation, entry, decision, demotion, cold-review, start-review, completion»
 - **Transition / purpose:** «exact state transition, or the decision being asked»
-- **Exact scope:** «named EPIC/UR/SR ids this gate covers; one answer may cover an Epic and named members»
+- **Exact scope:** «named EPIC/UR/SR ids, or the immutable source inventory for baseline authorization before requirements exist»
 - **Prerequisites:** «gate ids that must be PASS before this one may leave DRAFT, or none»
-- **Fingerprint:** «content/code fingerprint the gate was evaluated at»
+- **Fingerprint:** «approval-scope or evidence fingerprint and the exact inputs evaluated, per PROCESS.md»
 - **State:** «trace: PENDING / PASS / FAIL / STALE — human: DRAFT / OPEN / ANSWERED / CLOSED / SUPERSEDED»
 - **Verdict / answer:** «trace verdict with exact blockers, or the human answer as given»
 - **Actor / evaluator:** «real human actor and role for a human gate; evaluating agent or check for a trace gate»

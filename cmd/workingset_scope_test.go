@@ -256,7 +256,8 @@ func TestREQCROSS332PullScaffoldsTheRequiredStubsWhenTheStoreServesNone(t *testi
 		t.Fatalf("pull: %v", err)
 	}
 	dir := scopeDir(env)
-	want := []string{"10-recon.md", "30-red-strategy.md", "40-decisions.md", "20-enrichment-REQ-CROSS-310.md"}
+	// SR-CLI-028-001 (EPIC-CLI-028, D3): the state inventory joins the scaffold set.
+	want := []string{"10-recon.md", "15-state-inventory.md", "30-red-strategy.md", "40-decisions.md", "20-enrichment-REQ-CROSS-310.md"}
 	for _, f := range want {
 		content := readScopeFile(t, filepath.Join(dir, "packet", f))
 		if !unfilledPacketSection(content, sectionKeyFromFile(f), "epic", "EPIC-CLI-008") {

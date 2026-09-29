@@ -147,20 +147,12 @@ func TestSkillRelationShapesAllHaveReaders(t *testing.T) {
 	root := repoRoot(t)
 	skill := filepath.Join(root, ".modernpath", "rdd", "skills", "rdd-reverse-engineer", "SKILL.md")
 
-	content, err := os.ReadFile(skill)
-	if err != nil {
-		t.Skipf("skill not installed here: %v", err)
-	}
+	block := readSkillReference(t, skill, "file-backed.md")
 
-	block := section(string(content), "## Relation serialization")
-	if block == "" {
-		t.Fatal("rdd-reverse-engineer must declare its relation serialization under '## Relation serialization' — the writer and the reader are one contract")
-	}
-
-	// Every fenced example in that section must parse to at least one id.
+	// Every prescribed legacy relation example must parse to at least one id.
 	examples := fencedExamples(block)
 	if len(examples) == 0 {
-		t.Fatal("the relation-serialization section declares no example; a contract with no example is not checkable")
+		t.Fatal("the file-backed reference declares no relation example; the contract is not checkable")
 	}
 	for _, ex := range examples {
 		serves, requires := PacketRelations(ex)
@@ -185,18 +177,6 @@ func repoRoot(t *testing.T) string {
 	}
 	t.Skip("not inside a workspace carrying .modernpath/rdd")
 	return ""
-}
-
-func section(content, heading string) string {
-	i := strings.Index(content, heading)
-	if i < 0 {
-		return ""
-	}
-	rest := content[i+len(heading):]
-	if j := strings.Index(rest, "\n## "); j >= 0 {
-		return rest[:j]
-	}
-	return rest
 }
 
 func fencedExamples(block string) []string {

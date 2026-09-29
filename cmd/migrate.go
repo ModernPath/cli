@@ -1921,6 +1921,10 @@ func loadAcceptedResidue(path string) (map[string]bool, error) {
 // intentional single-record authoring is always attributed (REQ-CROSS-228).
 var authorActor = map[string]any{"kind": "agent", "agent_slug": "modernpath-author"}
 
+// authorQuiet silences the per-write lines the author helpers print, for a
+// batch that reports its own table (author apply, REQ-CROSS-442).
+var authorQuiet bool
+
 // authorPost sends one authoring call and surfaces a refusal verbatim: the
 // server's legality message is the useful part, never paraphrased.
 func authorPost(env *factoryEnv, body map[string]any) (map[string]any, error) {
@@ -1940,7 +1944,7 @@ func authorPost(env *factoryEnv, body map[string]any) (map[string]any, error) {
 
 // authorCreate posts one intentional, actor-attributed creation
 // (REQ-CROSS-228 §228.1/.2: born only in entry-side states, server-enforced).
-func authorCreate(env *factoryEnv, kind, externalID string, fields map[string]any) error {
+func authorCreate(env *factoryEnv, kind, externalID string, fields map[string]any) (string, error) {
 	record := map[string]any{"kind": kind, "external_id": externalID}
 	for k, v := range fields {
 		record[k] = v
@@ -1956,9 +1960,10 @@ func authorCreate(env *factoryEnv, kind, externalID string, fields map[string]an
 	}
 	data, err := authorPost(env, payload)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if row, ok := data[kind].(map[string]any); ok {
+	row, _ := data[kind].(map[string]any)
+	if row != nil && !authorQuiet {
 		printSuccess("authored %s %s (%s)", kind, str(row, "external_id"),
 			firstNonEmpty(str(row, "work_status"), str(row, "process_status"), str(row, "state"), str(row, "disposition")))
 		// The content-shadow fingerprint is the record's reference identity, not
@@ -1985,7 +1990,7 @@ func authorCreate(env *factoryEnv, kind, externalID string, fields map[string]an
 			}
 		}
 	}
-	return nil
+	return str(row, "fingerprint"), nil
 }
 
 // authorTrace records one immutable machine-evaluated trace gate. Its
@@ -2092,17 +2097,18 @@ func authorAdvance(env *factoryEnv, kind, externalID, to, expected, gateRef, gat
 // (REQ-CROSS-304/305/309, EPIC-CLI-007). The expected_fingerprint rides so a
 // stale edit conflicts rather than overwriting; the caller sends only the
 // fields it set, so an omitted flag preserves the server-side value.
-func authorUpdate(env *factoryEnv, kind, externalID string, fields map[string]any) error {
+func authorUpdate(env *factoryEnv, kind, externalID string, fields map[string]any) (string, error) {
 	record := map[string]any{"kind": kind, "external_id": externalID}
 	for k, v := range fields {
 		record[k] = v
 	}
 	data, err := authorPost(env, map[string]any{"action": "update", "record": record})
 	if err != nil {
-		return err
+		return "", err
 	}
 	// The response nests the edited record under its kind ("requirement" or "epic").
-	if row, ok := data[kind].(map[string]any); ok {
+	row, _ := data[kind].(map[string]any)
+	if row != nil && !authorQuiet {
 		printSuccess("updated %s %s (%s)", kind, str(row, "external_id"),
 			firstNonEmpty(str(row, "work_status"), str(row, "process_status")))
 		// The edit yields a fresh content fingerprint; the next edit guards
@@ -2111,23 +2117,24 @@ func authorUpdate(env *factoryEnv, kind, externalID string, fields map[string]an
 			printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
 		}
 	}
-	return nil
+	return str(row, "fingerprint"), nil
 }
 
 // authorRelate declares a UR<->SR relation from the SR side (REQ-CROSS-306,
 // EPIC-CLI-007): the parent user-requirement external ids ride as
 // parent_external_ids and the expected_fingerprint guards a stale target. The
 // server refuses a UR-side target — the relation lives on the SR.
-func authorRelate(env *factoryEnv, externalID string, fields map[string]any) error {
+func authorRelate(env *factoryEnv, externalID string, fields map[string]any) (string, error) {
 	record := map[string]any{"kind": "requirement", "external_id": externalID}
 	for k, v := range fields {
 		record[k] = v
 	}
 	data, err := authorPost(env, map[string]any{"action": "relate", "record": record})
 	if err != nil {
-		return err
+		return "", err
 	}
-	if row, ok := data["requirement"].(map[string]any); ok {
+	row, _ := data["requirement"].(map[string]any)
+	if row != nil && !authorQuiet {
 		printSuccess("related requirement %s (%s)", str(row, "external_id"),
 			firstNonEmpty(str(row, "work_status"), str(row, "process_status")))
 		// A relate bumps the SR's content fingerprint; the server serves the
@@ -2137,23 +2144,24 @@ func authorRelate(env *factoryEnv, externalID string, fields map[string]any) err
 			printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
 		}
 	}
-	return nil
+	return str(row, "fingerprint"), nil
 }
 
 // authorMember authors EPIC MEMBERSHIP (REQ-CROSS-306, EPIC-CLI-007): the epic
 // is the target (kind:"epic"), member_external_ids names the members, and mode
 // is declare|withdraw. It rides the same action:"relate" the UR<->SR path uses;
 // the record's kind is what routes it to the server's epic-membership clause.
-func authorMember(env *factoryEnv, externalID string, fields map[string]any) error {
+func authorMember(env *factoryEnv, externalID string, fields map[string]any) (string, error) {
 	record := map[string]any{"kind": "epic", "external_id": externalID}
 	for k, v := range fields {
 		record[k] = v
 	}
 	data, err := authorPost(env, map[string]any{"action": "relate", "record": record})
 	if err != nil {
-		return err
+		return "", err
 	}
-	if row, ok := data["epic"].(map[string]any); ok {
+	row, _ := data["epic"].(map[string]any)
+	if row != nil && !authorQuiet {
 		printSuccess("epic %s membership updated (%s)", str(row, "external_id"),
 			firstNonEmpty(str(row, "process_status"), str(row, "work_status")))
 		// REQ-CROSS-310 (SR-CLI-0081): membership moves the epic's content
@@ -2163,7 +2171,7 @@ func authorMember(env *factoryEnv, externalID string, fields map[string]any) err
 			printInfo("fingerprint: %s (pass as --expected-fingerprint on the next edit)", fp)
 		}
 	}
-	return nil
+	return str(row, "fingerprint"), nil
 }
 
 func firstNonEmpty(vals ...string) string {

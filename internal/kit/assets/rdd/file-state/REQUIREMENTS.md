@@ -30,12 +30,14 @@
 
 The RED/Passing split carries each result's role; `Outcome`, `Environment`,
 and `Fingerprint` carry the remaining mandated evidence-record fields.
+RED is required only on the applicable normal-development path; the
+existing-baseline path does not fabricate it.
 
 ### Gates and delivery
 
 - **Confirmation gates:** «GATES.md gate ids, or N/A»
-- **Entry gates:** «GATES.md gate ids»
-- **Start/review gates:** «GATES.md gate ids»
-- **Completion gates:** «GATES.md gate ids»
+- **Entry gates:** «GATES.md gate ids; N/A for the dedicated existing-baseline path»
+- **Start/review gates:** «GATES.md gate ids, or N/A»
+- **Completion gates:** «normal completion or dedicated existing-baseline GATES.md gate ids»
 - **Delivered revision:** «repository + revision or not delivered»
 - **Gaps / deferrals / blockers / notes:** «refs or none»

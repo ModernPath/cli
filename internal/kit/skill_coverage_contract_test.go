@@ -1,8 +1,6 @@
 package kit
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,47 +10,37 @@ import (
 // Twice in one day (2026-08-15) coverage discipline lived only in prose and
 // failed: a sweep instructed at "5-10 rows per context" produced a 46-row
 // "complete" ledger, and a "110/110 endpoints routed" claim audited to 65/110.
-// The contract lives in the package skill's coverage-contract section —
+// The contract lives in the installed skill and its linked coverage reference —
 // promoted there with the skill itself — and skill prose has ALSO been
 // lost before (REQ-CROSS-174's pointerization). This test pins the
 // load-bearing markers so the contract cannot be diluted or dropped without a
 // red build.
 func TestReverseEngineerSkillCarriesTheCoverageContract(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("assets", "rdd", "skills", "rdd-reverse-engineer", "SKILL.md"))
-	if err != nil {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
 		t.Fatal(err)
 	}
-	s := string(body)
+	s := installedReverseEngineeringInstructions(t, root)
 
 	for _, marker := range []string{
-		// the floor and its nature
-		"floor is 90%",
-		"exit code, not just an agent's summary",
-		// the executable-audit rule
-		"exits non-zero below the floor",
-		"retain its verbatim output",
-		// never-give-up / no-laziness / no-silent-fallback
-		"No row budget replaces behavioral granularity",
-		"Below the floor is incomplete",
-		"never silently truncated",
-		// denominator classes that history shows get dropped
-		"integrations and tests",
+		// Separate executable extraction checks from the citation count check.
+		"Account for every item as extracted, already covered, excluded with a reason, or unresolved",
+		"Distinct files cited by persisted rows, excluded with a reason, or unresolved",
+		"does not enforce percentage coverage",
+		"Counts and percentages describe the inventory; they do not define a passing gate",
+		"command, output and exit code",
+		"Missing denominators, unresolved mappings",
+		"Do not shrink a denominator",
+		"Zero recognized citations over nonempty expected input is a failed measurement",
+		// Keep the complete sweep and authoritative coverage distinctions.
 		"jobs/events/webhooks",
-		// grain calibration and the no-babysitting rule
-		"independently meaningful SRs",
-		"continues across remaining",
-		// REQ-CROSS-179/180: the platform measures first — the pass is
-		// coverage-guided, and the before/after delta is the pass's receipt
-		"authoritative store projection",
-		"rank uncovered directories",
-		"same measurement before and after",
-		"untraced test files",
-		// REQ-CROSS-181: the sweep is one autonomous invocation with a
-		// file-coverage floor — no per-component human checkpoints
-		"60% of eligible",
-		"candidate extraction",
-		"governed coverage",
-		"no per-context\nbaseline reapproval",
+		"integrations and tests",
+		"frozen inventory and authoritative read-back",
+		"uncovered items for each inventory",
+		"Validate any checker against known-good and known-bad inputs",
+		"candidate links do not establish governed or verified behavior",
+		"Unresolved in-scope work remains incomplete",
+		"full sweep across remaining authorized contexts without per-context reapproval",
 	} {
 		if !strings.Contains(s, marker) {
 			t.Errorf("coverage contract marker missing from the skill: %q — "+

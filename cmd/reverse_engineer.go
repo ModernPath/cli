@@ -50,6 +50,9 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 				if name == "authorize" && input["mode"] != "baseline" && input["mode"] != "derived" {
 					return fmt.Errorf("explicit mode baseline or derived is required after the user's choice")
 				}
+				if err := validateAsBuiltIntent(name, input); err != nil {
+					return err
+				}
 			}
 			suffix, err := path(cmd)
 			if err != nil {
@@ -116,11 +119,21 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 	add("candidates", "Read typed candidate requirements and proposed links", "GET", fixed("/candidate-sets"), false)
 	add("preview", "Preview an exact typed candidate set without applying it", "POST", fixed("/candidate-sets/preview"), true)
 	add("decide", "Apply the exact reviewed selection, fingerprint, USER source and retry key", "POST", fixed("/candidate-sets/decisions"), true)
+	add("proof-preview", "Preview exact existing assertion, execution and integration proof without lifecycle writes", "POST", fixed("/reverse-engineering/proof-preview"), true)
+	add("acceptance-open", "Open the single human decision for an eligible exact as-built proof packet", "POST", fixed("/reverse-engineering/acceptances"), true)
+	add("acceptance-apply", "Atomically apply an approved exact as-built packet and retain its receipt", "POST", func(cmd *cobra.Command) (string, error) {
+		path, err := reverseAcceptancePath(cmd)
+		return path + "/apply", err
+	}, true)
+	add("acceptance-status", "Read the recorded versus applied answer, current proof and durable receipt", "GET", reverseAcceptancePath, false)
 	for _, command := range root.Commands() {
 		switch command.Name() {
 		case "status", "publish", "read-document", "coverage":
 			command.Flags().String("run", "", "authorized run id (required)")
 			_ = command.MarkFlagRequired("run")
+		case "acceptance-apply", "acceptance-status":
+			command.Flags().String("gate", "", "dedicated acceptance gate id (required)")
+			_ = command.MarkFlagRequired("gate")
 		case "source-status":
 			command.Flags().String("capture", "", "source capture id (required)")
 			_ = command.MarkFlagRequired("capture")
@@ -137,7 +150,7 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			_ = command.MarkFlagRequired("document")
 		}
 	}
-	root.AddCommand(reverseInventoryCommand(), reverseCaptureCommand(load))
+	root.AddCommand(reverseInventoryCommand(), reverseCaptureCommand(load), asBuiltExecutionCommand(load), asBuiltDeliveryCommand(load))
 	applyGroupUnknownArgGuard(root)
 	return root
 }
@@ -186,6 +199,7 @@ func readReverseJSON(cmd *cobra.Command, path string, target any) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("invalid JSON intent: %w", err)
 	}
@@ -282,6 +296,17 @@ func reverseWriteName(path string) string {
 		}
 		if len(parts) == 4 && parts[3] == "preview" {
 			return "candidate_set.preview"
+		}
+	}
+	if parts[2] == "reverse-engineering" {
+		if len(parts) == 4 && parts[3] == "proof-preview" {
+			return "reverse_engineering.proof_preview"
+		}
+		if len(parts) == 4 && parts[3] == "acceptances" {
+			return "reverse_engineering.acceptance_open"
+		}
+		if len(parts) == 6 && parts[3] == "acceptances" && parts[5] == "apply" {
+			return "reverse_engineering.acceptance_apply"
 		}
 	}
 	if parts[2] == "reverse-engineering" && parts[3] == "runs" {

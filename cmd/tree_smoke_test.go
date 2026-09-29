@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modernpath/cli/internal/zitadel"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -38,9 +39,11 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"github"},
 		{"hooks", "install"}, {"hooks", "uninstall"}, {"hooks", "status"}, {"hooks", "doctor"},
 		{"import"}, {"init"}, {"init", "workspace"}, {"install"}, {"new"},
+		{"source", "push"},
 		{"read-doc"}, {"read-file"}, {"scan"}, {"search"}, {"status"},
 		{"system-docs", "push"}, {"system-docs", "pull"}, {"system-docs", "list"},
 		{"tasks", "list"}, {"tasks", "fetch"},
+		{"process", "prepare-inputs"},
 		{"work", "list"}, {"work", "new"}, {"work", "status"}, {"work", "select"},
 		{"work", "subtasks"}, {"work", "derive"}, {"work", "review"},
 		// external review RUN:2026-08-19: the first cut listed parent groups
@@ -296,7 +299,17 @@ func TestEveryLeafDispatchesThroughExecute(t *testing.T) {
 // set by one test otherwise silently changes another test's behaviour.
 func resetTreeFlags(c *cobra.Command) {
 	reset := func(f *pflag.Flag) {
-		_ = f.Value.Set(f.DefValue)
+		// A slice flag's Set appends once it has been set, and its DefValue is
+		// the rendered "[a,b]": Set would add the literal "[]" as a value.
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			def := []string{}
+			if inner := strings.Trim(f.DefValue, "[]"); inner != "" {
+				def = strings.Split(inner, ",")
+			}
+			_ = sv.Replace(def)
+		} else {
+			_ = f.Value.Set(f.DefValue)
+		}
 		f.Changed = false
 	}
 	c.Flags().VisitAll(reset)
@@ -407,6 +420,8 @@ var leafDispositions = map[string]disposition{
 	"ask": {kind: dispExecute, args: []string{"ask", "smoke question"}},
 	// REQ-CROSS-316 (EPIC-CLI-008): a pure read — GETs /sync/delivery-context.
 	"process check": {kind: dispExecute, args: []string{"process", "check", "--phase", "plan"}},
+	// EPIC-CLI-026: validates binding and gathers read-only preparation context.
+	"process prepare-inputs": {kind: dispExecute, args: []string{"process", "prepare-inputs", "--json"}},
 	// REQ-CROSS-317: `next` is a pure read (GET delivery-context); `reconcile`
 	// POSTs (dry run by default). Both reach the server, so both dispExecute.
 	"process next":      {kind: dispExecute, args: []string{"process", "next"}},
@@ -482,22 +497,48 @@ var leafDispositions = map[string]disposition{
 	"author update": {kind: dispExecute, args: []string{"author", "update", "REQ-SMK-001", "--expected-fingerprint", "sha-current", "--description", "d"}},
 	"author relate": {kind: dispExecute, args: []string{"author", "relate", "REQ-SMK-001", "--parent", "REQ-SMK-000", "--expected-fingerprint", "sha-current"}},
 	"author member": {kind: dispExecute, args: []string{"author", "member", "EPIC-SMK-001", "--member", "REQ-SMK-000"}},
-	"import":        {kind: dispExecute},
-	"new":           {kind: dispExecute},
-	"read-doc":      {kind: dispExecute, args: []string{"read-doc", "--list"}},
-	"read-file":     {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
+	// REQ-CROSS-442: apply reads the plan's records before it writes.
+	"author apply": {kind: dispExecute, args: []string{"author", "apply", "--file", "plan.json"}},
+	// REQ-CROSS-450: review record reads the held piece before any check.
+	"process review record": {kind: dispExecute, args: []string{"process", "review", "record", "--file", "review.json"}},
+	// REQ-CROSS-458: each lane verb loads the binding (the reachability call)
+	// before any check, then reads the store.
+	"process lane authorize": {kind: dispExecute, args: []string{"process", "lane", "authorize", "--classes", "wording", "--appliers", "7", "--expires", "5d", "--cap", "3"}},
+	"process lane approve":   {kind: dispExecute, args: []string{"process", "lane", "approve", "LANE-AUTH-SMOKE", "--text", "approve"}},
+	"process lane review":    {kind: dispExecute, args: []string{"process", "lane", "review", "SR-SMOKE", "--file", "review.json"}},
+	"process lane enter":     {kind: dispExecute, args: []string{"process", "lane", "enter", "SR-SMOKE"}},
+	"process lane check":     {kind: dispExecute, args: []string{"process", "lane", "check", "SR-SMOKE", "--commit", "HEAD"}},
+	"process lane complete":  {kind: dispExecute, args: []string{"process", "lane", "complete", "--apply"}},
+	"import":                 {kind: dispExecute},
+	"new":                    {kind: dispExecute},
+	// REQ-SYS-211: reads the bound system's upload repository before packing.
+	"source push": {kind: dispExecute},
+	"read-doc":    {kind: dispExecute, args: []string{"read-doc", "--list"}},
+	"read-file":   {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
 	// SR-CROSS-324: reuses fetchRequirementLists — GETs /sync/requirements via the
 	// factoryEnvLoad reachability call, so the server is reached (like `status`).
-	"requirements-corpus":             {kind: dispExecute, args: []string{"requirements-corpus", "--json"}},
-	"reverse-engineer preflight":      {kind: dispExecute},
-	"reverse-engineer coverage":       {kind: dispExecute, args: []string{"reverse-engineer", "coverage", "--run", "smoke"}},
-	"reverse-engineer candidates":     {kind: dispExecute},
-	"reverse-engineer status":         {kind: dispExecute, args: []string{"reverse-engineer", "status", "--run", "smoke"}},
-	"reverse-engineer source-status":  {kind: dispExecute, args: []string{"reverse-engineer", "source-status", "--capture", "smoke"}},
-	"reverse-engineer read-source":    {kind: dispExecute, args: []string{"reverse-engineer", "read-source", "--source", "smoke"}},
-	"reverse-engineer read-document":  {kind: dispExecute, args: []string{"reverse-engineer", "read-document", "--run", "smoke", "--document", "smoke"}},
-	"reverse-engineer capture-source": {kind: dispExecute, args: []string{"reverse-engineer", "capture-source", "--run", "smoke", "--repository", "catalog", "--root", "."}},
-	"reverse-engineer inventory":      {kind: dispNoCall, reason: "local-only"},
+	"requirements-corpus": {kind: dispExecute, args: []string{"requirements-corpus", "--json"}},
+	"requirements list":   {kind: dispExecute, args: []string{"requirements", "list", "--json"}},
+	// REQ-PLN-192 (EPIC-REQ-SEARCH): both searches GET their sync route.
+	"requirements search":                {kind: dispExecute, args: []string{"requirements", "search", "keys", "--json"}},
+	"epics search":                       {kind: dispExecute, args: []string{"epics", "search", "teams", "--json"}},
+	"reverse-engineer preflight":         {kind: dispExecute},
+	"reverse-engineer coverage":          {kind: dispExecute, args: []string{"reverse-engineer", "coverage", "--run", "smoke"}},
+	"reverse-engineer candidates":        {kind: dispExecute},
+	"reverse-engineer status":            {kind: dispExecute, args: []string{"reverse-engineer", "status", "--run", "smoke"}},
+	"reverse-engineer source-status":     {kind: dispExecute, args: []string{"reverse-engineer", "source-status", "--capture", "smoke"}},
+	"reverse-engineer read-source":       {kind: dispExecute, args: []string{"reverse-engineer", "read-source", "--source", "smoke"}},
+	"reverse-engineer read-document":     {kind: dispExecute, args: []string{"reverse-engineer", "read-document", "--run", "smoke", "--document", "smoke"}},
+	"reverse-engineer capture-source":    {kind: dispExecute, args: []string{"reverse-engineer", "capture-source", "--run", "smoke", "--repository", "catalog", "--root", "."}},
+	"reverse-engineer acceptance-status": {kind: dispExecute, args: []string{"reverse-engineer", "acceptance-status", "--gate", "smoke"}},
+	// Exact proof files and a real fetched repository are preconditions; the
+	// dedicated command and runtime journey tests exercise these operations.
+	"reverse-engineer proof-preview":    {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer acceptance-open":  {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer acceptance-apply": {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer execution-proof":  {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer delivery-proof":   {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer inventory":        {kind: dispNoCall, reason: "local-only"},
 	// Exact JSON intent is required before any write; nested payloads are
 	// exercised by reverse_engineer_test.go against its own HTTP fixture.
 	"reverse-engineer authorize": {kind: dispNoCall, reason: "needs-precondition"},
@@ -657,10 +698,25 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 			args = leaf
 		}
 		before := requests
+		var savedAuth []byte
+		authPath := filepath.Join(dir, ".modernpath", "auth.json")
+		if name == "feedback" {
+			var err error
+			savedAuth, err = os.ReadFile(authPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			feedbackAuth(t, "371734807656268047", zitadel.ProdProfile.Issuer)
+		}
 		resetTreeFlags(rootCmd) // do not inherit another test's flag state
 		rootCmd.SetArgs(args)
 		_ = rootCmd.Execute() // errors are fine — a stub server answers junk
 		rootCmd.SetArgs(nil)
+		if savedAuth != nil {
+			if err := os.WriteFile(authPath, savedAuth, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 		switch d.kind {
 		case dispExecute:
 			executed++
@@ -727,6 +783,8 @@ func seedSmokeWorkspace(t *testing.T, dir string) {
 	mk(".modernpath/modernpath/t/architecture/overview.md", "# Doc\n\nbody\n")
 	mk("epics/EPIC-X-001/specs/requirements.md", "# spec\n")
 	mk("README.md", "# r\n")
+	mk("plan.json", `{"epic":{"id":"EPIC-SMK-001","title":"t"}}`)
+	mk("review.json", `{"verdict":"FAIL","body":"b","source":"RUN:smoke","findings":[],"dispositions":[]}`)
 	git := func(args ...string) {
 		_ = exec.Command("git", append([]string{"-C", dir}, args...)...).Run()
 	}

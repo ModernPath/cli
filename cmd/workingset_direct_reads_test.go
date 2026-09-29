@@ -123,7 +123,7 @@ func TestDirectItemReadsChunkRequestsAtServerBound(t *testing.T) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("REQ-BATCH-%03d", i)
 	}
-	if _, err := fetchDirectItems(env, ids, false); err != nil {
+	if _, err := fetchDirectItems(env, ids, false, false); err != nil {
 		t.Fatalf("bounded direct read failed: %v", err)
 	}
 	reads := 0
@@ -185,7 +185,7 @@ func TestDirectItemReadsRespectEncodedRequestTargetBudget(t *testing.T) {
 				ids[i] = fmt.Sprintf("UR-%03d-%s", i, tc.suffix)
 			}
 
-			got, err := fetchDirectItems(env, ids, true)
+			got, err := fetchDirectItems(env, ids, true, false)
 			if err != nil {
 				t.Fatalf("long valid IDs should be chunked below the request-target bound, got %v (targets: %v)", err, requestTargets)
 			}

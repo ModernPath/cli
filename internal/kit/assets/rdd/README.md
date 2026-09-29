@@ -10,11 +10,13 @@ EPIC -- optionally groups --> UR and/or SR
 UR -> acceptance scenario -> TEST_CASE -> TEST_RESULT
 UR acceptance scenario -- may require --> SR
 SR -> CODE -> TEST_CASE -> TEST_RESULT
-
-Each selected trace passes planning, technical review, human entry, red-first
-evidence, implementation, cleanup, verification, delivery, reconciliation,
-and human completion.
 ```
+
+Normal development passes planning, technical review, human entry, red-first
+evidence, implementation, cleanup, verification, delivery, reconciliation,
+and human completion. An eligible source-scoped baseline uses existing-proof
+verification and one human acceptance instead; publication alone proves neither
+verification nor delivery.
 
 Product repositories hold authoritative process records in one selected store,
 alongside specifications, code, tests, evidence, and attributable gate answers.
@@ -27,7 +29,8 @@ or the other, never both at once.
 
 1. [`AGENTS.md`](AGENTS.md) — binding agent rules.
 2. [`PROCESS.md`](PROCESS.md) — the complete canonical process.
-3. [`skills/rdd-deliver/SKILL.md`](skills/rdd-deliver/SKILL.md) — complete-loop
+3. [`skills/rdd-start/SKILL.md`](skills/rdd-start/SKILL.md) — session entry and scope routing.
+4. [`skills/rdd-deliver/SKILL.md`](skills/rdd-deliver/SKILL.md) — complete-loop
    orchestration; use the other `skills/rdd-*/SKILL.md` files for explicitly
    bounded passes.
 
@@ -42,8 +45,7 @@ apply that model; `file-state/` serializes its records without redefining it.
 |---|---|
 | `AGENTS.md` | shared agent policy and canonical entry point |
 | `PROCESS.md` | complete canonical process |
-| `CLAUDE.md` | root compatibility entry required for Claude discovery |
-| `skills/` | full-loop orchestration plus focused procedures for discovery, planning, review, building, triage, completion, and as-built verification; corpus adoption for codebases without requirement records (`rdd-reverse-engineer`); a shared document/citation auditing utility (`rdd-audit`) |
+| `skills/` | delivery orchestration, an autopilot sprint (`rdd-autopilot`), and focused passes; `rdd-verify` for entered verification work; `rdd-reverse-engineer` for baseline publication or DERIVED additions; `rdd-reverse-engineer-verify` and `rdd-reverse-engineer-accept` for eligible existing baselines; `rdd-audit` for documents and citations |
 | `file-state/` | canonical serialization shapes for Epic, requirement, gate, work-selection, and backlog/gap records |
 
 ## Distribution
@@ -53,9 +55,9 @@ for ModernPath workspaces, the `modernpath` CLI — embeds a byte-identical
 snapshot of these files and installs it under `.modernpath/rdd/`, so in a
 consuming repository the canonical process resolves at
 `.modernpath/rdd/PROCESS.md` with every `skills/rdd-*/SKILL.md` beside it.
-The installer also registers the skills and hooks with each agentic platform
-in use (for example `.claude/skills/`) and writes managed instruction blocks
-pointing agents at the installed paths.
+Platform-specific metadata, compatibility files, registration and hooks belong
+to the distribution tool. This repository supplies the shared instructions and
+skills; the installer supplies the adapters for each platform in use.
 
 In a store-backed consuming repository the tooling additionally materializes
 two uncommitted projections (for ModernPath workspaces,

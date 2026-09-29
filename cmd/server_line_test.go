@@ -59,13 +59,22 @@ func TestServerLineSaysWhenTheRevisionIsNotServed(t *testing.T) {
 }
 
 func TestServerLineIsBoundedWhenTheServerHangs(t *testing.T) {
+	if serverLineTimeout != 2*time.Second {
+		t.Fatalf("the server line's production bound is %v, want 2 s", serverLineTimeout)
+	}
+	// The bound is measured at a tenth of its production value: the claim is
+	// that each status verb gives up at the bound instead of waiting out the
+	// hang, and that holds at any scale.
+	saved := serverLineTimeout
+	serverLineTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { serverLineTimeout = saved })
 	stubSystemsRead(t)
 	fx := &wsFixture{storeRevision: "abc123", contractVersion: 1, contractDelay: 6 * time.Second, workSelection: map[string]any{"current": nil}}
 	statusWorkspace(t, wsServe(t, fx))
 	start := time.Now()
 	fout, sout := runBothStatus(t)
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("two status verbs took %v against a hanging contract read; each is bounded at 2 s", elapsed)
+	if elapsed := time.Since(start); elapsed > 5*serverLineTimeout/2 {
+		t.Fatalf("two status verbs took %v against a hanging contract read; each is bounded at %v", elapsed, serverLineTimeout)
 	}
 	want(t, fout, "server:    not reachable (")
 	want(t, sout, "not reachable (")

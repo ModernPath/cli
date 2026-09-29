@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -34,6 +35,12 @@ to explore your documentation, and 'work' commands to manage epics and tasks.`,
 		DisableDefaultCmd: true,
 	},
 }
+
+// A command with a structured human error report still exits unsuccessfully,
+// but Execute must not print its reason a second time.
+type reportedError struct{ error }
+
+func (e reportedError) Unwrap() error { return e.error }
 
 // applyGroupUnknownArgGuard closes the D5 shape tree-wide: a group command
 // (subcommands, no Run/RunE) that receives a token which is not one of its
@@ -74,7 +81,10 @@ func Execute() {
 	// output tail) for `feedback --last`; the recorder drains before exit.
 	code := runWithHistory(os.Args[1:], func() int {
 		if err := rootCmd.Execute(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			var reported reportedError
+			if !errors.As(err, &reported) {
+				fmt.Fprintln(os.Stderr, err)
+			}
 			return 1
 		}
 		return 0

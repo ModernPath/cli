@@ -206,7 +206,7 @@ func selectImportMethod(hasGitRemote bool) (string, error) {
 
 	if hasGitRemote {
 		items = []string{
-			"🌐 Import via Git URL (recommended) - ModernPath clones the repository",
+			"🌐 Import via Git URL - ModernPath clones the repository",
 			"📁 Import local files - Upload current directory as zip",
 			"❌ Cancel",
 		}
@@ -295,18 +295,43 @@ func importViaGit(baseURL, token, name, gitURL string) error {
 		return err
 	}
 
-	return handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug)
+	return handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, 0)
 }
 
-func importViaUpload(baseURL, token, name, sourceDir string) error {
-	printInfo("Scanning directory...\n")
+// importFilterOptions are the filters `import --local` and `source push`
+// apply alike (REQ-SYS-211 AC1): the skip lists, .gitignore through
+// `git check-ignore`, --exclude and --max-size.
+type importFilterOptions struct {
+	Exclude     []string
+	MaxSizeMB   int
+	NoGitignore bool
+}
 
-	type candidate struct {
-		abs  string
-		rel  string
-		size int64
-	}
-	var cands []candidate
+// importFile is one file the archive will hold: its path on disk and its
+// slash-separated path inside the archive.
+type importFile struct {
+	abs  string
+	rel  string
+	size int64
+}
+
+// importReport is what the filters dropped, for the operator's eyes
+// (REQ-CROSS-172): a filter that silently removes most of a codebase is
+// indistinguishable from one that found a small codebase.
+type importReport struct {
+	Files        int
+	TotalSize    int64
+	Ignored      int
+	SizeIgnored  int64
+	Excluded     int
+	SizeExcluded int64
+}
+
+// collectImportFiles walks sourceDir with the import filters and returns the
+// files an archive of it holds, in walk order, with the filter report.
+func collectImportFiles(sourceDir string, opts importFilterOptions) ([]importFile, importReport, error) {
+	var cands []importFile
+	var report importReport
 
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -331,55 +356,93 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 		if relErr != nil {
 			return nil
 		}
-		cands = append(cands, candidate{path, filepath.ToSlash(rel), info.Size()})
+		cands = append(cands, importFile{path, filepath.ToSlash(rel), info.Size()})
 		return nil
 	})
-
 	if err != nil {
-		printError("Failed to scan directory: %v\n", err)
-		return err
+		return nil, report, fmt.Errorf("failed to scan directory: %w", err)
 	}
 
 	// REQ-CROSS-172: drop what the repository already calls junk, and what the
-	// operator named. Both are REPORTED — a filter that silently removes most of
-	// a codebase is indistinguishable from one that found a small codebase.
+	// operator named. Both are REPORTED.
 	ignored := make(map[string]bool)
-	if !importNoIgnore {
+	if !opts.NoGitignore {
 		rels := make([]string, 0, len(cands))
 		for _, c := range cands {
 			rels = append(rels, c.rel)
 		}
 		if ignored, err = gitIgnoredSet(sourceDir, rels); err != nil {
-			printError("Failed to consult .gitignore: %v\n", err)
-			return err
+			return nil, report, fmt.Errorf("failed to consult .gitignore: %w", err)
 		}
 	}
 
-	var files []candidate
-	var totalSize, sizeIgnored, sizeExcluded int64
-	var nIgnored, nExcluded int
+	var files []importFile
 	for _, c := range cands {
 		switch {
 		case ignored[c.rel]:
-			sizeIgnored += c.size
-			nIgnored++
-		case matchesExclude(c.rel, importExclude):
-			sizeExcluded += c.size
-			nExcluded++
+			report.SizeIgnored += c.size
+			report.Ignored++
+		case matchesExclude(c.rel, opts.Exclude):
+			report.SizeExcluded += c.size
+			report.Excluded++
 		default:
 			files = append(files, c)
-			totalSize += c.size
+			report.TotalSize += c.size
 		}
 	}
+	report.Files = len(files)
+	return files, report, nil
+}
 
-	sizeMB := float64(totalSize) / (1024 * 1024)
-	fmt.Printf("  Files: %d\n", len(files))
-	fmt.Printf("  Size:  %.2f MB\n", sizeMB)
-	if nIgnored > 0 {
-		fmt.Printf("  Skipped (.gitignore): %d files, %.2f MB\n", nIgnored, float64(sizeIgnored)/(1024*1024))
+// zipFiles packs exactly the given files, in memory. The set was decided by
+// collectImportFiles; zipping walks that list rather than the tree again, so
+// the archive cannot disagree with the size that was checked or the digest
+// that was computed.
+func zipFiles(files []importFile) (*bytes.Buffer, error) {
+	var zipBuffer bytes.Buffer
+	zipWriter := zip.NewWriter(&zipBuffer)
+	for _, c := range files {
+		writer, err := zipWriter.Create(c.rel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create zip: %w", err)
+		}
+		file, err := os.Open(c.abs)
+		if err != nil {
+			continue // Skip files we can't read
+		}
+		_, err = io.Copy(writer, file)
+		file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create zip: %w", err)
+		}
 	}
-	if nExcluded > 0 {
-		fmt.Printf("  Skipped (--exclude):  %d files, %.2f MB\n", nExcluded, float64(sizeExcluded)/(1024*1024))
+	if err := zipWriter.Close(); err != nil {
+		return nil, err
+	}
+	return &zipBuffer, nil
+}
+
+func importViaUpload(baseURL, token, name, sourceDir string) error {
+	printInfo("Scanning directory...\n")
+
+	files, report, err := collectImportFiles(sourceDir, importFilterOptions{
+		Exclude:     importExclude,
+		MaxSizeMB:   importMaxSizeMB,
+		NoGitignore: importNoIgnore,
+	})
+	if err != nil {
+		printError("%v\n", err)
+		return err
+	}
+
+	sizeMB := float64(report.TotalSize) / (1024 * 1024)
+	fmt.Printf("  Files: %d\n", report.Files)
+	fmt.Printf("  Size:  %.2f MB\n", sizeMB)
+	if report.Ignored > 0 {
+		fmt.Printf("  Skipped (.gitignore): %d files, %.2f MB\n", report.Ignored, float64(report.SizeIgnored)/(1024*1024))
+	}
+	if report.Excluded > 0 {
+		fmt.Printf("  Skipped (--exclude):  %d files, %.2f MB\n", report.Excluded, float64(report.SizeExcluded)/(1024*1024))
 	}
 
 	if sizeMB > float64(importMaxSizeMB) {
@@ -390,32 +453,11 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 
 	printInfo("Creating zip archive...\n")
 
-	// Create zip in memory
-	var zipBuffer bytes.Buffer
-	zipWriter := zip.NewWriter(&zipBuffer)
-
-	// The set was decided above; zipping walks that list rather than the tree
-	// again, so the archive cannot disagree with the size that was checked.
-	for _, c := range files {
-		writer, err := zipWriter.Create(c.rel)
-		if err != nil {
-			printError("Failed to create zip: %v\n", err)
-			return err
-		}
-
-		file, err := os.Open(c.abs)
-		if err != nil {
-			continue // Skip files we can't read
-		}
-		_, err = io.Copy(writer, file)
-		file.Close()
-		if err != nil {
-			printError("Failed to create zip: %v\n", err)
-			return err
-		}
+	zipBuffer, err := zipFiles(files)
+	if err != nil {
+		printError("%v\n", err)
+		return err
 	}
-
-	zipWriter.Close()
 	zipSize := zipBuffer.Len()
 	fmt.Printf("  Zip size: %.2f MB\n", float64(zipSize)/(1024*1024))
 
@@ -464,9 +506,10 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	var result struct {
 		Success bool `json:"success"`
 		Data    struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
-			Slug string `json:"slug"`
+			ID           int    `json:"id"`
+			Name         string `json:"name"`
+			Slug         string `json:"slug"`
+			RepositoryID int    `json:"repository_id"`
 		} `json:"data"`
 		Message string `json:"message"`
 	}
@@ -476,29 +519,40 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 		return err
 	}
 
-	return handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug)
+	return handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, result.Data.RepositoryID)
 }
 
-func handleImportSuccess(baseURL string, archID int, archName, archSlug string) error {
+// handleImportSuccess records the binding in <cwd>/.modernpath/config.json —
+// the init shape, never the parent-binding writer, which would rebind an
+// enclosing workspace — merging into the file's other fields (REQ-SYS-211
+// AC6). repositoryID is the upload repository `source push` targets; 0 when
+// the import created none.
+func handleImportSuccess(baseURL string, archID int, archName, archSlug string, repositoryID int) error {
 	fmt.Println()
 	printSuccess("System created successfully!\n")
 	fmt.Printf("  ID:   %d\n", archID)
 	fmt.Printf("  Name: %s\n", archName)
 	fmt.Printf("  Slug: %s\n", archSlug)
+	if repositoryID != 0 {
+		fmt.Printf("  Repository: %d\n", repositoryID)
+	}
 
 	// Save config
 	cwd, _ := os.Getwd()
 	modernpathDir := filepath.Join(cwd, ".modernpath")
 
 	if err := os.MkdirAll(modernpathDir, 0755); err == nil {
-		cfg := &config.Config{
-			APIURL:     getAPIURL(),
-			SystemID:   archID,
-			SystemName: archName,
-			SystemSlug: archSlug,
-		}
-
 		configPath := filepath.Join(modernpathDir, "config.json")
+		cfg := &config.Config{}
+		if existing, err := os.ReadFile(configPath); err == nil {
+			_ = json.Unmarshal(existing, cfg)
+		}
+		cfg.APIURL = getAPIURL()
+		cfg.SystemID = archID
+		cfg.SystemName = archName
+		cfg.SystemSlug = archSlug
+		cfg.RepositoryID = repositoryID
+
 		configData, _ := json.MarshalIndent(cfg, "", "  ")
 		if err := os.WriteFile(configPath, configData, 0644); err == nil {
 			printSuccess("Config saved to .modernpath/config.json\n")
@@ -516,6 +570,9 @@ func handleImportSuccess(baseURL string, archID int, archName, archSlug string) 
 	fmt.Println("  2. Generate docs:       modernpath docs generate")
 	fmt.Println("  3. Sync documentation:  modernpath docs sync")
 	fmt.Println("  4. Search codebase:     modernpath search \"...\"")
+	if repositoryID != 0 {
+		fmt.Println("  5. Push new commits:    modernpath source push")
+	}
 	fmt.Println()
 
 	return nil

@@ -1,6 +1,9 @@
 package kit
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // REQ-CROSS-029: `modernpath install` must refresh the block that points
 // non-Claude agents at the process WITHOUT touching anything the client wrote.
@@ -91,5 +94,51 @@ func TestMergeManagedBlockRefusesDuplicateBlocks(t *testing.T) {
 		BeginMarker + "\nold\n" + EndMarker + "\n"
 	if _, err := MergeManagedBlock(doc, "new"); err == nil {
 		t.Fatal("a document with two managed blocks must be refused, not half-refreshed")
+	}
+}
+
+// REQ-CROSS-478 (EPIC-TOOL-CLEANUP): the three places the CLI installs that
+// tell an agent where codebase knowledge comes from state one local-first
+// order — a repository search for the requirement id, code and tests; the
+// working-set pull; the docs export — and `modernpath ask` only for the why
+// and how the local search cannot answer. The skill once said only "rg the
+// export", so an agent went to the export before the code it was changing.
+func TestKnowledgeAssetsStateOneLocalFirstOrder(t *testing.T) {
+	const anchor = "Search locally first"
+	steps := []string{
+		"requirement id",
+		"working-set pull",
+		"docs export",
+		"modernpath ask",
+	}
+	for _, asset := range []string{
+		"assets/skills/mp-knowledge-search/SKILL.md",
+		"assets/agents-block.md",
+		"assets/skills/mp-process-cli/SKILL.md",
+	} {
+		b, err := assets.ReadFile(asset)
+		if err != nil {
+			t.Fatalf("%s: %v", asset, err)
+		}
+		text := strings.Join(strings.Fields(string(b)), " ")
+		at := strings.Index(text, anchor)
+		if at < 0 {
+			t.Errorf("%s does not say %q", asset, anchor)
+			continue
+		}
+		rest := text[at:]
+		last := -1
+		for _, step := range steps {
+			i := strings.Index(rest, step)
+			if i < 0 {
+				t.Errorf("%s: the local-first order does not name %q", asset, step)
+				break
+			}
+			if i < last {
+				t.Errorf("%s: %q comes before an earlier step of the local-first order", asset, step)
+				break
+			}
+			last = i
+		}
 	}
 }

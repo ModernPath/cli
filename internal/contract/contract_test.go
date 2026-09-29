@@ -56,3 +56,28 @@ func TestEveryPinnedCapabilityIsImplemented(t *testing.T) {
 		t.Fatal("the pinned map must name at least one write")
 	}
 }
+
+// SR-CLI-027-001 (EPIC-CLI-027): the pinned fixture advertises
+// finding_resolution under author.finding — the create is keyed by the record
+// kind, so a build without the name is refused on `findings add` as well
+// (USER:2026-09-27) — and this build implements it.
+func TestSRCLI027001FindingResolutionIsPinnedUnderAuthorFinding(t *testing.T) {
+	var pinned struct {
+		Capabilities map[string][]string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(PinnedCapabilities, &pinned); err != nil {
+		t.Fatalf("pinned fixture: %v", err)
+	}
+	found := false
+	for _, name := range pinned.Capabilities["author.finding"] {
+		if name == "finding_resolution" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("author.finding must advertise finding_resolution, got %v", pinned.Capabilities["author.finding"])
+	}
+	if missing := Missing([]string{"finding_resolution"}); len(missing) != 0 {
+		t.Fatalf("this build must implement finding_resolution, missing %v", missing)
+	}
+}

@@ -8,8 +8,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modernpath/cli/internal/api"
 )
 
 const entryBrief = `**Brief:**
@@ -78,7 +82,7 @@ func TestProcessEnterOpensTheGateFromStoreFacts(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{
 		member("REQ-A-1", "PROPOSED"), member("REQ-A-2", "PROPOSED"), member("REQ-A-3", "TODO"),
 	}, "PROPOSED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
@@ -124,7 +128,7 @@ func TestProcessEnterSingleSR(t *testing.T) {
 		"sections":    map[string]any{"complete": true, "missing": []string{}},
 	}
 	cs := enterServer(t, facts, true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	if err := processEnter(env, "REQ-S-1", enterOpts{}); err != nil {
 		t.Fatalf("enter: %v", err)
 	}
@@ -152,7 +156,7 @@ func TestProcessEnterRefusesWithoutAColdReviewTrace(t *testing.T) {
 		trace   string
 	}{{"absent", "absent", false, ""}, {"fail", "fail", true, "CR-A"}, {"not independent", "pass", false, "CR-A"}} {
 		cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", tc.verdict, tc.indep, tc.trace, nil), true)
-		env := wsEnv(t, cs.srv)
+		env := enterEnv(t, cs)
 		err := processEnter(env, "EPIC-A", enterOpts{})
 		if err == nil || !strings.Contains(err.Error(), "cold-review") {
 			t.Fatalf("%s: the missing independent passing cold-review trace must be named, got %v", tc.name, err)
@@ -163,7 +167,7 @@ func TestProcessEnterRefusesWithoutAColdReviewTrace(t *testing.T) {
 
 func TestProcessEnterRefusesWithMissingSections(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", []string{"enrichment:REQ-A-1"}), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	err := processEnter(env, "EPIC-A", enterOpts{})
 	if err == nil || !strings.Contains(err.Error(), "enrichment:REQ-A-1") || !strings.Contains(err.Error(), "working-set push") {
 		t.Fatalf("missing sections are named with the remedy, got %v", err)
@@ -173,7 +177,7 @@ func TestProcessEnterRefusesWithMissingSections(t *testing.T) {
 
 func TestProcessEnterRefusesWithoutFacts(t *testing.T) {
 	cs := enterServer(t, nil, false)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	err := processEnter(env, "EPIC-A", enterOpts{})
 	if err == nil || !strings.Contains(err.Error(), "deploy") {
 		t.Fatalf("a server without facts is refused before any write, got %v", err)
@@ -184,7 +188,7 @@ func TestProcessEnterRefusesWithoutFacts(t *testing.T) {
 func TestProcessEnterRefusesAnUnparseableBrief(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
 	cs.packetSections = []map[string]any{{"section_key": "entry_brief", "content": "- What: only this\n"}}
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	err := processEnter(env, "EPIC-A", enterOpts{})
 	if err == nil || !strings.Contains(err.Error(), "Why now") {
 		t.Fatalf("an incomplete brief is refused naming the missing bullet, got %v", err)
@@ -208,7 +212,7 @@ func TestProcessEnterDerivesTheSuccessorIdWhenTheEntryGateIsClosed(t *testing.T)
 	for _, state := range []string{"closed", "dismissed"} {
 		cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
 		cs.existingGates["ENTRY-EPIC-A"] = map[string]any{"external_id": "ENTRY-EPIC-A", "state": state, "applied_state": "applied"}
-		env := wsEnv(t, cs.srv)
+		env := enterEnv(t, cs)
 		var err error
 		out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
 		if err != nil {
@@ -232,7 +236,7 @@ func TestProcessEnterWalksTheSuccessorSeries(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
 	cs.existingGates["ENTRY-EPIC-A"] = map[string]any{"external_id": "ENTRY-EPIC-A", "state": "closed"}
 	cs.existingGates["ENTRY-EPIC-A-R2"] = map[string]any{"external_id": "ENTRY-EPIC-A-R2", "state": "closed"}
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	if err := processEnter(env, "EPIC-A", enterOpts{}); err != nil {
 		t.Fatalf("enter: %v", err)
 	}
@@ -243,7 +247,7 @@ func TestProcessEnterWalksTheSuccessorSeries(t *testing.T) {
 
 func TestProcessEnterDryRunPostsNothing(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
 	if err != nil {
@@ -260,7 +264,7 @@ func TestProcessEnterDryRunPostsNothing(t *testing.T) {
 func TestProcessEnterSaysAnswerItWhenTheGateIsOpen(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
 	cs.existingGates["ENTRY-EPIC-A"] = map[string]any{"external_id": "ENTRY-EPIC-A", "state": "open"}
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	err := processEnter(env, "EPIC-A", enterOpts{})
 	if err == nil || !strings.Contains(err.Error(), "already open") || strings.Contains(err.Error(), "-R2") {
 		t.Fatalf("an open gate is named as open, never rotated, got %v", err)
@@ -273,7 +277,7 @@ func TestProcessEnterSaysAnswerItWhenTheGateIsOpen(t *testing.T) {
 // epic is not named.
 func TestProcessEnterSaysWhyTheEpicIsNotNamed(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PENDING_VERIFICATION")}, "PROPOSED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
 	if err != nil {
@@ -296,7 +300,7 @@ func TestProcessEnterPinsAMembersOnlyGateAtTheEpicsAggregate(t *testing.T) {
 		cs := enterServer(t, enterFacts([]map[string]any{
 			member("REQ-A-1", "PROPOSED"), member("REQ-A-2", "TODO"),
 		}, status, "pass", true, "CR-A", nil), true)
-		env := wsEnv(t, cs.srv)
+		env := enterEnv(t, cs)
 		var err error
 		out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
 		if err != nil {
@@ -336,7 +340,7 @@ func TestProcessEnterPinsAMembersOnlyGateAtTheEpicsAggregate(t *testing.T) {
 // this arm — it equals `from`, so its own gate names it.)
 func TestProcessEnterKeepsTheRefusalShapedNoteForAnUnenteredEpic(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "DEFERRED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
 	if err != nil {
@@ -351,7 +355,7 @@ func TestProcessEnterKeepsTheRefusalShapedNoteForAnUnenteredEpic(t *testing.T) {
 // store resolves the epic as the subject and its own aggregate as the pin.
 func TestProcessEnterSendsNoPinWhenTheGateNamesTheEpic(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 	if err := processEnter(env, "EPIC-A", enterOpts{}); err != nil {
 		t.Fatalf("enter: %v", err)
 	}
@@ -373,7 +377,7 @@ func TestProcessEnterSendsNoPinWhenTheGateNamesTheEpic(t *testing.T) {
 // says so rather than leaving the line blank.
 func TestProcessEnterDryRunReportsThePinItWillSend(t *testing.T) {
 	cs := enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "IN_PROGRESS", "pass", true, "CR-A", nil), true)
-	env := wsEnv(t, cs.srv)
+	env := enterEnv(t, cs)
 
 	var err error
 	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
@@ -391,7 +395,7 @@ func TestProcessEnterDryRunReportsThePinItWillSend(t *testing.T) {
 	// aggregate were what the gate would carry.
 	for _, status := range []string{"DONE", "OBSOLETE", "DEFERRED"} {
 		cs = enterServer(t, enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, status, "pass", true, "CR-A", nil), true)
-		env = wsEnv(t, cs.srv)
+		env = enterEnv(t, cs)
 		out = captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
 		if err != nil {
 			t.Fatalf("%s: dry run: %v\n%s", status, err, out)
@@ -403,5 +407,388 @@ func TestProcessEnterDryRunReportsThePinItWillSend(t *testing.T) {
 			t.Fatalf("%s: the plan says the store resolves the member's own aggregate: %q", status, out)
 		}
 		assertNoWrites(t, cs)
+	}
+}
+
+// ---------------------------------------------------------------- SR-CLI-028-002 (EPIC-CLI-028)
+//
+// `process enter` reads the selection's reconnaissance revision, fetches the
+// remote default branch, and refuses when the tip moved past that revision
+// and a path the packet cites changed — unless the drift is accepted with a
+// USER: source, which the gate body records. Every enter test therefore runs
+// in a temporary repository with a LOCAL origin (a bare repository on disk),
+// so the fetch is real and needs no network, and the fixture selection serves
+// the tip as its recon_revision.
+
+// enterRepo is a repository whose main is pushed to a local bare origin; the
+// tip is the one commit, and origin/HEAD points at main. a.txt, VERSION and
+// c.md exist so a packet can cite them.
+func enterRepo(t *testing.T) (root, tip string) {
+	t.Helper()
+	root = t.TempDir()
+	gitRun(t, root, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(root, "a.txt"), "one\n")
+	writeFile(t, filepath.Join(root, "VERSION"), "1\n")
+	writeFile(t, filepath.Join(root, "c.md"), "c\n")
+	tip = gitCommitAll(t, root, "one")
+	bare := filepath.Join(t.TempDir(), "origin.git")
+	gitRun(t, root, "init", "-q", "--bare", bare)
+	gitRun(t, root, "remote", "add", "origin", bare)
+	gitRun(t, root, "push", "-q", "origin", "main")
+	gitRun(t, root, "remote", "set-head", "origin", "main")
+	return root, tip
+}
+
+// pushMain changes one file on main, commits it and pushes, returning the new
+// tip of origin/main.
+func pushMain(t *testing.T, root, file, body, msg string) string {
+	t.Helper()
+	writeFile(t, filepath.Join(root, file), body)
+	tip := gitCommitAll(t, root, msg)
+	gitRun(t, root, "push", "-q", "origin", "main")
+	return tip
+}
+
+// enterEnv is the env every enter test runs under: a repository whose tip is
+// the selection's recon_revision, so the reconnaissance reads current unless
+// a test moves the tip.
+func enterEnv(t *testing.T, cs *ceremonyServer) *factoryEnv {
+	t.Helper()
+	root, tip := enterRepo(t)
+	cs.reconRevision = tip
+	return &factoryEnv{Root: root, APIURL: cs.srv.URL, SystemID: 4, token: "t"}
+}
+
+// citeSection serves a reconnaissance section citing the given paths, in the
+// shapes packet text uses: `CODE:<path>:<line>`, a backticked citation with
+// trailing punctuation, an extension-less path, and a repo@rev: qualifier.
+func citeSection(cs *ceremonyServer) {
+	cs.packetSections = append(cs.packetSections, map[string]any{
+		"section_key": "reconnaissance",
+		"content": "Surface: CODE:a.txt:3 and `TEST:cmd/x_test.go:10`; the version file `CODE:VERSION`. " +
+			"Docs: CODE:modernpath-core@abc123:c.md.",
+	})
+}
+
+// enterCommand runs `modernpath process enter` through the command line from
+// the repository root bound to the ceremony server — the path the new flags
+// are parsed on.
+func enterCommand(t *testing.T, cs *ceremonyServer, root string, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	restore := stubListSystemsFn(func(apiURL, token string) ([]api.System, error) { return []api.System{{ID: 4}}, nil })
+	t.Cleanup(restore)
+	if err := os.MkdirAll(filepath.Join(root, ".modernpath"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := fmt.Sprintf(`{"api_url":%q,"system_id":4,"system_name":"T","system_slug":"t"}`, cs.srv.URL)
+	writeFile(t, filepath.Join(root, ".modernpath", "config.json"), cfg)
+	writeFile(t, filepath.Join(root, ".modernpath", "auth.json"), `{"token":"t"}`)
+	t.Chdir(root)
+	resetTreeFlags(rootCmd)
+	rootCmd.SetArgs(append([]string{"process", "enter"}, args...))
+	var err error
+	out := captureOut(t, func() { err = rootCmd.Execute() })
+	rootCmd.SetArgs(nil)
+	resetTreeFlags(rootCmd)
+	return out, err
+}
+
+func authoredGateBody(cs *ceremonyServer, i int) string {
+	rec, _ := cs.authored[i]["record"].(map[string]any)
+	return str(rec, "body_md")
+}
+
+func driftFacts() map[string]any {
+	return enterFacts([]map[string]any{member("REQ-A-1", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil)
+}
+
+// C1: no reconnaissance revision on the selection refuses before the facts
+// read and before any write, naming the verb that records one.
+func TestSRCLI028002EnterRefusesWithoutAReconnaissanceRevisionBeforeTheFactsRead(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	env := enterEnv(t, cs)
+	cs.reconRevision = ""
+	err := processEnter(env, "EPIC-A", enterOpts{})
+	if err == nil || !strings.Contains(err.Error(), "records no reconnaissance revision") || !strings.Contains(err.Error(), "working-set select EPIC-A --recon-revision") {
+		t.Fatalf("a selection with no recon_revision must be refused naming the verb, got %v", err)
+	}
+	for _, r := range cs.reads {
+		if r == "delivery-context" {
+			t.Fatalf("the refusal must come before the facts read, reads were %v", cs.reads)
+		}
+	}
+	assertNoWrites(t, cs)
+}
+
+// C2: the tip equal to the reconnaissance revision is current.
+func TestSRCLI028002EnterProceedsWhenTheTipEqualsTheReconnaissanceRevision(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	env := enterEnv(t, cs)
+	var err error
+	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
+	if err != nil {
+		t.Fatalf("enter: %v", err)
+	}
+	if !strings.Contains(out, "reconnaissance "+cs.reconRevision+" current") {
+		t.Fatalf("a current reconnaissance must be said so, got:\n%s", out)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the gate must open, authored %v", cs.authored)
+	}
+}
+
+// C2: a packet reconnoitred on a branch AHEAD of the tip is current — the
+// branch's own commits are not drift (F-CLI028-R1-01).
+func TestSRCLI028002EnterProceedsWhenTheReconnaissanceIsAheadOfTheTipOnABranch(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	gitRun(t, env.Root, "checkout", "-q", "-b", "feature")
+	writeFile(t, filepath.Join(env.Root, "a.txt"), "branch edit of a cited file\n")
+	cs.reconRevision = gitCommitAll(t, env.Root, "branch work")
+	var err error
+	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
+	if err != nil {
+		t.Fatalf("a reconnaissance ahead of the tip is current, got %v", err)
+	}
+	if !strings.Contains(out, "reconnaissance "+cs.reconRevision+" current") {
+		t.Fatalf("expected the current line, got:\n%s", out)
+	}
+}
+
+// C3: the tip moved but no cited path changed — proceed, saying so.
+func TestSRCLI028002EnterProceedsWhenTheTipMovedButNoCitedPathChanged(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	tip := pushMain(t, env.Root, "d.txt", "uncited\n", "move main")
+	var err error
+	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{}) })
+	if err != nil {
+		t.Fatalf("a moved tip with no cited path changed must proceed, got %v", err)
+	}
+	if !strings.Contains(out, "origin/main moved to "+tip) || !strings.Contains(out, "no cited path changed") {
+		t.Fatalf("the moved-but-unaffected line must name the tip, got:\n%s", out)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the gate must open, authored %v", cs.authored)
+	}
+}
+
+// C2: a cited path changed between the reconnaissance and the tip refuses,
+// naming the tip and each changed cited path (the diff is merge-base to tip;
+// an uncited change is not named; a path cited with a line, in backticks,
+// without an extension or behind a repo@rev: qualifier is matched by path).
+func TestSRCLI028002EnterRefusesWhenACitedPathChangedSinceTheReconnaissance(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	recon := cs.reconRevision
+	pushMain(t, env.Root, "a.txt", "two\n", "a moved")
+	pushMain(t, env.Root, "d.txt", "uncited\n", "d moved")
+	tip := pushMain(t, env.Root, "VERSION", "2\n", "version bumped")
+	err := processEnter(env, "EPIC-A", enterOpts{})
+	if err == nil {
+		t.Fatal("a changed cited path must refuse entry")
+	}
+	msg := err.Error()
+	for _, want := range []string{"reconnaissance at " + recon + " is stale", "origin/main " + tip, "2 cited path(s): VERSION, a.txt", "--allow-drift USER:", "--recon-revision"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("the refusal must carry %q, got %q", want, msg)
+		}
+	}
+	if strings.Contains(msg, "d.txt") || strings.Contains(msg, "c.md") {
+		t.Fatalf("an unchanged or uncited path must not be named, got %q", msg)
+	}
+	assertNoWrites(t, cs)
+}
+
+// C2: the path token after the prefix is read when whitespace separates it
+// from CODE: or TEST: — packet text writes `CODE: <path>` as well as
+// `CODE:<path>` — so a changed path cited that way refuses too. Read as no
+// citation at all, such a packet would enter past real drift.
+func TestSRCLI028002EnterRefusesWhenAPathCitedAfterASpaceChanged(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	cs.packetSections = append(cs.packetSections, map[string]any{
+		"section_key": "reconnaissance",
+		"content":     "Surface: CODE: a.txt:3 — the reader; the version file CODE:  VERSION.",
+	})
+	env := enterEnv(t, cs)
+	recon := cs.reconRevision
+	pushMain(t, env.Root, "a.txt", "two\n", "a moved")
+	tip := pushMain(t, env.Root, "VERSION", "2\n", "version bumped")
+	err := processEnter(env, "EPIC-A", enterOpts{})
+	if err == nil {
+		t.Fatal("a changed path cited after a space must refuse entry")
+	}
+	msg := err.Error()
+	for _, want := range []string{"reconnaissance at " + recon + " is stale", "origin/main " + tip, "2 cited path(s): VERSION, a.txt"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("the refusal must carry %q, got %q", want, msg)
+		}
+	}
+	assertNoWrites(t, cs)
+}
+
+// C2: a reconnaissance revision the repository does not hold is a refusal
+// naming it (merge-base exit 128, not "not an ancestor").
+func TestSRCLI028002EnterRefusesAnUnknownReconnaissanceRevision(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	env := enterEnv(t, cs)
+	cs.reconRevision = strings.Repeat("d", 40)
+	err := processEnter(env, "EPIC-A", enterOpts{})
+	if err == nil || !strings.Contains(err.Error(), cs.reconRevision) || !strings.Contains(err.Error(), "not present in the repository") {
+		t.Fatalf("an unknown reconnaissance revision must be refused by name, got %v", err)
+	}
+	assertNoWrites(t, cs)
+}
+
+// C3: --allow-drift USER:… proceeds and the gate body records the source,
+// the tip and the changed cited paths.
+func TestSRCLI028002EnterAcceptsDriftWithAUserSourceAndRecordsItOnTheGate(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	tip := pushMain(t, env.Root, "a.txt", "two\n", "a moved")
+	_, err := enterCommand(t, cs, env.Root, "EPIC-A", "--allow-drift", "USER:2026-09-28:a.txt changed by the merged sibling, packet re-read")
+	if err != nil {
+		t.Fatalf("an accepted drift must proceed, got %v", err)
+	}
+	if len(cs.authored) != 1 {
+		t.Fatalf("the gate must open once, authored %v", cs.authored)
+	}
+	body := authoredGateBody(cs, 0)
+	for _, want := range []string{"Reconnaissance drift accepted (USER:2026-09-28:a.txt changed by the merged sibling, packet re-read)", "origin/main " + tip, "changed cited paths: a.txt"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the gate body must carry %q, got %q", want, body)
+		}
+	}
+}
+
+// C3: a drift source that is not a USER: line is refused before any request.
+func TestSRCLI028002EnterRefusesANonUserDriftSourceBeforeAnyRequest(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	env := enterEnv(t, cs)
+	_, err := enterCommand(t, cs, env.Root, "EPIC-A", "--allow-drift", "yes")
+	if err == nil || !strings.Contains(err.Error(), "USER:") {
+		t.Fatalf("a non-USER drift source must be refused naming the form, got %v", err)
+	}
+	if len(cs.reads) != 0 {
+		t.Fatalf("the refusal must come before any request, reads were %v", cs.reads)
+	}
+	assertNoWrites(t, cs)
+}
+
+// C2: the fetch precedes every comparison; --no-fetch skips it (offline
+// fixtures only) and reads the local origin ref.
+func TestSRCLI028002EnterFetchesTheDefaultBranchUnlessNoFetch(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	env := enterEnv(t, cs)
+	gitRun(t, env.Root, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+	_, err := enterCommand(t, cs, env.Root, "EPIC-A")
+	if err == nil || !strings.Contains(err.Error(), "could not fetch origin/main") {
+		t.Fatalf("an unreachable origin must refuse before any comparison, got %v", err)
+	}
+	assertNoWrites(t, cs)
+	out, err := enterCommand(t, cs, env.Root, "EPIC-A", "--no-fetch")
+	if err != nil {
+		t.Fatalf("--no-fetch must read the local origin ref, got %v", err)
+	}
+	if !strings.Contains(out, "reconnaissance "+cs.reconRevision+" current") {
+		t.Fatalf("expected the current line, got:\n%s", out)
+	}
+}
+
+// C3 (REQ-CROSS-422): both calls of a two-call entry run the check against
+// the same reconnaissance revision — the drift refuses both without
+// --allow-drift, and with it each gate's body carries the line.
+func TestSRCLI028002TheSecondCallOfATwoCallEntryRepeatsTheCheck(t *testing.T) {
+	facts := enterFacts([]map[string]any{member("REQ-A-1", "PENDING_VERIFICATION"), member("REQ-A-2", "PROPOSED")}, "PROPOSED", "pass", true, "CR-A", nil)
+	cs := enterServer(t, facts, true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	pushMain(t, env.Root, "a.txt", "two\n", "a moved")
+	for i := 0; i < 2; i++ {
+		if err := processEnter(env, "EPIC-A", enterOpts{}); err == nil || !strings.Contains(err.Error(), "is stale") {
+			t.Fatalf("call %d must refuse on the standing drift, got %v", i+1, err)
+		}
+	}
+	assertNoWrites(t, cs)
+	source := "USER:2026-09-28:drift accepted"
+	if _, err := enterCommand(t, cs, env.Root, "EPIC-A", "--allow-drift", source); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	facts["members"] = []map[string]any{member("REQ-A-1", "TODO"), member("REQ-A-2", "PROPOSED")}
+	if _, err := enterCommand(t, cs, env.Root, "EPIC-A", "--allow-drift", source); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if len(cs.authored) != 2 {
+		t.Fatalf("two gates must open, authored %d", len(cs.authored))
+	}
+	for i, id := range []string{"ENTRY-EPIC-A-VERIFY", "ENTRY-EPIC-A"} {
+		rec, _ := cs.authored[i]["record"].(map[string]any)
+		if str(rec, "external_id") != id {
+			t.Fatalf("gate %d must be %s, got %v", i+1, id, rec["external_id"])
+		}
+		if !strings.Contains(authoredGateBody(cs, i), "Reconnaissance drift accepted ("+source+")") {
+			t.Fatalf("gate %s must carry the drift line, got %q", id, authoredGateBody(cs, i))
+		}
+	}
+}
+
+// F-PR697-01 (cold review of PR #697): when the diff itself fails — the
+// reconnaissance revision shares no merge base with the tip (an orphan
+// commit, a shallow clone cut below the merge base) — entry refuses naming
+// both revisions; it never reads a failed diff as "no cited path changed".
+func TestSRCLI028002EnterRefusesWhenTheDiffAgainstTheReconnaissanceFails(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	gitRun(t, env.Root, "checkout", "-q", "--orphan", "island")
+	writeFile(t, filepath.Join(env.Root, "a.txt"), "unrelated history\n")
+	cs.reconRevision = gitCommitAll(t, env.Root, "orphan reconnaissance")
+	err := processEnter(env, "EPIC-A", enterOpts{})
+	if err == nil || !strings.Contains(err.Error(), "could not diff") || !strings.Contains(err.Error(), cs.reconRevision) {
+		t.Fatalf("a failed diff must refuse naming the reconnaissance revision, got %v", err)
+	}
+	assertNoWrites(t, cs)
+}
+
+// F-PR697-02: C1 says the dry run refuses too — the drift check precedes the
+// dry-run return, so a stale reconnaissance is named, not planned around.
+func TestSRCLI028002EnterDryRunRefusesOnDriftToo(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	citeSection(cs)
+	env := enterEnv(t, cs)
+	pushMain(t, env.Root, "a.txt", "two\n", "a moved")
+	var err error
+	out := captureOut(t, func() { err = processEnter(env, "EPIC-A", enterOpts{dryRun: true}) })
+	if err == nil || !strings.Contains(err.Error(), "is stale") {
+		t.Fatalf("--dry-run must refuse on drift, got %v", err)
+	}
+	if strings.Contains(out, "dry run — nothing posted") {
+		t.Fatalf("the dry run must not reach the plan on a stale reconnaissance, got:\n%s", out)
+	}
+	assertNoWrites(t, cs)
+}
+
+// F-PR697-04/05: a reconnaissance revision beginning with '-' is refused
+// before it reaches git as an option; a `:L12` or `:12–14` (en dash) line
+// suffix is stripped from a citation like `:12` is.
+func TestSRCLI028002EnterRefusesAnOptionShapedRevisionAndStripsLineSuffixes(t *testing.T) {
+	cs := enterServer(t, driftFacts(), true)
+	env := enterEnv(t, cs)
+	cs.reconRevision = "--output=/tmp/x"
+	err := processEnter(env, "EPIC-A", enterOpts{})
+	if err == nil || !strings.Contains(err.Error(), "not a revision") {
+		t.Fatalf("an option-shaped revision must be refused by name, got %v", err)
+	}
+	assertNoWrites(t, cs)
+	got := citedPaths([]any{map[string]any{"content": "CODE:a.txt:L12 and TEST:b_test.go:12–14 and CODE:c.md:7-9."}})
+	for _, want := range []string{"a.txt", "b_test.go", "c.md"} {
+		if !got[want] {
+			t.Fatalf("the extractor must strip the line suffix and keep %q, got %v", want, got)
+		}
 	}
 }

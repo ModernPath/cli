@@ -26,24 +26,47 @@ a delegated pass returns findings and a verdict.
 
 `PROCESS.md` names phases and never a verb. In a store-backed workspace each
 phase is driven by these entry points; the sections below give the order and
-the flags:
+the flags. Each phase runs with the batch verbs first — one call per step,
+whatever the number of records — and the single-record verbs stay as the
+fallback, for one record or on a CLI that lacks the batch verb:
 
-| Phase (`PROCESS.md`) | Verbs | Section |
-|---|---|---|
-| any — where do I stand | `process next`, `process check --phase <p>`, `your-move`, `factory status` | Where the loop stands |
-| source → plan | `working-set select … --phase plan [--lane defect]`, `working-set pull --scope`, `working-set push` | 1 |
-| cold review | `working-set pull --scope --for-review`, `process findings add` / `disposition`, `author trace --purpose cold-review` | 1 |
-| entry | `process enter <scope>`, then the human's `factory answer`, then `author advance … --to TODO` | 1 |
-| build → verify | `factory evidence --fail --role RED`, `factory evidence --pass`, `process advance <SR>` | 2 |
-| completion → apply | `process complete <scope>`, then the human's `factory answer`, then `author advance … --to DONE`, `working-set select --put-down` | 2 |
-| triage | `author requirement` / `author epic` / `author backlog`, `author gate --gate-kind question`, `modernpath feedback "<line>"` for a tooling gap; `author demote` to reopen a delivered item | The write channels |
-| session | `auth status`, `env --set`, `factory status` | Where the loop stands; the reference |
+| Phase (`PROCESS.md`) | Batch verbs | Single-record fallback | Section |
+|---|---|---|---|
+| session preparation | `process prepare-inputs` | — | Where the loop stands |
+| any — where do I stand | one `process next`, even with several held pieces; `process check --phase <p>`, `your-move`, `factory status` | `process next --piece <id>` | Where the loop stands |
+| source → plan | `author apply --file <plan>`, `working-set select … --phase plan [--lane defect]`, `working-set pull --scope`, `working-set push` | `author epic` / `requirement` / `update` / `relate` / `member` | 1 |
+| cold review | `working-set pull --scope --for-review` (one `REVIEW.md`), then `process review record --file <review.json>` | `process findings add` / `disposition`, `author trace --purpose cold-review` | 1 |
+| entry | `process enter <scope>`, the human's `factory answer`, then `author advance --gate ENTRY-<scope>` | `author advance <id> … --to TODO` per record | 1 |
+| build → verify | `factory evidence --file <runs.json>`, then `process advance --all --piece <EPIC>` | `factory evidence --fail --role RED`, `factory evidence --pass`, `process advance <SR>` per SR | 2 |
+| completion → apply | `process complete <scope>`, the human's `factory answer`, then `author advance --gate COMPLETE-<scope>`, `working-set select --put-down` | `author advance <id> … --to DONE` per record | 2 |
+| triage | `author requirement` / `author epic` / `author backlog`, `author gate --gate-kind question`, `modernpath feedback "<line>"` for a tooling gap; `author demote` to reopen a delivered item | — | The write channels |
+| session | `auth status`, `env --set`, `factory status` | — | Where the loop stands; the reference |
 
 ## Where the loop stands (both modes)
 
+In a bound workspace, run `modernpath process prepare-inputs` before sourced
+work. It checks the binding, CLI/kit and server contract with one context read,
+and reports the held-piece count, active release, pending decisions, local docs
+last synced and server docs last updated. It does not refresh documents or
+change process records. For scripts, `--json` reports `ready` and the separate
+documentation timestamps; readiness does not mean the local docs are current.
+Run `modernpath docs sync` explicitly when a refresh is needed. Search locally
+first, in this order: the repository for the requirement id, its code and
+tests; `modernpath working-set pull <id>`; the docs export
+(`rg -n "<terms>" .modernpath/<system-slug>/`, then read the matching files);
+then `modernpath ask` for why and how questions the local search cannot answer.
+Use `modernpath search` or `modernpath read-doc` when the export lacks the
+material or a live answer is needed.
+
+After running `modernpath process prepare-inputs`, always show its complete
+human-readable output verbatim in a fenced `text` block in the user-facing
+response. Include every section, warning, and remedy, including a `Not ready`
+result. A summary does not replace the output. Put timing and any explanation
+outside the block.
+
 | Read | What it answers |
 |---|---|
-| `modernpath process next` | the derived phase, why, and the skill to run; `-v` prints the full packet aggregate and process revision |
+| `modernpath process next` | the derived phase, why, and the skill to run; `-v` prints the full packet aggregate and process revision. With several held pieces and no `--piece` it prints one block per piece — scope, phase, why, the skill, the gates waiting on it — and exits 0: session entry is one call |
 | `modernpath process check --phase <p>` | one phase's decision-table checks for the current selection (a pure read) |
 | `modernpath your-move` | the pending human decisions, ranked by what one answer releases |
 | `modernpath working-set pull <id>…` | a record as a readable file with its `Fingerprint:` line |
@@ -56,22 +79,28 @@ Phases are `source`, `plan`, `cold_review`, `entry`, `build`, `verify`,
 ## The write channels (store-backed)
 
 Every write is single-record and actor-attributed; legality is enforced by the
-server, and a stale fingerprint conflicts instead of overwriting. Retired files
+server, and a stale fingerprint conflicts instead of overwriting. The batch
+verbs — `author apply`, `process review record`, the `--file` forms,
+`author advance --gate` and `process advance --all` — run those same
+single-record writes in one call, chain each fingerprint, and report every
+record's result. Retired files
 are not recreated to record something — a file-derived batch is refused whole.
 
 | Channel | Carries |
 |---|---|
 | `modernpath author requirement`, `author epic`, `author update`, `author member`, `author relate` | records, content edits, membership and UR–SR relations. A user requirement's scenarios are `author update --criteria <json or file>`: a JSON array whose every object carries an `external_id` (the replace-set keys on it) and `given`, `when`, `then`; the array replaces the stored set whole |
+| `modernpath author apply --file <plan.yaml\|json>` | a whole plan in one call: the epic, its URs and SRs with their prose and criteria, the UR–SR relations and the membership, through `working-set push`'s write engine. The whole plan is checked before the first write; a missing record is created, then each record is one atomic patch carrying the authoring context. An existing record it would change is guarded by its `working-set pull` or a pinned `expected_fingerprint`; a re-run writes nothing; `--dry-run` prints the plan |
 | `modernpath author trace` | an immutable PASS/FAIL/STALE trace gate at an exact fingerprint |
 | `modernpath author gate` / `author gate-withdraw` | a human gate, born open; `--supersedes <old>` retires an open or answered decision in the same write; a mistakenly opened one is withdrawn with a reason |
-| `modernpath author advance` | a lifecycle transition; a human-gated one names the `ANSWERED` gate and its fingerprint |
-| `modernpath author demote` | the demotion gate that reopens a delivered item (`--to PROPOSED\|IN_PROGRESS\|OBSOLETE --basis reversed-decision\|defect\|superseded --reason USER:…`, no prerequisite trace); `--apply` after the answer advances the item on it and reports the user requirement and epic that followed |
+| `modernpath author advance` | a lifecycle transition; a human-gated one names the `ANSWERED` gate and its fingerprint. `author advance --gate <GATE>` with no id reads the gate — its fingerprint, the FROM and TO of its transition, an `approve` answer — and advances every record its scope names that is still in FROM, members first, then the epic |
+| `modernpath author demote` | the demotion gate that reopens delivered items — one id, or `--ids A,B,C` / `--file` for one gate over several items of one state (`--to PROPOSED\|IN_PROGRESS\|OBSOLETE --basis reversed-decision\|defect\|superseded --reason USER:…`, no prerequisite trace); `--apply` (with `--gate-id`, or an id for the newest gate in its series) after the answer advances every item on it and reports the user requirements and epics that followed |
 | `modernpath working-set select` | the frozen scope, its phase, suspension, resumption, put-down |
-| `modernpath working-set push` | packet sections whole and item files as atomic patches, from the scope directory `pull --scope` materialized |
-| `modernpath process findings add` / `disposition` | cold-review findings and their dispositions |
+| `modernpath working-set push` | packet sections whole and item files as atomic patches, from the scope directory `pull --scope` materialized; push never creates a record: an item file whose id the store does not know is refused before any write — create it with `author apply`, the only create path; a `members/` file whose record the store holds outside the frozen selection is skipped and named — re-select to push it |
+| `modernpath process review record --file <review.json>` | a delegated cold review in one call: the reviewer's findings, its guarded dispositions and the cold-review trace at the aggregate the review pull stamped |
+| `modernpath process findings add` / `disposition` | cold-review findings and their dispositions, one per call or a whole list with `process findings add --file` and `process findings disposition --file` |
 | `modernpath process reconcile --apply` | the automatic transitions current trace proofs allow |
-| `modernpath process enter`, `process advance`, `process complete` | the ceremony verbs (EPIC-CLI-017): the entry gate, the lower trace plus reconcile, and the delivered-revision evidence plus completion trace plus completion gate — each from the store facts, each refusing before any write on an unmet fact |
-| `modernpath factory evidence` | a test or browser run as evidence, pinned to the repository HEAD; `--role RED` marks a red-first result |
+| `modernpath process enter`, `process advance`, `process complete` | the ceremony verbs (EPIC-CLI-017): the entry gate, the lower trace plus reconcile, and the delivered-revision evidence plus completion trace plus completion gate — each from the store facts, each refusing before any write on an unmet fact; `process advance --all --piece <EPIC>` advances every SR of the piece |
+| `modernpath factory evidence` | a test or browser run as evidence, pinned to the repository HEAD; `--role RED` marks a red-first result; `factory evidence --file <runs.json>` records several runs in one call |
 | `modernpath factory answer` | an attributable human answer on an open gate (a governed gate's review is attached for you) |
 | `modernpath install --store-backed --source USER:…` | the store-backed declaration of a bound workspace that never had file ledgers: the activation gate answered with the source, the server state `active` and the marker, in one step; a workspace with ledgers goes through `migrate flip` |
 | `modernpath author backlog` / `author update --kind backlog` | one backlog, gap or tooling record (`BACKLOG-…`, `GAP-…`), born `OPEN` and attributed to you; a disposition change names its `--source`; `working-set pull <id>` renders it |
@@ -84,7 +113,13 @@ other (`PROCESS.md` §State records and reconciliation): their state is read
 from the store — `process backlog list [--kind backlog|gap|tooling]
 [--disposition <word>]` lists them newest first and `working-set pull <id>`
 reads one — never from a plan file or a note, which carry no disposition the
-store does not. The release
+store does not. Tooling feedback requires a ModernPath tenant credential and
+a current checkout bound to the server-verified `modernpath` system. It refuses
+customer workspaces rather than switching destinations. It never
+files tooling records or local fallback files in customer projects. When that
+destination is unavailable, report the gap in the session; do not substitute
+`author backlog --kind tooling` in the customer store. Read feedback records
+from a checkout bound to ModernPath. The release
 registry file is retired;
 the single active release and its `USER:` source are the newest answered,
 approved `release_selection` gate naming `release:<slug>` on the system —
@@ -93,6 +128,62 @@ approved `release_selection` gate naming `release:<slug>` on the system —
 
 ## 1. Plan → cold review → entry (store-backed)
 
+### Plan
+
+**Author the records.** One call records the whole plan:
+`author apply --file plan.yaml` (YAML or JSON):
+
+```
+epic: {id, title, description, expected_fingerprint}
+requirements:
+  - {id, kind: ur|sr, context, title, description, rationale, boundary,
+     verification_method, criteria: [...], parents: [UR ids],
+     expected_fingerprint}
+members: [requirement ids]
+```
+
+It runs through `working-set push`'s write engine. Every record is checked
+before the first write — one invalid record (a new one with no title or
+context, a lane class on a UR, a criterion without `external_id`) stops the
+call and nothing is written. A record the store does not know is created,
+then patched — apply is the only create path, and push never creates; each
+record's changes — the fields that differ (an empty field
+is left alone), its criteria, relations and membership — are one atomic patch
+carrying the authoring context. Each record's line shows its result and
+fingerprint; an updated one shows `<replaced> -> <new>`. A re-run writes
+nothing and each record reads `unchanged`. `--dry-run` prints the plan.
+A fingerprint conflict is reported for that record and the rest continue;
+any other refusal stops the run and names what was written. A record created
+whose patch never ran reads `created, not patched`: `working-set pull <id>`
+records its fingerprint, then apply the plan again. The call exits non-zero
+when any record did not apply.
+
+**Pull first, or pin fingerprints.** A record that already exists and would
+change is guarded by the version you wrote the plan against: its
+`expected_fingerprint` in the plan, or else the fingerprint of its
+`working-set pull` (`working-set pull <id>`, or the scope pull's member
+file). With neither, apply refuses it before any write; it never reads a
+fingerprint at run time. A record whose fingerprint moved since then stops
+the whole call — another session edited it; pull it again and keep that edit
+in the plan. New records need neither, so a plan of new records is one call.
+After apply updates a record, its by-id pull snapshot moves to the
+fingerprint the write returned, so the next apply from the same pull goes
+through. Only the fingerprint moves: the snapshot's content is from before
+the write, and the record's line says so — re-pull it before copying from
+it. A scope pull's file is left as pulled — push diffs it, and a moved
+fingerprint would let the next push revert the write — and the record's line
+says to re-pull the scope.
+
+Fallback, one record per call, each carrying the fingerprint the previous
+write printed: `author epic <id> --title … --description …`, `author
+requirement <id> --kind ur|sr --context … --title …`, `author update <id>
+--expected-fingerprint … --description … --rationale … --boundary …
+--verification-method …` (a UR's scenarios with `--criteria`), `author relate
+<SR> --expected-fingerprint … --parent <UR>`, `author member <epic>
+--expected-fingerprint … --member <id>…`.
+
+### Take the scope
+
 **Take the scope.**
 `working-set select <EPIC|SR> --kind epic|single_sr [--members a,b] --phase plan [--lane defect]`
 (`--lane defect` marks a customer-blocking defect: `process next`, `your-move`
@@ -100,6 +191,8 @@ and the session brief say so, and the defect-lane rules of `rdd-start` apply).
 A take with no `--replaces` *adds* a holder — you may hold several pieces; name
 the one you are displacing with `--replaces <piece> --outcome done|obsolete|returned=<phase>`.
 Advance the phase later with `working-set select <scope> --phase <p>`.
+
+### Author the packet
 
 **Author the packet.** `working-set pull --scope` materializes
 `.modernpath/working-set/<scope>/` — item files and `packet/*.md` sections —
@@ -111,31 +204,119 @@ stamp — the push says `re-stamped N section(s)`, never "nothing to do"
 (`--restamp` forces every filled canonical section). The scaffold reads the
 required keys the server serves (`facts.sections.required`), so the stubs and
 `process check --phase plan` walk one key set; a FAIL on `canonical_sections`
-names the missing or stale keys.
+names the missing or stale keys. The fixed sections are `10-recon.md`
+(reconnaissance), `15-state-inventory.md` (the state inventory — one row per
+piece of state the change touches, or the one-line declaration that it
+touches none; the stub names the columns), `30-red-strategy.md` and
+`40-decisions.md`, plus `20-enrichment-<SR>.md` per selected system
+requirement (SR-CLI-028-001).
+
+### Approval file listing
+
+**Approval file listing.** Before asking for human approval, present the brief
+and list the related working-set files (`PROCESS.md` §Gates). Materialize a
+selected scope with `working-set pull --scope`; pull named gates or items with
+`working-set pull <id>…` as needed. Read the files and apply the currency checks
+for the applicable file type and decision in `PROCESS.md` §Gates. Include the relevant scoped item
+files, acceptance content, packet brief, decisions, findings, and evidence.
+Resolve each listed file to its actual full absolute filesystem path and use
+that path as both the visible Markdown link label and the target, followed by
+a short description. Keep the links outside code formatting; use filesystem
+paths rather than `file://` or editor-specific URIs. Wrap a target containing
+spaces in angle brackets. Resolve missing or stale files before asking; never
+invent paths. Full file contents are shown only when the human requests them.
+
+### Cold review
 
 **Cold review** runs from an independent context and records from it.
 Delegate the pass to the installed reviewer, `.claude/agents/rdd-cold-reviewer.md`
-(Read, Grep, Glob; no shell): it returns findings and a verdict, and this
-session records them.
+(Read, Grep, Glob; no shell): it returns findings and a verdict as JSON, and
+this session records them in one call.
 
 1. `working-set pull --scope --for-review` — a read-only render that stamps a
-   review context. Pushes from it are refused by design.
-2. Read the full aggregate: `process next -v` → `full packet_fingerprint:`.
+   review context and the packet aggregate in `.context`, and writes the
+   whole packet to one `REVIEW.md`: the aggregate header, the epic, the packet
+   sections, the URs with their scenarios and the SRs with statement,
+   rationale, boundary and verification method, each under an
+   `id · fingerprint` heading, the members taken from the epic's stored
+   membership. The reviewer reads that one file. Pushes from the review
+   render are refused by design. The stamp also carries each record's and
+   section's fingerprint (`reviewed: <key> <fingerprint>` lines).
+   A later round adds `--since <previous CR-TRACE-…>`: `REVIEW.md` then holds
+   the previous trace's code revision beside HEAD, what changed since that
+   review in full, the open findings, the previous verdict, and the unchanged
+   ids with their fingerprints only; the stamp and the trace still pin the
+   full aggregate. It needs a previous trace recorded with reviewed
+   fingerprints (one full round by this CLI first), is refused for a trace
+   that is not this scope's cold review, and never takes the by-id narrow
+   form.
+2. The reviewer returns `{verdict, body, source, findings[], dispositions[]}`:
+   a finding is `{id, category, severity, owner, source, body,
+   introduced_by}`, a disposition `{id, from, disposition, ref, resolution,
+   widens}` — a `RESOLVED` one names its `resolution`. Save it as
+   `review.json`.
+3. `process review record --file review.json` (`--scope`, or the held piece)
+   records the new findings (ids already recorded are skipped), applies each
+   disposition only while its finding is still in `from`, then records the
+   cold-review trace `CR-TRACE-<scope>-<review context>` (`plan->entry`)
+   naming the scope and each member, pinned to the aggregate the review pull
+   stamped, with the stamped per-item fingerprints as
+   `reviewed_fingerprints`. It refuses before any write without the review stamp, when the
+   aggregate moved since the pull (re-pull `--for-review` and review again),
+   or on a PASS that would leave a material finding `OPEN` or `DEFERRED`. A
+   failure stops before the trace; a re-run records only what is missing.
+4. `process check --phase cold_review` → `independent_verdict` and `findings`
+   shows the checks when you need them.
+
+Findings rules, whichever verb records them: both `category` and `severity`
+are required (the CLI never defaults to the most blocking pair), and a
+`note` severity never blocks whatever its category. Material categories are
+`correctness`, `security`, `data_loss`, `contract`, `traceability`,
+`testability`; a material finding left `OPEN` **or `DEFERRED`** fails the
+check — an out-of-scope pre-existing finding is `REJECTED`, not deferred.
+Findings are scope-scoped, not aggregate-scoped. `process findings list`
+prints severity, per-round counts — including `widened` and `on earlier
+resolutions` — and flags a round whose material findings are all
+`traceability` (audit the change, not the document) or all on earlier
+resolutions (the packet was reviewed incomplete: return it to `rdd-plan`);
+`--all` groups rows and rounds per scope with a heading each, and `--json`
+writes the rows and the per-scope rounds as one object (SR-CLI-027-004: a
+convergence survey is one call). A `RESOLVED` disposition names its kind
+(below), in a file as on the flags; a review file that breaks a resolution
+rule is refused before any write.
+
+By hand — one record per call, or on a CLI that lacks `review record`:
+
+1. Read the full aggregate: `process next -v` → `full packet_fingerprint:`.
    The unadorned line is a 12-character display prefix that `--fingerprint`
    accepts and never matches.
-3. Findings: `process findings add --scope <kind>:<id> --id <F-id> --category
-   <c> --severity <s> --owner <o> --body … --aggregate <full aggregate>` —
-   both `--category` and `--severity` are required (the CLI never defaults to
-   the most blocking pair), and a `--severity note` never blocks whatever its
-   category; `process findings list` prints severity, per-round counts and
-   flags a round whose material findings are all `traceability` (audit the
-   change, not the document); `process findings disposition --id <F-id>
-   --disposition RESOLVED|DEFERRED|REJECTED --expected-fingerprint <from list>`.
-   Material categories are `correctness`, `security`, `data_loss`, `contract`,
-   `traceability`, `testability`; a material finding left `OPEN` **or
-   `DEFERRED`** fails the check — an out-of-scope pre-existing finding is
-   `REJECTED`, not deferred. Findings are scope-scoped, not aggregate-scoped.
-4. Verdict: `author trace CR-TRACE-<scope>-R<n> --purpose cold-review
+2. Findings: `process findings add --scope <kind>:<id> --id <F-id> --category
+   <c> --severity <s> --owner <o> --body … --aggregate <full aggregate>`, or a
+   whole list with `process findings add --file findings.json` (a JSON array
+   of `{id, scope, category, severity, owner, source, body, introduced_by}`,
+   each pinned to its own scope's aggregate). `--introduced-by <F-id>` (the
+   file's `introduced_by`) names the earlier finding of the same scope whose
+   resolution introduced the mechanism this one faults (SR-CLI-027-003).
+   Dispositions: `process findings disposition --id <F-id> --disposition
+   RESOLVED|DEFERRED|REJECTED --scope <kind>:<id> --from <what you saw>` —
+   the CLI reads the finding's fingerprint for the scope, and
+   `--expected-fingerprint` from `process findings list` still works — or
+   several with `process findings disposition --file dispositions.json`
+   (`{id, scope, from, disposition, ref, resolution, widens}`, each written
+   only while its finding is still in `from`). No flag resolves every open
+   finding: a disposition names its finding.
+   A `RESOLVED` names how it resolved (SR-CLI-027-001): `--resolution
+   packet-edit` (the packet was clarified), `scope` (a scope action; `--ref`
+   names its record) or `decision` (`--ref` is its `USER:` source) — the
+   file's `resolution` takes the same values and a review file's
+   dispositions carry it too; the list prints `RESOLVED/<kind>`. A packet
+   edit does not change a member: the server refuses a `packet-edit` whose
+   scoped member changed since the finding was raised, unless `--widens
+   USER:<date>:<why>` (the file's `widens`) states the widening on the
+   human's word (SR-CLI-027-002; `-v` prints it). A finding already
+   `RESOLVED` changes only its reference: `--ref --expected-fingerprint …`
+   with no `--disposition`.
+3. Verdict: `author trace CR-TRACE-<scope>-R<n> --purpose cold-review
    --verdict PASS|FAIL --scope <epic> --scope <each member> --source …
    --title …`. The pin defaults to the scope's current packet aggregate and
    the transition to `plan->entry` (REQ-CROSS-376/377); a given
@@ -146,19 +327,38 @@ session records them.
    write. The trace inherits the review context the scope was pulled under; a
    verdict with no review context is refused, and one recorded from an
    authoring context reads as not independent.
-5. `process check --phase cold_review` → `independent_verdict` and `findings`.
+4. `process check --phase cold_review` → `independent_verdict` and `findings`.
+
+### Entry
 
 **Entry.** `modernpath process enter <scope>` does the ceremony from the store
-facts: it refuses naming the fact when the packet sections are missing or
-stale, when no independent passing cold-review trace exists at the current
-aggregate, when the `entry_brief` packet section is absent or incomplete, or
-when `ENTRY-<scope>` is open or answered (answer or apply it); otherwise it
-opens the gate naming the epic plus every member still in FROM (a single SR
-names itself), the cold-review trace as prerequisite and `PROPOSED->TODO`,
-and moves the selection to phase `entry`. `--dry-run` prints the plan. The
-brief is the `packet/entry_brief.md` section in the PROCESS.md brief shape
-(`- What:`, `- Why now:`, `- Changes if approved:`, `- Risk if wrong:`,
-`- Recommendation:`; every bullet required), or `--brief-file`.
+facts: it refuses naming the fact when no independent passing cold-review
+trace exists at the current aggregate, when a packet section is missing,
+when the `entry_brief` packet section is absent or incomplete, or when
+`ENTRY-<scope>` is open or answered (answer or apply it); otherwise it opens
+the gate naming the epic plus every member still in FROM (a single SR names
+itself), the cold-review trace as prerequisite and `PROPOSED->TODO`, and
+moves the selection to phase `entry`. A section whose content is unchanged
+but whose scope context moved — a record edit moves it — is not refused:
+once the cold review passes, the verb re-puts it with its served content
+under its served fingerprint (a concurrent edit conflicts), re-reads, and
+refuses only the sections still missing, by name. `--dry-run` prints the
+plan and names the sections it would re-stamp, writing nothing. It
+also refuses on reconnaissance drift (SR-CLI-028-002): the selection must
+carry the revision the packet was reconnoitred at (`working-set select
+<scope> --recon-revision <sha>`; absent, the verb refuses before the facts
+read); it fetches the remote default branch (`--no-fetch` for offline
+fixtures only) and, when the tip moved past that revision and a path the
+packet cites as `CODE:`/`TEST:` changed from the merge-base to the tip,
+refuses naming the tip and the paths — a packet reconnoitred on a branch
+ahead of main is current, not drift. Re-reconnoitre and re-select with the
+new revision, or, on the human's word, `--allow-drift USER:<date>:<why>`
+records the source, the tip and the paths on the gate body; in a two-call
+entry both calls run the check and take the flag. The brief is
+the `packet/entry_brief.md` section in the PROCESS.md brief shape (`- What:`,
+`- Why now:`, `- Changes if approved:`, `- Risk if wrong:`,
+`- Recommendation:`; every bullet required), or `--brief-file` with a JSON
+brief object or the same markdown bullets.
 
 *As-built members first.* An epic whose members split between PROPOSED and
 PENDING_VERIFICATION enters in two calls: the first opens
@@ -203,10 +403,27 @@ of an epic that is already `TODO` are recovered by a members-only entry gate
 naming them (its prerequisite is the epic's cold-review trace). Move the
 selection: `working-set select <scope> --phase entry`.
 
+### Answer, then apply
+
 **Answer, then apply.** The human answers in Mission Control or with
 `factory answer ENTRY-<scope> --options approve` (a human decision; the CLI
 attaches the review a governed gate needs). Answering records; it moves
-nothing. Apply members first, then the epic:
+nothing. Apply in one call:
+
+```
+modernpath author advance --gate ENTRY-<scope>
+```
+
+It reads the gate — its fingerprint, the FROM and TO of its transition, and
+an `approve` answer when the chosen options are exactly `approve` (any other
+answer is echoed with `--gate-answer`) — then advances every record the
+gate's exact scope names that is still in FROM, members first, then the
+epic; it prints each result, skips a record already past, and stops before
+the epic when a member is refused. `--expected` is always the gate's FROM
+state, never a fresh read. The gate closes and reads `applied` once every
+named transition has landed.
+
+Fallback, one record per call, members first, then the epic:
 
 ```
 modernpath author advance <member> --kind requirement --to TODO --expected PROPOSED \
@@ -215,9 +432,10 @@ modernpath author advance <epic> --kind epic --to TODO --expected PROPOSED --gat
 ```
 
 `--gate-fingerprint` is the gate's content-shadow hash — the `Fingerprint:`
-line of `working-set pull ENTRY-<scope>`. `--gate-answer` accepts the option
-key, its label, or the stored answer text. The gate closes and reads
-`applied` once every named transition has landed.
+line of `working-set pull ENTRY-<scope>`, or `fingerprint` in `factory gates
+ENTRY-<scope> --json`; `author advance <id> --gate <GATE>` also reads it, and
+the FROM, TO and kind, when they are omitted. `--gate-answer` accepts the
+option key, its label, or the stored answer text.
 
 The entry pass ends here: report the applied transitions and stop. The answer
 was a decision about the gate, not an instruction to build (`PROCESS.md`
@@ -228,13 +446,28 @@ was a decision about the gate, not an instruction to build (`PROCESS.md`
 The operator records evidence; the tool does the ceremony (EPIC-CLI-017).
 
 1. `working-set select <scope> --phase build`.
-2. **RED**, recorded at the RED commit: `factory evidence --fail <SR> --role
-   RED --kind local_test --log "<command>"`, or later with `--revision
-   <red-commit>` (no checkout). Evidence currency is role-aware: a RED never
-   shadows a passing result, and the server warns at record time about a pass
-   with no RED before it or a RED recorded after a pass.
-3. **GREEN**: `factory evidence --pass <SR> --kind local_test --log "<command>"`.
-4. **Advance**: `modernpath process advance <SR> --log "<command>"` reads the
+2. **Evidence**, in one call: `factory evidence --file runs.json`, a JSON
+   array with one run per entry, `{pass, fail, skip, role, revision, kind,
+   log, totals}` — each SR's RED entry `{"fail": ["<SR>"], "role": "RED",
+   "revision": "<red-commit>", "log": "<command>"}` and its passing entry
+   `{"pass": ["<SR>"], "log": "<command>"}`. Each run is posted on its own
+   with an id derived from the whole entry, so running the same file again
+   updates the same runs and records any that failed; a refused run is
+   reported and the rest continue.
+
+   Single-record fallback — **RED**, recorded at the RED commit: `factory
+   evidence --fail <SR> --role RED --kind local_test --log "<command>"`, or
+   later with `--revision <red-commit>` (no checkout); **GREEN**: `factory
+   evidence --pass <SR> --kind local_test --log "<command>"`. Evidence
+   currency is role-aware: a RED never shadows a passing result, and the
+   server warns at record time about a pass with no RED before it or a RED
+   recorded after a pass.
+3. **Advance**, in one call: `process advance --all --piece <EPIC> --log "<command>"`
+   runs the per-SR advance below for every system requirement of the piece,
+   prints each SR it moved and, for each one it did not, the refusal that
+   names why; it exits non-zero when any SR was not advanced, and the ones
+   that were stay moved.
+4. **Advance one SR**: `modernpath process advance <SR> --log "<command>"` reads the
    facts of the piece that holds the SR (`--piece` when you hold several),
    refuses naming the fact (no RED recorded, evidence failing/claimed/stale,
    the SR not a member, no delivery facts served), records
@@ -303,9 +536,10 @@ modernpath author gate COMPLETE-<scope> --purpose completion --gate-kind approva
 
 7. The human answers (Mission Control, or `factory answer COMPLETE-<scope>
    --options approve --text "USER:<date>: …"`).
-8. **Apply**, members first: `author advance <member> --kind requirement --to
-   DONE --expected IN_REVIEW --gate COMPLETE-<scope> --gate-answer approve
-   --gate-fingerprint <gate Fingerprint>` for every SR, then the UR (also
+8. **Apply** in one call: `author advance --gate COMPLETE-<scope>` — every SR,
+   the UR, then the epic. Fallback, members first: `author advance <member>
+   --kind requirement --to DONE --expected IN_REVIEW --gate COMPLETE-<scope>
+   --gate-answer approve --gate-fingerprint <gate Fingerprint>` for every SR, then the UR (also
     `--kind requirement`), then the epic with `--kind epic`.
 9. `working-set select <scope> --put-down --outcome done`; `process next` now
    reads complete or "no current selection".
@@ -358,6 +592,22 @@ requirement, a hand-edited status or a synthetic failure (`PROCESS.md`
    requirement and the owning epic that were `IN_REVIEW`/`DONE` on the same
    gate (the epic to `PROPOSED` for a reversed decision, else
    `IN_PROGRESS`); the verb prints them as `followed:` lines.
+
+Several items reopened by one decision take one gate:
+`author demote --ids A,B,C …` (or `--file`, one id per line). All items must
+be `IN_REVIEW`, or all `DONE` — a mixed batch is refused before any write,
+naming both groups; run the group holding user requirements first. The gate
+is `DEMOTE-<first id>`, or the next free `-R<n>` when the earlier gates in
+the series are closed or withdrawn (an open or answered one is refused and
+named); the printed hint names it. After the answer,
+`author demote --gate-id <gate> --apply` advances every item, user
+requirements first, skipping an item already applied; an item another gate's
+follow already moved is reported with that gate and passed over, and the
+output names `author gate-withdraw <gate>` for the gate that then cannot
+close. Any other refusal stops the run, lists what was applied and what
+remains, and exits non-zero — re-run the same command to resume.
+`author demote <id> --apply` without `--gate-id` applies the newest gate in
+the `DEMOTE-<id>` series, every item on it.
 4. Next: a defect is rebuilt red-first, `process advance` returns it to
    `IN_REVIEW` on its lower trace — with no re-entry, even when no entry
    gate names it (an epic entered through a legacy approval gate) — and
@@ -365,6 +615,86 @@ requirement, a hand-edited status or a synthetic failure (`PROCESS.md`
    evidence (§2 step 6); a reversed
    decision is re-planned and cold-reviewed, and `process enter` opens the
    successor entry gate `ENTRY-<scope>-R2` (§1 Entry).
+
+### The small-change lane (store-backed)
+
+One small change — one SR in no epic, a class a current lane authorization
+covers, at most five non-test source files and no excluded area — goes
+through the lane (`PROCESS.md` §Small-change lane) instead of epic or
+single-SR scope. The authorization is the human decision; the server checks
+every stand-in for the per-change answer and refuses by name.
+
+- **Authorize, once per System:** `process lane authorize --classes <c,…>
+  --appliers <user id,…> --expires <date> --cap <n> [--exclude <glob>]…`
+  (or `--file lane.json`) opens the gate and prints its id. **A workspace
+  admin answers it once: in the web app (Mission Control), or with `process
+  lane approve <gate> [--text "<decision>"]`** — one call to the server's
+  `lane_approve` action, answered as the signed-in user (never an actor named
+  in the request), refused before any write when the gate is not a
+  `lane_authorization`. `factory answer` on it is refused, and so is any
+  other client (an API, integration or MCP token). `lane approve` asks in the
+  kit and the subagent guard denies it: the decision is the human's, made in
+  the conversation. `process lane` (no subcommand) shows the current
+  authorization.
+
+The verb sequence for one small change, five writing calls and one read:
+
+1. `author apply --file sr.yaml` — the SR with its statement, boundary,
+   verification method, `lane_class` (`defect_with_failing_test`, `wording`,
+   `presentation`, `dependency_patch`) and `sources: [USER:…]`; the lane
+   enters only a sourced SR, and the class is set **before** the review,
+   which pins it (`author update <SR> --lane-class <class>` to set it alone).
+2. `working-set pull <SR> --for-review` — a read: renders the SR to
+   `.modernpath/working-set/<SR>/REVIEW.md` under a fresh review context,
+   stamping the SR's content fingerprint and packet sections. The delegated
+   reviewer reads that file and returns the usual review JSON.
+3. `process lane review <SR> --file review.json` — one narrow pass, no
+   rounds. It refuses before any write without the stamp, without a
+   `lane_class`, or when the SR changed since the pull; it holds the SR as a
+   `single_sr` piece (the single-SR aggregate is served only for a held
+   piece), then records `LANE-REVIEW-<SR>-<context>`: a cold-review trace on
+   `PROPOSED->TODO` at the SR's single-SR aggregate, with the review context
+   and a `LANE:narrow` source. A FAIL is recorded and the change leaves the
+   lane for single-SR scope.
+4. `process lane enter <SR>` — reads the narrow review and the newest
+   answered authorization, then posts one advance `PROPOSED->TODO` with
+   `lane_ref` and no `gate_ref`; the server checks currency, class, the
+   signed-in applier, the daily cap and the review's independence. On an
+   entered SR that changed afterwards (TODO through IN_REVIEW) it posts
+   `lane_reapply` instead — review the changed SR again first.
+5. Build red-first, then `factory evidence --file runs.json` (RED, then the
+   passing run).
+6. `process advance --all --piece <SR> --log "<command>"` — to IN_REVIEW.
+
+After delivery to the default branch:
+
+- `process lane check <SR> --commit <sha> [--base <sha>]` posts `git diff
+  --name-only` over `<sha>^1..<sha>` (a merge or squash commit) or
+  `<base>..<sha>` (a rebase delivery). It refuses a commit the default
+  branch does not reach and a base that is not the commit's ancestor. The
+  server has no repository access: it records the SR's delivered revision
+  and the lane-eligibility trace as its own verdict over the file list the
+  CLI reported, and says so. The first full report for a commit counts — a
+  later one for the same commit that leaves a file out or uses another base
+  is refused; a new commit may be reported. A DONE or OBSOLETE SR is refused.
+  A FAIL names each offending file, exits non-zero, and the change leaves
+  the lane.
+- `process lane complete --log "<ci run>"` takes every IN_REVIEW small change
+  with a passing eligibility at its delivered revision, records the run you
+  name as the run the agent reported (nothing verifies it, and the brief
+  says so) and `LANE-COMPLETE-TRACE-<SR>` at its single-SR aggregate,
+  and opens one `LANE-BATCH-<date>` gate: options `approve` and
+  `reject:<SR>` per member, each change's files in the brief. It lists the
+  small changes left out and why. `--dry-run` prints the batch.
+- The human answers it (web app, or `factory answer <id> --options
+  approve,reject:<SR>`): the answer approves every member not rejected.
+- `process lane complete --apply [--gate <id>]` advances each approved member
+  `IN_REVIEW->DONE`; a rejected one stays IN_REVIEW, to be fixed and batched
+  again. Once answered, the batch is pinned to its approved members only, so
+  fixing a rejected change never blocks the approved ones.
+
+A lane SR never completes through an ordinary completion gate unless it
+re-entered with a full packet and review.
 
 ## 3. The work-selection model (store-backed)
 
@@ -374,10 +704,12 @@ requirement, a hand-edited status or a synthetic failure (`PROCESS.md`
   claimable by anyone.
 - **`--piece <scope>`** on `working-set` and `process` names which of your
   current pieces a read or write resolves. With several held and none named,
-  every scoped read and write is refused by name — `process next`, `process
-  check` and `process reconcile` print "you hold several current pieces (2):
-  A, B — name one with --piece <id>", the server answers 409, and `factory
-  status` lists
+  `process next` prints one block per held piece — its scope, phase, why,
+  the skill to run and the gates waiting on it — names the `--piece` remedy
+  and exits 0, so session entry is one call; every other scoped read and
+  write is refused by name — `process check`, `process reconcile` and
+  `process advance` print "you hold several current pieces (2): A, B — name
+  one with --piece <id>", the server answers 409, and `factory status` lists
   what you hold; "no current selection" is printed only when you hold none.
   Name the piece.
 - **Suspend / resume / claim / put down:** `working-set select <scope>
@@ -436,12 +768,12 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | Refusal (substring) | Origin | Cause | Clears it |
 |---|---|---|---|
 | `no current work selection — \`working-set select\` a scope first` | cli | a scope read or push with no selection | `working-set select <scope>` |
-| `no current selection — nothing to route` | cli | no current piece is held (several held pieces are refused by name instead) | `working-set select <scope>` |
-| `you hold several current pieces (…): … — name one with --piece <id>` | cli | a scoped read or write under several held pieces, none named | `--piece <scope>` on the command |
+| `no current selection — nothing to route` | cli | no current piece is held (with several held, `process next` prints one block per piece instead) | `working-set select <scope>` |
+| `you hold several current pieces (…): … — name one with --piece <id>` | cli | a scoped read or write other than `process next` — `process check`, `process reconcile`, `process advance` — under several held pieces, none named | `--piece <scope>` on the command |
 | `push: re-stamped %d section(s) whose scope context moved` | cli | unchanged sections the server reported stale were re-put for a fresh stamp (not an error) | nothing |
 | `no current selection named %s is held by you` | cli | `working-set pull selection --piece X` for a piece you do not hold; the snapshot is left unchanged | name a held piece |
 | `no route derived — <reason>` | cli | `process next` on a live selection with no phase to route — `entry_origin_unavailable` when a member whose evidence is not current has no live entry origin, retired by a demotion or never entered (a scope whose evidence is all current routes to `complete` instead); not an error, and `-v` still prints the aggregate | `process reenter <member-id>` re-establishes that MEMBER's entry (fresh cold review + human approval) — the entry origin is the member's fact, so naming the scope resolves a different gate; `process check --phase build` names the members. For any other reason nothing — read the aggregate from it or from `process check --phase completion -v` |
-| `you hold several current selections (…) — name one with ?scope=<id>` | server | an unscoped scope read or write under several pieces | `--piece <scope>` on the command |
+| `you hold several current selections (…) — name one with ?scope=<id>` | server | an unscoped scope read or write under several pieces | `--piece <scope>` on the command; `process advance` and `process reenter` on an SR that is itself one of the held pieces resolve it without one |
 | `is already held by` | server | a take of a piece someone else holds | take a different piece, or wait for a put-down |
 | `closing … requires stating how it ended` | server | a put-down or displacement with no outcome | add `--outcome done\|obsolete\|returned=<phase>` |
 | `you already hold … \`replaces\` displaces a piece on a fresh take` | server | `--replaces` on a piece you hold | advance in place; drop `--replaces` |
@@ -450,8 +782,32 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `is a --for-review directory … review pulls are read-only and never push` | cli | a push from the review render | pull without `--for-review` to author |
 | `a cold-review trace needs a review context, but none is stamped` | cli | `author trace --purpose cold-review` with no review pull | `working-set pull --scope --for-review`, then record |
 | `could not determine the packet aggregate fingerprint` | cli | a finding without a resolvable aggregate | pass `--aggregate <full aggregate>` |
-| `--expected-fingerprint is required — a finding disposition is fingerprint-guarded` | cli | disposition without the guard | read it from `process findings list` |
+| `--expected-fingerprint is required — a finding disposition is fingerprint-guarded` | cli | a disposition with neither the guard nor the finding's scope | pass `--scope <kind>:<external-id> --from <disposition you saw>` and the CLI reads the fingerprint, or `--expected-fingerprint` from `process findings list` |
+| `--from is required with --scope` | cli | `process findings disposition --scope` without the disposition you saw; nothing was written | add `--from OPEN` (or the disposition you read) |
+| `someone changed it after you read it` | cli | `process findings disposition --scope --from` on a finding no longer in `--from`; nothing was written | read `process findings list` again and decide |
+| `has unknown key(s)` | cli | a findings, dispositions, review or lane authorization file with a key the shape does not know (a misspelling); every one is named and nothing was written | correct the named keys |
+| `problem(s) in the plan; nothing was written` | cli | `author apply` where a record is invalid, would change with neither a pinned `expected_fingerprint` nor a `working-set pull`, or moved since that fingerprint; each is named | fix the named record; for a guard, `working-set pull <id>` (keep any other change in the plan) or pin its `expected_fingerprint`, and run it again |
+| `conflicted — the store moved since the fingerprint the plan guarded on` | cli | `author apply` whose patch the store refused as stale between the check and the write | `working-set pull <id>`, keep the other change in the plan, run it again |
+| `its current disposition is …, the file expects …` | cli | a `process findings disposition --file` entry whose finding is no longer in its `from` disposition; the rest still run | re-read `process findings list` and correct `from` |
+| `carries no review-mode stamp — pull it with` | cli | `process review record` on a scope not pulled `--for-review`; nothing was written | `working-set pull --scope --for-review`, review, then record from that pull |
+| `moved since the review pull (stamped …, now …)` | cli | `process review record` after the packet aggregate changed; nothing was written | re-pull `--for-review` and review again |
+| `the verdict is PASS, but material finding(s) would stay OPEN or DEFERRED on …` | cli | a PASS review file that leaves a material finding open; nothing was written | resolve or reject it in the file's `dispositions`, or record the verdict as FAIL |
+| `the run stopped there.` | cli | `author apply` where the store refused a write (not a 409) after the plan checked; the refusal, the records written, any created but not patched, and those not written are named | `working-set pull <id>` for each record created but not patched, fix the refused record, then apply the plan again — written records read `unchanged` |
+| `already exist — created since the plan was read` | cli | `author apply` whose create the store answered 409; the rest continued | `working-set pull <id>`, then apply the plan again |
+| `which the store does not know — push never creates a record` | cli | `working-set push` with an item file for an id the store does not know; nothing was written | create it with `author apply --file <plan>`, then pull and push |
+| `runs failed; the others were recorded` | cli | `factory evidence --file` with a refused run | run the same file again; each run id derives from its entry |
+| `system requirements not advanced (…)` | cli | `process advance --all` where an SR was refused; the reason for each is printed | the fact each reason names (a RED, a passing run), then run it again |
+| `--all needs --piece <EPIC>` | cli | `process advance --all` without the piece | add `--piece <EPIC>` |
+| `carries no FROM->TO transition — pass --to and --expected with the record id` | cli | `author advance --gate` on a gate that holds no transition | name the record with `--to` and `--expected` |
+| `did not advance — ` | cli | `author advance --gate` where a member the gate names is neither in the FROM state nor already past it (or is missing); the members that could move did, the epic did not | move the named members to the FROM state, then run the same command again |
+| `packet sections missing or stale for …` | cli | `process enter` on sections still missing after it re-stamped the unchanged ones | author them and `working-set push` |
 | `a … finding is immutable except its reference — a reopen or content edit is refused` | server | editing a settled finding | record a new finding |
+| `--resolution is required on RESOLVED` / `resolution_kind: is required on a RESOLVED disposition` | cli / server | a `RESOLVED` without its kind | `--resolution packet-edit\|scope\|decision`; `scope` needs `--ref <record>`, `decision` needs `--ref USER:…` |
+| `--disposition is required … or --ref alone to change the reference of a finding already RESOLVED` | cli | neither a disposition nor a reference | name the disposition, or `--ref` alone on a settled finding |
+| `changed since … was raised — a packet edit does not change a member` | server | a `packet_edit` resolution after a scoped member's content moved | resolve it as `scope` or `decision`, or `--widens USER:<date>:<why>` |
+| `--widens names the human who accepted the widening …` | cli | a `--widens` without `USER:` (a `--widens` with a resolution other than `packet-edit` is refused the same way) | `--widens USER:<date>:<why>` with `--resolution packet-edit` |
+| `introduced_by: names no finding on …` / `names the finding itself` | server | `--introduced-by` naming a finding of another scope, an unrecorded one, or the finding itself | name an earlier finding recorded on the same scope |
+| `the server does not record resolution kinds …` | cli | a kind posted to a server that does not advertise `finding_resolution` (a 404 contract read reads the same) | deploy the server; a failed contract read names its status instead |
 | `category: is invalid` / `map[category:[is invalid]]` | server | `process findings add --category` outside the server vocabulary; the refusal does not list it | one of `correctness`, `security`, `data_loss`, `contract`, `traceability`, `testability`, `feasibility`, `scope`, `other` — the first six are material |
 | `prerequisite_gate_external_ids is empty; record the cold-review trace at the packet aggregate` | server | an entry gate born with no prerequisite | record the trace, then `author gate --prerequisite <trace>` |
 | `names prerequisite_gate_external_ids that do not exist` | server | a misspelled or unrecorded prerequisite | check the trace id |
@@ -486,15 +842,27 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `this server serves no delivery facts` | cli | a ceremony verb against a server that predates the `facts` read | deploy the server; nothing was written |
 | `no RED is recorded for` | cli | `process advance` before the red-first result | `factory evidence --fail <SR> --role RED` (at the RED commit, or `--revision`) |
 | `the evidence for … reads failing, not passing` (or claimed, stale) | cli | `process advance` before the passing run, or after a drift | `factory evidence --pass <SR>` at the current revision |
+| `has no live entry of its own at the current packet aggregate` | cli | `process advance` on a TODO or READY member the server serves `entry_current: false` while the epic's entry gate is current — reconcile would not move it; nothing was written | read `process reconcile --piece <piece>` (dry run) for what the store holds about that member's entry, then act on what it states |
 | `a demotion carries the human's reason as a USER: source` | cli | `author demote` without `--reason USER:…` | pass the reason as `USER:<date>:<why>` |
 | `only delivered work is demoted` | cli | `author demote` on an item that is not `IN_REVIEW` or `DONE` | nothing — the item is not delivered; use the ordinary loop |
 | `is open — answer it first` | cli | `author demote --apply` before the human answered | answer the gate, then `--apply` |
+| `a batch reopen holds one starting state` | cli | `author demote --ids` over IN_REVIEW and DONE items; nothing was opened | run the named groups as separate batches, the group holding user requirements first |
+| `was refused: … — stopped; applied: …; remaining: …` | cli | `author demote --gate-id <gate> --apply` met a refusal on one item | fix the cause, then re-run the same command; it resumes with what remains |
+| `cannot close: … was moved by another gate` | cli | an item of the gate was already moved by another gate's follow and was passed over | `author gate-withdraw <gate> --reason "USER:<date>: …"` |
+| `--since is refused with a by-id pull` | cli | `working-set pull <SR> --for-review --since …` | the narrow review has no later rounds; pull it without `--since` |
+| `carries no reviewed fingerprints` | cli | `working-set pull --scope --for-review --since` on a trace recorded without them | pull without `--since` for one full round; later rounds can then use it |
+| `is not a cold review (purpose` | cli | `--since` names a trace of another purpose | name this scope's previous cold-review trace |
+| `--since takes a previous cold review of this scope` | cli | `--since` names another scope's cold review | name this scope's previous cold-review trace |
 | `cannot enter through a members-only gate; demote or reopen the epic first` | cli | `process enter` on a DONE or OBSOLETE epic with PENDING_VERIFICATION members | demote or reopen the epic, then enter its as-built members |
 | `is already open — answer it` | cli | `process enter`/`complete` find the primary id (or one in its -R series) open; `process reenter` finds its id open | answer it in Mission Control or with `factory answer` |
 | `is already answered — apply it` | cli | the same, answered | `author advance … --gate <id>` members first |
 | `behind the delivered tip origin/` | cli | `process complete` on an ancestor of the merged tip (a session that never pulled) | pull the merged tip |
 | `is not on the delivered branch origin/` | cli | `process complete` on a branch commit | merge, then check out the merged revision |
-| `could not fetch origin/` | cli | `process complete` offline or without a reachable remote | restore the remote; `--no-fetch` is for offline fixtures only |
+| `could not fetch origin/` | cli | `process complete` or `process enter` offline or without a reachable remote | restore the remote; `--no-fetch` is for offline fixtures only |
+| `the selection records no reconnaissance revision` | cli | `process enter` on a selection taken without `--recon-revision` | `working-set select <scope> --recon-revision <sha>` (the revision the packet was reconnoitred at), then enter again |
+| `is stale: origin/` | cli | `process enter` when the default branch moved past the reconnaissance revision and a cited path changed | re-reconnoitre and re-select with the new revision; or, on the human's word, `--allow-drift USER:<date>:<why>` |
+| `is not present in the repository` | cli | `process enter` with a reconnaissance revision the local repository does not hold | fetch it, or re-select with a revision the repository holds |
+| `--allow-drift accepts reconnaissance drift on the human's word` | cli | `process enter --allow-drift` with a value that is not a `USER:` source | pass `USER:<date>:<why>` |
 | `has members not yet IN_REVIEW` | cli | `process complete` before every member advanced | `process advance <SR>` each |
 | `--fingerprint must be a full 64-character hash` | cli | a display prefix on `author trace` | omit `--fingerprint` (the store's value is read) or pass the full hash from `process next -v` / `working-set pull <SR>` |
 | `but the value given is the …` (`--purpose lower pins to the content hash, but the value given is the packet aggregate`) | cli | the wrong pin class on `author trace` | omit `--fingerprint`, or pass the class the purpose takes |
@@ -506,14 +874,43 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `not served by … (unknown external id)` | cli | `working-set pull <id>` on an id the read surface does not hold | the same checks; an applied gate a pull cannot resolve is a known read gap, not a missing decision |
 | `transition is required for purpose …: give --from and --to` | cli | `author trace` with a purpose outside the inferring set | add `--from <state> --to <state>`; only cold-review, entry, lower, upper and completion infer their transition |
 | `criteria: every stated criterion needs an external_id` | server | `author update --criteria` with an object lacking `external_id` | give every object `external_id`, `given`, `when`, `then` |
+| `a by-id review pull takes a system requirement` | cli | `working-set pull <id> --for-review` on an epic or a user requirement | review an epic with `working-set pull --scope --for-review` |
+| `has no lane_class — set it with` | cli | `process lane review` or `enter` on an SR without a lane class | `author update <SR> --lane-class <class>`, then pull and review again (the review pins the class) |
+| `changed since the review pull` | cli | `process lane review` after the SR or its sections moved | `working-set pull <SR> --for-review` and review again |
+| `has no passing narrow review` | cli | `process lane enter` without a `LANE:narrow` PASS at the SR's current aggregate | `working-set pull <SR> --for-review`, then `process lane review <SR> --file review.json` |
+| `there is no answered lane authorization on this System` | cli | `process lane enter` before a workspace admin answered an authorization | `process lane authorize`; the admin answers it in the web app or with `process lane approve <gate>` |
+| `process lane approve answers only a lane authorization` | cli | `process lane approve` on a gate of another purpose | answer that gate with `factory answer` |
+| `is not reachable from the default branch` | cli | `process lane check --commit` on a commit not yet delivered | merge it and fetch, then name the delivering commit |
+| `is not an ancestor of … — a rebase delivery names the commit its range starts from` | cli | `process lane check --base` naming a commit after, or beside, the tip | the base the rebased range starts from |
+| `is not eligible for the lane` | cli | the server's eligibility verdict is FAIL (the verdict is recorded) | nothing in the lane: the change leaves it for single-SR scope with its full packet and review |
+| `there is no answered lane-batch gate to apply` | cli | `process lane complete --apply` before the answer | answer the lane-batch gate in the web app or with `factory answer <gate> --options approve[,reject:<SR>…]` |
+| `is not the System's current lane authorization` | server | a stale `lane_ref` | the refusal names the current one; rerun `process lane enter` |
+| `the signed-in caller is not an applier of` | server | the person signed in is not named by the authorization | an applier runs it, or an admin answers a new authorization |
+| `the daily cap of` | server | the System's lane applications for the UTC day reached the cap | wait for the next UTC day, or use single-SR scope |
+| `` a lane authorization is answered from the developer CLI only with `process lane approve` `` | server | `factory answer` (the generic gate answer route) on a lane authorization with a CLI sign-in | `process lane approve <gate>` as a workspace admin, or the web app |
+| `` a lane authorization is answered only from the web app or with the developer CLI's `process lane approve` `` | server | an answer with a token of any other client (API, integration, MCP) | sign in with the CLI (`modernpath auth`) or use the web app |
+| `a lane authorization is answered only by a workspace admin or a platform superuser` | server | `process lane approve` (or the web answer) by a member | a workspace admin answers it |
+| `a lane-batch gate may open only when every member can complete in the lane` | server | a member not lane-entered, not IN_REVIEW, without evidence or an eligibility PASS at its delivered revision | the causes are listed; fix each, then `process lane complete` again |
+| `was rejected in` | server | advancing a member the lane-batch answer rejected | fix it and include it in a new batch |
+| `entered through the small-change lane — it completes through a lane-batch gate` | server | `process complete` on a lane SR | `process lane complete` |
 
 ## Reverse-engineering onboarding (store-backed)
 
 Use this sequence with `rdd-reverse-engineer`; these operations are separate
 from delivery entry/completion gates. Run them only in the main session.
 
+Before resuming, use `modernpath reverse-engineer status --run ID` to recover
+stored authorization, source identities and group receipts. Reuse unchanged
+inputs/keys and reconcile acknowledged groups with the unpublished remainder;
+do not repeat mode approval or recapture completed sources. Resume incomplete
+captures as needed. A conflict requires reconciliation, not another key. New
+runs follow the sequence below.
+
 1. `modernpath factory status` verifies the authenticated system binding.
-   `modernpath docs sync` refreshes the local document projection.
+   `modernpath process prepare-inputs` reports local/server document freshness
+   without refreshing. Search/read fresh local documents first; use
+   `modernpath docs sync` only for missing or stale exports. Use live search/read
+   for material missing locally or when a current authoritative answer is needed.
 2. `modernpath reverse-engineer inventory --repository key=/absolute/root`
    (repeat for each repository) emits frozen paths, hashes, sizes, revision,
    dirty state and exclusions. Non-Git directories and Git worktrees are supported.
@@ -531,16 +928,129 @@ from delivery entry/completion gates. Run them only in the main session.
    resume without provider OAuth or FileAnalysis. `read-source --source ID`
    returns exact captured bytes; `read-document --run ID --document ID` returns
    the authorized immutable document snapshot.
-6. `modernpath reverse-engineer publish --run ID --group stable-key --file group.json`
-   publishes a coherent graph atomically. `status --run ID` reads durable group
-   receipts. Repeat identical inputs and keys after interruption; conflict means
-   reconcile, not silently pick another key.
+6. Prepare the complete requested requirement batch locally: exact UR/SR IDs,
+   criteria/scenarios, citations, relationships, stable keys and fingerprints.
+   Check duplicates and cross-context joins before the first publication.
+   `modernpath reverse-engineer publish --run ID --group stable-key --file group.json`
+   publishes a coherent graph atomically. Split only for supported limits or
+   dependencies; publish referenced parents first. Retain each returned receipt,
+   then perform one consolidated read-back/audit. `status --run ID` recovers
+   durable group receipts after interruption; retry identical inputs/keys only
+   when needed. Do not derive/publish/read back each row separately.
 7. `modernpath reverse-engineer coverage --run ID` measures the frozen inventory
    against stored traces. It separates governed/candidate linkage, captures,
    assessments and exclusions. It is not execution evidence or behavior-class
-   enumeration. `modernpath coverage` does not measure retired local ledgers in
-   a store-backed workspace. Read the actual Ledger and Requirements surfaces
+   enumeration. Follow the publication skill's linked coverage reference for a
+   separate behavior-denominator checker; `audit-citations.mjs --min=N` checks
+   citation counts/validity, not percentage coverage. `modernpath coverage` does
+   not measure retired local ledgers in a store-backed workspace. Read the actual Ledger and Requirements surfaces
    before claiming baseline-ready or candidate-ready.
+
+### Existing-proof verification and acceptance
+
+Run `rdd-reverse-engineer-verify`, then `rdd-reverse-engineer-accept`. These are
+separate from normal entry, RED/GREEN and completion. Publication alone supplies
+no execution proof. A standalone SR needs no invented Epic or parent. A UR needs
+its own UPPER proof and complete current proof for every required SR. Already
+DONE dependencies remain proof inputs and are not transitioned again.
+
+#### Resume before collecting proof or opening a decision
+
+Reuse retained current source, execution, delivery and preview identities for
+the exact snapshot. Recollect only missing, stale or invalid evidence. If an
+acceptance gate exists or answering/applying was interrupted, read
+`modernpath reverse-engineer acceptance-status --gate ASBUILT-…` first:
+
+- Current applied receipt: report its lifecycle/compliance states and finish.
+- Current approved gate without a receipt: apply the retained exact input.
+- Current open gate: reuse its brief/scope and any exact human answer already
+  provided in the session; do not ask for that decision again.
+- Rejected gate: report rejection without promotion.
+- Stale proof/pins: report historical receipts as historical and return to
+  verification before fresh review; an old answer cannot approve changed proof.
+
+If the opening response was lost before its gate ID was retained, retry the
+identical `acceptance-open` input/key to recover the existing gate. Missing status
+is a tooling gap, not proof that there is no gate. Do not preview already DONE
+scope as fresh pending work. New verification/acceptance follows these steps.
+
+#### Fresh verification and acceptance
+
+1. Inspect the exact captured code and tests with `read-source`. Bind each
+   actual test name to a registered TestCase or a captured test citation's
+   `test_case_ref`; inspect the behavior asserted, not only names or counts.
+2. Run the existing tests or inspect genuine retained execution reports.
+   `modernpath reverse-engineer execution-proof --file execution.json` records
+   through the existing evidence channel and returns durable run/result IDs
+   and the exact report digest. It does not execute tests. Input is `key`,
+   `kind`, full tested `sha`, actual `ran_at`, exact JSON-string `raw_evidence`
+   and `results`. `kind` is `local_test`, `ci`, `browser_verification` or
+   `compliance_test_run`. Reusing a key replays the retained execution; changed
+   reports or results require a new key. Each result includes `target_external_id`,
+   `target_type: "requirement"`, `target_clause`, exact `test_case_ref`,
+   `role: "LOWER" | "UPPER"`, `result`, `content_fingerprint`, full `revision`,
+   and `detail: {assertion, production_subject}`. The report enumerates
+   `executed_tests: [{test_case_ref, result}]`, `command`, `environment` and,
+   for CI, `ci: {provider, repository, run, job, attempt, tested_commit}`.
+3. For every repository, `modernpath reverse-engineer delivery-proof --file
+   delivery.json` takes `key`, `repository_key`, local `root`, exact
+   `tested_revision` and captured `snapshot_digest`. It checks the clean
+   snapshot before/after fetching the advertised remote default branch and
+   retains a distinct integration report in the evidence store. The tested
+   revision must be the fetched tip; a failed fetch or non-tip revision refuses.
+   The observed `origin` comes from the checkout's Git configuration, including
+   local-file remotes. The server does not bind it to a registered provider
+   repository. Verify and disclose that origin against the intended repository
+   before using the observation as delivery proof; changing origin can change
+   what this check proves. Local root is not sent. Retain the returned report/digest. An identical
+   retry preserves the original observation and digest; changed intent under
+   the same key conflicts. Reuse current retained observations when available.
+   This makes no deployment claim.
+4. `modernpath reverse-engineer proof-preview --file proof.json` evaluates
+   without record or lifecycle writes. Input has `version: 1`, `requirements`
+   and `delivery`. Each requirement has `kind: "SR" | "UR"`, `external_id`,
+   exact `content_fingerprint` and `clauses`. Each clause has `clause`,
+   `assertion`, `production_subject`, `code_source_id`, `test_source_id`,
+   `run_id`, `result_id` and `report_digest`. Delivery entries are
+   `{repository_key, run_id, report_digest}`. `clause` and execution
+   `target_clause` name active criterion `external_id` values; the supplied set
+   must exactly match every active criterion, with no omissions or duplicates.
+   Read eligibility, denominator,
+   gaps, exact pending scope and `proof_digest`. Unknown fields refuse.
+5. `modernpath reverse-engineer acceptance-open --file acceptance.json` takes
+   `key`, exact `proof`, returned `proof_digest` and the standard five-field
+   human `brief`: exactly `what`, `why_now`, `changes_if_approved`,
+   `risk_if_wrong` and `recommendation`, all nonempty strings. It rechecks proof,
+   retains reviewed facts, creates an
+   eligibility trace and opens one human decision. Use the retained eligible
+   preview for this packet; no extra preview is needed solely to open it.
+   Present the exact proof, relevant working-set files and limitations before
+   obtaining its answer.
+6. After the actual human answer (including an exact answer already provided
+   in this session), use the existing
+   `modernpath factory answer ASBUILT-… --options approve --text "…" --source
+   USER:…`. Its gate read attaches both review pins. The answer boundary
+   rechecks current evidence; permission to implement tooling is not acceptance.
+7. `modernpath reverse-engineer acceptance-apply --gate ASBUILT-… --file
+   apply.json` takes `key`, exact `proof_digest` and `gate_fingerprint`.
+   Application rechecks all proof and atomically moves exactly the pending
+   named scope to DONE, keeps compliance status unchanged and stores a receipt.
+   Any currently authorized signed-in member may apply that exact reviewed
+   decision; the receipt retains both answerer and applying actor. Application
+   does not supply or replace the human answer.
+   Report the receipt, proof currency and lifecycle/compliance states returned
+   by this successful apply. Do not add status/list/preview calls or replay the
+   write solely to confirm the same result. Use `acceptance-status --gate
+   ASBUILT-…` if the response is missing, incomplete or contradictory, or after
+   interruption. It separates recorded/applied state, current proof, retained
+   reviewed facts and receipt. Identical input recovers the same receipt,
+   changed input conflicts, and stale proof cannot replay as current acceptance.
+
+Missing assertions, unexecuted tests, contradictory results, revoked sources or
+unmerged delivery stay gaps. Test additions and behavior changes require an
+explicit normal-development handoff. Do not fabricate RED, edit a snapshot to
+approve it, pass client authority flags, or advance this edge through generic
+author/sync operations. These write commands run only from the main session.
 
 ### Group JSON contract
 
@@ -553,6 +1063,8 @@ Do not send authority, approval, release or work-status fields as intent.
 
 File citations use `kind: "code" | "test" | "document"`, `source_file_id`,
 `repository_key`, `revision`, `path`, `sha256`, and optional locator fields.
+A test citation can retain `test_case_ref` for the exact executed test identity;
+the readable `ref` remains the normalized source address.
 Document citations use `system_doc_id`, `version`, `fingerprint`; the server
 validates them against the run and supplies their readable reference.
 Typed citations publish SR→source/test edges and parents publish UR→SR edges.
@@ -610,8 +1122,9 @@ require a new preview and decision. None of this approves compliance or DONE.
   stales no packet and voids no open gate. `process next -v` still prints
   `full process_revision:` as information: which process text a packet was
   reviewed under stays readable, it just no longer pins a decision.
-- **Several held pieces, none named.** Every scoped read and write refuses by
-  name ("you hold several current pieces (…): … — name one with --piece <id>"; the server
+- **Several held pieces, none named.** `process next` prints one block per
+  piece; every other scoped read and write refuses by name ("you hold
+  several current pieces (…): … — name one with --piece <id>"; the server
   answers 409); `factory status` lists what you hold. Pass `--piece <scope>`.
 - **The snapshot header names the store revision the server sent**
   (`store <revision>`, from `x-modernpath-store-revision`), or says the store

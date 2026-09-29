@@ -72,7 +72,7 @@ test("a nonempty corpus with no recognized references is not a passing audit", t
   f.file("report.md", "No traceable citations were emitted.");
   const result = f.run(`--repository=legacy=${join(f.root, "repo")}`, "report.md");
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stdout, /vacuity/);
+  assert.match(result.stdout, /insufficient citations/);
 });
 
 test("the default single-repository audit still works from a nested directory", t => {
@@ -94,7 +94,7 @@ test("unknown prefixed source extensions cannot disappear beside a valid citatio
   assert.match(result.stdout, /missing.unknown/);
 });
 
-test("exempt teaching examples cannot satisfy the checked-citation floor", t => {
+test("exempt teaching examples cannot satisfy the checked-citation minimum", t => {
   const f = fixture(t);
   f.file("repo/code.xml", "one");
   f.file("report.md", "CODE:missing.xml:2 <!-- example-citation -->\n");
@@ -106,4 +106,108 @@ test("exempt teaching examples cannot satisfy the checked-citation floor", t => 
   const mixed = f.run(...args);
   assert.equal(mixed.status, 0, mixed.stdout + mixed.stderr);
   assert.match(mixed.stdout, /1\/1 citations resolve/);
+});
+
+test("source citations resolve files regardless of navigation suffixes or contents", t => {
+  const f = fixture(t);
+  f.file("repo/subject.ex", "# REQ-EXAMPLE-001\n");
+  f.file("repo/subject_test.go", "// REQ-EXAMPLE-001\n");
+  f.file("report.md", [
+    "CODE:subject.ex",
+    "CODE:subject.ex:validate/1",
+    "CODE:subject.ex:validator",
+    "CODE:subject.ex:Sample.Auth",
+    "CODE:subject.ex:900-999",
+    "CODE:subject.ex:0,2-1",
+    "TEST:subject_test.go",
+    "TEST:subject_test.go:TestParent/Child",
+    "`subject.ex:missing_symbol`",
+  ].join("\n"));
+  const result = f.run(`--repository=repo=${join(f.root, "repo")}`, "report.md");
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /9\/9 citations resolve to files/);
+  assert.match(result.stdout, /source contents and navigation suffixes are not checked/);
+});
+
+test("navigation suffixes never rescue a missing source file", t => {
+  const f = fixture(t);
+  f.file("repo/subject.ex", "# REQ-EXAMPLE-001\n");
+  f.file("report.md", "CODE:subject.ex\nCODE:missing.ex:validate/1\nTEST:missing_test.exs:TestParent/Child\n");
+  const result = f.run(`--repository=repo=${join(f.root, "repo")}`, "report.md");
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /1\/3 citations resolve to files/);
+  assert.match(result.stdout, /missing.ex.*no such file/);
+  assert.match(result.stdout, /missing_test.exs.*no such file/);
+});
+
+test("absence wording does not excuse missing files", t => {
+  const f = fixture(t);
+  f.file("repo/subject.py", "# REQ-EXAMPLE-001\n");
+  f.file("report.md", "CODE:subject.py\nMissing validation in `CODE:absent.py:1`.\n");
+  const result = f.run(`--repository=repo=${join(f.root, "repo")}`, "report.md");
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /1\/2 citations resolve to files/);
+  assert.match(result.stdout, /absent.py.*no such file/);
+});
+
+test("plain gap descriptions are not supporting citations", t => {
+  const f = fixture(t);
+  f.file("repo/subject.py", "# REQ-EXAMPLE-001\n");
+  f.file("report.md", "CODE:subject.py\nThere is no `test_missing.py`; verification remains unresolved.\n");
+  const result = f.run(`--repository=repo=${join(f.root, "repo")}`, "report.md");
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /1\/1 citations resolve to files/);
+});
+
+test("a missing document root cannot disappear beside a valid report", t => {
+  const f = fixture(t);
+  f.file("repo/subject.py", "# REQ-EXAMPLE-001\n");
+  f.file("report.md", "CODE:subject.py\n");
+  const result = f.run(`--repository=repo=${join(f.root, "repo")}`, "report.md", "missing-docs");
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /missing-docs/);
+});
+
+test("revision-qualified files must exist in the commit regardless of working-tree changes", t => {
+  const f = fixture(t);
+  const repo = join(f.root, "repo");
+  f.file("repo/subject.py", "# REQ-EXAMPLE-001\n");
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  git("init"); git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "fixture");
+  const revision = git("rev-parse", "HEAD").trim();
+  f.file("repo/subject.py", "changed contents\n");
+  f.file("repo/untracked.py", "new file\n");
+  const args = [`--repository=repo=${repo}`, "report.md"];
+
+  f.file("report.md", `CODE:repo@${revision}:subject.py\nCODE:untracked.py\n`);
+  let result = f.run(...args);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /2\/2 citations resolve to files/);
+
+  f.file("report.md", `CODE:repo@${revision}:untracked.py\n`);
+  result = f.run(...args);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /no such file at the cited revision/);
+
+  rmSync(join(repo, "subject.py"));
+  f.file("report.md", `CODE:repo@${revision}:subject.py\n`);
+  result = f.run(...args);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  f.file("report.md", "CODE:subject.py\n");
+  result = f.run(...args);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+});
+
+test("document citations resolve files without inspecting headings", t => {
+  const f = fixture(t);
+  f.file("repo/guide.md", "REQ-EXAMPLE-001\n");
+  const args = [`--repository=repo=${join(f.root, "repo")}`, "report.md"];
+  f.file("report.md", "DOC:guide.md#Trace completeness\nDOC:guide.md#missing-heading\nDOC:guide.md\n");
+  let result = f.run(...args);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /3\/3 citations resolve to files/);
+  f.file("report.md", "DOC:missing.md#Trace completeness\n");
+  result = f.run(...args);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /missing.md.*no such document/);
 });

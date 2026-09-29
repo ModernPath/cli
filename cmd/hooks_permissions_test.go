@@ -175,3 +175,54 @@ func TestKitPermissionRulesCoverEveryStoreWriteVerbTheGuardKnows(t *testing.T) {
 		}
 	}
 }
+
+// REQ-CROSS-448 (DC-8, DC-14): the batch verbs are routine writes, allowed
+// like author update — one wildcard rule covers process advance with an SR
+// and with --all — while the system-wide verbs still ask.
+func TestKitPermissionsAllowTheBatchVerbs(t *testing.T) {
+	rules := kitPermissionRules()
+	allowed := func(command string) bool {
+		for _, r := range rules["allow"] {
+			inner := strings.TrimSuffix(strings.TrimPrefix(r, "Bash("), ")")
+			if prefix, wild := strings.CutSuffix(inner, "*"); wild && strings.HasPrefix(command, prefix) || inner == command {
+				return true
+			}
+		}
+		return false
+	}
+	for _, command := range []string{
+		"modernpath author apply --file plan.yaml",
+		"modernpath process review record --file review.json",
+		"modernpath process advance REQ-CROSS-1 --log go-test",
+		"modernpath process advance --all --piece EPIC-X --log go-test",
+		"modernpath factory evidence --file runs.json",
+		"modernpath process findings add --file findings.json",
+		"modernpath process findings disposition --file dispositions.json",
+		"modernpath author advance --gate ENTRY-X",
+		".modernpath/bin/modernpath author apply --file plan.yaml",
+	} {
+		if !allowed(command) {
+			t.Errorf("no allow rule covers %q", command)
+		}
+		if !storeWriteCommand(command) {
+			t.Errorf("the subagent guard does not know %q as a store write", command)
+		}
+	}
+	advance := 0
+	for _, v := range kitPermissionVerbs {
+		if strings.HasPrefix(v.pattern, "process advance") {
+			advance++
+			if v.pattern != "process advance *" || v.list != "allow" {
+				t.Errorf("process advance is one allowed wildcard rule, got %q in %s", v.pattern, v.list)
+			}
+		}
+	}
+	if advance != 1 {
+		t.Errorf("process advance wants exactly one rule, got %d", advance)
+	}
+	for _, verb := range []string{"factory release *", "process cascade-mode *", "process supersede *", "migrate *", "env --set*"} {
+		if !has(rules["ask"], "Bash(modernpath "+verb+")") {
+			t.Errorf("the system-wide verb %q must still ask", verb)
+		}
+	}
+}

@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,17 +9,16 @@ import (
 	"time"
 
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/zitadel"
 	"github.com/spf13/cobra"
 )
 
 // REQ-CROSS-387 (EPIC-CLI-019): `modernpath feedback "<line>"` files a
 // tooling gap — something the CLI, the store or the harness lacked — as a
-// BACKLOG-TOOL-<n> record in the caller's own store (a REQ-CROSS-393 create
+// BACKLOG-TOOL-<n> record in the ModernPath workspace (a REQ-CROSS-393 create
 // of kind tooling), with the CLI build, the server contract and the time
 // captured; --last attaches the previous user-run command and its output.
-// Without a usable credential, a reachable binding or a reachable server the
-// line lands in the interim file process/tooling-gaps.md instead, and the
-// command says so.
+// An unverified destination is refused without a customer-store or local-file write.
 
 var (
 	feedbackLast bool
@@ -31,11 +27,15 @@ var (
 
 var feedbackCmd = &cobra.Command{
 	Use:   "feedback <line>",
-	Short: "File a tooling gap as a BACKLOG-TOOL record in your store (the sanctioned channel)",
+	Short: "File a tooling gap only in the ModernPath workspace",
 	Long: `File a tooling gap — a surface the CLI, the store, Mission Control or the
-harness lacked — as one BACKLOG-TOOL-<n> record in your own store, attributed
-to you, with the CLI build, the server contract version and the time captured.
-The record id is printed; read it back with 'working-set pull <id>'.
+harness lacked — as one BACKLOG-TOOL-<n> record in the current ModernPath
+workspace, attributed to you, with the CLI build, server contract version and
+time captured. The credential must belong to the ModernPath organization; the
+server must identify the checkout's bound system with slug modernpath. Feedback
+refuses customer workspaces rather than changing the destination.
+The record id is printed; read it from a checkout bound to ModernPath with
+'working-set pull <id>'.
 
 --last also attaches the previous modernpath command you ran, its exit status
 and the tail of its output (from the local history .modernpath/cli-history.log;
@@ -45,11 +45,9 @@ recent command instead (--ref 1 is --last) and implies --last; a value beyond
 the recorded count is refused naming how many entries exist. Nothing else is
 captured.
 
-Without a usable credential (missing, expired or rejected), without a
-workspace binding (or one bound to a system you cannot reach), or when the
-server cannot be reached, the line is appended to process/tooling-gaps.md at
-the workspace root and the output says so. A create the server refuses is
-reported verbatim and nothing is written.
+When the credential or destination cannot be verified, the command fails
+without writing a backlog record or a local fallback file. A create the server
+refuses is reported verbatim.
 
 Examples:
   modernpath feedback "process check prints only a check name"
@@ -89,19 +87,13 @@ func runFeedback(line string, attachLast bool, ref int) error {
 		observation += "\n\n" + note.body
 	}
 
-	env, err := factoryEnvLoad()
+	env, err := feedbackEnvLoad()
 	if err != nil {
-		if why, ok := storeUnwritable(err); ok {
-			return feedbackOffline(workspaceRootOrCwd(), line, why)
-		}
 		return err
 	}
 
 	id, err := allocateToolingID(env)
 	if err != nil {
-		if why, ok := storeUnwritable(err); ok {
-			return feedbackOffline(env.Root, line, why)
-		}
 		return err
 	}
 
@@ -124,9 +116,6 @@ func runFeedback(line string, attachLast bool, ref int) error {
 		status, resp, err := env.call("POST", "/api/v1/sync/author", body)
 		switch {
 		case err != nil:
-			if why, ok := storeUnwritable(err); ok {
-				return feedbackOffline(env.Root, line, why)
-			}
 			return err
 		case status == 409 && attempt == 0:
 			id = nextToolingID(id)
@@ -135,33 +124,39 @@ func runFeedback(line string, attachLast bool, ref int) error {
 			return serverRefusal("feedback refused", status, resp)
 		}
 		row, _ := dataOf(resp)["backlog"].(map[string]any)
-		printSuccess("filed %s (kind tooling, %s)", firstNonEmpty(str(row, "external_id"), id), firstNonEmpty(str(row, "disposition"), "OPEN"))
+		printSuccess("filed %s in ModernPath (kind tooling, %s)", firstNonEmpty(str(row, "external_id"), id), firstNonEmpty(str(row, "disposition"), "OPEN"))
 		if fp := str(row, "fingerprint"); fp != "" {
 			printInfo("fingerprint: %s (pass as --expected-fingerprint to author update --kind backlog)", fp)
 		}
-		printInfo("read it back with 'modernpath working-set pull %s'", firstNonEmpty(str(row, "external_id"), id))
+		printInfo("read it from a checkout bound to ModernPath with 'modernpath working-set pull %s'", firstNonEmpty(str(row, "external_id"), id))
 		return nil
 	}
 	return fmt.Errorf("feedback: the allocated id was taken twice — retry")
 }
 
-// storeUnwritable says why the store cannot take the line when the fix is
-// another command, not a retry: no usable credential (missing, expired, or
-// rejected by the server), no binding or one this credential cannot reach
-// (REQ-CROSS-434; BACKLOG-TOOL-74), or no server to reach. A server that
-// answers with a refusal or a 5xx is not one of these: that error is returned.
-func storeUnwritable(err error) (string, bool) {
-	var ce credentialError
-	var be bindingError
-	switch {
-	case errors.As(err, &ce):
-		return "no usable credential: " + err.Error(), true
-	case errors.As(err, &be):
-		return firstNonEmpty(be.why, "no workspace binding") + ": " + err.Error(), true
-	case isTransportError(err):
-		return "server unreachable: " + err.Error(), true
+// The production organization is an identity-provider ID, not a server-specific
+// system ID. Verified with `modernpath auth status` on 2026-09-27.
+const feedbackOrganizationID = "371734807656268047"
+
+func feedbackEnvLoad() (*factoryEnv, error) {
+	env, err := factoryCredentialLoad()
+	if err != nil {
+		return nil, err
 	}
-	return "", false
+	claims, ok := zitadel.TokenClaims(env.token)
+	if !ok || claims.OrganizationID != feedbackOrganizationID || claims.Issuer != zitadel.ProdProfile.Issuer {
+		return nil, fmt.Errorf("tooling feedback requires a credential for the ModernPath production workspace; nothing was written")
+	}
+	systems, err := listSystemsFn(env.APIURL, env.token)
+	if err != nil {
+		return nil, fmt.Errorf("could not verify the ModernPath feedback destination: %w", err)
+	}
+	for _, system := range systems {
+		if system.ID == env.SystemID && system.ID > 0 && system.Slug == "modernpath" {
+			return env, nil
+		}
+	}
+	return nil, fmt.Errorf("tooling feedback requires this checkout to be bound to the ModernPath workspace; nothing was written")
 }
 
 // allocateToolingID is the next BACKLOG-TOOL-<n> after the highest served.
@@ -238,55 +233,10 @@ func previousInvocationNoteAt(ref int) (invocationNote, error) {
 	return invocationNote{shown: shown, body: b.String()}, nil
 }
 
-// feedbackOffline appends the line to the interim file and says so.
-func feedbackOffline(root, line, why string) error {
-	path, err := appendInterimGap(root, line)
-	if err != nil {
-		return fmt.Errorf("could not file the gap (%s) and could not write the interim file: %w", why, err)
-	}
-	printWarning("%s — the store was not written\n", why)
-	printSuccess("appended the gap to %s (file it with 'modernpath feedback' once signed in)", path)
-	return nil
-}
-
-func appendInterimGap(root, line string) (string, error) {
-	path := filepath.Join(root, "process", "tooling-gaps.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		header := "# Tooling gaps — the surfacing channel (interim)\n\n| Date | Where | Gap | Suggested fix | Route |\n|---|---|---|---|---|\n"
-		if err := os.WriteFile(path, []byte(header), 0o644); err != nil {
-			return "", err
-		}
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	row := fmt.Sprintf("| %s | session (feedback, offline) | %s | — | new item |\n",
-		time.Now().UTC().Format("2006-01-02"), strings.ReplaceAll(line, "|", "\\|"))
-	if _, err := f.WriteString(row); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
 func workspaceRootOrCwd() string {
 	if cfgDir, err := config.FindConfigDir(); err == nil && cfgDir != "" {
 		return filepath.Dir(cfgDir)
 	}
 	cwd, _ := os.Getwd()
 	return cwd
-}
-
-// isTransportError tells a request that never got an answer — a connection
-// refused, a DNS miss, a timeout — from every error that is an answer: a
-// credential refusal, a contract refusal, a server refusal (F-CLI019-PR-05).
-// Only the former falls back to the interim file.
-func isTransportError(err error) bool {
-	var urlErr *url.Error
-	var netErr net.Error
-	return errors.As(err, &urlErr) || errors.As(err, &netErr)
 }

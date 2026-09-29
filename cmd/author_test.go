@@ -28,7 +28,7 @@ func TestAuthorCreatePostsTheAttributedCall(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorCreate(env, "requirement", "REQ-AU-100", map[string]any{
+	_, err := authorCreate(env, "requirement", "REQ-AU-100", map[string]any{
 		"title": "Authored", "context": "AU", "work_status": "PROPOSED",
 	})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestAuthorCreateSendsCurrentRelease(t *testing.T) {
 
 	env := wsEnv(t, srv)
 	env.CurrentRelease = "modernpath-v1-09"
-	if err := authorCreate(env, "requirement", "REQ-AU-367", map[string]any{
+	if _, err := authorCreate(env, "requirement", "REQ-AU-367", map[string]any{
 		"title": "Born into a release", "context": "AU",
 	}); err != nil {
 		t.Fatalf("author create failed: %v", err)
@@ -79,7 +79,7 @@ func TestAuthorCreateSendsCurrentRelease(t *testing.T) {
 	// the tenant's open delivery target rather than being handed an empty slug.
 	got = nil
 	env.CurrentRelease = ""
-	if err := authorCreate(env, "epic", "EPIC-AU-367", map[string]any{"title": "Epic"}); err != nil {
+	if _, err := authorCreate(env, "epic", "EPIC-AU-367", map[string]any{"title": "Epic"}); err != nil {
 		t.Fatalf("author create (epic) failed: %v", err)
 	}
 	if _, present := got["current_release"]; present {
@@ -119,7 +119,7 @@ func TestAuthorGateCarriesTheDeclarationFields(t *testing.T) {
 		authorGateScope, authorGateOptions, authorGateTransition = nil, nil, ""
 	})
 
-	if err := authorCreate(env, "gate", "UNFLIP-STORE-BACKED", authorGateFields()); err != nil {
+	if _, err := authorCreate(env, "gate", "UNFLIP-STORE-BACKED", authorGateFields()); err != nil {
 		t.Fatalf("author gate failed: %v", err)
 	}
 
@@ -395,7 +395,7 @@ func TestAuthorUpdatePostsTheContentEdit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorUpdate(env, "requirement", "REQ-AU-300", map[string]any{
+	_, err := authorUpdate(env, "requirement", "REQ-AU-300", map[string]any{
 		"expected_fingerprint": "sha-current",
 		"description":          "Refined behavior",
 	})
@@ -439,7 +439,7 @@ func TestAuthorUpdateCarriesInlineCriteria(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inline criteria JSON must parse: %v", err)
 	}
-	if err := authorUpdate(env, "requirement", "REQ-AU-301", map[string]any{
+	if _, err := authorUpdate(env, "requirement", "REQ-AU-301", map[string]any{
 		"expected_fingerprint": "sha-current",
 		"criteria":             criteria,
 	}); err != nil {
@@ -473,7 +473,7 @@ func TestAuthorRelatePostsTheParentDeclaration(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorRelate(env, "REQ-AU-310", map[string]any{
+	_, err := authorRelate(env, "REQ-AU-310", map[string]any{
 		"parent_external_ids":  []string{"REQ-AU-200", "REQ-AU-201"},
 		"expected_fingerprint": "sha-current",
 	})
@@ -524,7 +524,7 @@ func TestAuthorRelateServesTheChainedFingerprint(t *testing.T) {
 	color.Output, color.NoColor = &buf, true
 	t.Cleanup(func() { color.Output, color.NoColor = oldOut, oldNoColor })
 
-	if err := authorRelate(env, "REQ-AU-310", map[string]any{
+	if _, err := authorRelate(env, "REQ-AU-310", map[string]any{
 		"parent_external_ids":  []string{"REQ-AU-200"},
 		"expected_fingerprint": "sha-current",
 	}); err != nil {
@@ -553,7 +553,7 @@ func TestAuthorUpdateKindEpicPostsTheEpicEdit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorUpdate(env, "epic", "EPIC-DEMO-1", map[string]any{
+	_, err := authorUpdate(env, "epic", "EPIC-DEMO-1", map[string]any{
 		"expected_fingerprint": "sha-current",
 		"description":          "Description added",
 	})
@@ -663,7 +663,7 @@ func TestAuthorMemberPostsEpicMembership(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	err := authorMember(env, "EPIC-CLI-007", map[string]any{
+	_, err := authorMember(env, "EPIC-CLI-007", map[string]any{
 		"member_external_ids": []string{"SR-1", "UR-2"},
 		"mode":                "declare",
 	})
@@ -738,7 +738,7 @@ func TestAuthorMemberPrintsFingerprintHint(t *testing.T) {
 	color.Output = &buf
 	t.Cleanup(func() { color.Output = prev })
 
-	if err := authorMember(env, "EPIC-M-1", map[string]any{
+	if _, err := authorMember(env, "EPIC-M-1", map[string]any{
 		"member_external_ids": []string{"SR-1"}, "mode": "declare",
 	}); err != nil {
 		t.Fatalf("authorMember: %v", err)
@@ -802,7 +802,7 @@ func TestAuthorGateSuccessPrintsTheServedExactScope(t *testing.T) {
 	env := wsEnv(t, srv)
 
 	done := captureCLIOutput(t)
-	if err := authorCreate(env, "gate", "ENTRY-EPIC-X", map[string]any{"title": "Entry"}); err != nil {
+	if _, err := authorCreate(env, "gate", "ENTRY-EPIC-X", map[string]any{"title": "Entry"}); err != nil {
 		t.Fatalf("author gate failed: %v", err)
 	}
 	out := done()

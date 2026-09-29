@@ -3,6 +3,7 @@ package kit
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/modernpath/cli/internal/storeback"
 )
+
+const managedSkillReferencesFile = ".modernpath/skill-references.json"
 
 // The kit ships a released req-driven-dev snapshot and the agent-channel
 // adapters that load it. Installation never fetches instructions at runtime.
@@ -82,6 +85,33 @@ var legacyInstallTargets = map[string]string{
 // explicit so an upgrade removes stale manuals without deleting unknown client
 // files from either namespace.
 var retiredInstallTargets = []string{
+	// req-driven-dev PR #30 retired its provider adapter and agent metadata.
+	".modernpath/rdd/CLAUDE.md",
+	".modernpath/rdd/skills/rdd-audit/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-build/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-cold-review/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-completion-review/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-deliver/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-discover/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-entry-review/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-plan/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-reverse-engineer/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-start/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-triage/agents/openai.yaml",
+	".modernpath/rdd/skills/rdd-verify/agents/openai.yaml",
+	".claude/rdd/CLAUDE.md",
+	".claude/rdd/skills/rdd-audit/agents/openai.yaml",
+	".claude/rdd/skills/rdd-build/agents/openai.yaml",
+	".claude/rdd/skills/rdd-cold-review/agents/openai.yaml",
+	".claude/rdd/skills/rdd-completion-review/agents/openai.yaml",
+	".claude/rdd/skills/rdd-deliver/agents/openai.yaml",
+	".claude/rdd/skills/rdd-discover/agents/openai.yaml",
+	".claude/rdd/skills/rdd-entry-review/agents/openai.yaml",
+	".claude/rdd/skills/rdd-plan/agents/openai.yaml",
+	".claude/rdd/skills/rdd-reverse-engineer/agents/openai.yaml",
+	".claude/rdd/skills/rdd-start/agents/openai.yaml",
+	".claude/rdd/skills/rdd-triage/agents/openai.yaml",
+	".claude/rdd/skills/rdd-verify/agents/openai.yaml",
 	// The consolidated package replaced the process/ manuals and the work
 	// templates with PROCESS.md, file-state/ and skills/. These paths are no
 	// longer derivable from the embedded tree, so without listing them an
@@ -278,6 +308,10 @@ type Result struct {
 // where the installer cannot tell which bytes belong to the client.
 func Install(root string, generated ...Generated) (Result, error) {
 	var res Result
+	previousReferences, err := readManagedSkillReferences(root)
+	if err != nil {
+		return res, err
+	}
 
 	// Plan every merge BEFORE writing anything. A half-installed repository
 	// whose instructions were mangled is far worse than one never touched, and
@@ -324,6 +358,7 @@ func Install(root string, generated ...Generated) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("list embedded assets: %w", err)
 	}
+	currentReferences := managedSkillReferenceTargets(assetPaths)
 	for _, asset := range assetPaths {
 		targets := make([]string, 0, 2)
 		if target, owned := TargetForAsset(asset); owned {
@@ -424,6 +459,39 @@ func Install(root string, generated ...Generated) (Result, error) {
 			return res, fmt.Errorf("remove empty directories for retired %s: %w", target, err)
 		}
 	}
+	current := make(map[string]struct{}, len(currentReferences))
+	for _, target := range currentReferences {
+		current[target] = struct{}{}
+	}
+	for _, target := range previousReferences {
+		if _, live := current[target]; live {
+			continue
+		}
+		err := os.Remove(filepath.Join(root, target))
+		switch {
+		case err == nil:
+			res.Removed = append(res.Removed, target)
+		case os.IsNotExist(err):
+		default:
+			return res, fmt.Errorf("remove retired managed reference %s: %w", target, err)
+		}
+		if err := pruneEmptyParents(root, target); err != nil {
+			return res, fmt.Errorf("remove empty directories for retired reference %s: %w", target, err)
+		}
+	}
+	manifest, err := json.MarshalIndent(currentReferences, "", "  ")
+	if err != nil {
+		return res, fmt.Errorf("encode managed skill references: %w", err)
+	}
+	manifest = append(manifest, '\n')
+	manifestPath := filepath.Join(root, managedSkillReferencesFile)
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		return res, fmt.Errorf("create %s: %w", filepath.Dir(managedSkillReferencesFile), err)
+	}
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		return res, fmt.Errorf("write %s: %w", managedSkillReferencesFile, err)
+	}
+	res.Written = append(res.Written, managedSkillReferencesFile)
 
 	return res, nil
 }
@@ -476,10 +544,79 @@ func ClaudeSkillTargetForAsset(asset string) (string, bool) {
 		return "", false
 	}
 	name, file, ok := strings.Cut(relative, "/")
-	if !ok || name == "" || file != "SKILL.md" {
+	if !ok || name == "" {
 		return "", false
 	}
-	return path.Join(".claude/skills", name, "SKILL.md"), true
+	if file != "SKILL.md" && !(strings.HasPrefix(file, "references/") && strings.HasSuffix(file, ".md")) {
+		return "", false
+	}
+	return path.Join(".claude/skills", name, file), true
+}
+
+// managedSkillReferenceTargets returns only package-owned Markdown references
+// in the two skill installation trees. Those are the only files tracked by
+// the upgrade manifest; client additions beside them remain unowned.
+func managedSkillReferenceTargets(assetPaths []string) []string {
+	targets := map[string]struct{}{}
+	for _, asset := range assetPaths {
+		clean := strings.TrimPrefix(asset, "./")
+		relative, ok := strings.CutPrefix(clean, "assets/rdd/skills/")
+		if !ok || !strings.Contains(relative, "/references/") || !strings.HasSuffix(relative, ".md") {
+			continue
+		}
+		if target, ok := TargetForAsset(clean); ok {
+			targets[target] = struct{}{}
+		}
+		if target, ok := ClaudeSkillTargetForAsset(clean); ok {
+			targets[target] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(targets))
+	for target := range targets {
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func readManagedSkillReferences(root string) ([]string, error) {
+	body, err := os.ReadFile(filepath.Join(root, managedSkillReferencesFile))
+	if os.IsNotExist(err) {
+		return nil, nil // old installs predate the reference inventory
+	}
+	if err != nil {
+		return nil, err
+	}
+	var targets []string
+	if err := json.Unmarshal(body, &targets); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", managedSkillReferencesFile, err)
+	}
+	for _, target := range targets {
+		if !validManagedSkillReference(target) {
+			return nil, fmt.Errorf("invalid managed skill reference path %q in %s", target, managedSkillReferencesFile)
+		}
+	}
+	sort.Strings(targets)
+	return targets, nil
+}
+
+func validManagedSkillReference(target string) bool {
+	clean := path.Clean(target)
+	if clean != target || strings.HasPrefix(target, "/") || strings.Contains(target, "\\") {
+		return false
+	}
+	for _, prefix := range []string{".modernpath/rdd/skills/", ".claude/skills/"} {
+		relative, ok := strings.CutPrefix(target, prefix)
+		if !ok {
+			continue
+		}
+		skill, rest, ok := strings.Cut(relative, "/")
+		directory, file, hasFile := strings.Cut(rest, "/")
+		if ok && skill != "" && hasFile && directory == "references" && file != "" && !strings.Contains(file, "/") && strings.HasSuffix(file, ".md") {
+			return true
+		}
+	}
+	return false
 }
 
 // LegacyTargetForAsset returns the old Claude-specific destination for a
@@ -582,6 +719,48 @@ func Check(root string, generated ...Generated) ([]string, error) {
 	assetPaths, err := ListAssets()
 	if err != nil {
 		return nil, fmt.Errorf("list embedded assets: %w", err)
+	}
+	retired, err := RetiredTargets()
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range retired {
+		if _, err := os.Stat(filepath.Join(root, target)); err == nil {
+			drift = append(drift, target+" (retired managed target)")
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat %s: %w", target, err)
+		}
+	}
+	currentReferences := managedSkillReferenceTargets(assetPaths)
+	manifest, err := json.MarshalIndent(currentReferences, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode managed skill references: %w", err)
+	}
+	manifest = append(manifest, '\n')
+	manifestPath := filepath.Join(root, managedSkillReferencesFile)
+	installedManifest, err := os.ReadFile(manifestPath)
+	if os.IsNotExist(err) || (err == nil && !bytes.Equal(installedManifest, manifest)) {
+		drift = append(drift, managedSkillReferencesFile+" (managed reference inventory)")
+	} else if err != nil {
+		return nil, fmt.Errorf("read %s: %w", managedSkillReferencesFile, err)
+	}
+	previousReferences, err := readManagedSkillReferences(root)
+	if err != nil {
+		return nil, err
+	}
+	current := make(map[string]struct{}, len(currentReferences))
+	for _, target := range currentReferences {
+		current[target] = struct{}{}
+	}
+	for _, target := range previousReferences {
+		if _, live := current[target]; live {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, target)); err == nil {
+			drift = append(drift, target+" (retired managed target)")
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat %s: %w", target, err)
+		}
 	}
 	for _, asset := range assetPaths {
 		targets := make([]string, 0, 2)

@@ -26,8 +26,9 @@ var askCmd = &cobra.Command{
 	Short: "Ask a question about the codebase using AI",
 	Long: `Ask a natural language question about your codebase.
 
-Uses the ModernPath platform's agentic search to find relevant documentation
-and code, then synthesizes an answer.
+Uses the ModernPath platform's agentic search to find relevant documentation,
+code, and the curated patterns and capabilities the system uses, then
+synthesizes an answer. Each source names its kind and id.
 
 Output formats:
   --format=pretty   Colored terminal output (default)
@@ -52,14 +53,61 @@ func init() {
 type askResult struct {
 	Success bool `json:"success"`
 	Result  struct {
-		Answer  string `json:"answer"`
-		Sources []struct {
-			Title string `json:"title"`
-			Type  string `json:"type"`
-			Path  string `json:"path"`
-		} `json:"sources"`
-		Iterations int `json:"iterations"`
+		Answer     string          `json:"answer"`
+		Sources    []askWireSource `json:"sources"`
+		Iterations int             `json:"iterations"`
 	} `json:"result"`
+}
+
+// askSource is a source as ask prints it, and as --format=json emits it.
+type askSource struct {
+	Title string `json:"title"`
+	Type  string `json:"type"`
+	Path  string `json:"path"`
+}
+
+// askWireSource adds the ids the server sends, used only to list each source
+// once; they never reach the output.
+type askWireSource struct {
+	askSource
+	FileID any `json:"file_id"`
+	DocID  any `json:"doc_id"`
+}
+
+// label is what names a source: its title, or its path when it has none (a
+// file source has no title).
+func (s askSource) label() string {
+	if s.Title != "" {
+		return s.Title
+	}
+	return s.Path
+}
+
+// uniqueAskSources lists each source once, by file, document or path, in the
+// order the server first named it. The server lists a file once per tool
+// call that read it.
+func uniqueAskSources(wire []askWireSource) []askSource {
+	seen := map[string]bool{}
+	out := make([]askSource, 0, len(wire))
+	for _, src := range wire {
+		var key string
+		switch {
+		case src.FileID != nil:
+			key = fmt.Sprintf("file:%v", src.FileID)
+		case src.DocID != nil:
+			key = fmt.Sprintf("doc:%v", src.DocID)
+		case src.Path != "":
+			key = "path:" + src.Path
+		default:
+			key = "title:" + src.Type + "\x00" + src.Title
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, src.askSource)
+	}
+	return out
 }
 
 func runAsk(cmd *cobra.Command, args []string) error {
@@ -164,33 +212,35 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	sources := uniqueAskSources(result.Result.Sources)
+
 	// Output based on format
 	switch askFormat {
 	case "json":
-		outputAskJSON(result, question)
+		outputAskJSON(result, sources, question)
 	case "markdown":
-		outputAskMarkdown(result, question)
+		outputAskMarkdown(result, sources, question)
 	default:
-		outputAskPretty(result)
+		outputAskPretty(result, sources)
 	}
 
 	return nil
 }
 
-func outputAskJSON(result askResult, question string) {
+func outputAskJSON(result askResult, sources []askSource, question string) {
 	output := map[string]interface{}{
 		"question":   question,
 		"answer":     result.Result.Answer,
 		"iterations": result.Result.Iterations,
 	}
-	if !askBrief && len(result.Result.Sources) > 0 {
-		output["sources"] = result.Result.Sources
+	if !askBrief && len(sources) > 0 {
+		output["sources"] = sources
 	}
 	jsonBytes, _ := json.Marshal(output)
 	fmt.Println(string(jsonBytes))
 }
 
-func outputAskMarkdown(result askResult, question string) {
+func outputAskMarkdown(result askResult, sources []askSource, question string) {
 	var sb strings.Builder
 
 	if !askBrief {
@@ -199,12 +249,16 @@ func outputAskMarkdown(result askResult, question string) {
 
 	sb.WriteString(result.Result.Answer)
 
-	if !askBrief && len(result.Result.Sources) > 0 {
+	if !askBrief && len(sources) > 0 {
 		sb.WriteString("\n\n### Sources\n\n")
-		for _, src := range result.Result.Sources {
-			sb.WriteString(fmt.Sprintf("- [%s] %s", src.Type, src.Title))
-			if src.Path != "" {
-				sb.WriteString(fmt.Sprintf(" (`%s`)", src.Path))
+		for _, src := range sources {
+			if src.Title == "" {
+				sb.WriteString(fmt.Sprintf("- [%s] `%s`", src.Type, src.Path))
+			} else {
+				sb.WriteString(fmt.Sprintf("- [%s] %s", src.Type, src.Title))
+				if src.Path != "" {
+					sb.WriteString(fmt.Sprintf(" (`%s`)", src.Path))
+				}
 			}
 			sb.WriteString("\n")
 		}
@@ -213,18 +267,18 @@ func outputAskMarkdown(result askResult, question string) {
 	fmt.Print(sb.String())
 }
 
-func outputAskPretty(result askResult) {
+func outputAskPretty(result askResult, sources []askSource) {
 	bold := color.New(color.Bold)
 
 	// Show sources
-	if !askBrief && len(result.Result.Sources) > 0 {
+	if !askBrief && len(sources) > 0 {
 		fmt.Println()
 		bold.Println("📚 Sources")
 		fmt.Println("───────────────────────────────────────────────────────────")
-		for _, src := range result.Result.Sources {
+		for _, src := range sources {
 			typeColor := color.New(color.FgCyan)
 			typeColor.Printf("[%s] ", src.Type)
-			fmt.Printf("%s\n", src.Title)
+			fmt.Printf("%s\n", src.label())
 		}
 	}
 

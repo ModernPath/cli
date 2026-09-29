@@ -27,10 +27,14 @@ const (
 
 // Config holds the project-level configuration
 type Config struct {
-	APIURL           string            `json:"api_url"`
-	SystemID         int               `json:"system_id,omitempty"`
-	SystemName       string            `json:"system_name,omitempty"`
-	SystemSlug       string            `json:"system_slug,omitempty"`
+	APIURL     string `json:"api_url"`
+	SystemID   int    `json:"system_id,omitempty"`
+	SystemName string `json:"system_name,omitempty"`
+	SystemSlug string `json:"system_slug,omitempty"`
+	// RepositoryID is the upload repository `import --local` created for
+	// this directory, the target of `source push` (REQ-SYS-211 AC6). A config
+	// that predates it resolves the system's single URL-less repository.
+	RepositoryID     int               `json:"repository_id,omitempty"`
 	InitMode         string            `json:"init_mode,omitempty"`
 	WorkspaceMembers []WorkspaceMember `json:"workspace_members,omitempty"`
 	EpicID           int               `json:"epic_id,omitempty"`

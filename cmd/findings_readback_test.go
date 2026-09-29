@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,11 +85,11 @@ func TestREQCROSS424ListNarrowsToTheHeldPiece(t *testing.T) {
 	s.rows = []map[string]any{readbackFindingRow()}
 	env := &factoryEnv{Root: t.TempDir(), APIURL: s.srv.URL, SystemID: 4, token: "t"}
 
-	out := captureOut(t, func() {
-		if err := processFindingsList(env); err != nil {
-			t.Errorf("list: %v", err)
-		}
-	})
+	// SR-CLI-027-004: the list writes through the command writer.
+	out, err := listOut(env)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
 	if !strings.Contains(s.findingsQuery, "scope=single_sr%3AREQ-X") && !strings.Contains(s.findingsQuery, "scope=single_sr:REQ-X") {
 		t.Fatalf("the list must send the held piece as its scope, sent %q", s.findingsQuery)
 	}
@@ -110,7 +111,7 @@ func TestREQCROSS424PieceNamesTheHeldPieceWhenSeveral(t *testing.T) {
 	// Several held and none named: the server's refusal surfaces as the remedy.
 	s.selectStatus, s.selectBody = 422, map[string]any{
 		"error": "you hold several current selections (EPIC-A, EPIC-B) — name one with ?scope=<id>", "pieces": []any{"EPIC-A", "EPIC-B"}}
-	err := processFindingsList(env)
+	err := processFindingsList(env, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--piece") {
 		t.Fatalf("several held pieces must refuse naming --piece, got %v", err)
 	}
@@ -121,7 +122,7 @@ func TestREQCROSS424PieceNamesTheHeldPieceWhenSeveral(t *testing.T) {
 	// Named: the piece's scope is sent.
 	s.selectStatus = 0
 	processPiece = "EPIC-A"
-	if err := processFindingsList(env); err != nil {
+	if err := processFindingsList(env, io.Discard); err != nil {
 		t.Fatalf("list --piece: %v", err)
 	}
 	if !strings.Contains(s.findingsQuery, "scope=epic%3AEPIC-A") && !strings.Contains(s.findingsQuery, "scope=epic:EPIC-A") {
@@ -135,7 +136,7 @@ func TestREQCROSS424AllSendsNoScopeAndExplicitScopeStillNarrows(t *testing.T) {
 	env := &factoryEnv{Root: t.TempDir(), APIURL: s.srv.URL, SystemID: 4, token: "t"}
 
 	findingsAll = true
-	if err := processFindingsList(env); err != nil {
+	if err := processFindingsList(env, io.Discard); err != nil {
 		t.Fatalf("list --all: %v", err)
 	}
 	if strings.Contains(s.findingsQuery, "scope=") {
@@ -143,7 +144,7 @@ func TestREQCROSS424AllSendsNoScopeAndExplicitScopeStillNarrows(t *testing.T) {
 	}
 
 	findingsAll, findingsScope = false, "epic:EPIC-Z"
-	if err := processFindingsList(env); err != nil {
+	if err := processFindingsList(env, io.Discard); err != nil {
 		t.Fatalf("list --scope: %v", err)
 	}
 	if !strings.Contains(s.findingsQuery, "EPIC-Z") {
@@ -158,11 +159,10 @@ func TestREQCROSS424VerbosePrintsWhatWasWritten(t *testing.T) {
 	env := &factoryEnv{Root: t.TempDir(), APIURL: s.srv.URL, SystemID: 4, token: "t"}
 	findingsAll, verbose = true, true
 
-	out := captureOut(t, func() {
-		if err := processFindingsList(env); err != nil {
-			t.Errorf("list -v: %v", err)
-		}
-	})
+	out, err := listOut(env)
+	if err != nil {
+		t.Fatalf("list -v: %v", err)
+	}
 	for _, want := range []string{
 		"body: the chip claims what it does not hold",
 		"source: cold review R2",
@@ -184,7 +184,7 @@ func TestREQCROSS424ANon200IsARefusalWithTheServersReason(t *testing.T) {
 	env := &factoryEnv{Root: t.TempDir(), APIURL: s.srv.URL, SystemID: 4, token: "t"}
 	findingsAll = true
 
-	err := processFindingsList(env)
+	err := processFindingsList(env, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "findings store unavailable") {
 		t.Fatalf("a 500 must surface the server's reason, got %v", err)
 	}
@@ -223,7 +223,7 @@ func TestREQCROSS424PieceNotHeldIsNamedInTheRefusal(t *testing.T) {
 	env := &factoryEnv{Root: t.TempDir(), APIURL: s.srv.URL, SystemID: 4, token: "t"}
 	processPiece = "REQ-B"
 
-	err := processFindingsList(env)
+	err := processFindingsList(env, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "you do not hold REQ-B") {
 		t.Fatalf("naming an unheld piece must be refused naming it, got %v", err)
 	}

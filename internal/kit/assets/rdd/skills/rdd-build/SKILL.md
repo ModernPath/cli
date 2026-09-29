@@ -1,6 +1,6 @@
 ---
 name: rdd-build
-description: Execute the AI-owned TDD loop for one approved system requirement from TODO through current lower evidence and IN_REVIEW. Use for new or changed SR behavior after human entry approval. Repeat RED, GREEN, cleanup, lower verification, and separate affected-UR upper validation until the approved trace needs pass or an exact replanning condition is found. Use rdd-verify instead for confirmed as-built PENDING_VERIFICATION behavior.
+description: Implement one approved SR from TODO through current lower evidence and IN_REVIEW using RED, GREEN, cleanup and regression checks. Use after normal development entry for new or changed behavior. Use rdd-verify for entered verification work and rdd-reverse-engineer-verify for eligible source-scoped baselines with existing proof.
 ---
 
 # Build one SR slice
@@ -12,11 +12,15 @@ code, tests, and current records.
 
 ## Procedure
 
-1. Orient and select exactly one approved `TODO` or `IN_PROGRESS` SR with
-   current planning and no active hold. Work on a reviewable feature branch and
-   preserve unrelated changes.
-2. Before its first implementation iteration, establish every selected affected
-   UR's upper RED for the expected reason. Keep that evidence on the UR.
+1. Check that current applied normal entry approval covers the whole selected
+   delivery scope, including the Epic when selected, under `PROCESS.md`.
+   Then select exactly one `TODO` or `IN_PROGRESS` SR with current planning
+   and no active hold. A reopened baseline without that approval needs
+   planning and entry first. Work on a
+   reviewable feature branch and preserve unrelated changes.
+2. Before its first implementation iteration, establish upper RED for selected
+   UR scenarios requiring new evidence. Re-validation of previously proven
+   unchanged scenarios needs no new RED. Keep upper evidence on the UR.
 3. Select one unmet approved SR clause, establish its focused lower RED for the
    expected reason, and link the stable test identity to the clause.
 4. Implement the smallest behavior that makes the focused evidence pass.

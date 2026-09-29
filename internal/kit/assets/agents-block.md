@@ -24,15 +24,22 @@ starting product work:
    - `rdd-plan` — derive requirements and select the next trace;
    - `rdd-entry-review` — the human entry gate before red-first evidence;
    - `rdd-build` — run a trace red-first through implementation;
-   - `rdd-verify` — write the missing test for reverse-engineered
-     `PENDING_VERIFICATION` rows and promote only what goes green;
+   - `rdd-verify` — verify entered work requiring tests through the normal
+     RED/GREEN contract and promote only what goes green;
    - `rdd-cold-review` — review a change without its authoring context;
    - `rdd-completion-review` — audit evidence before the completion gate;
    - `rdd-triage` — route discoveries, blockers and deferrals;
    - `rdd-deliver` — land, reconcile and close the loop;
+   - `rdd-autopilot` — a sprint under a human's autopilot grant: product
+     questions asked without waiting, process refusals cleared or logged,
+     one review and one completion page at sprint end;
    - `rdd-reverse-engineer` — establish a source-scoped as-built baseline or
      propose `DERIVED` additions; ask for the mode, preserve existing requirements,
      and verify the persisted graph against explicit denominators;
+   - `rdd-reverse-engineer-verify` — inspect complete existing assertion,
+     execution and repository integration proof for pending baselines;
+   - `rdd-reverse-engineer-accept` — one exact human acceptance and guarded
+     DONE application with receipt, keeping compliance approval unchanged;
    - `rdd-audit` — shared utility the other passes invoke: resolve citations,
      diff inventories both directions, judge whether a measurement is real;
 4. `.modernpath/rdd/file-state/` — the canonical serialization shapes for
@@ -43,8 +50,8 @@ starting product work:
 Three `.claude/skills/` entries are shipped by the `modernpath` CLI rather
 than by the process package: `mp-process-cli` (how the CLI records each phase
 of the loop — verb sequences, the work-selection and fingerprint models, the
-refusal glossary), `mp-knowledge-search` (query the platform's analysis of
-this repository before reading it by hand) and `rdd-ledger` (the compatibility
+refusal glossary), `mp-knowledge-search` (find and read the local
+analysis, with live API reads when needed) and `rdd-ledger` (the compatibility
 adapter for the file `tasks/` ledger format). The ledger skill is installed only while the workspace
 is file-backed; under `process/store-backed.md` its subject is retired, so
 `modernpath install` withholds it and `install --check` reports a copy found
@@ -59,6 +66,26 @@ rules. On conflict the process wins (see "Instruction ownership" in
 `.modernpath/rdd/AGENTS.md`); a genuine conflict is a defect to report — fix the
 canonical `req-driven-dev` source and publish a new CLI rather than creating a
 local variant.
+
+## What the loop covers (binding, all agents)
+
+**The loop is for product development.** The dividing line is who the change
+is for. If it changes what a customer can do or observe, it is product work
+and the loop applies — including infrastructure work whose *purpose* is
+customer-visible behavior. If it only changes how the repository is built,
+run or reviewed, or how its agents are instructed, it is meta-work.
+
+**Meta-work stays out of the loop and its records.** Repository layout and
+ownership, CI/CD lanes, deployment identity and infrastructure, developer
+tooling and scripts, agent instructions, and the installed process material
+(`AGENTS.md`, `CLAUDE.md`, `.claude/`, the process snapshot and skills under
+`.modernpath/rdd/`) are meta-work unless the test above makes them product
+work; they are not requirements in themselves. Do that work as a regular
+change — a pull request where the project uses them — and state in its
+description why the loop does not apply. Two things are not this
+repository's meta-work: the `file-state/` ledgers where they are the store
+(a file-backed workspace), and friction with the `modernpath` CLI itself,
+which is a tooling gap filed through the channel named below.
 
 ## Where the loop stands (binding, all agents)
 
@@ -107,6 +134,13 @@ tooling gap with `modernpath feedback "<line>"`, and change a disposition with
 handover or a note, which are projections and carry no disposition the store
 does not.
 
+ModernPath tooling feedback belongs only to the ModernPath workspace,
+never to a customer project's backlog or local tooling-gap file. `modernpath
+feedback` requires a ModernPath tenant credential and verifies that the current
+checkout is bound to the ModernPath system. It refuses customer workspaces
+without changing the binding. If unavailable, report the gap in the session;
+do not substitute `author backlog --kind tooling` in the customer store.
+
 **File-backed — no declaration.** The ledger files are the store and are
 edited in place. `modernpath author` is not the write path there.
 
@@ -118,19 +152,25 @@ separately and labelled, never in place of the queue.
 ## Codebase knowledge (binding, all agents)
 
 This repository is analyzed into a **knowledge core** — per-subsystem
-architecture, module docs, data model, patterns. There are two ways to reach it
-and they do different jobs:
+architecture, module docs, data model, patterns. In a bound workspace, run
+`modernpath process prepare-inputs` before sourced work; it checks the delivery
+context and reports when local documents were last synced and when server
+documents were last updated. It does not refresh the export. Run `modernpath
+docs sync` explicitly when a refresh is needed.
 
-- **To find** something: `modernpath search "<terms>"`, or let the context hook
-  inject ranked pointers into your prompt (`modernpath hooks install`). Both ask
-  the API, so both are current.
-- **To read** what you found: open it from the local export under
-  `.modernpath/modernpath/…` — free, instant, and the whole document rather than
-  an excerpt. `modernpath read-doc --id=<id>` fetches anything not exported.
+Search locally first, in this order: the repository for the requirement id,
+its code and tests (`rg -n "<requirement id>" .`); `modernpath working-set pull
+<id>` for the requirement records; the docs export under
+`.modernpath/<system-slug>/` — `rg -n "authentication" .modernpath/<system-slug>/`
+followed by `cat <matching-document>` needs no further ModernPath API call; then
+`modernpath ask "<question>"` for why and how questions the local search cannot
+answer.
 
-If `.modernpath/modernpath/` is missing, the export has not been run here:
-`modernpath docs sync`. **If the export and the API disagree, the API is right** —
-the export is a cache, and a stale cache answers confidently.
+Use `modernpath search "<terms>"` or `modernpath read-doc --id=<id>` when the
+export lacks the material or a live answer is needed. The context hook also
+provides live pointers. **If the export and the API disagree, the API is right**
+— the export is a cache, and a stale cache answers confidently. If only the
+export is missing, `modernpath docs sync` can refresh it.
 
 Cite what you actually used as a `DOC:` source. Generated docs describe modules
 rather than lines, so verify a specific claim against the code before recording

@@ -19,36 +19,10 @@ type docPushManifest struct {
 	ArchitectureDocFiles map[string]docPushManifestEntry `json:"architecture_doc_files"` // backward compat
 }
 
-func modernpathReservedTopDir(name string) bool {
-	switch strings.ToLower(name) {
-	case "viewer", "memories", "specs", "tasks", "artifacts", "organization", "patterns", "workflows", "scripts", "datamodel":
-		return true
-	default:
-		return false
-	}
-}
-
-func hasSystemRootMarkers(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "docs_push_manifest.json")); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(dir, "blueprint.json")); err == nil {
-		return true
-	}
-	return false
-}
-
 // resolveSystemRootDir returns the directory for {slug} under .modernpath (flat or legacy docs/{slug}/).
 func resolveSystemRootDir(modernpathRoot, slug string) (string, bool) {
-	flat := filepath.Join(modernpathRoot, slug)
-	if hasSystemRootMarkers(flat) {
-		return flat, true
-	}
-	legacy := filepath.Join(modernpathRoot, "docs", slug)
-	if hasSystemRootMarkers(legacy) {
-		return legacy, true
-	}
-	return flat, false
+	root := systemExportRootDir(modernpathRoot, slug)
+	return root, hasSystemRootMarkers(root)
 }
 
 // listSystemExportSlugs finds system roots: .modernpath/{slug}/ or .modernpath/docs/{slug}/.
@@ -56,7 +30,7 @@ func listSystemExportSlugs(modernpathRoot string) []string {
 	seen := map[string]bool{}
 	var slugs []string
 	add := func(slug string, dir string) {
-		if slug == "" || seen[slug] || modernpathReservedTopDir(slug) {
+		if slug == "" || seen[slug] || validateSystemExportSlug(slug) != nil {
 			return
 		}
 		if !hasSystemRootMarkers(dir) {
@@ -77,7 +51,7 @@ func listSystemExportSlugs(modernpathRoot string) []string {
 	legacyDocs := filepath.Join(modernpathRoot, "docs")
 	if entries, err := os.ReadDir(legacyDocs); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() {
+			if !e.IsDir() || validateSystemExportSlug(e.Name()) != nil {
 				continue
 			}
 			add(e.Name(), filepath.Join(legacyDocs, e.Name()))
@@ -115,6 +89,9 @@ func shouldSkipDocPushSubtree(rel string) bool {
 		return false
 	}
 	first, _, _ := strings.Cut(rel, "/")
+	if strings.EqualFold(first, "docs") {
+		return false // docs is the container for legacy and reserved-name system roots.
+	}
 	return modernpathReservedTopDir(first)
 }
 

@@ -17,8 +17,6 @@ serialization shapes; it does not contain a project's live delivery state.
   rather than redefine the process. They name the project's sanctioned tool
   for the process store and its channel for surfacing tooling gaps; the rule
   that binds both is `PROCESS.md` "State records and reconciliation".
-- `CLAUDE.md` files are compatibility pointers; they do not override these
-  instructions.
 
 If project instructions conflict with a process rule, stop the affected
 transition and report the conflict rather than creating a silent local variant.
@@ -32,17 +30,27 @@ on a decision, or what is blocked:
 1. read the project's root `AGENTS.md` for project-specific rules;
 2. read this file and `PROCESS.md`;
 3. enter the session with `skills/rdd-start/SKILL.md` — it verifies the store
-   binding and active release before any selection; then use
-   `skills/rdd-deliver/SKILL.md` for end-to-end delivery, or the applicable
+   binding before selection and the active release for normal delivery; then use
+   `skills/rdd-deliver/SKILL.md` for end-to-end delivery,
+   `skills/rdd-autopilot/SKILL.md` for a sprint under a human's autopilot
+   grant, or the applicable
    focused `skills/rdd-*/SKILL.md` when the request explicitly ends at one
-   process pass; use `skills/rdd-verify/SKILL.md` for reverse-engineered
-   `PENDING_VERIFICATION` rows, and `skills/rdd-reverse-engineer/SKILL.md` to
+   process pass; use `skills/rdd-verify/SKILL.md` for entered verification work
+   requiring new tests, and `skills/rdd-reverse-engineer/SKILL.md` to
    establish an authorized as-built baseline or propose DERIVED additions to
    an existing requirement corpus;
+   use `skills/rdd-reverse-engineer-verify/SKILL.md` and
+   `skills/rdd-reverse-engineer-accept/SKILL.md` for source-scoped baselines
+   with existing proof (one human acceptance directly to DONE);
    `skills/rdd-audit/SKILL.md` is a shared utility other passes invoke, not a
    phase;
 4. read the relevant product sources, requirement records, optional epic, and
    active work-selection record.
+
+Find and read relevant documents available locally. Checking when documents
+were last updated does not refresh the local copies. When a refresh is needed,
+follow the project's documented procedure. Consult the authoritative source
+when local documents lack the information or you need an up-to-date answer.
 
 Being asked what to do next is session entry, not a shortcut past it. The
 answer is the store's pending human decisions and routed work, read through

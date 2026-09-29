@@ -9,6 +9,7 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -59,6 +60,8 @@ type factoryEnv struct {
 	Root           string // workspace root (parent of .modernpath)
 	APIURL         string
 	SystemID       int
+	Config         *config.Config
+	Auth           *config.Auth
 	CurrentRelease string // REQ-CROSS-017: the envelope release stamp ("" = unscoped)
 	token          string
 	// callTimeout bounds each API call; zero means the 120s default. migrate
@@ -159,6 +162,7 @@ func factoryBindingLoad() (*factoryEnv, error) {
 		Root:           filepath.Dir(cfgDir),
 		APIURL:         cfg.APIURL,
 		SystemID:       cfg.SystemID,
+		Config:         cfg,
 		CurrentRelease: cfg.CurrentRelease,
 	}
 	if env.APIURL == "" {
@@ -211,6 +215,7 @@ func credentialLoad(refresh bool) (*factoryEnv, error) {
 	}
 	env.token = auth.Token
 	env.tokenExpiry = storedExpiry(auth)
+	env.Auth = auth
 	return env, nil
 }
 
@@ -901,8 +906,9 @@ after a merge it tells you whether production serves it.`,
 }
 
 // serverLineTimeout bounds the server line's one read: an offline status must
-// answer "not reachable" in seconds, not wait out the 120 s call default.
-const serverLineTimeout = 2 * time.Second
+// answer "not reachable" in seconds, not wait out the 120 s call default. A
+// variable only so a test can shorten the bound it measures.
+var serverLineTimeout = 2 * time.Second
 
 // serverLine — REQ-CROSS-417 (EPIC-CLI-021): what the bound server is serving,
 // for `factory status` and `status`: the store revision from the
@@ -958,6 +964,9 @@ func printHeldPieces(env *factoryEnv) {
 	case status != 200:
 		if pieces := stringSlice(body["pieces"]); len(pieces) > 0 {
 			fmt.Printf("held:      %d current pieces — %s (name one with --piece)\n", len(pieces), strings.Join(pieces, ", "))
+			// An ambiguous selection still carries the independent active-release
+			// context. Keep provenance visible without choosing a piece.
+			printActiveReleaseSource(env, body)
 		} else {
 			fmt.Printf("held:      unavailable (server %d)\n", status)
 		}
@@ -1389,9 +1398,18 @@ With an external_id, show that one gate — its state and, when it carries an
 answer, the answer, chosen options, USER: source, answerer and applied state —
 so "did my approval land?" is answerable without reading the event stream. An
 applied answer is stored closed; read it by id or under --state all.
+The stored decision brief is shown without --json or --verbose: What, Why now,
+Changes if approved, Risk if wrong and Recommendation.
+
+With --audit and an external_id, read answer and application blockers, review
+provenance and recovery guidance without changing the work selection.
 
 With --state, list gate history: open, answered, dismissed, superseded, or all.
---json prints the server's gate envelope on stdout and nothing else.`,
+--json prints the server's gate envelope on stdout and nothing else.
+
+A listing prints at most --limit gates (default 50) from --offset in text,
+and says how to see more; under --json every gate is printed unless --limit
+is given.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// factoryEnvLoad stays first: a local refusal (e.g. a token without the
@@ -1405,7 +1423,7 @@ With --state, list gate history: open, answered, dismissed, superseded, or all.
 		if len(args) == 1 {
 			id = args[0]
 		}
-		return factoryGatesRun(env, gatesState, gatesKind, gatesJSON, id, os.Stdout, os.Stderr)
+		return factoryGatesRun(env, gatesState, gatesKind, gatesJSON, id, os.Stdout, os.Stderr, gatesAudit)
 	},
 }
 
@@ -1425,15 +1443,21 @@ func validGateState(s string) bool {
 // so JSON on stdout stays parseable — the requirements-corpus precedent
 // (REQ-CROSS-324/121). --state is validated here, before any request, so a typo
 // never becomes a call; the server stays the authority and its 422 is surfaced.
-func factoryGatesRun(env *factoryEnv, state, kind string, jsonOut bool, id string, out, errOut io.Writer) error {
+func factoryGatesRun(env *factoryEnv, state, kind string, jsonOut bool, id string, out, errOut io.Writer, audit bool) error {
+	if audit && id == "" {
+		return fmt.Errorf("--audit requires an external_id")
+	}
 	if id != "" && (state != "" || kind != "") {
 		return fmt.Errorf("--state and --kind apply to the listing, not to a gate by id (--json combines with either form)")
+	}
+	if err := gatesPage.validate(); err != nil {
+		return err
 	}
 	if state != "" && !validGateState(state) {
 		return fmt.Errorf("unknown --state %q — use one of open, answered, dismissed, superseded, all", state)
 	}
 	if id != "" {
-		return factoryGateShow(env, id, jsonOut, out)
+		return factoryGateShow(env, id, jsonOut, out, audit)
 	}
 	return factoryGateList(env, state, kind, jsonOut, out, errOut)
 }
@@ -1443,9 +1467,12 @@ func factoryGatesRun(env *factoryEnv, state, kind string, jsonOut bool, id strin
 // is a non-zero exit naming the id; any other 404 (a server without the route
 // answers Phoenix's {"errors":{"detail":"Not Found"}}) is a server error, never
 // read as absence.
-func factoryGateShow(env *factoryEnv, id string, jsonOut bool, out io.Writer) error {
-	status, body, err := env.call("GET",
-		fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", url.PathEscape(id), env.SystemID), nil)
+func factoryGateShow(env *factoryEnv, id string, jsonOut bool, out io.Writer, audit bool) error {
+	path := fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", url.PathEscape(id), env.SystemID)
+	if audit {
+		path += "&audit=true"
+	}
+	status, body, err := env.call("GET", path, nil)
 	if err != nil {
 		return err
 	}
@@ -1458,11 +1485,44 @@ func factoryGateShow(env *factoryEnv, id string, jsonOut bool, out io.Writer) er
 		// emit {"gate": {}} rather than {"gate": null} so a consumer's parse holds.
 		gate = map[string]any{}
 	}
+	diagnostics, _ := gate["audit"].(map[string]any)
+	if audit && diagnostics == nil {
+		return fmt.Errorf("server did not return the requested gate audit; update the server before using --audit")
+	}
 	if jsonOut {
 		return emitJSONEnvelope(out, "gate", gate)
 	}
 	renderGate(out, gate)
+	if audit {
+		renderGateAudit(out, diagnostics)
+	}
 	return nil
+}
+
+func renderGateAudit(out io.Writer, audit map[string]any) {
+	answer, _ := audit["answer"].(map[string]any)
+	application, _ := audit["application"].(map[string]any)
+	fmt.Fprintf(out, "\nAnswer ready: %v\nApplication: %s\n", answer["ready"], str(application, "status"))
+	if remaining, ok := application["remaining_scope"].([]any); ok && len(remaining) > 0 {
+		fmt.Fprintf(out, "Remaining scope: %v\n", remaining)
+	}
+	for _, section := range []struct {
+		name  string
+		value map[string]any
+	}{
+		{"Answer", answer}, {"Application", application},
+	} {
+		blockers, _ := section.value["blockers"].([]any)
+		for _, item := range blockers {
+			blocker, _ := item.(map[string]any)
+			fmt.Fprintf(out, "%s [%s]: %s\n  Next: %s\n", section.name, str(blocker, "code"), str(blocker, "message"), str(blocker, "next_action"))
+		}
+	}
+	reviews, _ := audit["reviews"].([]any)
+	for _, item := range reviews {
+		review, _ := item.(map[string]any)
+		fmt.Fprintf(out, "Review %s: %s; context=%v; independent=%v; reason=%v\n", str(review, "external_id"), str(review, "state"), review["review_context_id"], review["independent"], review["independence_reason"])
+	}
 }
 
 // gateShowError concludes absence ONLY from the server's nested "no such gate"
@@ -1510,8 +1570,9 @@ func factoryGateList(env *factoryEnv, state, kind string, jsonOut bool, out, err
 	}
 	gates, _ := dataOf(body)["gates"].([]any)
 	shown := filterGatesByKind(gates, kind)
+	start, end := gatesPage.window(len(shown), jsonOut)
 	if jsonOut {
-		return emitGatesJSON(out, shown)
+		return emitPagedJSON(out, "gates", shown[start:end], end, len(shown))
 	}
 	// History (answered|dismissed|superseded|all) renders each gate's stored
 	// state; the open queue (default, or explicit --state open) is unchanged.
@@ -1531,7 +1592,7 @@ func factoryGateList(env *factoryEnv, state, kind string, jsonOut bool, out, err
 		return nil
 	}
 	if history {
-		for _, g := range shown {
+		for _, g := range shown[start:end] {
 			m, _ := g.(map[string]any)
 			renderGateHistory(out, m)
 		}
@@ -1540,9 +1601,10 @@ func factoryGateList(env *factoryEnv, state, kind string, jsonOut bool, out, err
 		} else {
 			fmt.Fprintf(out, "\n%d %s gate(s)\n", len(shown), state)
 		}
+		fmt.Fprint(out, pageFooter(start, end, len(shown)))
 		return nil
 	}
-	for _, g := range shown {
+	for _, g := range shown[start:end] {
 		m, _ := g.(map[string]any)
 		fmt.Fprintf(out, "\n%s  [%s]  %s\n", str(m, "external_id"), str(m, "kind"), str(m, "title"))
 		if rec := str(m, "recommendation"); rec != "" {
@@ -1556,14 +1618,28 @@ func factoryGateList(env *factoryEnv, state, kind string, jsonOut bool, out, err
 		}
 	}
 	fmt.Fprint(out, gateQueueFooter(len(shown), gateKindBreakdown(gates), kind))
+	fmt.Fprint(out, pageFooter(start, end, len(shown)))
 	return nil
 }
 
-// renderGate is the by-id detail: state and applied state, then the answer,
-// chosen options, source and answerer when the gate carries them. A trace
-// gate (REQ-CROSS-425) adds its verdict, evaluator, recording revision, pin
-// and class, scope, purpose, transition and prerequisites; -v prints any
-// gate's body after its fields.
+func gateBriefLines(g map[string]any) []string {
+	brief, _ := g["brief"].(map[string]any)
+	var lines []string
+	for _, field := range []struct{ key, label string }{
+		{"what", "What"},
+		{"why_now", "Why now"},
+		{"changes_if_approved", "Changes if approved"},
+		{"risk_if_wrong", "Risk if wrong"},
+		{"recommendation", "Recommendation"},
+	} {
+		if value := str(brief, field.key); strings.TrimSpace(value) != "" {
+			lines = append(lines, field.label+": "+value)
+		}
+	}
+	return lines
+}
+
+// renderGate shows the decision brief and stored gate metadata; -v adds body_md.
 func renderGate(out io.Writer, g map[string]any) {
 	fmt.Fprintf(out, "\n%s  [%s]  %s\n", str(g, "external_id"), str(g, "kind"), str(g, "title"))
 	fmt.Fprintf(out, "  state: %s", str(g, "state"))
@@ -1571,6 +1647,12 @@ func renderGate(out io.Writer, g map[string]any) {
 		fmt.Fprintf(out, "   applied: %s", a)
 	}
 	fmt.Fprintln(out)
+	if lines := gateBriefLines(g); len(lines) > 0 {
+		fmt.Fprintln(out, "  Brief:")
+		for _, line := range lines {
+			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(line, "\n", "\n    "))
+		}
+	}
 	if ans := str(g, "answer"); ans != "" {
 		fmt.Fprintf(out, "  answer: %s\n", ans)
 	}
@@ -1819,6 +1901,8 @@ var (
 	gatesKind     string
 	gatesState    string
 	gatesJSON     bool
+	gatesAudit    bool
+	gatesPage     listPage
 	answerText    string
 	answerOptions string
 	answerSource  string
@@ -2192,7 +2276,10 @@ type evidenceOpts struct {
 	kind, log, totals, pass, fail, skip, role, revision string
 }
 
-var evidenceRevision string
+var (
+	evidenceRevision string
+	evidenceFile     string
+)
 
 var factoryEvidenceCmd = &cobra.Command{
 	Use:   "evidence",
@@ -2216,11 +2303,31 @@ it the epic reads :claimed and its completion gate is refused. So does the
 user requirement a completion gate will name (UR-<suffix> for EPIC-<suffix>):
 a run posted on the epic or the SRs does not cover the UR; --pass the UR too,
 or the gate refuses "not yet". Evidence for
-completion is pinned to the delivered (merged) revision, not the branch head.`,
+completion is pinned to the delivered (merged) revision, not the branch head.
+
+--file <runs.json> records several runs in one call: a JSON array of
+{pass, fail, skip (id lists), role, revision, kind, log, totals (an object
+of counts)}. Each entry is one run, posted on its own; its run id is derived
+from the whole entry (the resolved revision, role, kind, log and each target
+with its outcome), so running the same file again updates the same runs and
+records any that failed before, while two different results never share an
+id. Each run id is printed with the server's result; a refused run is
+reported and the rest continue, and the command exits non-zero when any
+failed. --file cannot be combined with the per-run flags.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if evidenceFile != "" {
+			for _, f := range []string{"pass", "fail", "skip", "role", "revision", "log", "totals", "kind"} {
+				if cmd.Flags().Changed(f) {
+					return fmt.Errorf("--file carries each run's --%s; give it in the file, not as a flag", f)
+				}
+			}
+		}
 		env, err := factoryEnvLoad()
 		if err != nil {
 			return err
+		}
+		if evidenceFile != "" {
+			return factoryEvidenceFile(env, evidenceFile)
 		}
 		return factoryEvidenceRun(env, evidenceOpts{
 			kind: evidenceKind, log: evidenceLog, totals: evidenceTotals,
@@ -2230,10 +2337,93 @@ completion is pinned to the delivered (merged) revision, not the branch head.`,
 	},
 }
 
+func newEvidenceRunID(now time.Time, sha string) string {
+	// Separate observations need distinct IDs; replaying the same payload keeps
+	// its ID and uses the server's existing idempotency contract (REQ-CMP-013).
+	return "RUN-" + now.UTC().Format("2006-01-02T15-04-05Z") + "-" + sha + "-" + rand.Text()
+}
+
 func factoryEvidenceRun(env *factoryEnv, o evidenceOpts) error {
+	_, err := postEvidenceRun(env, o, false)
+	return err
+}
+
+// evidenceEntryRunID derives a run id from everything that makes a result
+// what it is — the resolved revision, role, kind, log and each target with its
+// outcome (REQ-CROSS-445). The same entry posted again keeps its id, which the
+// server treats as an update; a different outcome, kind or log never shares it.
+func evidenceEntryRunID(sha, revision, role, kind, log string, results []map[string]any) string {
+	targets := make([]string, 0, len(results))
+	for _, r := range results {
+		targets = append(targets, str(r, "target_external_id")+"="+str(r, "result"))
+	}
+	sort.Strings(targets)
+	sum := sha256.Sum256([]byte(strings.Join([]string{revision, role, kind, log, strings.Join(targets, ",")}, "\n")))
+	return "RUN-" + sha + "-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// evidenceFileEntry is one run in a --file (REQ-CROSS-445).
+type evidenceFileEntry struct {
+	Pass     []string       `json:"pass"`
+	Fail     []string       `json:"fail"`
+	Skip     []string       `json:"skip"`
+	Role     string         `json:"role"`
+	Revision string         `json:"revision"`
+	Kind     string         `json:"kind"`
+	Log      string         `json:"log"`
+	Totals   map[string]int `json:"totals"`
+}
+
+// factoryEvidenceFile posts each entry as its own run with a derived id, keeps
+// going past a refused one, and exits non-zero when any failed.
+func factoryEvidenceFile(env *factoryEnv, path string) error {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("--file: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var entries []evidenceFileEntry
+	if err := dec.Decode(&entries); err != nil {
+		return fmt.Errorf("--file %s: expected a JSON array of runs: %w", path, err)
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("--file %s holds no runs", path)
+	}
+	failed := 0
+	for i, e := range entries {
+		totals := make([]string, 0, len(e.Totals))
+		for k, v := range e.Totals {
+			totals = append(totals, fmt.Sprintf("%s=%d", k, v))
+		}
+		sort.Strings(totals)
+		kind := e.Kind
+		if kind == "" {
+			kind = "local_test"
+		}
+		runID, err := postEvidenceRun(env, evidenceOpts{
+			kind: kind, log: e.Log, totals: strings.Join(totals, ","),
+			pass: strings.Join(e.Pass, ","), fail: strings.Join(e.Fail, ","), skip: strings.Join(e.Skip, ","),
+			role: e.Role, revision: e.Revision,
+		}, true)
+		if err != nil {
+			failed++
+			// A batch row, like the recorded ones: stdout, so the report reads whole.
+			fmt.Printf("✗ run %d %s failed: %v\n", i+1, runID, err)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d runs failed; the others were recorded — run the same file again to record the missing ones", failed, len(entries))
+	}
+	return nil
+}
+
+// postEvidenceRun posts one run and returns its id. derivedID names the run
+// from its content (a --file entry) instead of the time and a random part.
+func postEvidenceRun(env *factoryEnv, o evidenceOpts, derivedID bool) (string, error) {
 	results := buildEvidenceResults(o.pass, o.fail, o.skip, o.role)
 	if len(results) == 0 {
-		return fmt.Errorf("no targets — give at least --pass or --fail")
+		return "", fmt.Errorf("no targets — give at least --pass or --fail")
 	}
 
 	totals := map[string]any{}
@@ -2255,15 +2445,19 @@ func factoryEvidenceRun(env *factoryEnv, o evidenceOpts) error {
 	}
 	full := gitOut(env.Root, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
 	if full == "" {
-		return fmt.Errorf("--revision %q is not a commit in this repository — give a sha, tag or branch git resolves", rev)
+		return "", fmt.Errorf("--revision %q is not a commit in this repository — give a sha, tag or branch git resolves", rev)
 	}
 	sha := gitOut(env.Root, "rev-parse", "--short", full)
 	for _, r := range results {
 		r["revision"] = full
 	}
+	runID := newEvidenceRunID(time.Now(), sha)
+	if derivedID {
+		runID = evidenceEntryRunID(sha, full, strings.ToUpper(strings.TrimSpace(o.role)), o.kind, o.log, results)
+	}
 	status, body, err := env.call("POST", "/api/v1/sync/evidence", map[string]any{
 		"system_id":   env.SystemID,
-		"external_id": "RUN-" + time.Now().UTC().Format("2006-01-02T15-04-05Z") + "-" + sha,
+		"external_id": runID,
 		"kind":        o.kind,
 		"sha":         sha,
 		"branch":      gitOut(env.Root, "rev-parse", "--abbrev-ref", "HEAD"),
@@ -2274,10 +2468,10 @@ func factoryEvidenceRun(env *factoryEnv, o evidenceOpts) error {
 		"results":     results,
 	})
 	if err != nil {
-		return err
+		return runID, err
 	}
 	if status != 200 {
-		return serverRefusal("", status, body)
+		return runID, serverRefusal("", status, body)
 	}
 	run, _ := dataOf(body)["run"].(map[string]any)
 	printSuccess("evidence %s: %s (%d targets, sha %s)", str(dataOf(body), "result"), str(run, "external_id"), len(results), sha)
@@ -2287,7 +2481,7 @@ func factoryEvidenceRun(env *factoryEnv, o evidenceOpts) error {
 	for _, w := range stringSlice(dataOf(body)["warnings"]) {
 		printWarning("%s", w)
 	}
-	return nil
+	return runID, nil
 }
 
 // ---------------------------------------------------------------- drift
@@ -2474,7 +2668,9 @@ func init() {
 
 	factoryGatesCmd.Flags().StringVar(&gatesKind, "kind", "", "show only this kind (approval_request, decision, question, roadblock, …)")
 	factoryGatesCmd.Flags().StringVar(&gatesState, "state", "", "list gate history in this state: open, answered, dismissed, superseded, all (default: the open queue)")
+	factoryGatesCmd.Flags().BoolVar(&gatesAudit, "audit", false, "audit one gate: answer and application blockers, review provenance and next actions")
 	factoryGatesCmd.Flags().BoolVar(&gatesJSON, "json", false, "emit the server's gate envelope as JSON on stdout and nothing else")
+	addPageFlags(factoryGatesCmd, &gatesPage)
 
 	factoryAnswerCmd.Flags().StringVar(&answerText, "text", "", "the answer, recorded verbatim as the USER: decision")
 	factoryAnswerCmd.Flags().StringVar(&answerOptions, "options", "", "chosen option keys, comma-separated")
@@ -2489,6 +2685,7 @@ func init() {
 	factoryEvidenceCmd.Flags().StringVar(&evidenceFail, "fail", "", "failing target ids, comma-separated")
 	factoryEvidenceCmd.Flags().StringVar(&evidenceSkip, "skip", "", "skipped target ids, comma-separated")
 	factoryEvidenceCmd.Flags().StringVar(&evidenceRole, "role", "", "evidence role stamped on every result this run — RED for a red-first result (upper-cased here; the server matches RED exactly); empty = unset")
+	factoryEvidenceCmd.Flags().StringVar(&evidenceFile, "file", "", "record several runs from a JSON array of {pass, fail, skip, role, revision, kind, log, totals}, one run per entry with an id derived from the entry")
 	factoryEvidenceCmd.Flags().StringVar(&evidenceRevision, "revision", "", "pin the run to this commit (sha, tag or branch) instead of HEAD — record a RED at the RED commit without a checkout")
 
 	// Q-ARCH-016 (USER:2026-08-18): --report was advertised in drift's own

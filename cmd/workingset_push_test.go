@@ -12,6 +12,7 @@ package cmd
 // exist.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,8 +257,137 @@ func TestREQCROSS314AnUnknownMemberFileIsRefusedWithTheCreateHint(t *testing.T) 
 	if err == nil {
 		t.Fatal("push accepted a member file whose id the store does not know")
 	}
-	if !strings.Contains(err.Error(), "REQ-CROSS-999") || !strings.Contains(err.Error(), "author create") {
-		t.Fatalf("refusal should name the file and hint at author create: %v", err)
+	if !strings.Contains(err.Error(), "REQ-CROSS-999") || !strings.Contains(err.Error(), "author apply") {
+		t.Fatalf("refusal should name the file and point at author apply: %v", err)
+	}
+	if len(fx.authorPosts) != 0 {
+		t.Fatalf("the refusal comes before any write, posted %v", fx.authorPosts)
+	}
+}
+
+// unknownToTheStore is a member file for an id the store does not know. It
+// states its kind, so nothing but the rule itself keeps push from creating it.
+const unknownToTheStore = "# REQ-CROSS-999 — working-set (authoring)\n\n- **Kind:** system\n- **Served fingerprint:** none\n- **Context:** authoring:authoring-x\n\n" +
+	"## title\n```authoring:editable\nnot in the store\n```\n\n" +
+	"## context\n```authoring:editable\nCROSS\n```\n\n" +
+	"## boundary\n```authoring:editable\nthe CLI\n```\n"
+
+// declareMember adds id to the scope file's members block.
+func declareMember(t *testing.T, dir, id string) {
+	t.Helper()
+	edit(t, filepath.Join(dir, "EPIC-CLI-008.md"), func(s string) string {
+		out := strings.Replace(s, "- REQ-CROSS-311\n```", "- REQ-CROSS-311\n- "+id+"\n```", 1)
+		if out == s {
+			t.Fatalf("the scope file has no members block to declare %s in:\n%s", id, s)
+		}
+		return out
+	})
+}
+
+// REQ-CROSS-442 (owner decision USER:2026-09-28, option A): push never
+// creates a record; `author apply` is the only create path. A file for an id
+// the store does not know is refused before any write, whether the frozen
+// selection holds it, the scope file declares it in the same push, or
+// neither — and the refusal names `author apply`.
+func TestREQCROSS442PushRefusesAnUnknownIDBeforeAnyWrite(t *testing.T) {
+	cases := map[string]func(fx *wsFixture, dir string){
+		"outside the selection": func(*wsFixture, string) {},
+		"declared in the scope file in the same push": func(_ *wsFixture, dir string) {
+			declareMember(t, dir, "REQ-CROSS-999")
+		},
+		"a member of the frozen selection": func(fx *wsFixture, _ string) {
+			fx.workSelection["current"].(map[string]any)["members"] = []any{"REQ-CROSS-310", "REQ-CROSS-311", "REQ-CROSS-999"}
+			// The scope's served membership is what the pulled scope file shows.
+			fx.epics[0].(map[string]any)["requirement_external_ids"] = []any{"REQ-CROSS-310", "REQ-CROSS-311"}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			fx := scopeFixture()
+			env, dir := pulledScope(t, fx)
+			edit(t, memberPath(dir, "REQ-CROSS-310"), func(s string) string {
+				return strings.Replace(s, "the reads", "changed 310", 1)
+			})
+			if err := os.WriteFile(memberPath(dir, "REQ-CROSS-999"), []byte(unknownToTheStore), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			setup(fx, dir)
+
+			fx.authorPosts = nil
+			err := workingSetPush(env, false)
+			if err == nil {
+				t.Fatal("push accepted a file for an id the store does not know")
+			}
+			if len(fx.authorPosts) != 0 {
+				t.Fatalf("the refusal comes before any write, posted %v", fx.authorPosts)
+			}
+			for _, want := range []string{"REQ-CROSS-999", "author apply"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal names the id and the create path; %q is missing: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// A members/ file whose record the store knows, but the frozen selection
+// does not hold, is reported as skipped. The scope's served membership holds
+// it, so the advice must not say it is not a member: it is not in the frozen
+// selection, and re-selecting is what lets push send it.
+func TestREQCROSS442PushSkipsAServedMemberOutsideTheFrozenSelection(t *testing.T) {
+	fx := scopeFixture()
+	fx.epics[0].(map[string]any)["requirement_external_ids"] = []any{"REQ-CROSS-310", "REQ-CROSS-311", "REQ-CROSS-999"}
+	fx.requirements = append(fx.requirements, map[string]any{"external_id": "REQ-CROSS-999", "title": "a served member",
+		"context": "CROSS", "boundary": "the CLI", "work_status": "PROPOSED", "fingerprint": "sr999-fp"})
+	env, dir := pulledScope(t, fx)
+	file := "# REQ-CROSS-999 — working-set (authoring)\n\n- **Served fingerprint:** sr999-fp\n- **Context:** authoring:authoring-x\n\n" +
+		"## title\n```authoring:editable\na served member\n```\n\n" +
+		"## boundary\n```authoring:editable\nthe CLI, edited\n```\n"
+	if err := os.WriteFile(memberPath(dir, "REQ-CROSS-999"), []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fx.authorPosts = nil
+	var pushErr error
+	out := captureOut(t, func() { pushErr = workingSetPush(env, false) })
+	if pushErr != nil {
+		t.Fatalf("push: %v\n%s", pushErr, out)
+	}
+	if len(fx.authorPosts) != 0 {
+		t.Errorf("a file outside the frozen selection is not pushed, posted %v", fx.authorPosts)
+	}
+	for _, want := range []string{"REQ-CROSS-999", "skipped", "frozen selection", "re-select"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the skip line misses %q, got:\n%s", want, out)
+		}
+	}
+	for _, wrong := range []string{"make it a member", "not a member"} {
+		if strings.Contains(out, wrong) {
+			t.Errorf("the scope's served membership holds REQ-CROSS-999; the advice must not say %q:\n%s", wrong, out)
+		}
+	}
+}
+
+// REQ-CROSS-442 (revised): lane_class is one of the SR's mutable fields, so a
+// pulled SR shows it and push can change it.
+func TestREQCROSS442PulledSRShowsAndPushesLaneClass(t *testing.T) {
+	fx := scopeFixture()
+	fx.requirements[0].(map[string]any)["lane_class"] = "wording"
+	env, dir := pulledScope(t, fx)
+
+	file := readScopeFile(t, memberPath(dir, "REQ-CROSS-310"))
+	if !strings.Contains(file, "## lane_class\n```authoring:editable\nwording\n```") {
+		t.Fatalf("the pulled SR does not show its lane class as an editable field:\n%s", file)
+	}
+	edit(t, memberPath(dir, "REQ-CROSS-310"), func(s string) string {
+		return strings.Replace(s, "```authoring:editable\nwording\n```", "```authoring:editable\npresentation\n```", 1)
+	})
+	fx.authorPosts = nil
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if rec := patchPostFor(fx, "REQ-CROSS-310"); str(rec, "lane_class") != "presentation" {
+		t.Fatalf("the patch must carry the edited lane class, posted %v", rec)
 	}
 }
 
@@ -673,5 +803,61 @@ func TestREQCROSS331PushSkipsAStubWithTrailingWhitespaceOnTheMarker(t *testing.T
 	}
 	if !strings.Contains(out, "packet section red_strategy — unfilled stub, not pushed (30-red-strategy.md)") {
 		t.Fatalf("the trailing-whitespace stub must be named unfilled, got:\n%s", out)
+	}
+}
+
+// SR-CLI-028-001 C2 (EPIC-CLI-028): the scaffolded inventory stub follows the
+// fixed-key path — `15-state-inventory.md` maps to `state_inventory`, and an
+// untouched stub is not pushed (REQ-CROSS-331 AC1 preserved for the new key).
+// RED: the file keys to `15-state-inventory` and is pushed as an extra section.
+func TestSRCLI028001PushSkipsAnUntouchedStateInventoryStub(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	writePacketFile(t, dir, "15-state-inventory.md", packetStubMarker("state_inventory", "epic", "EPIC-CLI-008")+"\n")
+
+	fx.authorPosts = nil
+	var pushErr error
+	out := captureOut(t, func() { pushErr = workingSetPush(env, false) })
+	if pushErr != nil {
+		t.Fatalf("push: %v", pushErr)
+	}
+	for _, key := range []string{"state_inventory", "15-state-inventory"} {
+		if packetPostFor(fx, key) != nil {
+			t.Fatalf("an untouched inventory stub must not be pushed (as %s): %v", key, fx.authorPosts)
+		}
+	}
+	if !strings.Contains(out, "packet section state_inventory — unfilled stub, not pushed (15-state-inventory.md)") {
+		t.Fatalf("the plan must name the skipped stub by its canonical key, got:\n%s", out)
+	}
+}
+
+// REQ-CROSS-489 guard: a scope pull and push carry no trace links, even from a
+// server that serves the key on every requirement entry.
+func TestREQCROSS489ScopePullAndPushCarryNoTraceLinks(t *testing.T) {
+	fx := scopeFixture()
+	var queries []string
+	env := wsEnv(t, tlServe(t, fx, &queries, tlServedTraces()))
+	if err := workingSetPullScope(env, false, wsNow); err != nil {
+		t.Fatalf("pull --scope: %v", err)
+	}
+	dir := scopeDir(env)
+	path := memberPath(dir, "REQ-CROSS-310")
+	if body := readScopeFile(t, path); strings.Contains(body, "Trace links") {
+		t.Fatalf("the member file must not carry trace links:\n%s", body)
+	}
+	edit(t, path, func(s string) string { return strings.Replace(s, "the reads", "the reads AND writes", 1) })
+
+	fx.authorPosts = nil
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(fx.authorPosts) == 0 {
+		t.Fatal("push posted nothing; the guard checks nothing")
+	}
+	for _, post := range fx.authorPosts {
+		raw, _ := json.Marshal(post)
+		if strings.Contains(string(raw), "traces") || strings.Contains(string(raw), "trace_status") {
+			t.Errorf("a push must not send trace links: %s", raw)
+		}
 	}
 }

@@ -26,6 +26,10 @@ func TestSubagentStoreWriteIsDeniedThroughTheGateAdapter(t *testing.T) {
 		"modernpath reverse-engineer capture-source --run r --repository catalog --root .",
 		"modernpath reverse-engineer publish --run r --group g --file group.json",
 		"modernpath reverse-engineer decide --file decision.json",
+		"modernpath reverse-engineer execution-proof --file execution.json",
+		"modernpath reverse-engineer delivery-proof --file delivery.json",
+		"modernpath reverse-engineer acceptance-open --file open.json",
+		"modernpath reverse-engineer acceptance-apply --gate G --file apply.json",
 		"modernpath factory answer G --options approve",
 		"modernpath factory evidence --pass REQ-1",
 		"modernpath working-set select EPIC-1 --kind epic",
@@ -170,5 +174,69 @@ func TestSubagentMarkerIsAnIdentityNotALabel(t *testing.T) {
 	}
 	if m := subagentMarker([]byte("not json")); m != "" {
 		t.Errorf("malformed payload yields marker %q; the guard must fail open", m)
+	}
+}
+
+// REQ-CROSS-451: every process verb that writes is denied to a delegated
+// agent, the batch forms included, however flags sit between command words.
+func TestREQCROSS451GuardDeniesEveryProcessWriteWhereverFlagsSit(t *testing.T) {
+	sub := map[string]string{"agent_id": "abc123"}
+	for _, cmd := range []string{
+		"modernpath process advance REQ-1 --log RUN-1",
+		"modernpath process advance REQ-1 --log RUN-1 --piece EPIC-1",
+		"modernpath process --piece EPIC-1 advance REQ-1 --log RUN-1",
+		"modernpath process --piece=EPIC-1 advance REQ-1",
+		"modernpath process -v advance REQ-1",
+		"modernpath process advance --all --piece EPIC-1 --log RUN-1",
+		"modernpath process enter EPIC-1",
+		"modernpath process --piece EPIC-1 enter",
+		"modernpath process complete EPIC-1",
+		"modernpath process review record --file review.json",
+		"modernpath process review --piece EPIC-1 record --file review.json",
+		"modernpath --verbose process --piece EPIC-1 complete",
+		"modernpath factory --verbose answer G --options approve",
+		"modernpath factory evidence --file runs.json",
+		"modernpath process findings --piece EPIC-1 add --id F1",
+		"modernpath process findings add --file findings.json",
+		"modernpath process findings disposition --file d.json",
+		"modernpath working-set --piece EPIC-1 push",
+		"modernpath --api-url https://x working-set --piece EPIC-1 select EPIC-1",
+		"modernpath author apply --file plan.yaml",
+		"modernpath author --verbose apply --file plan.yaml",
+	} {
+		out := processGateHookPayload(hookPayload(sub, cmd))
+		if !strings.Contains(out, `"permissionDecision":"deny"`) {
+			t.Errorf("subagent %q was not denied: %s", cmd, out)
+		}
+	}
+}
+
+func TestREQCROSS451GuardStillPassesReadsAndMainSession(t *testing.T) {
+	sub := map[string]string{"agent_id": "abc123"}
+	for _, cmd := range []string{
+		"modernpath process next",
+		"modernpath process --piece EPIC-1 next",
+		"modernpath process check --phase build",
+		"modernpath process --piece EPIC-1 check --phase entry",
+		"modernpath working-set pull REQ-1",
+		"modernpath working-set --piece EPIC-1 pull --scope",
+		"modernpath process findings list",
+		"modernpath process findings --piece EPIC-1 list",
+		"modernpath -v process next",
+	} {
+		if out := processGateHookPayload(hookPayload(sub, cmd)); out != "{}" {
+			t.Errorf("subagent read %q was not passed through: %s", cmd, out)
+		}
+	}
+	for _, cmd := range []string{
+		"modernpath process advance REQ-1 --log RUN-1",
+		"modernpath process --piece EPIC-1 enter",
+		"modernpath process complete EPIC-1",
+		"modernpath process review record --file review.json",
+		"modernpath author apply --file plan.yaml",
+	} {
+		if out := processGateHookPayload(hookPayload(nil, cmd)); out != "{}" {
+			t.Errorf("main-session write %q was denied: %s", cmd, out)
+		}
 	}
 }

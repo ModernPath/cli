@@ -24,11 +24,16 @@ type Patch struct {
 	CitationsSet bool
 	Relations    []RelOp
 	Members      []MemberOp
+	// Criteria is a structured acceptance replace-set. Diff never sets it (a
+	// working-set file's scenarios are read-only); `author apply`, whose plan
+	// states criteria as structured objects, does (REQ-CROSS-442).
+	Criteria    []any
+	CriteriaSet bool
 }
 
 // Empty reports whether the plan would change nothing (a no-op file).
 func (p *Patch) Empty() bool {
-	return len(p.Fields) == 0 && !p.CitationsSet &&
+	return len(p.Fields) == 0 && !p.CitationsSet && !p.CriteriaSet &&
 		len(p.Relations) == 0 && len(p.Members) == 0
 }
 

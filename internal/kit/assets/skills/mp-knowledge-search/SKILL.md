@@ -1,46 +1,68 @@
 ---
 name: mp-knowledge-search
-description: Query the platform's knowledge core — search, ask, read-doc, read-file — before reading a codebase by hand. Use when writing about the codebase, locating which subsystem owns a behavior, or deciding where to look; the analysis says where to look, grep only says where a word appears.
+description: Find and read the local knowledge-core export before inspecting code. Use when writing about the codebase or locating a subsystem; use live search or read-doc when the export lacks material or a current server answer is needed.
 ---
 
-# Querying the knowledge core
+# Reading the knowledge core
 
 <!-- TOOL-OWNED. Installed by `modernpath install`. -->
 
 The platform has already analyzed this repository. Its subsystem and module
-documentation, its data model and its file analyses are queryable — and they are
-**derived from this code**, not from anyone's memory of it.
+documentation, data model, and file analyses are derived from the code. In a
+bound workspace, `modernpath process prepare-inputs` checks the delivery
+context and reports local documentation sync and server update timestamps before
+sourced work. It does not refresh the export. Run `modernpath docs sync`
+explicitly when a refresh is needed.
 
-Any pass that writes about the codebase should ask the knowledge core **before**
-it starts reading files, for one reason: it tells you *where to look*. Grep tells
-you where a word appears.
+## Search locally first
 
-## The four commands
+Search locally first, in this order, and stop at the step that answers:
+
+1. **The repository.** Search the code and tests for the requirement id and the
+   names you are working with — `rg -n "REQ-CROSS-12" .` finds the code, the
+   tests and the records that cite it. The code decides.
+2. **The requirement records.** `modernpath working-set pull <id>` materializes
+   the requirement, its epic and its traces as readable files.
+3. **The docs export.** Find documents under `.modernpath/<system-slug>/` with
+   `rg`, then read the matching files directly:
+
+   ```sh
+   rg -n "authentication" .modernpath/<system-slug>/
+   cat <matching-document>
+   ```
+
+4. **`modernpath ask "<question>"`** for why and how questions the local search
+   cannot answer. It costs a model call; the steps above do not.
+
+These local reads need no additional ModernPath API call. Use the live commands
+below when the export lacks the material or the answer must reflect current
+server state. The local export is a cache; if it and the API disagree, the API
+is right.
+
+## Live commands when needed
 
 | Command | Use it for |
 |---|---|
-| `modernpath search "<terms>"` | find which documents and files concern a topic |
-| `modernpath ask "<question>"` | agentic search — finds material and synthesises an answer |
-| `modernpath read-doc --id=<id>` | read a generated document in full |
-| `modernpath read-file <path>` | read an analyzed source file through the API |
+| `modernpath search "<terms>"` | find documents and files absent from the export, or get live pointers |
+| `modernpath read-doc --id=<id>` | read a generated document in full from the server |
+| `modernpath ask "<question>"` | get a synthesized live answer when document reads are insufficient |
+| `modernpath read-file <path>` | read an analyzed source file through the API when the local source is unavailable |
 
 `search` takes `--docs-only`, `--files-only`, `--limit`. `ask` takes
 `--format=markdown` when you want output you can paste.
 
-## Enumerate before you search
+## When the export lacks material
 
-**`modernpath read-doc --list` prints the whole corpus** — every generated
-document with its id, title and one-line summary. Verified : 40
-documents on a real system.
+`modernpath read-doc --list` lists the server's generated documents with their
+ids, titles, and summaries. Use it when local lookup cannot find the material,
+then `read-doc --id=<id>` for the document you need. `--tier` (`module`,
+`subsystem`, `architecture`) and `--angle` (`architecture`, `api`, `data`) narrow
+the list.
 
-Do this **first**. Searching requires guessing the word the corpus used; listing
-does not, and the list is short enough to read. `--tier` (`module`, `subsystem`,
-`architecture`) and `--angle` (`architecture`, `api`, `data`) narrow it.
-
-That ordering matters because the failure below is real: a query for
+Enumeration can help when vocabulary differs: a query for
 `organisation` returned nothing on a system whose documents say `organization`
-throughout. An enumeration would have shown the vocabulary in seconds, and no
-guess can recover from a word the corpus does not use.
+throughout. A local filename or content search is the first check after
+preparation; a server list is useful if that check misses relevant material.
 
 `modernpath ask` also takes `--brief` (answer only, no sources) and
 `--iterations N` (1–10, default 5) when a question needs more or less digging.
@@ -77,16 +99,18 @@ relative to the working tree. So:
   this repository"* from a plausible reading; the repository described one
   plainly in a file the pass had not opened.
 - **If the export and the API disagree, the API is right.** The local export
-  under `.modernpath/modernpath/` is a cache, and a stale cache answers
+  under `.modernpath/<system-slug>/` is a cache, and a stale cache answers
   confidently. Refresh it with `modernpath docs sync`.
 
 ## The local export
 
-`.modernpath/modernpath/` holds the analysis as files — free to read, whole
-documents rather than excerpts. Use `search` to *find* the id, then read the
-export; fall back to `read-doc` for anything not exported.
+`.modernpath/<system-slug>/` holds the analysis as files — free to read, whole
+documents rather than excerpts. Use `rg` to find and file reads to inspect
+them; fall back to `search` or `read-doc` for material not exported or when a
+live answer is needed.
 
-If the directory is missing, the export has not been run here.
+If the directory is missing, run `modernpath docs sync` in the bound workspace
+to download it, or use live search/read-doc for the material you need.
 
 ## When the corpus is empty
 

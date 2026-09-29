@@ -57,12 +57,14 @@ type Record struct {
 	Cleared []string
 }
 
-// mutableFields mirrors SR-CLI-0081's Elixir constants exactly (per kind); the
-// parity test pins the two together so an editable field never drops silently.
+// mutableFields mirrors the server's `Core.Author.mutable_fields/1` exactly
+// (per kind, in order); the parity test reads the server source, so a field
+// added there fails here instead of dropping silently. lane_class is the SR's
+// small-change lane class (REQ-CROSS-454).
 var mutableFields = map[string][]string{
-	"system": {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "boundary", "rationale", "verification_method", "source_citations", "parent_external_ids"},
+	"system": {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "boundary", "rationale", "verification_method", "lane_class", "source_citations", "parent_external_ids"},
 	"user":   {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "source_citations"},
-	"epic":   {"title", "description", "outcome_source", "scope", "impact_assessment", "shared_context", "generated_from", "owner"},
+	"epic":   {"title", "description", "outcome_source", "scope", "impact_assessment", "shared_context", "generated_from", "owner", "source_citations"},
 }
 
 // MutableFields is the ordered mutable-field set for a kind.

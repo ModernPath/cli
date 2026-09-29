@@ -573,7 +573,11 @@ func TestTheHookReturnsBeforeTheSyncFinishes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			marker := filepath.Join(dir, "sync-ran")
-			stub := "#!/bin/sh\nsleep 3\ntouch " + marker + "\n"
+			release := filepath.Join(dir, "release")
+			// The stub sync holds until the test releases it (at most 10 s),
+			// so a hook that waited for it could not return inside the bound,
+			// and a detached one does not make the test wait a fixed time.
+			stub := "#!/bin/sh\ni=0\nwhile [ ! -e " + release + " ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done\ntouch " + marker + "\n"
 			if err := os.WriteFile(filepath.Join(dir, "modernpath"), []byte(stub), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -592,6 +596,12 @@ func TestTheHookReturnsBeforeTheSyncFinishes(t *testing.T) {
 			}
 			if tc.name == "codex" && string(out) != "{}" {
 				t.Fatalf("codex validates Stop output as JSON, got %q", out)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Fatalf("the sync finished before it was released — the stub did not hold")
+			}
+			if err := os.WriteFile(release, nil, 0o644); err != nil {
+				t.Fatal(err)
 			}
 
 			deadline := time.Now().Add(15 * time.Second)

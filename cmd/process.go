@@ -46,7 +46,7 @@ var processPiece string
 
 // The phase vocabulary `working-set select --phase` accepts.
 var processPhases = []string{
-	"source", "plan", "cold_review", "entry", "build", "verify", "completion", "triage",
+	"source", "plan", "cold_review", "entry", "build", "verify", "completion", "triage", "reverse_engineer_verify", "reverse_engineer_accept",
 }
 
 var processCheckCmd = &cobra.Command{
@@ -108,26 +108,45 @@ func readDeliveryContext(env *factoryEnv) (*deliveryContextResponse, error) {
 }
 
 func readDeliveryContextFor(env *factoryEnv, piece string) (*deliveryContextResponse, error) {
+	resp, pieces, err := readDeliveryContextOrHeld(env, piece)
+	if err == nil && pieces != nil {
+		_, err = heldPiecesRefusal(map[string]any{"pieces": toAnySlice(pieces)})
+	}
+	return resp, err
+}
+
+func toAnySlice(ids []string) []any {
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = id
+	}
+	return out
+}
+
+// readDeliveryContextOrHeld is the delivery-context read that hands back the
+// held pieces, instead of a refusal, when the caller holds several and named
+// none (REQ-CROSS-446) — for the one read that summarizes them.
+func readDeliveryContextOrHeld(env *factoryEnv, piece string) (*deliveryContextResponse, []string, error) {
 	status, body, err := env.call("GET",
 		deliveryContextPathFor(env, piece), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if status != 200 {
-		if ok, err := heldPiecesRefusal(body); ok {
-			return nil, err
+		if pieces := stringSlice(body["pieces"]); len(pieces) > 0 {
+			return nil, pieces, nil
 		}
-		return nil, fmt.Errorf("delivery-context read returned HTTP %d", status)
+		return nil, nil, fmt.Errorf("delivery-context read returned HTTP %d", status)
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var resp deliveryContextResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, fmt.Errorf("delivery-context response was not the expected shape: %w", err)
+		return nil, nil, fmt.Errorf("delivery-context response was not the expected shape: %w", err)
 	}
-	return &resp, nil
+	return &resp, nil, nil
 }
 
 func processCheck(env *factoryEnv, phase string) error {
@@ -198,10 +217,11 @@ var processNextCmd = &cobra.Command{
 to run. It never writes.
 
 The read is caller-scoped. When you hold SEVERAL current pieces and name
-none, the server refuses by name — "you hold N current pieces: A, B — name
-one with --piece <id>" — and nothing is routed; "no current selection" is
-printed only when you hold none. Pass --piece <id> (a scope you took with
-working-set select) to route one.
+none, it prints one block per held piece — its scope, phase, why, the skill
+to run and the gates waiting on it — names the --piece <id> remedy the scoped
+verbs need, and exits 0; "no current selection" is printed only when you
+hold none. Pass --piece <id> (a scope you took with working-set select) to
+route one.
 
 The packet aggregate is independent of the process revision: it folds the
 scope's content, membership and canonical sections — not the server's process
@@ -219,14 +239,20 @@ it just no longer pins a decision.`,
 }
 
 func processNext(env *factoryEnv) error {
-	resp, err := readDeliveryContext(env)
+	resp, held, err := readDeliveryContextOrHeld(env, processPiece)
 	if err != nil {
 		return err
 	}
-	d := resp.Data
 	if note := storeBackedNote(env.Root); note != "" {
 		fmt.Println(note)
 	}
+	if held != nil {
+		// REQ-CROSS-446 (DC-3, DC-7): several held pieces are summarized, one
+		// block each, never refused.
+		printHeldPiecesSummary(env, held)
+		return nil
+	}
+	d := resp.Data
 	if d.DerivedPhase == "" {
 		// A nil route is not always "no selection": the decision table also returns
 		// a nil route with derived_reason "complete" (the loop is finished) or
@@ -673,14 +699,16 @@ func init() {
 	processAdvanceCmd.Flags().StringVar(&advanceBody, "body", "", "the lower trace's verdict details (RED and GREEN observations, cleanup)")
 	processCmd.AddCommand(processAdvanceCmd)
 	processEnterCmd.Flags().StringVar(&enterGateID, "gate-id", "", "the gate id to open (default ENTRY-<scope>; a successor when that id is taken)")
-	processEnterCmd.Flags().StringVar(&enterBriefFile, "brief-file", "", "JSON brief object, overriding the packet's entry_brief section")
+	processEnterCmd.Flags().StringVar(&enterBriefFile, "brief-file", "", "a JSON brief object or the markdown brief bullets, overriding the packet's entry_brief section")
 	processEnterCmd.Flags().BoolVar(&enterDryRun, "dry-run", false, "print the gate the verb would open and post nothing")
+	processEnterCmd.Flags().StringVar(&enterAllowDrift, "allow-drift", "", "accept reconnaissance drift on the human's word: a USER:<date>:<why> source, recorded on the gate with the tip and the changed cited paths")
+	processEnterCmd.Flags().BoolVar(&enterNoFetch, "no-fetch", false, "skip the fetch of the remote default branch before the drift check (offline fixtures only)")
 	processCmd.AddCommand(processEnterCmd)
 	processCompleteCmd.Flags().StringVar(&completeLog, "log", "", "the delivered run's reference (CI url or command) the completion evidence cites (required)")
 	processCompleteCmd.Flags().StringVar(&completeKind, "kind", "ci", "the evidence run kind: ci|local_test|browser_verification|manual")
 	processCompleteCmd.Flags().StringVar(&completeBody, "body", "", "audit disclosures appended to the completion trace (gaps, deferrals, decisions)")
 	processCompleteCmd.Flags().StringVar(&completeGateID, "gate-id", "", "the gate id to open (default COMPLETE-<scope>; a successor when that id is taken)")
-	processCompleteCmd.Flags().StringVar(&completeBriefFile, "brief-file", "", "JSON brief object, overriding the packet's completion_brief section")
+	processCompleteCmd.Flags().StringVar(&completeBriefFile, "brief-file", "", "a JSON brief object or the markdown brief bullets, overriding the packet's completion_brief section")
 	processCompleteCmd.Flags().BoolVar(&completeDryRun, "dry-run", false, "print the ceremony the verb would run and post nothing")
 	processCompleteCmd.Flags().BoolVar(&completeNoFetch, "no-fetch", false, "skip the fetch of the remote default branch (offline fixtures only)")
 	processCmd.AddCommand(processCompleteCmd)

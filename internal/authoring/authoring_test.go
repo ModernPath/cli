@@ -1,7 +1,11 @@
 package authoring
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -177,18 +181,84 @@ func TestREQCROSS313ProjectionBlocksRoundTripVerbatimAndAreReadOnly(t *testing.T
 	}
 }
 
-// The Go render's mutable-field set per kind must equal the wire's (SR-CLI-0081's
-// Elixir constants). Drift between the two silently drops an editable field.
-func TestREQCROSS313MutableFieldSetMatchesTheWire(t *testing.T) {
-	want := map[string][]string{
-		"system": {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "boundary", "rationale", "verification_method", "source_citations", "parent_external_ids"},
-		"user":   {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "source_citations"},
-		"epic":   {"title", "description", "outcome_source", "scope", "impact_assessment", "shared_context", "generated_from", "owner"},
-	}
-	for kind, exp := range want {
-		if got := MutableFields(kind); !reflect.DeepEqual(got, exp) {
-			t.Fatalf("MutableFields(%q) = %v, want %v", kind, got, exp)
+// serverMutableFieldsSource is the server's own definition of the mutable-field
+// set per kind: `Core.Author.mutable_fields/1` returns these module attributes.
+// No route serves them, so the parity test reads the source the server is
+// built from, so a field the server adds cannot drift past the CLI (REQ-CROSS-442).
+const serverMutableFieldsSource = "apps/core/lib/core/author/content.ex"
+
+var mutableFieldAttrs = map[string]string{"system": "sr", "user": "ur", "epic": "epic"}
+
+// servedMutableFields parses `@<kind>_mutable_fields ~w(...)a` per kind.
+func servedMutableFields(t *testing.T, src string) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for kind, attr := range mutableFieldAttrs {
+		m := regexp.MustCompile(`@` + attr + `_mutable_fields\s+~w\(([^)]*)\)a`).FindStringSubmatch(src)
+		if m == nil {
+			t.Fatalf("%s: no @%s_mutable_fields ~w(...)a — the parity read no longer matches the server's definition", serverMutableFieldsSource, attr)
 		}
+		out[kind] = strings.Fields(m[1])
+	}
+	return out
+}
+
+// mutableFieldDrift names every field the server lists for a kind that the
+// CLI lacks, and every field the CLI lists that the server does not.
+func mutableFieldDrift(served map[string][]string, cli func(string) []string) []string {
+	var drift []string
+	for _, kind := range []string{"system", "user", "epic"} {
+		have := map[string]bool{}
+		for _, f := range cli(kind) {
+			have[f] = true
+		}
+		want := map[string]bool{}
+		for _, f := range served[kind] {
+			want[f] = true
+			if !have[f] {
+				drift = append(drift, kind+": the server's "+f+" is missing from the CLI")
+			}
+		}
+		for _, f := range cli(kind) {
+			if !want[f] {
+				drift = append(drift, kind+": the CLI's "+f+" is not a server mutable field")
+			}
+		}
+	}
+	return drift
+}
+
+// The Go render's mutable-field set per kind must equal the server's
+// (`Core.Author.mutable_fields/1`), read from the server source rather than a
+// copy, so a new server field fails here instead of staying green. It runs in
+// the monorepo checkout; the published CLI tree has no server source.
+func TestREQCROSS313MutableFieldSetMatchesTheWire(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "../../../..", serverMutableFieldsSource))
+	if err != nil {
+		t.Skipf("%s not present (%v) — the server source lives only in the monorepo", serverMutableFieldsSource, err)
+	}
+	served := servedMutableFields(t, string(raw))
+	if drift := mutableFieldDrift(served, MutableFields); len(drift) > 0 {
+		t.Fatalf("the CLI's mutable fields drifted from %s:\n  %s", serverMutableFieldsSource, strings.Join(drift, "\n  "))
+	}
+	for kind, want := range served {
+		if got := MutableFields(kind); !reflect.DeepEqual(got, want) {
+			t.Errorf("MutableFields(%q) = %v, want the server's order %v", kind, got, want)
+		}
+	}
+}
+
+// The parity check fails on a served field the CLI lacks: a server source
+// with one more SR field is named as drift.
+func TestREQCROSS442ParityCheckNamesAServedFieldTheCLILacks(t *testing.T) {
+	cli := func(kind string) []string {
+		return map[string][]string{"system": {"title"}, "user": {"title"}, "epic": {"title"}}[kind]
+	}
+	src := "@sr_mutable_fields ~w(title lane_class)a\n@ur_mutable_fields ~w(title)a\n@epic_mutable_fields ~w(title)a\n"
+	drift := mutableFieldDrift(servedMutableFields(t, src), cli)
+	if len(drift) != 1 || !strings.Contains(drift[0], "lane_class") {
+		t.Fatalf("a served field the CLI lacks must be named as drift, got %v", drift)
 	}
 }
 

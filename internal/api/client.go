@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -19,8 +20,17 @@ const exportDownloadTimeout = 30 * time.Minute
 
 var exportPollInterval = 2 * time.Second
 
+// SetExportPollInterval changes how often an export job is polled and returns
+// a function that restores the previous interval. Tests in other packages use
+// it so a fake export server does not cost two real seconds per sync.
+func SetExportPollInterval(d time.Duration) (restore func()) {
+	previous := exportPollInterval
+	exportPollInterval = d
+	return func() { exportPollInterval = previous }
+}
+
 // REQ-CROSS-176: how long an unchanged export status may stay silent. A big
-// export sits in "generating" for minutes; without a periodic report the wait
+// export sits in "running" for minutes; without a periodic report the wait
 // is indistinguishable from a hang, and users kill syncs that were working.
 var exportHeartbeatEvery = 15 * time.Second
 
@@ -276,24 +286,36 @@ func (c *Client) GetSystem(id int) (*System, error) {
 }
 
 type exportJobStartResponse struct {
-	ID           string `json:"id"`
-	Status       string `json:"status"`
-	PollPath     string `json:"poll_path"`
-	DownloadPath string `json:"download_path"`
+	ExportID string `json:"export_id"`
+	Status   string `json:"status"`
+	PollPath string `json:"poll_path"`
+	LinkPath string `json:"link_path"`
 }
 
 type exportJobStatusResponse struct {
-	ID             string `json:"id"`
-	Status         string `json:"status"`
-	ErrorMessage   string `json:"error_message"`
-	ProgressStatus string `json:"progress_status"`
-	DownloadPath   string `json:"download_path"`
+	ExportID string `json:"export_id"`
+	Status   string `json:"status"`
+	Error    string `json:"error"`
 }
 
+// exportLinkResponse is the answer of GET link_path (REQ-OBAN-018): url is an
+// absolute signed storage URL, or the API's own file route.
+type exportLinkResponse struct {
+	URL       string `json:"url"`
+	Filename  string `json:"filename"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// ErrExportExpired marks a /link answer of 410: the export's zip is gone from
+// the store, and only a new export brings it back.
+var ErrExportExpired = errors.New("the export expired before it was downloaded; run the export again")
+
+// ExportProgressFunc receives the export job's status when it changes, and a
+// heartbeat detail with the elapsed time while it does not.
 type ExportProgressFunc func(status, progress string)
 
 // DownloadExport downloads the system export as a zip file.
-// Uses async export (POST + poll + file GET) so each HTTP call returns quickly — required when
+// Uses async export (POST + poll + link + file GET) so each HTTP call returns quickly — required when
 // a front load balancer has a low idle timeout (e.g. Hetzner Cloud ~60s).
 func (c *Client) DownloadExport(systemID int) ([]byte, error) {
 	return c.DownloadExportWithProgress(systemID, nil)
@@ -340,16 +362,16 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 	if err := json.Unmarshal(startBody, &started); err != nil {
 		return nil, fmt.Errorf("parse start export: %w", err)
 	}
-	if started.PollPath == "" || started.DownloadPath == "" {
+	if started.PollPath == "" || started.LinkPath == "" {
 		return nil, fmt.Errorf("invalid start export response (missing paths)")
 	}
 
-	pollPath := canonicalExportJobPath(started.PollPath, systemID, started.ID, false)
+	pollPath := canonicalExportJobPath(started.PollPath, systemID, started.ExportID, "")
+	linkPath := canonicalExportJobPath(started.LinkPath, systemID, started.ExportID, "/link")
 	pollURL := apiBase + pollPath
 	begun := time.Now()
 	deadline := begun.Add(exportDownloadTimeout)
 	var lastStatus string
-	var lastProgress string
 	lastReport := begun
 	for time.Now().Before(deadline) {
 		time.Sleep(exportPollInterval)
@@ -385,58 +407,141 @@ func (c *Client) DownloadExportWithProgress(systemID int, progress ExportProgres
 		if err := json.Unmarshal(pb, &st); err != nil {
 			return nil, fmt.Errorf("parse export status: %w", err)
 		}
-		changed := st.Status != lastStatus || st.ProgressStatus != lastProgress
-		if progress != nil && changed {
-			progress(st.Status, st.ProgressStatus)
-			lastProgress = st.ProgressStatus
+		if progress != nil && st.Status != lastStatus {
+			progress(st.Status, "")
 			lastReport = time.Now()
 		} else if progress != nil && time.Since(lastReport) >= exportHeartbeatEvery {
 			// Heartbeat: nothing changed, but say so — a working wait and a
 			// dead one must not look identical (REQ-CROSS-176).
-			detail := "still working"
-			if st.ProgressStatus != "" {
-				detail = st.ProgressStatus + " — still working"
-			}
-			progress(st.Status, fmt.Sprintf("%s, %s elapsed", detail, time.Since(begun).Round(time.Second)))
+			progress(st.Status, fmt.Sprintf("still working, %s elapsed", time.Since(begun).Round(time.Second)))
 			lastReport = time.Now()
 		}
 		lastStatus = st.Status
 		switch st.Status {
-		case "ready", "completed", "complete", "succeeded", "success":
-			rel := st.DownloadPath
-			if rel == "" {
-				rel = started.DownloadPath
-			}
-			rel = canonicalExportJobPath(rel, systemID, started.ID, true)
-			return c.downloadExportZipByPath(rel)
-		case "failed", "error", "cancelled", "canceled", "expired":
-			msg := strings.TrimSpace(st.ErrorMessage)
+		case "queued", "running":
+		case "ready":
+			return c.downloadExportViaLink(linkPath)
+		case "failed":
+			msg := strings.TrimSpace(st.Error)
 			if msg == "" {
-				msg = fmt.Sprintf("export job ended with status %q", st.Status)
+				msg = "export job failed"
 			}
 			return nil, fmt.Errorf("export failed: %s", msg)
+		default:
+			return nil, fmt.Errorf("export failed: unknown export status %q", st.Status)
 		}
 	}
 	return nil, fmt.Errorf("export timed out waiting for zip (last status %q)", lastStatus)
 }
 
-func canonicalExportJobPath(path string, systemID int, jobID string, file bool) string {
+// canonicalExportJobPath maps a job path the server answered under another
+// route family (`/api/architectures/...`) onto the system route, with suffix
+// "" for the poll path and "/link" for the link path.
+func canonicalExportJobPath(path string, systemID int, exportID string, suffix string) string {
 	path = strings.TrimSpace(path)
-	if path == "" || systemID == 0 || jobID == "" {
+	if path == "" || systemID == 0 || exportID == "" {
 		return path
 	}
 
-	suffix := ""
-	if file {
-		suffix = "/file"
-	}
-
-	canonical := fmt.Sprintf("/api/systems/%d/export/jobs/%s%s", systemID, jobID, suffix)
-	if strings.Contains(path, fmt.Sprintf("/export/jobs/%s%s", jobID, suffix)) {
+	canonical := fmt.Sprintf("/api/systems/%d/export/jobs/%s%s", systemID, exportID, suffix)
+	if strings.HasSuffix(path, fmt.Sprintf("/export/jobs/%s%s", exportID, suffix)) {
 		return canonical
 	}
 
 	return path
+}
+
+// downloadExportViaLink asks link_path where the zip is and fetches it
+// (REQ-OBAN-018). An absolute url is a signed storage URL: it carries its own
+// credential and is fetched without the bearer, which a bucket refuses and
+// which must never leave for a host that is not ours. A path is the API's own
+// file route, resolved against the API base and fetched with the bearer.
+func (c *Client) downloadExportViaLink(linkPath string) ([]byte, error) {
+	linkURL := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + linkPath
+	req, err := http.NewRequest("GET", linkURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	platform.Prepare(req)
+	if err := platform.Authorize(req, c.Token); err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "ModernPath-CLI")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("export link: %w", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read export link response: %w", err)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized:
+		return nil, fmt.Errorf("export link: %w", ErrUnauthorized)
+	case http.StatusGone:
+		return nil, ErrExportExpired
+	default:
+		return nil, exportResponseError("export link", resp.StatusCode, body)
+	}
+
+	var link exportLinkResponse
+	if err := json.Unmarshal(body, &link); err != nil {
+		return nil, fmt.Errorf("parse export link: %w", err)
+	}
+	target := strings.TrimSpace(link.URL)
+	switch {
+	case strings.HasPrefix(target, "/"):
+		return c.downloadExportZipByPath(target)
+	case isAbsoluteHTTPURL(target):
+		return c.downloadSignedExport(target)
+	default:
+		return nil, fmt.Errorf("invalid export link response (url is neither an API path nor an http(s) URL)")
+	}
+}
+
+func isAbsoluteHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "https" || u.Scheme == "http"
+}
+
+// downloadSignedExport fetches a signed storage URL. It never goes through
+// platform.Authorize, so no Authorization header is sent, and the URL is kept
+// out of every error: it is a credential until it expires.
+func (c *Client) downloadSignedExport(signedURL string) ([]byte, error) {
+	req, err := http.NewRequest("GET", signedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid signed export URL")
+	}
+	// A no-op on a storage host; it acts only on a platform API origin.
+	platform.Prepare(req)
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := c.exportHTTPClientForURL(signedURL).Do(req)
+	if err != nil {
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return nil, fmt.Errorf("failed to download export from storage: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download export from storage: HTTP %d", resp.StatusCode)
+	}
+	return checkExportZip(resp, body)
 }
 
 func (c *Client) downloadExportZipByPath(path string) ([]byte, error) {
@@ -468,26 +573,35 @@ func (c *Client) downloadExportZipByPath(path string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to download export: %w", ErrUnauthorized)
 	}
 	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error   string                 `json:"error"`
-			Message string                 `json:"message"`
-			Details map[string]interface{} `json:"details"`
-		}
-		if json.Unmarshal(body, &errResp) == nil {
-			// Show message if available, otherwise show error code
-			if errResp.Message != "" {
-				if errResp.Details != nil {
-					return nil, fmt.Errorf("export failed: %s (details: %v)", errResp.Message, errResp.Details)
-				}
-				return nil, fmt.Errorf("export failed: %s", errResp.Message)
-			}
-			if errResp.Error != "" {
-				return nil, fmt.Errorf("export failed: %s", errResp.Error)
-			}
-		}
-		return nil, fmt.Errorf("failed to download export: HTTP %d", resp.StatusCode)
+		return nil, exportResponseError("failed to download export", resp.StatusCode, body)
 	}
+	return checkExportZip(resp, body)
+}
 
+// exportResponseError renders a non-2xx export answer: the server's message,
+// else its error code, else the status.
+func exportResponseError(what string, status int, body []byte) error {
+	var errResp struct {
+		Error   string                 `json:"error"`
+		Message string                 `json:"message"`
+		Details map[string]interface{} `json:"details"`
+	}
+	if json.Unmarshal(body, &errResp) == nil {
+		if errResp.Message != "" {
+			if errResp.Details != nil {
+				return fmt.Errorf("export failed: %s (details: %v)", errResp.Message, errResp.Details)
+			}
+			return fmt.Errorf("export failed: %s", errResp.Message)
+		}
+		if errResp.Error != "" {
+			return fmt.Errorf("export failed: %s (HTTP %d)", errResp.Error, status)
+		}
+	}
+	return fmt.Errorf("%s: HTTP %d", what, status)
+}
+
+// checkExportZip refuses a 200 whose body is not a zip.
+func checkExportZip(resp *http.Response, body []byte) ([]byte, error) {
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/zip") && !strings.Contains(contentType, "application/octet-stream") {
 		if len(body) < 4 || string(body[0:2]) != "PK" {

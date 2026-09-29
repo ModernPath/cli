@@ -49,6 +49,9 @@ func renderCLIReference(root *cobra.Command) string {
 	b.WriteString("\n")
 
 	for _, c := range visibleCommands(root) {
+		// Cobra merges inherited flags lazily when a command executes.
+		// Resolve them before UseLine so the reference stays stable.
+		c.InheritedFlags()
 		fmt.Fprintf(&b, "## `%s`\n\n", c.CommandPath())
 		if c.Short != "" {
 			b.WriteString(c.Short)

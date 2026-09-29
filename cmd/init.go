@@ -199,9 +199,21 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	if err != nil {
 		return err
 	}
+	syncedAt, err := exportGeneratedAt(zipData, selectedSystem.Slug)
+	if err != nil {
+		return fmt.Errorf("read export timestamp: %w", err)
+	}
+	if syncedAt == "" {
+		printWarning("The server export has no generated_at timestamp; local sync time will be unknown until the server provides one.\n")
+	}
+	if err := validateSystemExportSlug(selectedSystem.Slug); err != nil {
+		return err
+	}
+	modernpathRoot := filepath.Join(cwd, config.ConfigDir)
+	targetRoot := systemExportRootDir(modernpathRoot, selectedSystem.Slug)
 
 	if opts.force {
-		if err := cleanSystemExport(cwd, selectedSystem.Slug); err != nil {
+		if err := cleanSystemExportAt(cwd, targetRoot); err != nil {
 			printError("Failed to clean existing export: %v\n", err)
 			return err
 		}
@@ -209,16 +221,16 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 
 	printInfo("Extracting to .modernpath/...\n")
 
-	if err := extractZip(cwd, zipData); err != nil {
+	if err := extractZipForSystemRoot(cwd, zipData, selectedSystem.Slug, targetRoot); err != nil {
 		printError("Failed to extract: %v\n", err)
 		return err
 	}
-
 	cfg := &config.Config{
 		APIURL:     baseURL,
 		SystemID:   selectedSystem.ID,
 		SystemName: selectedSystem.Name,
 		SystemSlug: selectedSystem.Slug,
+		LastSyncAt: syncedAt,
 		InitMode:   opts.initMode,
 	}
 
@@ -424,6 +436,33 @@ func extractZipIntoWorkspace(zipData []byte) error {
 // init` passes the current directory: init binds HERE, and its extract runs
 // before the binding is written.
 func extractZip(root string, zipData []byte) error {
+	return extractZipForSystem(root, zipData, "")
+}
+
+func extractZipForSystem(root string, zipData []byte, slug string) error {
+	modernpathRoot := filepath.Join(root, config.ConfigDir)
+	targetRoot := modernpathRoot
+	if slug != "" {
+		if err := validateSystemExportSlug(slug); err != nil {
+			return err
+		}
+		targetRoot = systemExportRootDir(modernpathRoot, slug)
+	}
+	return extractZipForSystemRoot(root, zipData, slug, targetRoot)
+}
+
+func extractZipForSystemRoot(root string, zipData []byte, slug, targetRoot string) error {
+	relTarget := ""
+	if slug != "" {
+		if err := validateSystemExportSlug(slug); err != nil {
+			return err
+		}
+		var err error
+		relTarget, err = filepath.Rel(filepath.Join(root, config.ConfigDir), targetRoot)
+		if err != nil || relTarget == ".." || strings.HasPrefix(relTarget, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("invalid system export destination for %q", slug)
+		}
+	}
 	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return fmt.Errorf("failed to open zip: %w", err)
@@ -446,9 +485,12 @@ func extractZip(root string, zipData []byte) error {
 			docsFilesFound++
 		}
 
-		// Flatten module angle folders so angle docs live beside module overview.md:
-		// .../modules/<module>/<angle>/<doc>.md -> .../modules/<module>/<doc>.md
+		// Preserve server paths, moving reserved system names under docs/ so
+		// extraction cannot overwrite CLI-owned roots.
 		exportPath := remapExportPath(file.Name)
+		if slug != "" {
+			exportPath = remapSystemExportPath(file.Name, slug, relTarget)
+		}
 
 		// Security: ensure path doesn't escape
 		destPath := filepath.Join(root, exportPath)
@@ -457,8 +499,7 @@ func extractZip(root string, zipData []byte) error {
 		}
 
 		if file.FileInfo().IsDir() {
-			// We create parent directories lazily for files; skipping zip dir entries
-			// avoids re-creating pre-flattened angle subdirectories.
+			// We create parent directories lazily for files.
 			continue
 		}
 
@@ -561,7 +602,20 @@ func cleanSystemExport(cwd, slug string) error {
 		return nil
 	}
 
-	target := filepath.Join(cwd, ".modernpath", slug)
+	if err := validateSystemExportSlug(slug); err != nil {
+		return err
+	}
+	modernpathRoot := filepath.Join(cwd, config.ConfigDir)
+	target := systemExportRootDir(modernpathRoot, slug)
+	return cleanSystemExportAt(cwd, target)
+}
+
+func cleanSystemExportAt(cwd, target string) error {
+	modernpathRoot := filepath.Join(cwd, config.ConfigDir)
+	rel, err := filepath.Rel(modernpathRoot, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("system export path escapes %s", modernpathRoot)
+	}
 	if _, err := os.Stat(target); os.IsNotExist(err) {
 		return nil
 	}
@@ -570,37 +624,5 @@ func cleanSystemExport(cwd, slug string) error {
 }
 
 func remapExportPath(path string) string {
-	path = filepath.ToSlash(path)
-	parts := strings.Split(path, "/")
-
-	// Find ".../modules/<module>/<angle>/<file>" and flatten to
-	// ".../modules/<module>/<file>".
-	for i := 0; i+3 < len(parts); i++ {
-		if parts[i] != "modules" {
-			continue
-		}
-
-		moduleName := parts[i+1]
-		angle := parts[i+2]
-		fileName := parts[i+3]
-
-		if moduleName == "" || angle == "" || fileName == "" {
-			continue
-		}
-
-		// Only flatten markdown angle docs, never overview.md or deeper nested paths.
-		if !strings.HasSuffix(strings.ToLower(fileName), ".md") || strings.EqualFold(fileName, "overview.md") {
-			continue
-		}
-
-		if len(parts) != i+4 {
-			continue
-		}
-
-		flattened := append([]string{}, parts[:i+2]...)
-		flattened = append(flattened, fileName)
-		return strings.Join(flattened, "/")
-	}
-
-	return path
+	return filepath.ToSlash(path)
 }

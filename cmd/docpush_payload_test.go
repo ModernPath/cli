@@ -73,3 +73,34 @@ func TestPushDocsSendsTheKeyTheServerRequires(t *testing.T) {
 		t.Fatalf("payload must carry architecture_id, got keys: %v", *captured)
 	}
 }
+
+func TestPushDocsReadsReservedSystemFromNestedExport(t *testing.T) {
+	server, captured := docsImportTestServer(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	for path, content := range map[string]string{
+		".modernpath/runtime/internal.md":                  "# CLI state\n",
+		".modernpath/docs/runtime/architecture/auth.md":    "# Authentication\n\nExported content.\n",
+		".modernpath/docs/runtime/docs_push_manifest.json": `{"version":1,"system_doc_files":{"architecture/auth.md":{"tier":"subsystem","angle":"security"}}}`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count, err := pushDocs(&config.Config{APIURL: server.URL, SystemID: 42, SystemSlug: "runtime"})
+	if err != nil || count != 1 {
+		t.Fatalf("nested export push = %d, %v; want one document", count, err)
+	}
+	docs := (*captured)["docs"].([]interface{})
+	doc := docs[0].(map[string]interface{})
+	for key, want := range map[string]string{
+		"title": "Authentication", "tier": "subsystem", "angle": "security", "export_path": "architecture/auth.md",
+	} {
+		if got := doc[key]; got != want {
+			t.Errorf("imported %s = %v, want %q", key, got, want)
+		}
+	}
+}

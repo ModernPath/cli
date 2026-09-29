@@ -183,7 +183,7 @@ func TestREQCROSS425FactoryGatesRendersATraceInFull(t *testing.T) {
 	fx := &wsFixture{gate: readbackTraceGate()}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "TRACE-LOWER-REQ-X", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "TRACE-LOWER-REQ-X", &out, &errOut, false); err != nil {
 		t.Fatalf("show: %v", err)
 	}
 	s := out.String()
@@ -212,7 +212,7 @@ func TestREQCROSS425ColdReviewTraceIsPinnedToThePacketAggregate(t *testing.T) {
 	fx := &wsFixture{gate: g}
 	env := wsEnv(t, wsServe(t, fx))
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "CR-TRACE-EPIC-X", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "CR-TRACE-EPIC-X", &out, &errOut, false); err != nil {
 		t.Fatalf("show: %v", err)
 	}
 	if want := "(packet aggregate)"; !strings.Contains(out.String(), want) {
@@ -227,7 +227,7 @@ func TestREQCROSS425VerbosePrintsAnyGatesBody(t *testing.T) {
 	verbose = true
 	t.Cleanup(func() { verbose = false })
 	var out, errOut bytes.Buffer
-	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-X", &out, &errOut); err != nil {
+	if err := factoryGatesRun(env, "", "", false, "APPROVE-EPIC-X", &out, &errOut, false); err != nil {
 		t.Fatalf("show: %v", err)
 	}
 	if !strings.Contains(out.String(), "the decision brief") {
@@ -258,6 +258,78 @@ func TestREQCROSS425PulledTraceBlockCarriesTheSameFieldsAndNone(t *testing.T) {
 	}
 	if strings.Contains(got, "Prerequisites:** "+notServed) {
 		t.Errorf("an empty prerequisite list is served and reads none, never not served:\n%s", got)
+	}
+}
+
+// SR-CLI-GATE-BRIEF-001: both standalone and attached gate snapshots show briefs.
+func pullGateBriefFixture(t *testing.T, gate map[string]any, attached bool) string {
+	t.Helper()
+	id := "APPROVE-EPIC-X"
+	fx := &wsFixture{gates: []any{gate}}
+	if attached {
+		id = "REQ-X"
+		gate["exact_scope"] = []any{id}
+		fx.requirements = []any{wsReq(id, "Requirement with a decision")}
+	}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPull(env, []string{id}, wsNow); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(env.Root, workingSetDir, id+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range fx.requests {
+		if !strings.HasPrefix(request, "GET ") {
+			t.Fatalf("pull must only read: %s", request)
+		}
+	}
+	return string(raw)
+}
+
+func TestSRCLIGateBrief001PullShowsDecisionBrief(t *testing.T) {
+	output := pullGateBriefFixture(t, gateBriefFixture(), false)
+	assertGateBriefOrder(t, output, "- ")
+	for _, detail := range []string{"**State:** ANSWERED", "**Verdict / answer:** Ok, specs approved. Continue.", "**Application:** pending"} {
+		if !strings.Contains(output, detail) {
+			t.Fatalf("lost existing gate detail %q:\n%s", detail, output)
+		}
+	}
+}
+
+func TestSRCLIGateBrief001AttachedGateShowsDecisionBrief(t *testing.T) {
+	output := pullGateBriefFixture(t, gateBriefFixture(), true)
+	assertGateBriefOrder(t, output, "- ")
+	if !strings.Contains(output, "Requirement with a decision") {
+		t.Fatalf("lost the owning requirement:\n%s", output)
+	}
+}
+
+func TestSRCLIGateBrief001PullShowsPartialMultilineBrief(t *testing.T) {
+	gate := req109AnsweredGate()
+	gate["brief"] = map[string]any{"what": "First line.\nSecond line.", "why_now": " \t\n", "risk_if_wrong": nil}
+	output := pullGateBriefFixture(t, gate, false)
+	if !strings.Contains(output, "- What: First line.\n  Second line.") {
+		t.Fatalf("Markdown brief must preserve multiline content within the bullet:\n%s", output)
+	}
+	for _, absent := range []string{"Why now:", "Changes if approved:", "Risk if wrong:", "Recommendation:"} {
+		if strings.Contains(output, absent) {
+			t.Fatalf("fabricated empty field %s:\n%s", absent, output)
+		}
+	}
+}
+
+func TestSRCLIGateBrief001EmptyBriefPreservesSnapshotOutput(t *testing.T) {
+	var baseline strings.Builder
+	writeGateBlock(&baseline, req109AnsweredGate())
+	for _, brief := range []any{nil, "invalid", map[string]any{}, map[string]any{"what": " \n", "why_now": nil, "recommendation": 12}} {
+		gate := req109AnsweredGate()
+		gate["brief"] = brief
+		var output strings.Builder
+		writeGateBlock(&output, gate)
+		if output.String() != baseline.String() {
+			t.Fatalf("empty brief changed legacy output:\n%s", output.String())
+		}
 	}
 }
 

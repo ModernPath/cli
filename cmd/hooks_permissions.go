@@ -39,12 +39,27 @@ var kitPermissionVerbs = []struct {
 	{"factory evidence *", "allow"}, {"factory sync*", "allow"},
 	{"working-set select *", "allow"}, {"working-set push*", "allow"},
 	{"process reconcile *", "allow"}, {"process findings add *", "allow"},
+	// REQ-CROSS-448 (DC-8): the batch verbs are routine writes like author
+	// update; their --file forms ride the same rules. One wildcard covers
+	// process advance <SR> and --all (DC-14). The subagent guard still denies
+	// them to delegated agents.
+	{"author apply *", "allow"}, {"process review record *", "allow"}, {"process advance *", "allow"},
+	// REQ-CROSS-458: the small-change lane's verbs are routine writes with
+	// their legality on the server, and the bare group is a read; authorize
+	// prepares a standing authorization for a whole System, so it asks.
+	{"process lane", "allow"}, {"process lane review *", "allow"}, {"process lane enter *", "allow"},
+	{"process lane check *", "allow"}, {"process lane complete*", "allow"},
 	// in-loop decision verbs: decided in the conversation, attributed by the server
 	{"factory answer *", "allow"}, {"author advance *", "allow"},
 	{"author gate-withdraw *", "allow"}, {"process findings disposition *", "allow"},
 	{"process reapply-entry *", "allow"},
 	// system-wide state: always a prompt
 	{"factory release *", "ask"}, {"process cascade-mode *", "ask"}, {"process supersede *", "ask"},
+	{"process lane authorize*", "ask"},
+	// DL-12: approve answers a standing authorization for a whole System as the
+	// signed-in admin; it asks, is in no allow rule, and the subagent guard
+	// denies it.
+	{"process lane approve*", "ask"},
 	// BACKLOG-TOOL-44: reenter re-approves a reversed decision (material re-entry) —
 	// stricter than reapply-entry (allow), so it prompts like supersede.
 	{"process reenter *", "ask"},
