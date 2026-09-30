@@ -2,10 +2,18 @@
 
 ## Unreleased
 
+## v0.13.0 — ask waits for slow answers, and trace refresh for existing baselines
+
+### Upgrading from v0.12.0
+
+- Run `modernpath install` after upgrading so the `mp-process-cli` skill and
+  `.modernpath/cli-reference.md` match this release.
+- Both changes need a server that has them; production serves them from
+  modernpath-v1@e291eda5c.
+
 ### ask waits for a slow answer instead of timing out
 
-Run `modernpath install` after upgrading: `.modernpath/cli-reference.md`
-changes. Needs a server with the `agentic_search_result` tool.
+Needs a server with the `agentic_search_result` tool.
 
 - The server runs each `ask` in a background job. An answer ready within 45
   seconds comes back as before. Otherwise the server returns an ask id and
@@ -24,6 +32,27 @@ changes. Needs a server with the `agentic_search_result` tool.
   amended).
 - An older CLI prints "Still working on this question (ask N)." for an ask
   that takes longer than 45 seconds, instead of the answer.
+
+### reverse-engineer refresh-traces links existing baselines to captured code and tests
+
+Needs a server with the `captured_trace_refresh` capability.
+
+- New `modernpath reverse-engineer refresh-traces --run <capture-run> --group
+  <retry-key> --file refresh.json`. After `author update --citations-file`
+  changes the captured citations of existing pending SR baselines, it creates
+  or reuses confirmed `implements` links to the captured code and `verifies`
+  links to source-bound test cases. Before, those baselines stayed ineligible
+  for acceptance, because `publish` reuse creates no links.
+- The input is `corpus_fingerprint` from `reverse-engineer preflight` and each
+  requirement's current content fingerprint; a stale fingerprint returns a
+  conflict. The capture run must belong to the signed-in person and be
+  baseline-authorized; a DERIVED run is refused. Rejected, stale, deleted or
+  differently governed links are refused, not revived.
+- Requirement content, criteria, lifecycle, baseline provenance and existing
+  links stay unchanged. A refresh records no test pass and no acceptance.
+- The same input and group key return the same receipt, also after
+  acceptance; `reverse-engineer status --run <capture-run>` lists
+  `trace_refreshes` for recovery.
 
 ## v0.12.0 — find by meaning, a small-change lane, and fewer calls per phase
 
