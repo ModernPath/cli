@@ -979,6 +979,23 @@ scope as fresh pending work. New verification/acceptance follows these steps.
 1. Inspect the exact captured code and tests with `read-source`. Bind each
    actual test name to a registered TestCase or a captured test citation's
    `test_case_ref`; inspect the behavior asserted, not only names or counts.
+   After changing captured citations on existing pending SR baselines, run
+   `modernpath reverse-engineer preflight`, then
+   `modernpath reverse-engineer refresh-traces --run CAPTURE-RUN --group stable-key
+   --file refresh.json`. Input is exactly `corpus_fingerprint` from preflight and
+   `requirements: [{kind: "system", external_id, expected_fingerprint}]`, using
+   each requirement's current content fingerprint. The capture run must belong
+   to the signed-in actor, be baseline-authorized and contain every persisted
+   code/test citation selected. DERIVED grants refuse confirmed refresh links.
+   This atomically creates/reuses confirmed immutable source/TestCase links;
+   requirement content, criteria, lifecycle and baseline provenance stay intact.
+   Existing historical links remain. Rejected, stale, deleted or differently
+   governed pairs refuse rather than being revived. UR upper proof uses captured
+   citations directly and needs no invented SR links. Retain the returned receipt;
+   `status --run CAPTURE-RUN` includes `trace_refreshes` for recovery. Identical
+   inputs/key recover the receipt even after acceptance; changed input conflicts.
+   A new refresh needs current graph/content fingerprints. Refresh grants neither
+   test PASS nor acceptance. `publish` reuse does not refresh existing links.
 2. Run the existing tests or inspect genuine retained execution reports.
    `modernpath reverse-engineer execution-proof --file execution.json` records
    through the existing evidence channel and returns durable run/result IDs

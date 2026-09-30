@@ -102,6 +102,17 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 		}
 		return path + "/groups/" + url.PathEscape(group), nil
 	}, true)
+	add("refresh-traces", "Refresh confirmed captured code/test links on existing pending baselines; preserve requirement content", "PUT", func(cmd *cobra.Command) (string, error) {
+		path, err := reverseRunPath(cmd)
+		if err != nil {
+			return "", err
+		}
+		group, _ := cmd.Flags().GetString("group")
+		if group == "" {
+			return "", fmt.Errorf("--group is required")
+		}
+		return path + "/trace-refreshes/" + url.PathEscape(group), nil
+	}, true)
 	add("source-status", "Read source capture status and immutable file identities", "GET", func(cmd *cobra.Command) (string, error) {
 		id, _ := cmd.Flags().GetString("capture")
 		if id == "" {
@@ -128,7 +139,7 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 	add("acceptance-status", "Read the recorded versus applied answer, current proof and durable receipt", "GET", reverseAcceptancePath, false)
 	for _, command := range root.Commands() {
 		switch command.Name() {
-		case "status", "publish", "read-document", "coverage":
+		case "status", "publish", "refresh-traces", "read-document", "coverage":
 			command.Flags().String("run", "", "authorized run id (required)")
 			_ = command.MarkFlagRequired("run")
 		case "acceptance-apply", "acceptance-status":
@@ -141,7 +152,7 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			command.Flags().String("source", "", "immutable source_file id (required)")
 			_ = command.MarkFlagRequired("source")
 		}
-		if command.Name() == "publish" {
+		if command.Name() == "publish" || command.Name() == "refresh-traces" {
 			command.Flags().String("group", "", "stable coherent-group retry key (required)")
 			_ = command.MarkFlagRequired("group")
 		}
@@ -315,6 +326,9 @@ func reverseWriteName(path string) string {
 		}
 		if len(parts) == 6 && parts[5] == "sources" {
 			return "reverse_engineering.capture"
+		}
+		if len(parts) == 7 && parts[5] == "trace-refreshes" {
+			return "reverse_engineering.refresh_traces"
 		}
 		if len(parts) == 7 && parts[5] == "groups" {
 			return "reverse_engineering.publish"

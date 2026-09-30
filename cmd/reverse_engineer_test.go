@@ -198,3 +198,35 @@ func TestSRRDDONBOARD007GitWorktreeAndIgnoredFiles(t *testing.T) {
 		t.Fatalf("wrong worktree inventory: %+v", manifest)
 	}
 }
+
+func TestReverseEngineerRefreshTraces(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(404)
+			return
+		}
+		calls++
+		if r.Method != "PUT" || r.URL.Path != "/api/v1/systems/4/reverse-engineering/runs/captured-run/trace-refreshes/current" {
+			t.Errorf("wrong target: %s %s", r.Method, r.URL.Path)
+		}
+		var input map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		if input["corpus_fingerprint"] != "graph" {
+			t.Errorf("missing graph pin: %v", input)
+		}
+		if r.Header.Get("Authorization") != "Bearer t" {
+			t.Error("actor token missing")
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":"refresh-receipt","result":{"created_links":2}}}`))
+	}))
+	defer server.Close()
+	out, err := reCommand(t, server, `{"corpus_fingerprint":"graph","requirements":[{"kind":"system","external_id":"SR-EXISTING","expected_fingerprint":"content"}]}`,
+		"refresh-traces", "--run", "captured-run", "--group", "current", "--file", "-")
+	if err != nil || calls != 1 || !strings.Contains(out, "refresh-receipt") {
+		t.Fatalf("refresh: %s %v calls=%d", out, err, calls)
+	}
+	if got := writeName("/api/v1/systems/4/reverse-engineering/runs/captured-run/trace-refreshes/current", nil); got != "reverse_engineering.refresh_traces" {
+		t.Fatalf("wrong write capability: %s", got)
+	}
+}

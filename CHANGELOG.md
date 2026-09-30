@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### ask waits for a slow answer instead of timing out
+
+Run `modernpath install` after upgrading: `.modernpath/cli-reference.md`
+changes. Needs a server with the `agentic_search_result` tool.
+
+- The server runs each `ask` in a background job. An answer ready within 45
+  seconds comes back as before. Otherwise the server returns an ask id and
+  `ask` polls it, showing `Still working (m:ss)…` on stderr in pretty format,
+  until the answer arrives, the ask fails, or 10 minutes pass
+  (`MODERNPATH_ASK_WAIT_LIMIT`, a Go duration, overrides the limit). The
+  answer prints exactly as before in every format. A failed ask, or one still
+  running at the limit, prints its reason and ask id and exits non-zero
+  (REQ-CROSS-490).
+- Server: the job has 5 minutes and always ends with an answer, partial when
+  time runs out. The tool calls of one model turn run concurrently (up to 4),
+  every model call, tool call and embedding is bounded by the time left, a
+  search for the question's own text reuses its embedding, and a cold source
+  cache is restored at the start of the job. Only the signed-in user who asked
+  can read the answer; answers are kept 7 days (REQ-CROSS-490, REQ-CROSS-468 as
+  amended).
+- An older CLI prints "Still working on this question (ask N)." for an ask
+  that takes longer than 45 seconds, instead of the answer.
+
 ## v0.12.0 — find by meaning, a small-change lane, and fewer calls per phase
 
 ### Upgrading from v0.11.1

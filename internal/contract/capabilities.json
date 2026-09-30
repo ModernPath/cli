@@ -13,6 +13,7 @@
     "reverse_engineering.authorize": ["source_scoped_onboarding"],
     "reverse_engineering.capture": ["source_scoped_onboarding"],
     "reverse_engineering.publish": ["source_scoped_onboarding"],
+    "reverse_engineering.refresh_traces": ["captured_trace_refresh"],
     "candidate_set.decide": ["exact_candidate_set"],
     "work_selection": ["selection_piece"],
     "reverse_engineering.proof_preview": ["exact_as_built_proof"],

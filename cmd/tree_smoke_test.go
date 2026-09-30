@@ -541,12 +541,13 @@ var leafDispositions = map[string]disposition{
 	"reverse-engineer inventory":        {kind: dispNoCall, reason: "local-only"},
 	// Exact JSON intent is required before any write; nested payloads are
 	// exercised by reverse_engineer_test.go against its own HTTP fixture.
-	"reverse-engineer authorize": {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer publish":   {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer preview":   {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer decide":    {kind: dispNoCall, reason: "needs-precondition"},
-	"scan":                       {kind: dispExecute},
-	"search":                     {kind: dispExecute, args: []string{"search", "smoke query"}},
+	"reverse-engineer authorize":      {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer publish":        {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer refresh-traces": {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer preview":        {kind: dispNoCall, reason: "needs-precondition"},
+	"reverse-engineer decide":         {kind: dispNoCall, reason: "needs-precondition"},
+	"scan":                            {kind: dispExecute},
+	"search":                          {kind: dispExecute, args: []string{"search", "smoke query"}},
 	// REQ-CROSS-282: status now checks the bound system's reachability
 	// whenever a bearer and a system_id are both present — exactly this
 	// fixture's shape — so it genuinely reaches the server and is no longer

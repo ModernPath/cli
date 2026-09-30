@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +32,10 @@ Uses the ModernPath platform's agentic search to find relevant documentation,
 code, and the curated patterns and capabilities the system uses, then
 synthesizes an answer. Each source names its kind and id.
 
+A question that takes the server longer than 45 seconds keeps running there:
+ask waits for the answer, showing "Still working (m:ss)…" on stderr in pretty
+format, for up to 10 minutes.
+
 Output formats:
   --format=pretty   Colored terminal output (default)
   --format=markdown Plain markdown for hooks/injection
@@ -51,12 +57,35 @@ func init() {
 }
 
 type askResult struct {
-	Success bool `json:"success"`
+	Success bool   `json:"success"`
+	Error   string `json:"error"`
 	Result  struct {
+		// Status is "done", or "running" with an AskID to poll (REQ-CROSS-490).
+		Status     string          `json:"status"`
+		AskID      string          `json:"ask_id"`
 		Answer     string          `json:"answer"`
 		Sources    []askWireSource `json:"sources"`
 		Iterations int             `json:"iterations"`
 	} `json:"result"`
+}
+
+// REQ-CROSS-490: a slow ask keeps running on the server and is polled.
+const (
+	// askWaitLimitDefault is how long ask waits for an answer in all. It is
+	// reached only when the server's ask queue is backlogged.
+	askWaitLimitDefault = 10 * time.Minute
+	// askPollFloor is the least time between two requests. Each poll blocks on
+	// the server for up to 45 s, so this matters only if it answers at once.
+	askPollFloor = time.Second
+)
+
+// askWaitLimit is askWaitLimitDefault unless MODERNPATH_ASK_WAIT_LIMIT names
+// a Go duration, such as "30s" or "20m".
+func askWaitLimit() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("MODERNPATH_ASK_WAIT_LIMIT")); err == nil && d > 0 {
+		return d
+	}
+	return askWaitLimitDefault
 }
 
 // askSource is a source as ask prints it, and as --format=json emits it.
@@ -150,66 +179,22 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		printInfo("Asking ModernPath platform...\n")
 	}
 
-	// Call the remote API
-	apiURL := fmt.Sprintf("%s/api/mcp/tools/agentic_search", cfg.APIURL)
-
-	payload := map[string]interface{}{
-		"arguments": map[string]interface{}{
-			"system_id":      cfg.SystemID,
-			"question":       question,
-			"max_iterations": askIterations,
-		},
+	started := time.Now()
+	result, err := postAskTool(env, fmt.Sprintf("%s/api/mcp/tools/agentic_search", cfg.APIURL), map[string]interface{}{
+		"system_id":      cfg.SystemID,
+		"question":       question,
+		"max_iterations": askIterations,
+	})
+	if err == nil && result.Result.Status == "running" {
+		result, err = pollAsk(env, cfg.APIURL, result.Result.AskID, started)
 	}
-
-	jsonPayload, _ := json.Marshal(payload)
-
-	resp, err := api.DoPostWithToken(apiURL, bytes.NewBuffer(jsonPayload), env.token, 120*time.Second)
 	if err != nil {
-		if askFormat == "json" {
-			fmt.Printf(`{"error": "API error: %v"}`, err)
-		} else {
-			printError("API error: %v\n", err)
-		}
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		err := env.credentialRejected()
 		if askFormat == "json" {
 			fmt.Printf(`{"error": %q}`+"\n", err.Error())
 		} else {
 			printError("%v\n", err)
 		}
 		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if askFormat == "json" {
-			fmt.Printf(`{"error": "API error: %s"}`, string(body))
-		} else {
-			printError("API error: %s\n", string(body))
-		}
-		return fmt.Errorf("API error: %s", resp.Status)
-	}
-
-	var result askResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		if askFormat == "json" {
-			fmt.Printf(`{"error": "Failed to parse response: %v"}`, err)
-		} else {
-			printError("Failed to parse response: %v\n", err)
-		}
-		return err
-	}
-
-	if !result.Success {
-		if askFormat == "json" {
-			fmt.Println(`{"error": "Search failed"}`)
-		} else {
-			printError("Search failed\n")
-		}
-		return nil
 	}
 
 	sources := uniqueAskSources(result.Result.Sources)
@@ -225,6 +210,85 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// postAskTool calls one of the ask tools and returns its decoded reply. A
+// refused credential, an HTTP error and a failed tool call are errors.
+func postAskTool(env *factoryEnv, url string, arguments map[string]interface{}) (askResult, error) {
+	var result askResult
+	jsonPayload, _ := json.Marshal(map[string]interface{}{"arguments": arguments})
+
+	resp, err := api.DoPostWithToken(url, bytes.NewBuffer(jsonPayload), env.token, 120*time.Second)
+	if err != nil {
+		return result, fmt.Errorf("API error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return result, env.credentialRejected()
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(body, &result); err != nil {
+		if resp.StatusCode != http.StatusOK {
+			return result, fmt.Errorf("API error: %s", string(body))
+		}
+		return result, fmt.Errorf("Failed to parse response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || !result.Success {
+		reason := result.Error
+		if unquoted, err := strconv.Unquote(reason); err == nil {
+			reason = unquoted
+		}
+		if reason == "" {
+			reason = "Search failed"
+		}
+		return result, fmt.Errorf("%s", reason)
+	}
+	return result, nil
+}
+
+// pollAsk waits for a running ask through agentic_search_result until it is
+// done, has failed, or the wait limit counted from started has passed.
+func pollAsk(env *factoryEnv, apiURL, askID string, started time.Time) (askResult, error) {
+	limit := askWaitLimit()
+	url := fmt.Sprintf("%s/api/mcp/tools/agentic_search_result", apiURL)
+	progress := askFormat == "pretty"
+	if progress {
+		defer fmt.Fprintln(os.Stderr)
+	}
+	lastRequest := started
+
+	for {
+		if wait := askPollFloor - time.Since(lastRequest); wait > 0 {
+			if left := limit - time.Since(started); left < wait {
+				wait = left
+			}
+			if wait > 0 {
+				time.Sleep(wait)
+			}
+		}
+		if time.Since(started) >= limit {
+			return askResult{}, fmt.Errorf("ask %s: the answer was not ready after %s", askID, limit)
+		}
+		if progress {
+			fmt.Fprintf(os.Stderr, "\rStill working (%s)…", askClock(time.Since(started)))
+		}
+
+		lastRequest = time.Now()
+		result, err := postAskTool(env, url, map[string]interface{}{"ask_id": askID})
+		if err != nil {
+			return result, fmt.Errorf("ask %s: %v", askID, err)
+		}
+		if result.Result.Status != "running" {
+			return result, nil
+		}
+	}
+}
+
+// askClock renders an elapsed time as m:ss.
+func askClock(d time.Duration) string {
+	s := int(d.Round(time.Second) / time.Second)
+	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
 func outputAskJSON(result askResult, sources []askSource, question string) {

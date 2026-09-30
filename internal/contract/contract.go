@@ -15,6 +15,7 @@ const Version = 1
 // the server's map (CoreHttpApi.SyncContract) and the pinned fixture move
 // together with it.
 var Implemented = []string{
+	"captured_trace_refresh",   // guarded captured links on existing baselines, with retry receipts
 	"exact_as_built_proof",     // typed preview, one reviewed acceptance and guarded receipt application
 	"source_scoped_onboarding", // explicit mode and immutable inventory/run/group receipts
 	"exact_candidate_set",      // typed requirement and selected-link decisions
