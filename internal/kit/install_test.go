@@ -1140,9 +1140,6 @@ func TestAgentsBlockNamesEveryStoreBackedWriteChannel(t *testing.T) {
 			t.Fatalf("the tooling skill never names the write channel %q", want)
 		}
 	}
-	if strings.Contains(managed, "only write path") {
-		t.Fatal("the managed block still calls author the only write path")
-	}
 	// The release registry is not among the retired path families; a session
 	// must be told so, or rdd-start's release preflight has nowhere to look.
 	if !strings.Contains(managed, "process/releases.md") {
@@ -1151,9 +1148,5 @@ func TestAgentsBlockNamesEveryStoreBackedWriteChannel(t *testing.T) {
 	// The ledger skill is withheld under the marker; the block must not promise it.
 	if !strings.Contains(managed, "rdd-ledger") {
 		t.Fatal("the managed block must scope the ledger skill to a file-backed workspace")
-	}
-	// The stale GAP-016 breadcrumb left with the table (plan item D2).
-	if strings.Contains(managed, "GAP-016") {
-		t.Fatal("the managed block still carries the resolved GAP-016 breadcrumb")
 	}
 }

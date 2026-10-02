@@ -630,9 +630,9 @@ func listAvailableAgents(bold *color.Color) error {
 }
 
 // scanFailureReason names a non-200 scan answer for the user. The server's
-// reason rides "message" or "error" ({"error":"Request blocked by WAF"} was
-// shown as a bare "HTTP 403" — REQ-CROSS-208/T5, RUN:2026-08-18); a bare
-// status code is the last resort, not the default.
+// reason rides "message" or "error" (a 403 carrying {"error": ...} was shown
+// as a bare "HTTP 403" — REQ-CROSS-208/T5, RUN:2026-08-18); a bare status
+// code is the last resort, not the default.
 func scanFailureReason(status int, body []byte) string {
 	var errResp struct {
 		Error   string `json:"error"`

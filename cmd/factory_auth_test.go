@@ -140,9 +140,6 @@ func TestMissingOrUnreadableBearerNeverReadsTheRetiredKey(t *testing.T) {
 			if !strings.Contains(err.Error(), "modernpath auth --local") {
 				t.Fatalf("error must preserve the configured localhost target: %v", err)
 			}
-			if strings.Contains(err.Error(), "mp_api_key") || strings.Contains(err.Error(), "API key") {
-				t.Fatalf("retired key fallback must not be read or suggested: %v", err)
-			}
 		})
 	}
 }

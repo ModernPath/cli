@@ -23,6 +23,7 @@ func TestSubagentStoreWriteIsDeniedThroughTheGateAdapter(t *testing.T) {
 		"modernpath feedback \"the verb has no --scope\"",
 		"modernpath feedback",
 		"modernpath reverse-engineer authorize --file grant.json",
+		"modernpath reverse-engineer authorize --inventory inventory.json --preflight preflight.json --mode baseline --source USER:2026-10-02:approved --key run-1 --documents all",
 		"modernpath reverse-engineer capture-source --run r --repository catalog --root .",
 		"modernpath reverse-engineer publish --run r --group g --file group.json",
 		"modernpath reverse-engineer decide --file decision.json",

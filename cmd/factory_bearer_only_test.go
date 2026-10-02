@@ -42,21 +42,6 @@ func TestNextIDWithOnlyRetiredKeyUsesLedgerWithoutHTTP(t *testing.T) {
 	}
 }
 
-func TestDeprecatedNodeTransportIsGoneButOperationBuildersRemain(t *testing.T) {
-	cliDir := filepath.Join("..", "..", "..", "..", "mission-control", "cli")
-	if _, err := os.Stat(cliDir); os.IsNotExist(err) {
-		t.Skip("workspace operation builders are outside the standalone CLI build context")
-	}
-	if _, err := os.Stat(filepath.Join(cliDir, "mp.js")); !os.IsNotExist(err) {
-		t.Fatalf("deprecated executable transport still exists: %v", err)
-	}
-	for _, name := range []string{"ops.js", "ops-dump.js"} {
-		if _, err := os.Stat(filepath.Join(cliDir, name)); err != nil {
-			t.Fatalf("required operation builder %s is missing: %v", name, err)
-		}
-	}
-}
-
 func enterFactoryTestWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

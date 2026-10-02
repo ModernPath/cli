@@ -142,9 +142,32 @@ func reverseRoot(path string) (string, error) {
 }
 
 func buildReverseInventory(declarations []string) (reverseInventory, error) {
+	return buildScopedReverseInventory(declarations, nil)
+}
+
+// buildScopedReverseInventory limits a Git repository to the paths named for
+// its key. The repository keeps its revision and dirty state, and every file
+// left out is disclosed as an exclusion.
+func buildScopedReverseInventory(declarations []string, scopes map[string][]string) (reverseInventory, error) {
 	result := reverseInventory{Repositories: []reverseRepository{}}
 	if len(declarations) == 0 || len(declarations) > 100 {
 		return result, fmt.Errorf("declare 1–100 repositories explicitly")
+	}
+	declared := map[string]bool{}
+	for _, declaration := range declarations {
+		if key, _, ok := strings.Cut(declaration, "="); ok {
+			declared[key] = true
+		}
+	}
+	scoped := make([]string, 0, len(scopes))
+	for key := range scopes {
+		scoped = append(scoped, key)
+	}
+	sort.Strings(scoped)
+	for _, key := range scoped {
+		if !declared[key] {
+			return result, fmt.Errorf("--path %s=%s names a repository that no --repository declares", key, scopes[key][0])
+		}
 	}
 	keys, roots := map[string]bool{}, map[string]bool{}
 	for _, declaration := range declarations {
@@ -163,10 +186,12 @@ func buildReverseInventory(declarations []string) (reverseInventory, error) {
 		repo := reverseRepository{Key: key, Revision: "unversioned", Dirty: true, Files: []reverseFile{}}
 		paths := []string{}
 		var initialStatus []byte
+		gitRoot := false
 		git := func(args ...string) ([]byte, error) {
 			return exec.Command("git", append([]string{"-C", root}, args...)...).Output()
 		}
 		if _, err := os.Lstat(filepath.Join(root, ".git")); err == nil {
+			gitRoot = true
 			revision, err := git("rev-parse", "HEAD")
 			if err != nil {
 				return result, fmt.Errorf("repository %s has unreadable Git revision: %w", key, err)
@@ -197,9 +222,20 @@ func buildReverseInventory(declarations []string) (reverseInventory, error) {
 				return result, fmt.Errorf("repository %s inventory failed: %w", key, err)
 			}
 			paths = strings.Split(strings.TrimSuffix(string(listed), "\x00"), "\x00")
+			if scope := scopes[key]; len(scope) > 0 {
+				included, err := reverseScopedPaths(root, key, scope)
+				if err != nil {
+					return result, err
+				}
+				repo.Exclusions = reverseScopeExclusions(repo.Exclusions, reverseOutOfScope(paths, included))
+				paths = included
+			}
 		} else if !os.IsNotExist(err) {
 			return result, err
 		} else {
+			if scope := scopes[key]; len(scope) > 0 {
+				return result, fmt.Errorf("repository %s is not a Git repository; --path %s=%s can only scope a Git repository", key, key, scope[0])
+			}
 			err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
 					return walkErr
@@ -256,12 +292,21 @@ func buildReverseInventory(declarations []string) (reverseInventory, error) {
 				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "private or workspace metadata", "file"})
 				continue
 			}
+			// Git lists a tracked link as one path. It is left out and disclosed,
+			// never followed; a non-Git walk keeps refusing it in reverseRead.
+			if gitRoot && reverseIsLink(root, path) {
+				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "symbolic link", "file"})
+				continue
+			}
 			content, err := reverseRead(root, path)
 			if err != nil {
 				return result, err
 			}
 			size += int64(len(content))
 			if size > 32_000_000 {
+				if len(scopes[key]) > 0 {
+					return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit within the named paths; name fewer or smaller paths", key)
+				}
 				return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit; narrow and disclose the scope", key)
 			}
 			repo.Files = append(repo.Files, reverseFile{path, reverseDigest(content), int64(len(content))})
@@ -291,6 +336,125 @@ func buildReverseInventory(declarations []string) (reverseInventory, error) {
 		result.Repositories = append(result.Repositories, repo)
 	}
 	return result, nil
+}
+
+// reverseScopedPaths lists the tracked and unignored files under each named
+// path. A path is a literal name passed after "--", so it is never read as a
+// Git option or a pattern and cannot widen the scope.
+func reverseScopedPaths(root, key string, scope []string) ([]string, error) {
+	seen := map[string]bool{}
+	included := []string{}
+	for _, path := range scope {
+		command := exec.Command("git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", path)
+		command.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
+		listed, err := command.Output()
+		if err != nil {
+			return nil, fmt.Errorf("repository %s could not list path %q: %w", key, path, err)
+		}
+		matched := false
+		for _, file := range strings.Split(strings.TrimSuffix(string(listed), "\x00"), "\x00") {
+			if file == "" {
+				continue
+			}
+			matched = true
+			if !seen[file] {
+				seen[file] = true
+				included = append(included, file)
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("path %q matches no file in repository %s", path, key)
+		}
+	}
+	return included, nil
+}
+
+// reverseOutOfScope discloses every listed file that the scope leaves out, as
+// the top-most directory that holds no included file, or as the file itself.
+func reverseOutOfScope(listed, included []string) []reverseExclusion {
+	in, holds := map[string]bool{}, map[string]bool{}
+	for _, path := range included {
+		in[path] = true
+		parts := strings.Split(path, "/")
+		for i := 1; i < len(parts); i++ {
+			holds[strings.Join(parts[:i], "/")] = true
+		}
+	}
+	seen := map[string]bool{}
+	exclusions := []reverseExclusion{}
+	for _, path := range listed {
+		if path == "" || in[path] {
+			continue
+		}
+		target, kind := path, "file"
+		parts := strings.Split(path, "/")
+		for i := 1; i < len(parts); i++ {
+			if dir := strings.Join(parts[:i], "/"); !holds[dir] {
+				target, kind = dir, "subtree"
+				break
+			}
+		}
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		exclusions = append(exclusions, reverseExclusion{target, "outside the authorized scope", kind})
+	}
+	sort.Slice(exclusions, func(i, j int) bool { return exclusions[i].Path < exclusions[j].Path })
+	return exclusions
+}
+
+// reverseScopeExclusions joins the Git-ignored exclusions with the scope's.
+// An ignored path under a directory the scope already leaves out is covered
+// by that directory's entry; listing each one could pass the server's limit
+// on exclusions.
+func reverseScopeExclusions(ignored, outOfScope []reverseExclusion) []reverseExclusion {
+	leftOut := map[string]bool{}
+	for _, exclusion := range outOfScope {
+		if exclusion.Kind == "subtree" {
+			leftOut[exclusion.Path] = true
+		}
+	}
+	kept := []reverseExclusion{}
+	for _, exclusion := range ignored {
+		covered := leftOut[exclusion.Path]
+		parts := strings.Split(exclusion.Path, "/")
+		for i := 1; i < len(parts) && !covered; i++ {
+			covered = leftOut[strings.Join(parts[:i], "/")]
+		}
+		if !covered {
+			kept = append(kept, exclusion)
+		}
+	}
+	return append(kept, outOfScope...)
+}
+
+// reverseIsLink reports whether a listed path is a symbolic link, without
+// following it and without leaving the root.
+func reverseIsLink(root, path string) bool {
+	boundary, err := os.OpenRoot(root)
+	if err != nil {
+		return false
+	}
+	defer boundary.Close()
+	info, err := boundary.Lstat(filepath.FromSlash(path))
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+// reverseGitIdentity reads the HEAD revision and the clean state of a Git root.
+func reverseGitIdentity(root string) (string, bool, error) {
+	if _, err := os.Lstat(filepath.Join(root, ".git")); err != nil {
+		return "", false, fmt.Errorf("not a Git repository: %s", root)
+	}
+	revision, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", false, fmt.Errorf("unreadable Git revision: %w", err)
+	}
+	status, err := exec.Command("git", "-C", root, "status", "--porcelain", "-z").Output()
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(string(revision)), len(status) > 0, nil
 }
 
 func reverseSourceBundle(repository reverseRepository, path string) ([]map[string]string, error) {

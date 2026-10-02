@@ -912,16 +912,113 @@ runs follow the sequence below.
    `modernpath docs sync` only for missing or stale exports. Use live search/read
    for material missing locally or when a current authoritative answer is needed.
 2. `modernpath reverse-engineer inventory --repository key=/absolute/root`
-   (repeat for each repository) emits frozen paths, hashes, sizes, revision,
+   (repeat the `--repository` flag in one command for each repository;
+   one run has one inventory file) emits frozen paths, hashes, sizes, revision,
    dirty state and exclusions. Non-Git directories and Git worktrees are supported.
-3. `modernpath reverse-engineer preflight` returns existing-corpus fingerprint,
-   recommended mode and document descriptors. Ask the user for **baseline** or
-   **derived**, showing scope and consequences; recommendation is not authorization.
-4. `modernpath reverse-engineer authorize --file authorization.json` takes
-   `key`, explicit `mode`, attributable `authorization_source: "USER:…"`,
-   `corpus_fingerprint`, `repositories` from inventory and `documents` selected
-   from preflight. Document descriptors include `id`, `kind`, `version` and
-   `fingerprint`. Actor, system, Base and process revision are server-owned.
+   A tracked symbolic link in a Git repository is left out and listed as an
+   exclusion; it is never followed.
+   For part of a large Git repository, add `--path key=relative/path`
+   (repeatable) for the directories or files to include. The inventory then
+   holds only those files; the revision and dirty state stay the whole
+   repository's, the 32,000,000-byte and file limits count the included files,
+   and every file left out is an exclusion with the reason `outside the
+   authorized scope`; a directory left out whole is one `subtree` entry, and
+   Git-ignored files under it are not listed again. A path is a literal name —
+   no patterns, no trailing slash — and a non-Git root cannot be scoped. Name
+   the tests with the code they cover: one proof takes one delivery report per
+   repository, and every cited code and test file must come from the same
+   capture. A path is only a set of files; which domain or capability it holds
+   is for the person naming it to decide. A subfolder given as
+   the repository root is not a substitute: it inventories as unversioned and
+   dirty, so its requirements cannot be accepted as built.
+   Save the output unchanged when you run it: add `> inventory.json` to the
+   command. A large inventory does not belong in your context; read from the
+   file only the totals (`file_count`, `byte_count`) and, for each entry of
+   `repositories`, its `key`, `revision`, `dirty` and how many `files` and
+   `exclusions` it has.
+   The saved file must hold the bytes the command printed. In bash, zsh and
+   `cmd` the redirect does that. In PowerShell it does not: PowerShell's own
+   redirect re-encodes the output. In PowerShell, let `cmd` save
+   `inventory.json` and `preflight.json`, for example
+   `cmd /c "modernpath reverse-engineer preflight > preflight.json"`.
+   If step 4 refuses a saved file as invalid JSON, or because its snapshot
+   digest does not match, the file was re-encoded when it was saved: save it
+   again this way and never edit it. `run.json` in step 4 is not read back by
+   the CLI and needs no such care.
+3. `modernpath reverse-engineer preflight > preflight.json` saves, under
+   `data`, the existing-corpus fingerprint, the requirement count, the
+   recommended mode and the document descriptors. The recommendation is not
+   authorization: the person chooses **baseline** or **derived** in the one
+   question of step 4.
+4. Authorize from the two saved files. Do not write a JSON file, and
+   do not run `inventory` or `preflight` again, except after a refusal as
+   described below: the saved files are what the person approves. After the
+   person has answered:
+   `modernpath reverse-engineer authorize --inventory inventory.json
+   --preflight preflight.json --mode baseline --source "USER:<date>:<name>
+   approved <mode>, documents <all|none>" --key <run name>
+   --documents all > run.json`.
+   Every flag is required and none has a default. The mode and the document
+   choice are the person's answers. You propose the run name for `--key` — short
+   and stable, for example `billing-baseline` — and you write `--source` from
+   the answer, in at most 255 bytes. `<name>` is the person who answered; ask
+   for it in the same question when you do not know it. The response is the
+   whole run, with every file and every attached document, so it goes to
+   `run.json`: read only `data.id` from that file for step 5. Actor, system,
+   Base and process revision are server-owned.
+
+   **Before authorizing, show the person** what they approve, read from the
+   two files, in plain words and in one message:
+   - the source: each repository with its commit and whether it is clean
+     (`repositories[].revision`, `repositories[].dirty`), how many files and
+     megabytes are included (`file_count`, `byte_count`), and how many
+     entries are left out (`repositories[].exclusions`; the field is absent
+     when nothing is left out);
+   - the mode and what it means: baseline publishes as-built requirements as
+     "Baselined — not verified"; derived proposes candidates for later review.
+     State how many requirements the system already has
+     (`data.requirement_count`) and `data.recommended_mode` as a
+     recommendation, never as the answer;
+   - the analysis documents: how many the preflight lists (`data.documents`)
+     and what attaching them does — the run's requirements can then cite
+     them; without them requirements cite code and tests only. Recommend
+     `--documents all` when `data.documents_truncated` is false. When it is
+     true, the system has more documents than one run can attach and `all`
+     cannot be authorized from the saved files: say so and offer `none` only.
+     The person still answers;
+   - the run name. You propose the run name; the person can change it.
+   Ask once: one question that covers the mode, the documents and the run
+   name. Then run the command with what the person said.
+
+   **If the authorization is refused**, nothing was recorded, and the same run
+   name can be used again. A refusal never lets you change the mode, the
+   document choice or the run name yourself. The two rules below are for
+   these three server reasons only:
+   - `stale_corpus` (the requirements changed) or `document_not_authorized`
+     (a document changed): run `preflight` again and save it as
+     `preflight-new.json`. Then compare the four fields of the two files:
+     `data.requirement_count`, `data.recommended_mode`, the number of
+     `data.documents` and `data.documents_truncated`. If nothing differs,
+     authorize again with the same answers and `--preflight
+     preflight-new.json`, and tell the person that you did. If something
+     differs, show the difference and ask again before you authorize.
+   - `document_snapshot_too_large` (too much document text for one run): stop
+     and tell the person. The error and the help name `--documents none` as
+     the next step; that is the mechanism, not permission. `--documents none`
+     changes what they approved, so authorize with it only after they agree,
+     and write the new choice into `--source`.
+   If the same refusal comes a second time, or the refusal is any other
+   reason — for example `idempotency_conflict`, which means the run name
+   already belongs to a run with other content — stop and show the person the
+   error. The same holds when the command itself refuses your flags.
+   The source list in `inventory.json` is not part of these refusals and
+   needs no new review.
+
+   A file built another way can still be given with `authorize --file
+   authorization.json`. Its fields are `key`, `mode`, `authorization_source`,
+   `corpus_fingerprint`, `repositories` (from inventory) and `documents` (from
+   preflight; each has `kind`, `id`, `version`, `fingerprint`). The two forms
+   cannot be mixed, and the file form's errors carry no next step.
 5. For each repository, `modernpath reverse-engineer capture-source --run ID
    --repository key --root /absolute/root`. Poll `source-status --capture ID`
    until ready; use returned immutable source-file IDs. Interrupted captures
@@ -1023,6 +1120,15 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    retry preserves the original observation and digest; changed intent under
    the same key conflicts. Reuse current retained observations when available.
    This makes no deployment claim.
+   For a run inventoried with `--path`, add `--run CAPTURE-RUN`: the command
+   reads that run's authorization first and takes its snapshot over exactly the
+   files authorized for the repository, so the digest equals the captured one.
+   The input JSON is unchanged and the repository must still be clean as a
+   whole. `snapshot_digest` must be the digest that run captured: any other
+   digest, even that of the current files, refuses and records nothing. The report then also carries
+   `authorization_run_id` and `measured_files`. A run that cannot be read, or
+   that does not authorize the repository key, refuses before any observation.
+   Without `--run` a scoped run's digest never matches the whole repository.
 4. `modernpath reverse-engineer proof-preview --file proof.json` evaluates
    without record or lifecycle writes. Input has `version: 1`, `requirements`
    and `delivery`. Each requirement has `kind: "SR" | "UR"`, `external_id`,

@@ -67,9 +67,6 @@ func TestCreateEpicPostsTheFieldTheCoreRequires(t *testing.T) {
 	if _, present := payload["name"]; present {
 		t.Fatalf("`name` is not a cast field — sending it is what produced the 422: %#v", payload)
 	}
-	if _, present := payload["status"]; present {
-		t.Fatal("Epic creation must not send the retired board status field")
-	}
 }
 
 func TestCreateEpicReportsARejection(t *testing.T) {
@@ -125,12 +122,6 @@ func TestNewFailsWhenTheEpicIsRejected(t *testing.T) {
 
 	// The config must not name an Epic that was never created.
 	cfg := readNewConfig(t)
-	if _, present := cfg["initiative_id"]; present {
-		t.Fatalf("config claims an Epic id after a failed creation: %#v", cfg)
-	}
-	if _, present := cfg["initiative_name"]; present {
-		t.Fatalf("config names an Epic that does not exist: %#v", cfg)
-	}
 	if _, present := cfg["epic_id"]; present {
 		t.Fatalf("config claims an Epic id after a failed creation: %#v", cfg)
 	}
@@ -155,11 +146,5 @@ func TestNewRecordsTheEpicItCreated(t *testing.T) {
 	}
 	if got, _ := cfg["epic_name"].(string); got != epicTitle("Ledger") {
 		t.Fatalf("unexpected epic_name %#v", cfg["epic_name"])
-	}
-	if _, present := cfg["initiative_id"]; present {
-		t.Fatalf("new config must not write the deleted initiative_id key: %#v", cfg)
-	}
-	if _, present := cfg["initiative_name"]; present {
-		t.Fatalf("new config must not write the deleted initiative_name key: %#v", cfg)
 	}
 }

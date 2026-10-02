@@ -50,3 +50,36 @@ func TestREQCROSS386SyncWithOnlyDeferredOpsWarnsButSucceeds(t *testing.T) {
 		t.Fatalf("the deferred op must be named:\n%s", out)
 	}
 }
+
+// SR-ROADMAP-012 (UR-ROADMAP-011 AS-3): an item moved on a release page keeps
+// its release through a sync naming another open release; the batch row carries
+// release_kept and the CLI prints one line per kept item.
+func TestSRROADMAP012SyncPrintsOneLinePerKeptItem(t *testing.T) {
+	body := map[string]any{"data": map[string]any{
+		"results": []any{
+			map[string]any{"external_id": "EPIC-A", "type": "upsert_epic", "result": "unchanged",
+				"release_kept": map[string]any{"item": "EPIC-A", "kept_release": "v1-10", "workspace_release": "v1-09"}},
+			map[string]any{"external_id": "SR-B", "type": "upsert_requirement", "result": "updated",
+				"release_kept": map[string]any{"item": "SR-B", "kept_release": "v1-11", "workspace_release": "v1-09"}},
+			map[string]any{"external_id": "SR-C", "type": "upsert_requirement", "result": "unchanged"},
+		},
+		"failed": float64(0), "skipped": float64(0), "deferred": float64(0),
+	}}
+
+	var err error
+	out := captureOut(t, func() { err = reportSyncOutcome(200, body) })
+	if err != nil {
+		t.Fatalf("a kept release is not a failure: %v", err)
+	}
+	for _, want := range []string{
+		"kept EPIC-A in v1-10 (workspace names v1-09)",
+		"kept SR-B in v1-11 (workspace names v1-09)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "kept "); got != 2 {
+		t.Fatalf("one line per kept item, got %d:\n%s", got, out)
+	}
+}

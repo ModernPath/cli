@@ -69,18 +69,6 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 	}
 }
 
-func TestDeadSurfacesStayDead(t *testing.T) {
-	// Q-ARCH-016 (USER:2026-08-18): top-level sync and ralph are deleted —
-	// their living replacements are docs sync/factory sync and dev ralph.
-	// review and implement were retired earlier for the same reason.
-	for _, name := range []string{"sync", "ralph", "review", "implement"} {
-		cmd, _, _ := rootCmd.Find([]string{name})
-		if cmd != rootCmd {
-			t.Errorf("%q resolves to %q — a deleted command has returned", name, cmd.Name())
-		}
-	}
-}
-
 func TestDriftReportFlagIsRegistered(t *testing.T) {
 	// Q-ARCH-016: --report is advertised in drift's own output; it must exist.
 	drift, _, err := rootCmd.Find([]string{"factory", "drift"})

@@ -193,16 +193,66 @@ func TestProcessCliSkillCarriesTheCompletionGateLessons(t *testing.T) {
 	}
 }
 
-// REQ-CROSS-412: the packet aggregate no longer folds the server's compiled
-// process revision, so the §6 trap that described that fold must be GONE. The
-// presence loop above cannot catch a sentence that should have been removed, so
-// the old wording is forbidden explicitly (builder note F-CROSS412-R2-02).
-func TestProcessCliSkillNoLongerDescribesTheProcessRevisionFold(t *testing.T) {
+// SR-RDD-ONBOARD-012: the agent operates the authorization, so the skill is
+// where it learns to build it from the CLI's own outputs and what to show the
+// person first. A customer's agent stopped at authorize because the only
+// instruction was a prose list of fields for a hand-written file.
+func TestProcessCliSkillGuidesTheAuthorization(t *testing.T) {
 	body, err := os.ReadFile(processCliSkill)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "**The aggregate folds the server's compiled process revision.**") {
-		t.Error("the tooling skill still carries the old process-revision fold trap sentence")
+	_, section, found := strings.Cut(string(body), "## Reverse-engineering onboarding (store-backed)")
+	if !found {
+		t.Fatal("the tooling skill lost its reverse-engineering onboarding section")
+	}
+	if next := strings.Index(section, "\n## "); next >= 0 {
+		section = section[:next]
+	}
+	// Markers are matched on the words, not on where the lines wrap.
+	section = strings.Join(strings.Fields(section), " ")
+	// The first text let the agent drop the documents on its own.
+	if old := "the person and authorize again with `--documents none`"; strings.Contains(section, old) {
+		t.Errorf("the onboarding sequence again lets the agent drop the documents without asking: %q", old)
+	}
+	for _, marker := range []string{
+		"authorize --inventory", "--preflight", "--documents all", "--documents none",
+		"Before authorizing, show the person",
+		// the recommendation, and the two preflight fields it is read from
+		"recommended_mode", "documents_truncated", "Recommend",
+		"stale_corpus", "document_not_authorized", "document_snapshot_too_large",
+		// the saved files are what the person approves: no second run
+		"do not run `inventory` or `preflight` again",
+		// the commit and clean state the agent is asked to show
+		"`repositories[].revision`",
+		// one question; the agent proposes the run name
+		"You propose the run name",
+		// after a refusal the agent asks again when what the person saw has
+		// changed, and always before it drops the documents
+		// (USER:2026-10-02:authorize-refusal-ask-when-changed)
+		"requirement_count",
+		"show the difference and ask again",
+		"only after they agree",
+		"Ask once", "If nothing differs", "same run name",
+		// second independent review: one inventory file for all repositories
+		"one run has one inventory file",
+		// the authorize response holds the whole run; it goes to a file
+		"> run.json", "`data.id`",
+		// a truncated document list leaves one choice, and it is still asked
+		"offer `none` only",
+		// the comparison is made between two files, not from memory
+		"preflight-new.json", "except after a refusal", "compare the four fields",
+		// the error text names the mechanism; any other or repeated refusal stops
+		"is the mechanism, not permission",
+		"stop and show the person the error",
+		// PowerShell's own redirect re-encodes the output; cmd saves the bytes
+		// (USER:2026-10-02:authorize-powershell-line-now-flag-later)
+		"In PowerShell",
+		"cmd /c \"modernpath reverse-engineer preflight > preflight.json\"",
+		"was re-encoded when it was saved",
+	} {
+		if !strings.Contains(section, marker) {
+			t.Errorf("the onboarding sequence does not guide the authorization: %q is missing", marker)
+		}
 	}
 }

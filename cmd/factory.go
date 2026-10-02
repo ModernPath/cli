@@ -413,10 +413,14 @@ func (e *factoryEnv) call(method, apiPath string, payload any) (int, map[string]
 func reportSyncOutcome(status int, body map[string]any) error {
 	results, _ := dataOf(body)["results"].([]any)
 	counts := map[string]int{}
-	var failed, skipped, deferred []map[string]any
+	var failed, skipped, deferred, kept []map[string]any
 	for _, r := range results {
 		m, _ := r.(map[string]any)
 		counts[str(m, "result")]++
+		// SR-ROADMAP-012: an item a release move keeps in its open release.
+		if k, ok := m["release_kept"].(map[string]any); ok {
+			kept = append(kept, k)
+		}
 		switch str(m, "result") {
 		case "failed":
 			failed = append(failed, m)
@@ -453,6 +457,12 @@ func reportSyncOutcome(status int, body map[string]any) error {
 	}
 	for _, m := range deferred {
 		fmt.Printf("  deferred op %v %s: %s\n", m["op_index"], str(m, "external_id"), str(m, "reason"))
+	}
+	for _, k := range kept {
+		fmt.Printf("  kept %s in %s (workspace names %s)\n", str(k, "item"), str(k, "kept_release"), str(k, "workspace_release"))
+	}
+	if len(kept) > 0 {
+		fmt.Printf("  %d item(s) were moved on a release page and stay in that release while it is open; change the release there, or update the workspace to match.\n", len(kept))
 	}
 	if len(failed)+len(skipped) > 0 {
 		return fmt.Errorf("%d op(s) failed and %d skipped — fix the cause and run `factory sync` again; the other ops landed and nothing is lost locally", len(failed), len(skipped))
@@ -2699,7 +2709,7 @@ func init() {
 	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivateSource, "source", "", "optional attributable source (the server composes one when omitted)")
 	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivatePin, "pin", "", "existing release PIN confirmation (otherwise prompt or --pin-stdin)")
 	factoryReleaseActivateCmd.Flags().StringVar(&releaseActivateReason, "reason", "", "optional activation reason recorded by the server")
-	factoryReleaseActivateCmd.Flags().BoolVar(&releaseActivateCloseCurrent, "close-current", false, "explicitly close other open releases in this system")
+	factoryReleaseActivateCmd.Flags().BoolVar(&releaseActivateCloseCurrent, "close-current", false, "explicitly close the currently active release in this system (planned releases are never closed)")
 	factoryReleaseActivateCmd.Flags().BoolVar(&releaseActivatePinStdin, "pin-stdin", false, "read the existing compliance PIN from stdin")
 	factoryReleaseCmd.AddCommand(factoryReleaseUseCmd, factoryReleaseShowCmd, factoryReleaseClearCmd, factoryReleaseActivateCmd)
 

@@ -177,9 +177,26 @@ type asBuiltDeliveryInput struct {
 	SnapshotDigest string `json:"snapshot_digest"`
 }
 
+// asBuiltDeliveryScope is the file list a run's authorization recorded for one
+// repository: what a delivery proof of a path-scoped run measures.
+type asBuiltDeliveryScope struct {
+	RunID          string
+	SnapshotDigest string
+	Files          []reverseFile
+}
+
 func asBuiltDeliveryCommand(load func() (*factoryEnv, error)) *cobra.Command {
-	c := &cobra.Command{Use: "delivery-proof", Short: "Fetch and retain a clean tested snapshot at the remote default-branch tip", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "delivery-proof", Short: "Fetch and retain a clean tested snapshot at the remote default-branch tip", Args: cobra.NoArgs,
+		Long: `Observe that the clean tested revision is the tip of the remote default branch
+and retain the observation as evidence.
+
+Without --run the snapshot is the whole repository. With --run the snapshot is
+the files that run's authorization recorded for the repository: use it for a
+run that was inventoried with --path, so the proof measures the same files
+that were captured. The input's snapshot_digest must be the one that run captured.
+The repository must still be clean as a whole.`}
 	c.Flags().String("file", "", "key, repository_key, local root, tested_revision and snapshot_digest JSON (required)")
+	c.Flags().String("run", "", "run whose authorized files are the snapshot, for a run inventoried with --path (optional; the whole repository when omitted)")
 	_ = c.MarkFlagRequired("file")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		file, _ := cmd.Flags().GetString("file")
@@ -190,7 +207,20 @@ func asBuiltDeliveryCommand(load func() (*factoryEnv, error)) *cobra.Command {
 		if input.Key == "" || input.RepositoryKey == "" || input.Root == "" || input.TestedRevision == "" || input.SnapshotDigest == "" {
 			return fmt.Errorf("all delivery observation fields are required")
 		}
-		report, err := collectAsBuiltDelivery(input)
+		var env *factoryEnv
+		var scope *asBuiltDeliveryScope
+		if runID, _ := cmd.Flags().GetString("run"); runID != "" {
+			// The scope is read before any observation: a run that cannot be
+			// read, or that does not authorize the repository, records nothing.
+			var err error
+			if env, err = load(); err != nil {
+				return err
+			}
+			if scope, err = asBuiltRunScope(env, runID, input.RepositoryKey); err != nil {
+				return err
+			}
+		}
+		report, err := collectScopedAsBuiltDelivery(input, scope)
 		if err != nil {
 			return err
 		}
@@ -198,23 +228,88 @@ func asBuiltDeliveryCommand(load func() (*factoryEnv, error)) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		env, err := load()
-		if err != nil {
-			return err
+		if env == nil {
+			if env, err = load(); err != nil {
+				return err
+			}
 		}
 		return asBuiltRecordEvidence(cmd, env, map[string]any{"external_id": "ASBUILT-DELIVERY-" + reverseDigest([]byte(input.Key)), "kind": "manual", "sha": input.TestedRevision, "ran_at": report["observed_at"], "raw_evidence": string(raw)})
 	}
 	return c
 }
+
+// asBuiltRunScope reads the files a run's authorization recorded for one
+// repository key.
+func asBuiltRunScope(env *factoryEnv, runID, key string) (*asBuiltDeliveryScope, error) {
+	body, err := reverseCall(env, "GET", "/reverse-engineering/runs/"+url.PathEscape(runID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not read run %s: %w", runID, err)
+	}
+	repositories, err := reverseAuthorizedRepositories(body)
+	if err != nil {
+		return nil, fmt.Errorf("could not read run %s: %w", runID, err)
+	}
+	for _, repository := range repositories {
+		if repository.Key != key {
+			continue
+		}
+		if len(repository.Files) == 0 {
+			return nil, fmt.Errorf("run %s authorizes no files for repository %q", runID, key)
+		}
+		return &asBuiltDeliveryScope{RunID: runID, SnapshotDigest: repository.SnapshotDigest, Files: repository.Files}, nil
+	}
+	return nil, fmt.Errorf("run %s does not authorize repository %q", runID, key)
+}
+
+// asBuiltObserve reads the repository's revision, clean state and snapshot
+// digest: of the whole repository, or of the files a run authorized. The clean
+// state is the whole repository's in both forms.
+func asBuiltObserve(input asBuiltDeliveryInput, scope *asBuiltDeliveryScope) (reverseRepository, error) {
+	if scope == nil {
+		inventory, err := buildReverseInventory([]string{input.RepositoryKey + "=" + input.Root})
+		if err != nil {
+			return reverseRepository{}, err
+		}
+		return inventory.Repositories[0], nil
+	}
+	root, err := reverseRoot(input.Root)
+	if err != nil {
+		return reverseRepository{}, err
+	}
+	revision, dirty, err := reverseGitIdentity(root)
+	if err != nil {
+		return reverseRepository{}, err
+	}
+	files := make([]reverseFile, len(scope.Files))
+	for i, file := range scope.Files {
+		content, err := reverseRead(root, file.Path)
+		if err != nil {
+			return reverseRepository{}, fmt.Errorf("authorized file unavailable: %w", err)
+		}
+		files[i] = reverseFile{file.Path, reverseDigest(content), int64(len(content))}
+	}
+	return reverseRepository{Key: input.RepositoryKey, Revision: revision, Dirty: dirty, SnapshotDigest: reverseSnapshot(files)}, nil
+}
+
 func collectAsBuiltDelivery(input asBuiltDeliveryInput) (map[string]any, error) {
+	return collectScopedAsBuiltDelivery(input, nil)
+}
+
+// collectScopedAsBuiltDelivery observes delivery over a run's authorized files
+// when a scope is given, and over the whole repository otherwise.
+func collectScopedAsBuiltDelivery(input asBuiltDeliveryInput, scope *asBuiltDeliveryScope) (map[string]any, error) {
 	if strings.Contains(input.RepositoryKey, "=") {
 		return nil, fmt.Errorf("repository key must not contain '='")
 	}
-	inventory, err := buildReverseInventory([]string{input.RepositoryKey + "=" + input.Root})
+	// The proof is of what the run captured: a digest of other bytes, even of
+	// the current ones, would be retained under the run's name and never match.
+	if scope != nil && scope.SnapshotDigest != input.SnapshotDigest {
+		return nil, fmt.Errorf("snapshot digest does not match the snapshot run %s captured for repository %q", scope.RunID, input.RepositoryKey)
+	}
+	repo, err := asBuiltObserve(input, scope)
 	if err != nil {
 		return nil, err
 	}
-	repo := inventory.Repositories[0]
 	if repo.Dirty {
 		return nil, fmt.Errorf("repository is dirty; delivery proof requires a clean tested snapshot")
 	}
@@ -271,18 +366,25 @@ func collectAsBuiltDelivery(input asBuiltDeliveryInput) (map[string]any, error) 
 	if tip != input.TestedRevision {
 		return nil, fmt.Errorf("passing tested revision is not the fetched default-branch tip; repository integration proof is missing")
 	}
-	after, err := buildReverseInventory([]string{input.RepositoryKey + "=" + input.Root})
+	after, err := asBuiltObserve(input, scope)
 	if err != nil {
 		return nil, err
 	}
-	if after.Repositories[0].Dirty || after.Repositories[0].Revision != repo.Revision || after.Repositories[0].SnapshotDigest != repo.SnapshotDigest {
+	if after.Dirty || after.Revision != repo.Revision || after.SnapshotDigest != repo.SnapshotDigest {
 		return nil, fmt.Errorf("repository changed during delivery observation")
 	}
 	commands := make([]string, len(remoteArgs))
 	for i, args := range remoteArgs {
 		commands[i] = strings.Join(args, " ")
 	}
-	return map[string]any{"repository_key": input.RepositoryKey, "origin": origin, "default_branch": branch, "integrated_revision": tip, "tested_revision": repo.Revision, "snapshot_digest": repo.SnapshotDigest, "dirty": false, "commands": remoteArgs, "command": strings.Join(commands, "; "), "observed_at": time.Now().UTC().Format(time.RFC3339Nano)}, nil
+	report := map[string]any{"repository_key": input.RepositoryKey, "origin": origin, "default_branch": branch, "integrated_revision": tip, "tested_revision": repo.Revision, "snapshot_digest": repo.SnapshotDigest, "dirty": false, "commands": remoteArgs, "command": strings.Join(commands, "; "), "observed_at": time.Now().UTC().Format(time.RFC3339Nano)}
+	// Only a scoped proof adds keys: the server replays a retained report by
+	// comparing every key but observed_at, so the unscoped set must not grow.
+	if scope != nil {
+		report["authorization_run_id"] = scope.RunID
+		report["measured_files"] = len(scope.Files)
+	}
+	return report, nil
 }
 
 func passwordPresent(user *url.Userinfo) bool {

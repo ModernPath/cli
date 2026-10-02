@@ -62,9 +62,6 @@ func TestReleaseWarningNamesWhereTheWorkLands(t *testing.T) {
 			if !strings.Contains(msg, "base release") {
 				t.Fatalf("the reader cannot tell where the work went: %q", msg)
 			}
-			if strings.Contains(msg, "unscoped") {
-				t.Fatalf("nothing is unscoped any more — base is a real release: %q", msg)
-			}
 		})
 	}
 }

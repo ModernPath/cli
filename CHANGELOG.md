@@ -2,6 +2,79 @@
 
 ## Unreleased
 
+## v0.14.0 — baseline a large repository path by path, and authorize without a JSON file
+
+### Upgrading from v0.13.0
+
+- Run `modernpath install` after upgrading so the `mp-process-cli` skill and
+  `.modernpath/cli-reference.md` match this release. The skill's
+  reverse-engineering onboarding steps changed: an agent follows the new
+  steps only after the install.
+- The reverse-engineering changes need no server change and work against
+  the production server of v0.13.0 (modernpath-v1@6f69ff5ec).
+- The release-planning lines below, and the help text of `factory release
+  activate --close-current`, describe a server that production does not
+  serve yet. Against the current production server the command behaves as
+  in v0.13.0.
+
+### Baseline a large repository path by path
+
+- `reverse-engineer inventory --path key=relative/path` (repeatable) limits a
+  Git repository to the named paths. The inventory keeps the repository's commit and
+  clean or dirty state, the size and file limits count the included files, and
+  every file left out is listed as an exclusion. A path is a literal name; a
+  path that matches no file, is not relative or ends with a slash refuses.
+  Non-Git roots cannot be scoped (SR-RDD-ONBOARD-010).
+- A tracked symbolic link in a Git repository no longer stops the inventory.
+  It is left out, listed as an exclusion and never followed. `capture-source`
+  still refuses an authorized path that has become a link, and a non-Git root
+  still refuses a link (SR-RDD-ONBOARD-011).
+- `reverse-engineer delivery-proof --run <run>` takes its snapshot over the
+  files that run authorized, so the proof of a path-scoped run matches its
+  capture. The input's `snapshot_digest` must be the one the run captured;
+  any other digest refuses and records nothing. The report adds
+  `authorization_run_id` and `measured_files`. Without `--run` the command
+  and its report are unchanged (SR-RDD-AS-BUILT-CLI-002).
+- No server change is needed: the server already accepts an authorization for
+  part of a repository.
+
+### Authorize a run without writing a JSON file
+
+- `reverse-engineer authorize --inventory inventory.json --preflight
+  preflight.json --mode … --source "USER:…" --key … --documents all|none`
+  builds the authorization from the saved output of `inventory` and
+  `preflight`. Every flag is required and none has a default. The command
+  checks the inventory file against its digest and refuses incomplete input
+  before it calls the server (SR-RDD-ONBOARD-012). `--source` and `--key`
+  are at most 255 bytes each.
+- When the server refuses an authorization given this way with `stale_corpus`,
+  `document_not_authorized` or `document_snapshot_too_large`, the error says
+  what to do next and that nothing was recorded.
+- `authorize --help` describes both forms and names the fields of the file
+  form. `--file` works as before; the two forms cannot be mixed. With no
+  flags, `authorize` now names both forms instead of reporting a missing
+  `--file`.
+- The `mp-process-cli` skill leads with the new form and tells the agent what
+  to show the person before authorizing. The agent saves `inventory` and
+  `preflight` once and authorizes from those files, proposes the run name,
+  and asks one question. After a server refusal it asks again when what the
+  person saw has changed, and always before it drops the documents. It
+  compares two saved preflight files, saves the authorize response to a file
+  and reads the run id from it, and stops on a repeated or any other refusal.
+  In PowerShell it saves the two files through `cmd /c`, because PowerShell's
+  own redirect re-encodes the output (not yet verified on Windows).
+
+### Release planning
+
+- `factory release activate --close-current` is refused while the active
+  release still holds unfinished epics or system requirements
+  (`incumbent_has_unfinished_work`); the refusal names the release and points
+  to Close release in the product, where each item gets a destination first.
+- `factory sync` prints one `kept <item> in <release> (workspace names
+  <release>)` line for each epic or system requirement that was moved on a
+  release page and stays there while that release is open (SR-ROADMAP-012).
+  Older servers send no such rows.
+
 ## v0.13.0 — ask waits for slow answers, and trace refresh for existing baselines
 
 ### Upgrading from v0.12.0

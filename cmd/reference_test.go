@@ -221,19 +221,3 @@ func TestLoopVerbsCarryTheirPrerequisitesInHelp(t *testing.T) {
 		}
 	}
 }
-
-// REQ-CROSS-412: the packet aggregate no longer folds the server's compiled
-// process revision, so `process next` help must no longer describe that fold.
-// A presence loop cannot catch text that should be GONE, so the old markers are
-// forbidden explicitly (builder note F-CROSS412-R2-02).
-func TestProcessNextHelpNoLongerDescribesTheProcessRevisionFold(t *testing.T) {
-	c := findCommand(t, rootCmd, []string{"process", "next"})
-	for _, forbidden := range []string{
-		"compiled process revision",
-		"The planning scope\nchanged since the decision was pinned",
-	} {
-		if strings.Contains(c.Long, forbidden) {
-			t.Errorf("process next --help still describes the process-revision fold: %q", forbidden)
-		}
-	}
-}

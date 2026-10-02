@@ -53,6 +53,9 @@ func refusalBodyText(body map[string]any) string {
 			if reason == "release_open" {
 				parts = append(parts, openReleaseRefusal(errVal))
 			}
+			if reason == "incumbent_has_unfinished_work" {
+				parts = append(parts, unfinishedWorkRefusal(errVal))
+			}
 		}
 		if message := str(errVal, "message"); message != "" {
 			parts = append(parts, message)
@@ -109,6 +112,35 @@ func openReleaseRefusal(errBody map[string]any) string {
 	}
 	parts = append(parts, "Retry `modernpath factory release activate <slug> --close-current` only if you intend to close these releases")
 	return strings.Join(parts, "; ")
+}
+
+// SR-ROADMAP-015: activation with --close-current is refused while the active
+// release still holds unfinished epics or system requirements. Retrying cannot
+// help: each unfinished item needs a destination in the close dialog first.
+func unfinishedWorkRefusal(errBody map[string]any) string {
+	var names []string
+	if releases, ok := errBody["open_releases"].([]any); ok {
+		for _, value := range releases {
+			release, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, slug := str(release, "name"), str(release, "slug")
+			switch {
+			case name != "" && slug != "":
+				names = append(names, fmt.Sprintf("%s (%s)", name, slug))
+			case slug != "":
+				names = append(names, slug)
+			case name != "":
+				names = append(names, name)
+			}
+		}
+	}
+	subject := "the active release"
+	if len(names) > 0 {
+		subject = strings.Join(names, ", ")
+	}
+	return subject + " still has unfinished work; open it in the product, choose Close release and give each unfinished epic and system requirement a destination, then activate again"
 }
 
 func detailLines(details map[string]any) string {

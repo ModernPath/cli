@@ -238,8 +238,8 @@ func TestReleaseActivateRendersOpenReleaseRefusalAndConsentRecovery(t *testing.T
 			"error": map[string]any{
 				"reason": "release_open",
 				"open_releases": []any{
+					// SR-ROADMAP-001: the server names only the active incumbent.
 					map[string]any{"id": 17, "name": "Current stable", "slug": "stable-1", "status": "active", "system_id": 4},
-					map[string]any{"id": 18, "name": "Next validation", "slug": "validation-2", "status": "planned", "system_id": 4},
 				},
 			},
 		})
@@ -258,7 +258,6 @@ func TestReleaseActivateRendersOpenReleaseRefusalAndConsentRecovery(t *testing.T
 	for _, want := range []string{
 		"release_open",
 		"Current stable (stable-1): active",
-		"Next validation (validation-2): planned",
 		"--close-current",
 		"req-release-open-1",
 	} {
@@ -343,5 +342,38 @@ func TestReleaseReadOrdersAnsweredAtAsTime(t *testing.T) {
 	got := readWorkSelection(t, env)
 	if !strings.Contains(got, "USER:2026-09-14:newer (gate GATE-RELEASE-modernpath-v1-09-2)") {
 		t.Errorf("the later second must win over a longer-spelled earlier one:\n%s", got)
+	}
+}
+
+// SR-ROADMAP-015: activation with --close-current is refused while the active
+// release holds unfinished work; the refusal names it and points to the close
+// dialog, where every unfinished epic gets a destination first.
+func TestReleaseActivateRendersIncumbentHasUnfinishedWork(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/sync/author", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+			"reason": "incumbent_has_unfinished_work",
+			"open_releases": []any{
+				map[string]any{"name": "Autumn", "slug": "modernpath-v1-09", "status": "active"},
+			},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	env := wsEnv(t, srv)
+
+	err := activateRelease(env, "modernpath-v1-10", "USER:2026-09-27:hand over", "1234", true, "")
+	if err == nil {
+		t.Fatal("a 409 incumbent_has_unfinished_work must refuse")
+	}
+	for _, want := range []string{"incumbent_has_unfinished_work", "modernpath-v1-09", "unfinished", "Close release"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must carry %q, got: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--close-current` only if") {
+		t.Errorf("retrying with --close-current cannot help here: %v", err)
 	}
 }
