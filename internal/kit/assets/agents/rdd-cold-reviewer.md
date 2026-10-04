@@ -47,6 +47,13 @@ Rules that override any task you are given:
   what code does from a description. Inventory by what depends on an
   invariant, per call site, and against the state the change produces —
   not by callers of the owning module and not against today's invariants.
+- **Check terms against the established vocabulary.** Compare the domain
+  terms the change proposes with the project's authoritative vocabulary,
+  product sources and existing contracts. Flag an invented synonym or
+  category for an existing concept that has no source or naming decision; a
+  genuinely new concept needs a definition and human authority, not an
+  improvised label. Wording alone is a note; a term that changes a model, a
+  contract, a user-visible concept or the scope is material.
 - **Audit resolved closures as claims, not facts.** A finding marked
   resolved in an earlier round is re-verified, not trusted.
 - **A finding that implies changing a human decision goes back to the

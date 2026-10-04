@@ -5,7 +5,7 @@ package cmd
 // After the store-backed flip the tasks/*-REQUIREMENTS.md ledgers are retired by
 // declaration, so the three corpus-verification gates lose their file population.
 // This command gives them the same corpus from the store: it reuses the
-// GET /api/v1/sync/requirements read the working set already uses (cmd/workingset.go
+// GET /api/v1/sync/requirements read the working set already uses (cmd/workingset_read.go
 // fetchRequirementLists), merges system and user requirements, excludes DERIVED,
 // and — with --json — prints ONLY a JSON array of {external_id, kind, work_status,
 // detail_md} to stdout, so a gate can JSON.parse stdout directly. Warnings go to

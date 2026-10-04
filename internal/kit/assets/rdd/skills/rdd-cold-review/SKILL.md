@@ -41,6 +41,13 @@ review audits the change the packet proposes, not the packet as a document.
    finding; do not defer that check to build.
 5. Identify any product, architecture, acceptance, or scope choice that lacks
    human authority.
+   Check proposed domain terms against the project's authoritative vocabulary,
+   product sources, and existing contracts. Reuse established names for the
+   same concept; flag invented synonyms or categories (for example, "business
+   area") without a source or explicit naming decision. A genuinely new
+   concept needs a definition and human authority, not an improvised label.
+   Apply step 7's materiality rule: wording alone is a note; terminology that
+   changes a model, contract, user-visible concept, or scope is material.
 6. Record each finding with severity, direct source, owner, and disposition as
    `OPEN`, `RESOLVED`, `DEFERRED`, or `REJECTED`. A `RESOLVED` closure carried
    from an earlier round is a claim: verify it against the current packet and

@@ -16,11 +16,15 @@ code, tests, and current records.
    delivery scope, including the Epic when selected, under `PROCESS.md`.
    Then select exactly one `TODO` or `IN_PROGRESS` SR with current planning
    and no active hold. A reopened baseline without that approval needs
-   planning and entry first. Work on a
-   reviewable feature branch and preserve unrelated changes.
+   planning and entry first. Under a current autopilot grant, reversible
+   local build-ahead (`PROCESS.md` §Autopilot) may precede this check; it is
+   set aside before RED and authorizes no RED evidence or status change.
+   Work on a reviewable feature branch and preserve unrelated changes.
 2. Before its first implementation iteration, establish upper RED for selected
    UR scenarios requiring new evidence. Re-validation of previously proven
    unchanged scenarios needs no new RED. Keep upper evidence on the UR.
+   Under an autopilot grant, a scenario's upper RED is established in the
+   batch that can make it pass (`PROCESS.md` §AI TDD inner loop).
 3. Select one unmet approved SR clause, establish its focused lower RED for the
    expected reason, and link the stable test identity to the clause.
 4. Implement the smallest behavior that makes the focused evidence pass.
@@ -50,6 +54,20 @@ its targeted failing test is its gate, and committing it before the change
 that satisfies it is what makes red-first auditable in history. Record the
 RED evidence while the repository stands at the RED commit, so the evidence
 is pinned to the revision that produced it.
+
+Under a current autopilot grant, `PROCESS.md` §Autopilot's batch cadence
+applies: one RED commit carries a connected batch's failing tests, with a
+failing assertion for every clause the batch implements; adjacent
+actions are implemented together, and full-verifier feedback runs wait for
+closeout.
+A RED commit carries only failing tests that its next commit turns green;
+that commit lands the whole batch. To land a batch SR by SR, use one RED/GREEN
+pair per SR. A journey assertion is written in the batch that can make it
+pass. A test is never skipped, disabled or left failing to get a commit past
+the project's gate, other than the declared RED tests of a RED commit as the
+gate admits them; the gate runs on every commit as configured, even when it
+runs the full suite.
+The exit to `IN_REVIEW` in step 8 does not change.
 
 ## Report
 

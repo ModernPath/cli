@@ -103,7 +103,8 @@ These rules bind every subsequent phase in the session:
   Never mutate a shared store to test a hypothesis;
 - commit at waypoints — specification, expected RED, GREEN, cleanup,
   reconciliation — with RED evidence committed before the change that
-  satisfies it, so red-first is auditable in history;
+  satisfies it, so red-first is auditable in history (under an autopilot
+  grant, per connected batch — `PROCESS.md` §Autopilot);
 - work on a reviewable feature branch and preserve RED and passing
   fingerprints;
 - route a discovery through `rdd-triage` to the earliest phase it

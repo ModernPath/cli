@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## v0.15.0 — autopilot builds connected journeys in batches, and cold review checks terms
+
+### Upgrading from v0.14.0
+
+- Run `modernpath install` after upgrading so the embedded process kit matches
+  this release. It is synced from req-driven-dev `a4e20ec`
+  (ModernPath/req-driven-dev#34 and #35):
+  - `rdd-autopilot` builds connected user journeys in batches. Red-first holds
+    per batch: a batch's RED commit carries its failing tests, and an
+    end-to-end failing test is established in the batch that can make it
+    pass.
+  - Closeout adds full verification and hardening, not RED for clauses
+    already built; a clause first built at closeout gets its own RED.
+  - `rdd-build` and `rdd-start` point to the batch cadence under an autopilot
+    grant.
+  - `rdd-cold-review` checks proposed domain terms against the project's
+    established vocabulary. Wording alone is a note; a term that changes a
+    model, contract, user-visible concept or scope is material.
+- The installed `rdd-cold-reviewer` agent states the same vocabulary check,
+  so a delegated review applies it whatever the project's own instructions
+  say.
+- These changes need no server change and work against the production
+  server of v0.14.0 (modernpath-v1@6f69ff5ec).
+
+### Internal
+
+- The command code is split into smaller files by workflow (working set,
+  factory, process ceremony, lane, RDD sync and extract, documentation and
+  work commands). Commands, flags and help text are unchanged from v0.14.0.
 
 ## v0.14.0 — baseline a large repository path by path, and authorize without a JSON file
 
