@@ -11,59 +11,94 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
 var (
-	importGit       bool
 	importLocal     bool
+	importYes       bool
 	importName      string
 	importMaxSizeMB int
 	importExclude   []string
+	importKeep      []string
 	importNoIgnore  bool
 )
 
 const (
-	defaultMaxSizeMB = 100 // 100MB default max upload size
+	defaultMaxSizeMB = 100 // 100 MiB default max zip size
+	// REQ-CROSS-500 AC3: --max-size bounds the zip as uploaded.
+	maxSizeUsage = "Maximum size of the compressed zip in MiB (the server's upload limit applies as well)"
+	// REQ-CROSS-501 AC2/AC3: the matching matchesExclude does, and --keep.
+	excludeUsage = "Leave out matching paths (repeatable). Without /, a name or glob matches a file or directory " +
+		"at any depth (fixtures, *.min.js); with /, a path glob matches from the top, * within one directory " +
+		"and ** across any depth (src/*/fixtures, **/generated/**)"
+	keepUsage     = "Keep a directory the built-in filter skips, by name, such as packages (repeatable)"
+	noIgnoreUsage = "Upload files that .gitignore excludes (off by default)"
+	// REQ-CROSS-502 AC3: import's upload flags say so in import's help.
+	localUploadLabel = "Local upload: "
 )
 
+// REQ-CROSS-502 (EPIC-CLI-029, USER:2026-09-29 D7): import uploads the local
+// files and nothing else — the git-URL import the server answers 410 is
+// removed (D9) — runs unattended with --yes, refuses without a terminal and
+// without --yes instead of exiting 0, and its next steps name the lifecycle
+// verbs and link to the app host.
 var importCmd = &cobra.Command{
 	Use:   "import",
-	Short: "Import an existing codebase into ModernPath",
-	Long: `Import an existing codebase to create a new ModernPath system.
+	Short: "Import the codebase in this directory into ModernPath",
+	Long: `Import the codebase in the current directory as a new ModernPath system.
 
-This command detects if the current directory is a git repository and offers
-appropriate import options:
+The CLI packs the directory into a zip with the upload filters, shows a
+summary, asks for a confirmation and uploads the zip. The server creates the
+system and its repository, stores the source and queues the analysis. The
+binding is saved to .modernpath/config.json; keep the system current with
+'modernpath source push' and follow the analysis with
+'modernpath analysis status'.
 
-If git remote exists:
-  1. Import via Git URL - ModernPath clones and analyzes the repository
-  2. Import local files - Zip and upload the current directory
+--yes skips the confirmation. Without a terminal --yes is required: the
+command exits non-zero instead of waiting for an answer, so a CI job fails
+loudly rather than succeeding without importing.
 
-If no git remote:
-  - Import local files only
+Local upload flags:
+  --exclude <pattern>   leave out matching paths (repeatable): a name or glob
+                        without / at any depth, a path glob with / from the
+                        top, where * stays within one directory and ** spans
+                        any depth
+  --keep <name>         upload a directory the built-in filter skips
+  --no-gitignore        upload files that .gitignore excludes
+  --max-size <MiB>      the largest compressed zip to upload
+
+The scan report lists what each filter left out. Before sending, the request
+is compared with the server's upload limit; one that does not fit is refused
+with the zip size, the limit, the largest top-level directories and an
+--exclude example.
 
 Examples:
-  modernpath import                    # Interactive - detects git and prompts
-  modernpath import --git              # Force import via git URL
-  modernpath import --local            # Force import local files
-  modernpath import --name="My App"    # Specify system name`,
-	RunE: runImport,
+  modernpath import                          # summary, confirmation, upload
+  modernpath import --yes                    # unattended, for CI
+  modernpath import --name="My App"          # system name (default: folder name)
+  modernpath import --exclude fixtures --keep packages`,
+	// Each error is printed once where it happens (REQ-CROSS-500, D4).
+	SilenceErrors: true,
+	RunE:          runImport,
 }
 
 func init() {
-	importCmd.Flags().BoolVar(&importGit, "git", false, "Import via git URL (requires git remote)")
-	importCmd.Flags().BoolVar(&importLocal, "local", false, "Import by uploading local files")
+	importCmd.Flags().BoolVar(&importLocal, "local", false, "Upload the local files (the default and the only import method)")
+	importCmd.Flags().BoolVarP(&importYes, "yes", "y", false, "Import without asking (required without a terminal)")
 	importCmd.Flags().StringVar(&importName, "name", "", "System name (default: folder name)")
-	importCmd.Flags().IntVar(&importMaxSizeMB, "max-size", defaultMaxSizeMB, "Maximum upload size in MB")
-	importCmd.Flags().StringArrayVar(&importExclude, "exclude", nil, "Exclude paths matching a name, path glob or basename glob (repeatable)")
-	importCmd.Flags().BoolVar(&importNoIgnore, "no-gitignore", false, "Upload files that .gitignore excludes (off by default)")
+	importCmd.Flags().IntVar(&importMaxSizeMB, "max-size", defaultMaxSizeMB, localUploadLabel+maxSizeUsage)
+	importCmd.Flags().StringArrayVar(&importExclude, "exclude", nil, localUploadLabel+excludeUsage)
+	importCmd.Flags().StringArrayVar(&importKeep, "keep", nil, localUploadLabel+keepUsage)
+	importCmd.Flags().BoolVar(&importNoIgnore, "no-gitignore", false, localUploadLabel+noIgnoreUsage)
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -80,20 +115,15 @@ func runImport(cmd *cobra.Command, args []string) error {
 	// Get current directory info
 	cwd, err := os.Getwd()
 	if err != nil {
-		printError("Failed to get current directory: %v\n", err)
-		return err
+		return reportFailure(fmt.Errorf("failed to get current directory: %w", err))
 	}
 	folderName := filepath.Base(cwd)
 
-	// Detect git remote
-	gitRemote := detectGitRemote()
-	hasGitRemote := gitRemote != ""
-
 	fmt.Printf("📁 Directory: %s\n", cwd)
-	if hasGitRemote {
-		cyan.Printf("🔗 Git Remote: %s\n", gitRemote)
+	if origin := detectGitRemote(); origin != "" {
+		cyan.Printf("🔗 Git remote origin: %s\n", origin)
 	} else {
-		fmt.Println("🔗 Git Remote: (none detected)")
+		fmt.Println("🔗 Git remote origin: none")
 	}
 	fmt.Println()
 
@@ -104,44 +134,19 @@ func runImport(cmd *cobra.Command, args []string) error {
 	// Check auth
 	auth, _ := config.ReadAuth()
 	if auth == nil || auth.Token == "" {
-		printError("Not authenticated. Run 'modernpath auth' first.\n")
-		return fmt.Errorf("authentication required")
+		return reportFailure(fmt.Errorf("not authenticated; run 'modernpath auth' first"))
 	}
 
 	// Health check
 	healthReq, _, err := healthProbe(baseURL)
 	if err != nil {
-		return err
+		return reportFailure(err)
 	}
 	resp, err := client.Do(healthReq)
 	if err != nil {
-		printError("Cannot connect to ModernPath at %s\n", baseURL)
-		return err
+		return reportFailure(fmt.Errorf("cannot connect to ModernPath at %s: %w", baseURL, err))
 	}
 	resp.Body.Close()
-
-	// Determine import method
-	var importMethod string
-	if importGit {
-		if !hasGitRemote {
-			printError("No git remote found. Cannot use --git flag.\n")
-			return fmt.Errorf("no git remote")
-		}
-		importMethod = "git"
-	} else if importLocal {
-		importMethod = "local"
-	} else {
-		// Interactive selection
-		importMethod, err = selectImportMethod(hasGitRemote)
-		if err != nil {
-			return err
-		}
-	}
-
-	if importMethod == "cancel" {
-		printInfo("Import cancelled.\n")
-		return nil
-	}
 
 	// Get system name
 	archName := importName
@@ -150,37 +155,28 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Confirm before proceeding
-	fmt.Println()
 	bold.Println("📋 Import Summary")
 	fmt.Println("───────────────────────────────────────────────────────────")
 	fmt.Printf("Name:     %s\n", archName)
-	fmt.Printf("Method:   %s\n", importMethod)
-	if importMethod == "git" {
-		fmt.Printf("Git URL:  %s\n", gitRemote)
-	} else {
-		fmt.Printf("Source:   %s\n", cwd)
-	}
+	fmt.Printf("Source:   %s (packed and uploaded as a zip)\n", cwd)
 	fmt.Printf("API:      %s\n", baseURL)
 	fmt.Println()
 
-	confirmPrompt := promptui.Prompt{
-		Label:     "Proceed with import",
-		IsConfirm: true,
-	}
-	_, err = confirmPrompt.Run()
+	ok, err := confirmAction("Proceed with import", importYes, false)
 	if err != nil {
+		return reportFailure(err)
+	}
+	if !ok {
 		printInfo("Import cancelled.\n")
 		return nil
 	}
 
-	// Execute import
 	fmt.Println()
-	if importMethod == "git" {
-		return importViaGit(baseURL, auth.Token, archName, gitRemote)
-	}
 	return importViaUpload(baseURL, auth.Token, archName, cwd)
 }
 
+// detectGitRemote is the URL of the checkout's origin remote, shown for
+// reference; "" when there is none.
 func detectGitRemote() string {
 	cmd := exec.Command("git", "remote", "get-url", "origin")
 	output, err := cmd.Output()
@@ -201,108 +197,12 @@ func getAPIURL() string {
 	return config.DefaultAPIURL
 }
 
-func selectImportMethod(hasGitRemote bool) (string, error) {
-	var items []string
-
-	if hasGitRemote {
-		items = []string{
-			"🌐 Import via Git URL - ModernPath clones the repository",
-			"📁 Import local files - Upload current directory as zip",
-			"❌ Cancel",
-		}
-	} else {
-		items = []string{
-			"📁 Import local files - Upload current directory as zip",
-			"❌ Cancel",
-		}
-	}
-
-	prompt := promptui.Select{
-		Label:    "How would you like to import this codebase?",
-		Items:    items,
-		HideHelp: true,
-	}
-
-	index, _, err := prompt.Run()
-	if err != nil {
-		return "", err
-	}
-
-	if hasGitRemote {
-		switch index {
-		case 0:
-			return "git", nil
-		case 1:
-			return "local", nil
-		default:
-			return "cancel", nil
-		}
-	}
-
-	switch index {
-	case 0:
-		return "local", nil
-	default:
-		return "cancel", nil
-	}
-}
-
-func importViaGit(baseURL, token, name, gitURL string) error {
-	printInfo("Creating system from git repository...\n")
-
-	payload := map[string]interface{}{
-		"name":        name,
-		"import_type": "git",
-		"git_url":     gitURL,
-	}
-
-	jsonPayload, _ := json.Marshal(payload)
-
-	req, _ := http.NewRequest("POST", baseURL+"/api/systems/import", bytes.NewBuffer(jsonPayload))
-	platform.Prepare(req)
-	req.Header.Set("Content-Type", "application/json")
-	if err := platform.Authorize(req, token); err != nil {
-		return err
-	}
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		printError("Failed to create system: %v\n", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		printError("API error: %s - %s\n", resp.Status, string(body))
-		return fmt.Errorf("import failed")
-	}
-
-	var result struct {
-		Success bool `json:"success"`
-		Data    struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
-			Slug string `json:"slug"`
-		} `json:"data"`
-		Message string `json:"message"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		printError("Failed to parse response: %v\n", err)
-		return err
-	}
-
-	return handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, 0)
-}
-
 // importFilterOptions are the filters `import --local` and `source push`
-// apply alike (REQ-SYS-211 AC1): the skip lists, .gitignore through
-// `git check-ignore`, --exclude and --max-size.
+// apply alike (REQ-SYS-211 AC1): the skip lists less the directories --keep
+// names, .gitignore through `git check-ignore`, --exclude and --max-size.
 type importFilterOptions struct {
 	Exclude     []string
+	Keep        []string
 	MaxSizeMB   int
 	NoGitignore bool
 }
@@ -325,6 +225,19 @@ type importReport struct {
 	SizeIgnored  int64
 	Excluded     int
 	SizeExcluded int64
+	// BuiltIn is what each built-in rule dropped, largest first
+	// (REQ-CROSS-501 AC1).
+	BuiltIn []filterDrop
+	// Kept is the built-in directory drops --keep turned off (AC3).
+	Kept []string
+}
+
+// filterDrop is what one built-in rule dropped: a directory name ("bin/"), an
+// extension ("*.svg") or a file name (".env").
+type filterDrop struct {
+	Rule  string
+	Files int
+	Bytes int64
 }
 
 // collectImportFiles walks sourceDir with the import filters and returns the
@@ -333,22 +246,41 @@ func collectImportFiles(sourceDir string, opts importFilterOptions) ([]importFil
 	var cands []importFile
 	var report importReport
 
-	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+	keep, err := keptDirectories(opts.Keep)
+	if err != nil {
+		return nil, report, err
+	}
+	if err := checkExcludePatterns(opts.Exclude); err != nil {
+		return nil, report, err
+	}
+	builtIn := map[string]*filterDrop{}
+	drop := func(rule string, files int, size int64) {
+		if builtIn[rule] == nil {
+			builtIn[rule] = &filterDrop{Rule: rule}
+		}
+		builtIn[rule].Files += files
+		builtIn[rule].Bytes += size
+	}
+
+	err = filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 
-		// Skip directories we don't want
+		// Skip directories we don't want, counting what they held.
 		if info.IsDir() {
 			base := filepath.Base(path)
-			if shouldSkipImportDir(base) {
+			if shouldSkipImportDir(base) && !keep[base] {
+				files, size := treeSize(path)
+				drop(base+"/", files, size)
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
 		// Skip files we don't want
-		if shouldSkipImportFile(info.Name()) {
+		if rule := builtInFileRule(info.Name()); rule != "" {
+			drop(rule, 1, info.Size())
 			return nil
 		}
 
@@ -391,7 +323,71 @@ func collectImportFiles(sourceDir string, opts importFilterOptions) ([]importFil
 		}
 	}
 	report.Files = len(files)
+	for _, d := range builtIn {
+		report.BuiltIn = append(report.BuiltIn, *d)
+	}
+	sort.Slice(report.BuiltIn, func(i, j int) bool {
+		if report.BuiltIn[i].Bytes != report.BuiltIn[j].Bytes {
+			return report.BuiltIn[i].Bytes > report.BuiltIn[j].Bytes
+		}
+		return report.BuiltIn[i].Rule < report.BuiltIn[j].Rule
+	})
+	for name := range keep {
+		report.Kept = append(report.Kept, name+"/")
+	}
+	sort.Strings(report.Kept)
 	return files, report, nil
+}
+
+// treeSize counts the files under dir and their bytes.
+func treeSize(dir string) (files int, size int64) {
+	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			files++
+			size += info.Size()
+		}
+		return nil
+	})
+	return files, size
+}
+
+// printImportReport prints what the scan found and what every filter left
+// out (REQ-CROSS-172, REQ-CROSS-501): .gitignore, --exclude, each built-in
+// rule, and the built-in directories --keep kept.
+func printImportReport(w io.Writer, report importReport) {
+	fmt.Fprintf(w, "  Files: %d\n", report.Files)
+	fmt.Fprintf(w, "  Size:  %s\n", byteCount(report.TotalSize))
+	if report.Ignored > 0 {
+		fmt.Fprintf(w, "  Skipped (.gitignore): %s, %s\n", fileCount(report.Ignored), byteCount(report.SizeIgnored))
+	}
+	if report.Excluded > 0 {
+		fmt.Fprintf(w, "  Skipped (--exclude):  %s, %s\n", fileCount(report.Excluded), byteCount(report.SizeExcluded))
+	}
+	if len(report.BuiltIn) > 0 {
+		fmt.Fprintln(w, "  Skipped (built-in):")
+		width := 0
+		for _, d := range report.BuiltIn {
+			width = max(width, len(d.Rule))
+		}
+		directories := false
+		for _, d := range report.BuiltIn {
+			fmt.Fprintf(w, "    %-*s  %s, %s\n", width, d.Rule, fileCount(d.Files), byteCount(d.Bytes))
+			directories = directories || strings.HasSuffix(d.Rule, "/")
+		}
+		if directories {
+			fmt.Fprintln(w, "  Upload a skipped directory with --keep <name>.")
+		}
+	}
+	if len(report.Kept) > 0 {
+		fmt.Fprintf(w, "  Kept (--keep): %s\n", strings.Join(report.Kept, ", "))
+	}
+}
+
+func fileCount(n int) string {
+	if n == 1 {
+		return "1 file"
+	}
+	return fmt.Sprintf("%d files", n)
 }
 
 // zipFiles packs exactly the given files, in memory. The set was decided by
@@ -422,46 +418,34 @@ func zipFiles(files []importFile) (*bytes.Buffer, error) {
 	return &zipBuffer, nil
 }
 
+// importViaUpload packs sourceDir, checks the zip against --max-size and the
+// request body against the server's upload limit (REQ-CROSS-500), and posts
+// it. Every failure is printed once and returned as a reportedError.
 func importViaUpload(baseURL, token, name, sourceDir string) error {
 	printInfo("Scanning directory...\n")
 
 	files, report, err := collectImportFiles(sourceDir, importFilterOptions{
 		Exclude:     importExclude,
+		Keep:        importKeep,
 		MaxSizeMB:   importMaxSizeMB,
 		NoGitignore: importNoIgnore,
 	})
 	if err != nil {
-		printError("%v\n", err)
-		return err
+		return reportFailure(err)
 	}
-
-	sizeMB := float64(report.TotalSize) / (1024 * 1024)
-	fmt.Printf("  Files: %d\n", report.Files)
-	fmt.Printf("  Size:  %.2f MB\n", sizeMB)
-	if report.Ignored > 0 {
-		fmt.Printf("  Skipped (.gitignore): %d files, %.2f MB\n", report.Ignored, float64(report.SizeIgnored)/(1024*1024))
-	}
-	if report.Excluded > 0 {
-		fmt.Printf("  Skipped (--exclude):  %d files, %.2f MB\n", report.Excluded, float64(report.SizeExcluded)/(1024*1024))
-	}
-
-	if sizeMB > float64(importMaxSizeMB) {
-		printError("Directory too large (%.2f MB > %d MB limit)\n", sizeMB, importMaxSizeMB)
-		printInfo("Narrow it with --exclude <name|glob>, use git import, or raise --max-size\n")
-		return fmt.Errorf("directory too large")
-	}
+	printImportReport(os.Stdout, report)
 
 	printInfo("Creating zip archive...\n")
 
 	zipBuffer, err := zipFiles(files)
 	if err != nil {
-		printError("%v\n", err)
-		return err
+		return reportFailure(err)
 	}
-	zipSize := zipBuffer.Len()
-	fmt.Printf("  Zip size: %.2f MB\n", float64(zipSize)/(1024*1024))
-
-	printInfo("Uploading to ModernPath...\n")
+	fmt.Printf("  Zip size: %s\n", byteCount(int64(zipBuffer.Len())))
+	sizes := uploadSizes{command: "modernpath import --local", zip: zipBuffer.Bytes()}
+	if int64(zipBuffer.Len()) > int64(importMaxSizeMB)*1024*1024 {
+		return reportFailure(sizes.overMaxSize(importMaxSizeMB))
+	}
 
 	// Create multipart request
 	var requestBody bytes.Buffer
@@ -474,33 +458,50 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	// Add zip file
 	part, err := mpWriter.CreateFormFile("file", name+".zip")
 	if err != nil {
-		printError("Failed to create form: %v\n", err)
-		return err
+		return reportFailure(fmt.Errorf("failed to create form: %w", err))
 	}
 	part.Write(zipBuffer.Bytes())
 	mpWriter.Close()
+	sizes.body = int64(requestBody.Len())
+
+	// One read gives the upload limit and the app address the next steps
+	// link to (D2).
+	capabilities, err := readUploadCapabilities(&authenticatedClient{client: &http.Client{Timeout: 30 * time.Second}, token: token, baseURL: baseURL})
+	if err != nil {
+		return reportFailure(err)
+	}
+	limit := capabilities.limit
+	if limit.note != "" {
+		printWarning("%s\n", limit.note)
+	}
+	if sizes.body > limit.bytes {
+		return reportFailure(sizes.overLimit(limit.bytes))
+	}
+
+	printInfo("Uploading to ModernPath...\n")
 
 	req, _ := http.NewRequest("POST", baseURL+"/api/systems/import", &requestBody)
 	platform.Prepare(req)
 	req.Header.Set("Content-Type", mpWriter.FormDataContentType())
 	if err := platform.Authorize(req, token); err != nil {
-		return err
+		return reportFailure(err)
 	}
 
 	// Longer timeout for upload
 	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		printError("Upload failed: %v\n", err)
-		return err
+		return reportFailure(fmt.Errorf("upload failed: %w", err))
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		return reportFailure(sizes.refused(bodyTooLarge(body).limitOr(limit.bytes)))
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		printError("API error: %s - %s\n", resp.Status, string(body))
-		return fmt.Errorf("import failed")
+		return reportFailure(pushRefusal(resp, body))
 	}
 
 	var result struct {
@@ -515,11 +516,14 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		printError("Failed to parse response: %v\n", err)
-		return err
+		return reportFailure(fmt.Errorf("failed to parse response: %w", err))
 	}
 
-	return handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, result.Data.RepositoryID)
+	if err := handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, result.Data.RepositoryID); err != nil {
+		return err
+	}
+	printImportNextSteps(systemAppLink(capabilities.appURL, baseURL, result.Data.ID, "overview"), result.Data.RepositoryID)
+	return nil
 }
 
 // handleImportSuccess records the binding in <cwd>/.modernpath/config.json —
@@ -547,7 +551,7 @@ func handleImportSuccess(baseURL string, archID int, archName, archSlug string, 
 		if existing, err := os.ReadFile(configPath); err == nil {
 			_ = json.Unmarshal(existing, cfg)
 		}
-		cfg.APIURL = getAPIURL()
+		cfg.APIURL = baseURL
 		cfg.SystemID = archID
 		cfg.SystemName = archName
 		cfg.SystemSlug = archSlug
@@ -564,22 +568,33 @@ func handleImportSuccess(baseURL string, archID int, archName, archSlug string, 
 		os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644)
 	}
 
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Printf("  1. View in UI:          %s/systems/%d\n", baseURL, archID)
-	fmt.Println("  2. Generate docs:       modernpath docs generate")
-	fmt.Println("  3. Sync documentation:  modernpath docs sync")
-	fmt.Println("  4. Search codebase:     modernpath search \"...\"")
-	if repositoryID != 0 {
-		fmt.Println("  5. Push new commits:    modernpath source push")
-	}
-	fmt.Println()
-
 	return nil
 }
 
-func shouldSkipImportDir(name string) bool {
-	skipDirs := []string{
+// printImportNextSteps tells what happens after an upload (REQ-CROSS-502
+// AC4): the server has queued the analysis, which the lifecycle verbs of
+// REQ-CROSS-503 follow, start, re-run and reset; source push sends new
+// commits. link opens the system in the app.
+func printImportNextSteps(link string, repositoryID int) {
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  The analysis of the uploaded source is queued.")
+	fmt.Println("  1. Follow the analysis:  modernpath analysis status")
+	fmt.Printf("  2. View in UI:           %s\n", link)
+	step := 3
+	if repositoryID != 0 {
+		fmt.Printf("  %d. Push new commits:     modernpath source push\n", step)
+		step++
+	}
+	fmt.Printf("  %d. Sync documentation:   modernpath docs sync, once the analysis is done\n", step)
+	fmt.Println("  To start, re-run or reset the analysis: modernpath analysis start | reanalyze | reset")
+	fmt.Println()
+}
+
+// The built-in skip lists (REQ-CROSS-501): directory names dropped at any
+// depth, and file extensions and names. Every drop is counted in the report.
+var (
+	builtInSkipDirs = []string{
 		".git", ".svn", ".hg", ".modernpath",
 		"node_modules", "deps", "_build", "vendor", "packages",
 		"dist", "build", "target", "out", ".next", ".nuxt",
@@ -588,17 +603,8 @@ func shouldSkipImportDir(name string) bool {
 		".tmp", ".cache", ".pytest_cache", "__pycache__", ".coverage",
 		".DS_Store", "Thumbs.db",
 	}
-	for _, skip := range skipDirs {
-		if name == skip {
-			return true
-		}
-	}
-	return false
-}
-
-func shouldSkipImportFile(name string) bool {
-	// Skip large binary files and common non-code files
-	skipExtensions := []string{
+	// Large binary files and common non-code files.
+	builtInSkipExtensions = []string{
 		".exe", ".dll", ".so", ".dylib", ".a", ".o",
 		".zip", ".tar", ".gz", ".rar", ".7z",
 		".pdf", ".doc", ".docx", ".xls", ".xlsx",
@@ -607,24 +613,55 @@ func shouldSkipImportFile(name string) bool {
 		".ttf", ".otf", ".woff", ".woff2", ".eot",
 		".sqlite", ".db",
 	}
-
-	ext := strings.ToLower(filepath.Ext(name))
-	for _, skip := range skipExtensions {
-		if ext == skip {
-			return true
-		}
-	}
-
-	// Skip specific files
-	skipFiles := []string{
+	builtInSkipFiles = []string{
 		".DS_Store", "Thumbs.db", ".env", ".env.local",
 		"package-lock.json", "yarn.lock", "pnpm-lock.yaml",
 	}
-	for _, skip := range skipFiles {
-		if name == skip {
-			return true
-		}
+	// Built-in directory drops --keep never turns off, and why.
+	unkeepableDirs = map[string]string{
+		".modernpath": "it holds the workspace binding and the sign-in credential",
+		".git":        "it holds version control data, not source",
+		".svn":        "it holds version control data, not source",
+		".hg":         "it holds version control data, not source",
 	}
+)
 
-	return false
+func shouldSkipImportDir(name string) bool {
+	return slices.Contains(builtInSkipDirs, name)
+}
+
+// builtInFileRule is the built-in rule that drops a file by its name — its
+// extension ("*.svg") or the name itself (".env") — or "" when none does.
+func builtInFileRule(name string) string {
+	if ext := strings.ToLower(filepath.Ext(name)); slices.Contains(builtInSkipExtensions, ext) {
+		return "*" + ext
+	}
+	if slices.Contains(builtInSkipFiles, name) {
+		return name
+	}
+	return ""
+}
+
+// keptDirectories checks the --keep names (REQ-CROSS-501 AC3, D6): each must
+// be a built-in directory drop that may be uploaded.
+func keptDirectories(names []string) (map[string]bool, error) {
+	keep := map[string]bool{}
+	for _, name := range names {
+		name = strings.Trim(strings.TrimSpace(name), "/")
+		if reason, ok := unkeepableDirs[name]; ok {
+			return nil, fmt.Errorf("--keep %s is not allowed: %s", name, reason)
+		}
+		if !shouldSkipImportDir(name) {
+			var keepable []string
+			for _, dir := range builtInSkipDirs {
+				if _, ok := unkeepableDirs[dir]; !ok {
+					keepable = append(keepable, dir)
+				}
+			}
+			return nil, fmt.Errorf("--keep %s is not a directory the built-in filter skips; --keep takes one of: %s",
+				name, strings.Join(keepable, ", "))
+		}
+		keep[name] = true
+	}
+	return keep, nil
 }

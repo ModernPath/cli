@@ -1,5 +1,90 @@
 # Changelog
 
+## v0.16.0 — the upload path fits a legacy estate
+
+### Upgrading from v0.15.0: `import --git` is removed
+
+- `modernpath import` no longer offers an import from a git URL, and its
+  `--git` flag is gone: the server has refused that import (410) since the
+  push channel shipped. A script that passes `--git` now fails with
+  `unknown flag: --git`; use `modernpath import --yes` to upload the local
+  files (REQ-CROSS-502).
+
+### Import runs unattended
+
+- `import` takes `--yes` (`-y`) to skip its confirmation. Without `--yes` and
+  without a terminal it exits non-zero with `--yes is required for unattended
+  runs` instead of printing "Import cancelled." and exiting 0. The method
+  menu is gone; `--local` is accepted and changes nothing.
+- The help labels `--exclude`, `--keep`, `--no-gitignore` and `--max-size` as
+  local-upload flags, and the git remote line names `origin`.
+- After an upload the next steps say the analysis is queued and name
+  `modernpath analysis status`, `source push` and the other analysis verbs
+  instead of `docs generate`. The View in UI link of `import`, `new` and
+  `docs push` opens the app host the server names; a server that names none
+  gets a link on the API host, marked as such. Every `import` error prints
+  once.
+
+### Uploads are checked against the server's limit before sending
+
+- `import --local` and `source push` read the server's upload limit
+  (`GET /api/import/capabilities`) and compare the request body with it
+  before uploading. A body that does not fit is not sent: the command prints
+  the zip size, the limit, the ten largest top-level directories by
+  compressed size and an `--exclude` example, and exits non-zero. A server
+  without the read accepts 50,000,000 bytes; when the read fails the CLI
+  assumes 90,000,000. The output says which limit was used (REQ-CROSS-500).
+  The read closes its connection, so a server that drops the connection
+  after answering the unknown route cannot take the upload down with it.
+- `--max-size` now bounds the compressed zip (MiB), not the files before
+  compression.
+- A `413` from the server prints one message with the same guidance instead
+  of the raw JSON twice. Every `source push` error and every error of the
+  `import` upload now prints once; other `import` upload refusals print as
+  `code: message`, as `source push` does.
+
+### Every upload filter is reported
+
+- The scan report of `import --local` and `source push` now lists each
+  built-in directory name and extension that dropped files (`packages/`,
+  `bin/`, `*.svg`, …) with the file count and bytes, beside the `.gitignore`
+  and `--exclude` drops. `source push` prints the whole report, including the
+  `.gitignore` count (REQ-CROSS-501).
+- New `--keep <name>` (repeatable) on both commands uploads a directory the
+  built-in list skips, for example `--keep packages` in a JavaScript
+  monorepo; the report names it. A name that is not on the list, the
+  `.modernpath` directory and the version control directories are refused.
+- `--exclude` matches the way its help says: a pattern without `/` matches a
+  file or directory name at any depth (`fixtures` now also leaves out
+  `src/a/fixtures/x.cs`, not only `fixtures/` at the top); a pattern with `/`
+  matches the path from the top, where `*` stays within one directory and
+  `**` spans any depth.
+- Report sizes are exact bytes, with megabytes from one megabyte up.
+
+### Run and follow the analysis from the CLI
+
+- New `modernpath analysis start | reanalyze <repository-id> | reset |
+  status` drive the analysis of the bound system through the lifecycle the UI
+  uses. `start` and `reset` take `--mode independent_repos|unified_workspace`.
+  `reset` deletes the analysis results, asks first and needs `--yes` without a
+  terminal. `status` prints the repository's analysis, documentation and
+  embedding status, its source revision and refresh mark, and the current run
+  with its phase; with no recorded run (often the case right after an import)
+  it prints `no analysis run recorded` and exits 0. A server refusal prints
+  once by its error code and exits non-zero (REQ-CROSS-503).
+- `docs generate` starts that same lifecycle (`--mode`, default
+  `independent_repos`) instead of posting to a route the server never had, and
+  no longer creates a repository.
+- `docs generate` and `docs refresh` take `--yes`. Without it and without a
+  terminal they exit non-zero with `--yes is required for unattended runs`
+  instead of printing "cancelled" and exiting 0.
+- `docs refresh`, `preview` and `repair` find an import-created repository by
+  the `repository_id` that `import --local` saves, else the system's single
+  upload repository, else a local-path match, and exit non-zero when none
+  resolves. The config reader now loads `repository_id`, and every command
+  that rewrites `config.json`, including `env --set`, keeps it; a `factory
+  connect` to another system or API host clears it.
+
 ## v0.15.0 — autopilot builds connected journeys in batches, and cold review checks terms
 
 ### Upgrading from v0.14.0

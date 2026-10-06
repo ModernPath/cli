@@ -380,11 +380,13 @@ func runNew(cmd *cobra.Command, args []string) error {
 	bold.Println("✨ Project Created!")
 	fmt.Println()
 	fmt.Println("Next steps:")
+	// REQ-CROSS-502 C3: the link opens the app host, not the API host.
+	link := systemAppLink(readAppURL(newAuthenticatedClient(&config.Config{APIURL: baseURL})), baseURL, archResult.ID, "overview")
 	if !inPlace {
 		fmt.Printf("  1. cd %s\n", projectDir)
-		fmt.Printf("  2. View in UI:    %s/systems/%d\n", baseURL, archResult.ID)
+		fmt.Printf("  2. View in UI:    %s\n", link)
 	} else {
-		fmt.Printf("  1. View in UI:    %s/systems/%d\n", baseURL, archResult.ID)
+		fmt.Printf("  1. View in UI:    %s\n", link)
 	}
 	fmt.Printf("  %d. Sync docs:     modernpath docs sync\n", ifThen(!inPlace, 3, 2))
 	fmt.Printf("  %d. Search:        modernpath search \"...\"\n", ifThen(!inPlace, 4, 3))

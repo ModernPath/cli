@@ -27,16 +27,21 @@ via 'modernpath work select'.`,
 var docsGenerateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Run AI analysis to generate codebase documentation",
-	Long: `Scan the codebase, get analysis estimates, and run the full AI analysis pipeline
-to generate comprehensive documentation.
+	Long: `Start the AI analysis of the bound system, which generates its documentation.
+It sends the same request as the UI's Start analysis button and as
+'modernpath analysis start', and it creates no repository.
 
-This performs the same analysis as the UI when creating new systems:
-1. Scans the codebase for initial statistics
-2. Shows estimates (cost, time, tokens)
-3. Asks for confirmation
-4. Creates repository if needed
-5. Runs full AI analysis pipeline including documentation generation`,
-	RunE: runDocsGenerate,
+1. Scans this directory for statistics and shows estimates (cost, time, tokens)
+2. Asks for confirmation; --yes skips it, and without a terminal --yes is
+   required, so a script fails instead of starting nothing
+3. Starts the analysis of the system's repositories in --mode
+   (independent_repos, the default, or unified_workspace)
+
+A refusal (the analysis is already running or complete, the sources are not
+ready) prints its error code and message and exits non-zero. Follow the run
+with 'modernpath analysis status'.`,
+	SilenceErrors: true,
+	RunE:          runDocsGenerate,
 }
 
 var docsRefreshCmd = &cobra.Command{
@@ -51,15 +56,24 @@ This is much faster than a full regeneration:
 4. Updates subsystem docs for affected subsystems
 5. Updates architecture docs if subsystems changed
 
-Use this for daily documentation updates to keep docs in sync with code.`,
-	RunE: runDocsRefresh,
+Use this for daily documentation updates to keep docs in sync with code.
+
+` + boundRepositoryHelp + `
+
+The update asks for a confirmation first. --yes skips it; without a terminal
+--yes is required, so a script fails instead of updating nothing.`,
+	SilenceErrors: true,
+	RunE:          runDocsRefresh,
 }
 
 var docsPreviewCmd = &cobra.Command{
 	Use:   "preview",
 	Short: "Preview what would be updated by docs refresh",
-	Long:  `Show what files have changed and what documentation would be regenerated without making changes.`,
-	RunE:  runDocsPreview,
+	Long: `Show what files have changed and what documentation would be regenerated without making changes.
+
+` + boundRepositoryHelp,
+	SilenceErrors: true,
+	RunE:          runDocsPreview,
 }
 
 var docsRepairCmd = &cobra.Command{
@@ -77,15 +91,26 @@ The command will:
 2. Re-analyze them with full deep analysis
 3. Update the database with complete analysis data
 
-Use --dry-run to preview which files would be repaired.`,
-	RunE: runDocsRepair,
+Use --dry-run to preview which files would be repaired.
+
+` + boundRepositoryHelp,
+	SilenceErrors: true,
+	RunE:          runDocsRepair,
 }
 
+// boundRepositoryHelp says which repository refresh, preview and repair act
+// on (REQ-CROSS-503 C2).
+const boundRepositoryHelp = `The repository is the one .modernpath/config.json records (repository_id,
+written by 'modernpath import --local'), else the system's single upload
+repository, else the repository whose local path is this directory. When none
+resolves, the command exits non-zero.`
+
 var docsRepairLimit int
-
 var docsRepairDryRun bool
-
 var docsCleanupDryRun bool
+var docsGenerateMode string
+var docsGenerateYes bool
+var docsRefreshYes bool
 
 var docsCleanupCmd = &cobra.Command{
 	Use:   "cleanup",
@@ -136,6 +161,9 @@ func init() {
 	docsCmd.AddCommand(docsCleanupCmd)
 	docsCmd.AddCommand(docsPushCmd)
 
+	docsGenerateCmd.Flags().StringVar(&docsGenerateMode, "mode", defaultAnalysisMode, "Analysis mode: independent_repos or unified_workspace")
+	docsGenerateCmd.Flags().BoolVarP(&docsGenerateYes, "yes", "y", false, "Start without asking (required without a terminal)")
+	docsRefreshCmd.Flags().BoolVarP(&docsRefreshYes, "yes", "y", false, "Update without asking (required without a terminal)")
 	docsRepairCmd.Flags().IntVar(&docsRepairLimit, "limit", 50, "Maximum files to analyze at once")
 	docsRepairCmd.Flags().BoolVar(&docsRepairDryRun, "dry-run", false, "Preview which files would be repaired")
 	docsCleanupCmd.Flags().BoolVar(&docsCleanupDryRun, "dry-run", false, "Preview what would be deleted")

@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -107,31 +109,88 @@ func nearestRepo(sourceDir, rel string) string {
 	}
 }
 
-// matchesExclude reports whether rel matches any operator-supplied pattern.
+// matchesExclude reports whether rel matches any operator-supplied pattern
+// (REQ-CROSS-501 AC2, D5), the way --exclude's help describes it.
 //
-// Three shapes, because operators reach for all three: a plain directory name
-// ("app-web" — one real estate carried 2.8 GB under such a directory,
-// untracked and un-ignored, so git cannot help), a glob on the basename
-// ("*.bin"), and a glob on the path ("*/fixtures/*").
+// A pattern without "/" matches any one segment of the path, so it names a
+// file or directory at any depth: a plain name ("app-web" — one real estate
+// carried 2.8 GB under such a directory, untracked and un-ignored, so git
+// cannot help) or a glob ("*.min.js"). It matches whole segments only:
+// excluding "build" must not drop "buildkite.yml".
 //
-// A bare name matches a whole subtree but NOT a longer name: excluding "build"
-// must not drop "buildkite.yml".
+// A pattern with "/" is a path glob anchored at the top of the tree: "*"
+// stays within one segment and "**" spans any number of them. It matches the
+// path or a directory on it, which leaves out everything under that
+// directory. A leading "/" anchors a single name ("/build").
 func matchesExclude(rel string, patterns []string) bool {
-	rel = filepath.ToSlash(rel)
+	segments := strings.Split(filepath.ToSlash(rel), "/")
 	for _, p := range patterns {
-		p = strings.TrimSuffix(strings.TrimSpace(p), "/")
+		anchored, p := excludePattern(p)
 		if p == "" {
 			continue
 		}
-		if rel == p || strings.HasPrefix(rel, p+"/") {
-			return true
+		if !anchored {
+			for _, segment := range segments {
+				if ok, err := path.Match(p, segment); err == nil && ok {
+					return true
+				}
+			}
+			continue
 		}
-		if ok, err := filepath.Match(p, rel); err == nil && ok {
-			return true
-		}
-		if ok, err := filepath.Match(p, filepath.Base(rel)); err == nil && ok {
-			return true
+		pattern := strings.Split(p, "/")
+		for n := 1; n <= len(segments); n++ {
+			if matchSegments(pattern, segments[:n]) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// excludePattern normalises one --exclude pattern the way matchesExclude
+// reads it: slash separated, without a leading "./" or surrounding slashes,
+// and anchored when a "/" remains inside it.
+func excludePattern(p string) (anchored bool, pattern string) {
+	p = filepath.ToSlash(strings.TrimSpace(p))
+	anchored = strings.Contains(strings.TrimSuffix(p, "/"), "/")
+	return anchored, strings.Trim(strings.TrimPrefix(p, "./"), "/")
+}
+
+// checkExcludePatterns refuses a malformed --exclude pattern before the scan
+// (REQ-CROSS-501): path.Match fails on one such as "[", so it would match
+// nothing and upload what the operator meant to leave out.
+func checkExcludePatterns(patterns []string) error {
+	for _, raw := range patterns {
+		_, p := excludePattern(raw)
+		for _, segment := range strings.Split(p, "/") {
+			if _, err := path.Match(segment, ""); err != nil {
+				return fmt.Errorf("--exclude %q is not a valid pattern (%v); nothing was uploaded", raw, err)
+			}
+		}
+	}
+	return nil
+}
+
+// matchSegments matches a path segment by segment: "**" matches zero or more
+// segments, any other pattern segment exactly one by path.Match. Go's own
+// matchers have no "**" (D5: no dependency for one function).
+func matchSegments(pattern, segments []string) bool {
+	for len(pattern) > 0 {
+		if pattern[0] == "**" {
+			for skip := 0; skip <= len(segments); skip++ {
+				if matchSegments(pattern[1:], segments[skip:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(segments) == 0 {
+			return false
+		}
+		if ok, err := path.Match(pattern[0], segments[0]); err != nil || !ok {
+			return false
+		}
+		pattern, segments = pattern[1:], segments[1:]
+	}
+	return len(segments) == 0
 }

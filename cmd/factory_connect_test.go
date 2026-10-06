@@ -4,6 +4,7 @@ package cmd
 // name and slug, not only by id. The lookup is injected, so no network.
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
 )
 
@@ -201,6 +203,63 @@ func TestConnectSavesTheBindingWhenTheLookupFails(t *testing.T) {
 	if cfg.SystemID != 243 {
 		t.Errorf("system id = %d, want 243 bound regardless", cfg.SystemID)
 	}
+}
+
+// REQ-CROSS-503 (EPIC-CLI-029): the upload repository `import --local`
+// recorded belongs to the system it was created in, on the server it was
+// read from. A connect that rebinds to another system or another API host
+// clears it — `source push`, the docs verbs and `analysis status` would
+// otherwise address the new system with the old repository — and a re-run
+// that changes neither keeps it. Driven through the command tree, with a fake
+// server answering the identity lookup on each host.
+func TestConnectClearsTheRepositoryIDWhenTheBindingChanges(t *testing.T) {
+	saved := listSystemsFn
+	listSystemsFn = func(string, string) ([]api.System, error) { return []api.System{{ID: 9}, {ID: 42}}, nil }
+	t.Cleanup(func() { listSystemsFn = saved })
+
+	for _, tc := range []struct {
+		name string
+		args func(otherHost string) []string
+		keep bool
+	}{
+		{"another system", func(string) []string { return []string{"factory", "connect", "--system", "9"} }, false},
+		{"another API host", func(host string) []string { return []string{"factory", "connect", "--api-url", host} }, false},
+		{"the same system and host", func(string) []string { return []string{"factory", "connect", "--system", "42"} }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bound, other := identityServer(t), identityServer(t)
+			t.Setenv("HOME", t.TempDir())
+			root := enterFactoryTestWorkspace(t)
+			writeJSON(t, root, ".modernpath/config.json", map[string]any{
+				"api_url": bound.URL, "system_id": 42, "system_name": "Legacy Estate", "system_slug": "legacy-estate",
+				"repository_id": 7,
+			})
+			writeJSON(t, root, ".modernpath/auth.json", map[string]any{"token": "t"})
+
+			out, err := runVerb(t, tc.args(other.URL)...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", tc.args(other.URL), err, out)
+			}
+			repository, kept := readConfigFile(t, root)["repository_id"]
+			switch {
+			case tc.keep && repository != float64(7):
+				t.Errorf("a connect that changes neither the system nor the host must keep repository 7, got %v", repository)
+			case !tc.keep && kept:
+				t.Errorf("a connect to %s must clear the old system's repository_id, got %v", tc.name, repository)
+			}
+		})
+	}
+}
+
+// identityServer answers the identity lookup a connect makes for any system.
+func identityServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "System " + r.URL.Path, "slug": "system"})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // The guard: with nothing bound and no flag there is no system to talk about.

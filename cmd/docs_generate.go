@@ -2,31 +2,35 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
+// runDocsGenerate starts the lifecycle the UI starts (REQ-CROSS-503 C3, D8):
+// a system-scoped POST that needs no repository, so none is looked up or
+// created here — a created one would be a stray second upload repository on
+// an import-created system.
 func runDocsGenerate(cmd *cobra.Command, args []string) error {
+	if err := validateAnalysisMode(docsGenerateMode); err != nil {
+		return reportFailure(err)
+	}
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
+		return reportFailure(errNoBoundSystem)
 	}
 
 	// Get current directory name
 	cwd, err := os.Getwd()
 	if err != nil {
 		printError("Failed to get current directory: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 	folderName := filepath.Base(cwd)
 	folderPath := cwd
@@ -39,7 +43,7 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 	scanResult, err := scanFolder(folderPath)
 	if err != nil {
 		printError("Failed to scan folder: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	// Calculate estimates (similar to UI)
@@ -54,6 +58,8 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 	fmt.Println("📋 Analysis Overview")
 	fmt.Println("════════════════════════════════════════════════════════════════════")
 	fmt.Println()
+	fmt.Printf("  🔗 System:        %s\n", boundSystemLabel(cfg))
+	fmt.Printf("  🧭 Mode:          %s\n", docsGenerateMode)
 	fmt.Printf("  📁 Folder:        %s\n", folderName)
 	fmt.Printf("  📂 Path:          %s\n", folderPath)
 	fmt.Println()
@@ -74,33 +80,17 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 	fmt.Println("     map dependencies, and generate comprehensive documentation.")
 	fmt.Println()
 
-	// Ask for confirmation
-	prompt := promptui.Prompt{
-		Label:     "Start AI Analysis",
-		IsConfirm: true,
-		Default:   "y",
+	ok, err := confirmAction("Start AI Analysis", docsGenerateYes, true)
+	if err != nil {
+		return reportFailure(err)
 	}
-
-	result, err := prompt.Run()
-	if err != nil || strings.ToLower(result) != "y" {
+	if !ok {
 		fmt.Println("Analysis cancelled.")
 		return nil
 	}
 
 	fmt.Println()
-	printInfo("🔍 Step 2: Checking for existing repository...\n")
-
-	// Check if repository exists for this system and folder
-	repo, err := findOrCreateRepository(cfg, folderName, folderPath, scanResult)
-	if err != nil {
-		printError("Failed to find/create repository: %v\n", err)
-		return err
-	}
-
-	fmt.Printf("✓ Repository: %s (ID: %d)\n", repo.Name, repo.ID)
-	fmt.Println()
-
-	printInfo("🚀 Step 3: Starting AI analysis pipeline...\n")
+	printInfo("🚀 Step 2: Starting AI analysis pipeline...\n")
 	fmt.Println("   This may take a while. The analysis will:")
 	fmt.Println("   • Extract architecture patterns")
 	fmt.Println("   • Identify technologies and frameworks")
@@ -108,17 +98,16 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 	fmt.Println("   • Generate comprehensive documentation")
 	fmt.Println()
 
-	// Start analysis
-	if err := startAnalysis(cfg, repo.ID); err != nil {
+	answer, err := startAnalysis(cfg, docsGenerateMode)
+	if err != nil {
 		printError("Failed to start analysis: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
-	fmt.Println()
-	printSuccess("✅ Analysis started!\n")
+	printLifecycleRun(answer)
 	fmt.Println()
 	printInfo("The analysis is running in the background.\n")
-	fmt.Printf("  • View progress in UI: %s/systems/%d\n", cfg.APIURL, cfg.SystemID)
+	fmt.Println("  • Follow progress: modernpath analysis status")
 	fmt.Println("  • Sync documentation when complete: modernpath docs sync")
 	fmt.Println()
 

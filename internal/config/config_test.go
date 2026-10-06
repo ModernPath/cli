@@ -7,6 +7,7 @@ package config
 // pinned here.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,6 +91,83 @@ func TestCurrentReleaseSurvivesLegacyArchitectureRead(t *testing.T) {
 	}
 	if got.CurrentRelease != "modernpath-v1-09" {
 		t.Fatalf("current_release dropped on the legacy read path: got %q", got.CurrentRelease)
+	}
+}
+
+// REQ-CROSS-503 (EPIC-CLI-029) C1: `import --local` saves the upload
+// repository's id in config.json (REQ-SYS-211 AC6). The reader must load it
+// and every read-modify-write — docs sync (last_sync_at), factory release use
+// (current_release), auth (api_url) — must write it back, or the docs verbs
+// and `source push` lose the repository the import made.
+func TestRepositoryIDSurvivesEveryReadModifyWrite(t *testing.T) {
+	for name, raw := range map[string]string{
+		"canonical keys":            `{"api_url":"http://localhost:4000","system_id":42,"system_slug":"legacy-estate","repository_id":7}`,
+		"legacy architecture keys":  `{"api_url":"http://localhost:4000","architecture_id":42,"architecture_slug":"legacy-estate","repository_id":7}`,
+		"after an unrelated writer": `{"api_url":"http://localhost:4000","system_id":42,"repository_id":7,"last_sync_at":"2026-09-30T10:00:00Z"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := chdirTemp(t)
+			path := filepath.Join(dir, ".modernpath", ConfigFile)
+			if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := ReadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.RepositoryID != 7 {
+				t.Fatalf("repository_id must be read, got %d", got.RepositoryID)
+			}
+
+			got.LastSyncAt = "2026-10-01T09:00:00Z"
+			got.CurrentRelease = "modernpath-v1-09"
+			got.APIURL = "https://api.modernpath.ai"
+			if err := WriteConfig(got); err != nil {
+				t.Fatal(err)
+			}
+			written, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(written), `"repository_id": 7`) {
+				t.Fatalf("a read-modify-write must keep repository_id, wrote: %s", written)
+			}
+		})
+	}
+}
+
+// REQ-CROSS-503 C1: `env --set` keeps each environment's binding under
+// environments.<name>; the upload repository id is part of that binding, so
+// a read and a write must not drop it from the stash either.
+func TestRepositoryIDSurvivesInTheEnvironmentStash(t *testing.T) {
+	dir := chdirTemp(t)
+	path := filepath.Join(dir, ".modernpath", ConfigFile)
+	raw := `{"api_url":"http://localhost:4000","system_id":49,"repository_id":7,` +
+		`"environments":{"production":{"system_id":3,"system_slug":"legacy-estate","repository_id":9}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteConfig(got); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Environments map[string]map[string]any `json:"environments"`
+	}
+	if err := json.Unmarshal(written, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Environments["production"]["repository_id"] != float64(9) {
+		t.Fatalf("the stashed production binding must keep repository_id 9, wrote: %s", written)
 	}
 }
 

@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -72,20 +70,17 @@ func runDocsPreview(cmd *cobra.Command, args []string) error {
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
+		return reportFailure(errNoBoundSystem)
 	}
 
-	// Find repository ID for current directory
-	repoID, err := findRepositoryForCurrentDir(cfg)
+	repoID, err := resolveBoundRepository(cfg)
 	if err != nil {
 		printError("Failed to find repository: %v\n", err)
-		printInfo("Make sure you've run 'modernpath docs generate' first.\n")
-		return nil
+		return reportedError{err}
 	}
 
 	fmt.Println()
@@ -96,7 +91,7 @@ func runDocsPreview(cmd *cobra.Command, args []string) error {
 	preview, err := getIncrementalPreview(cfg, repoID)
 	if err != nil {
 		printError("Failed to get preview: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	displayPreview(preview)
@@ -107,20 +102,17 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
+		return reportFailure(errNoBoundSystem)
 	}
 
-	// Find repository ID for current directory
-	repoID, err := findRepositoryForCurrentDir(cfg)
+	repoID, err := resolveBoundRepository(cfg)
 	if err != nil {
 		printError("Failed to find repository: %v\n", err)
-		printInfo("Make sure you've run 'modernpath docs generate' first.\n")
-		return nil
+		return reportedError{err}
 	}
 
 	fmt.Println()
@@ -131,7 +123,7 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 	preview, err := getIncrementalPreview(cfg, repoID)
 	if err != nil {
 		printError("Failed to scan for changes: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	// Display what will be updated
@@ -144,14 +136,11 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 
 	// Ask for confirmation
 	fmt.Println()
-	prompt := promptui.Prompt{
-		Label:     "Proceed with incremental update",
-		IsConfirm: true,
-		Default:   "y",
+	ok, err := confirmAction("Proceed with incremental update", docsRefreshYes, true)
+	if err != nil {
+		return reportFailure(err)
 	}
-
-	result, err := prompt.Run()
-	if err != nil || strings.ToLower(result) != "y" {
+	if !ok {
 		fmt.Println("Update cancelled.")
 		return nil
 	}
@@ -164,7 +153,7 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 	updateResult, err := runIncrementalUpdate(cfg, repoID)
 	if err != nil {
 		printError("Failed to run update: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	// Display results

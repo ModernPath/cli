@@ -125,6 +125,15 @@ func TestMatchesExclude(t *testing.T) {
 		// A pattern must not match a name that merely starts with it, or
 		// excluding "build" would drop "buildkite.yml".
 		{"prefix is not a substring match", "buildkite.yml", []string{"build"}, false},
+		// REQ-CROSS-501 AC2: the matching the help describes. A bare name
+		// is a whole path segment at any depth; in a path glob * stays within
+		// one segment and ** spans any number; a glob without / matches the
+		// file name.
+		{"a bare name matches at any depth", "src/a/fixtures/x.cs", []string{"fixtures"}, true},
+		{"** spans any depth", "src/a/b/fixtures/c/x.cs", []string{"**/fixtures/**"}, true},
+		{"a basename glob matches the file name", "web/js/app.min.js", []string{"*.min.js"}, true},
+		{"* does not cross /", "a/b/fixtures/x", []string{"*/fixtures/*"}, false},
+		{"a bare name is a whole segment, not a prefix", "a/fixtures2/x", []string{"fixtures"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := matchesExclude(tc.rel, tc.patterns); got != tc.want {

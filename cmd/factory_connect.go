@@ -19,7 +19,9 @@ type systemLookup func(id int) (name, slug string, err error)
 
 // resolveBinding sets the system id and API URL on cfg. A systemID of 0 means
 // "keep the system this workspace is already bound to", which is what lets a
-// re-run repair an existing config instead of demanding a re-init.
+// re-run repair an existing config instead of demanding a re-init. The upload
+// repository `import --local` recorded belongs to the old system on the old
+// server, so a change of either clears it with the identity (REQ-CROSS-503).
 func resolveBinding(cfg *config.Config, systemID int, apiURLFlag string) error {
 	if systemID == 0 && cfg.SystemID == 0 {
 		return fmt.Errorf("usage: modernpath factory connect --system <id> [--api-url <url>]")
@@ -28,13 +30,13 @@ func resolveBinding(cfg *config.Config, systemID int, apiURLFlag string) error {
 		// a different system: drop the old identity rather than let the new id
 		// wear the old name if the lookup below cannot reach the server
 		cfg.SystemID = systemID
-		cfg.SystemName, cfg.SystemSlug = "", ""
+		cfg.SystemName, cfg.SystemSlug, cfg.RepositoryID = "", "", 0
 	}
 	if apiURLFlag != "" {
 		if cfg.APIURL != "" && apiURLFlag != cfg.APIURL {
 			// a different server: the recorded identity was read from the OLD
 			// one, and the same numeric id on another host is another system
-			cfg.SystemName, cfg.SystemSlug = "", ""
+			cfg.SystemName, cfg.SystemSlug, cfg.RepositoryID = "", "", 0
 		}
 		cfg.APIURL = apiURLFlag
 	}

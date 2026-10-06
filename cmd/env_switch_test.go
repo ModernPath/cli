@@ -124,6 +124,53 @@ func TestEnvSetWithoutAStashClearsAndNamesTheRemedies(t *testing.T) {
 	}
 }
 
+// REQ-CROSS-503 (EPIC-CLI-029) C1: the upload repository `import --local`
+// recorded is part of an environment's binding. A switch away stashes it with
+// the system, a switch back restores it, and a target with nothing stashed
+// gets none, so `docs refresh` and `source push` never aim at another
+// environment's repository.
+func TestEnvSetKeepsEachEnvironmentsRepositoryID(t *testing.T) {
+	root := enterFactoryTestWorkspace(t)
+	writeJSON(t, root, ".modernpath/config.json", map[string]any{
+		"api_url": zitadel.TestProfile.APIURL, "system_id": 49, "system_name": "sandbox", "repository_id": 7,
+		"environments": map[string]any{"production": map[string]any{"system_id": 3, "system_name": "ModernPath", "repository_id": 9}},
+	})
+	writeJSON(t, root, ".modernpath/auth.json", map[string]any{
+		"token": testPlaneToken(t), "issuer": zitadel.TestProfile.Issuer,
+		"stash": map[string]any{zitadel.ProdProfile.Issuer: map[string]any{"token": prodPlaneToken(t)}},
+	})
+
+	switchTo := func(env string) map[string]any {
+		t.Helper()
+		cfg, err := config.ReadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := captureStdout(t, func() error { return setEnvironment(cfg, env) }); err != nil {
+			t.Fatalf("setEnvironment(%s): %v", env, err)
+		}
+		return readConfigFile(t, root)
+	}
+
+	c := switchTo("production")
+	if c["system_id"] != float64(3) || c["repository_id"] != float64(9) {
+		t.Errorf("after the switch to production want system 3 and repository 9, got system %v repository %v", c["system_id"], c["repository_id"])
+	}
+	if envs, _ := c["environments"].(map[string]any); envs == nil || envs["test"] == nil || envs["test"].(map[string]any)["repository_id"] != float64(7) {
+		t.Errorf("the test binding must be stashed with repository 7, got %v", c["environments"])
+	}
+
+	c = switchTo("test")
+	if c["system_id"] != float64(49) || c["repository_id"] != float64(7) {
+		t.Errorf("after the switch back to test want system 49 and repository 7, got system %v repository %v", c["system_id"], c["repository_id"])
+	}
+
+	c = switchTo("local")
+	if _, bound := c["repository_id"]; bound {
+		t.Errorf("nothing is stashed for local, so repository_id must be cleared, got %v", c["repository_id"])
+	}
+}
+
 // (d) A restored credential this server does not accept is reported at
 // switch time, not at the next write.
 func TestEnvSetReportsACredentialTheServerWillNotAccept(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -32,6 +33,7 @@ import (
 var (
 	sourcePushMaxSizeMB int
 	sourcePushExclude   []string
+	sourcePushKeep      []string
 	sourcePushNoIgnore  bool
 )
 
@@ -49,14 +51,21 @@ var sourcePushCmd = &cobra.Command{
 	Long: `Push the working directory as the bound system's current source.
 
 The tree is packed with the same filters as ` + "`modernpath import --local`" + `
-(skip lists, .gitignore, --exclude, --max-size) and its content revision is
-compared with the server's before anything is uploaded:
+(skip lists, .gitignore, --exclude, --keep, --max-size), and the scan report
+says what each filter left out. Pass the same --exclude and --keep as the
+import, or the pushed tree differs from the imported one. Its content revision
+is compared with the server's before anything is uploaded:
 
   unchanged, refresh completed   nothing is uploaded or re-analysed (exit 0)
   unchanged, refresh not done    the refresh is queued again, no upload (exit 0)
   changed                        the archive is uploaded, the previous source
                                  is superseded and an incremental refresh of
                                  the knowledge core is queued (exit 0)
+
+--max-size bounds the compressed zip. Before uploading, the request is
+compared with the server's upload limit; one that does not fit is refused
+without sending, with the zip size, the limit, the largest top-level
+directories and an --exclude example.
 
 A server refusal — the repository is being analysed, or it is linked to a
 git provider the platform refreshes itself — exits non-zero with the
@@ -67,41 +76,42 @@ environment, as for every other verb.
 Examples:
   modernpath source push
   modernpath source push --exclude fixtures --max-size 200`,
+	// Each error is printed once, by RunE (REQ-CROSS-500, D4).
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.ReadConfig()
 		if err != nil {
-			return err
+			return reportFailure(err)
 		}
 		if apiURL != "" {
 			cfg.APIURL = apiURL
 		}
 		if cfg.SystemID == 0 {
-			printError("No bound system. Run 'modernpath import --local' here first.\n")
-			return fmt.Errorf("no bound system")
+			return reportFailure(fmt.Errorf("no bound system; run 'modernpath import --local' here first"))
 		}
 		root, err := pushRoot()
 		if err != nil {
-			printError("%v\n", err)
-			return err
+			return reportFailure(err)
 		}
 		opts := sourcePushOptions{
 			Exclude:     sourcePushExclude,
+			Keep:        sourcePushKeep,
 			MaxSizeMB:   sourcePushMaxSizeMB,
 			NoGitignore: sourcePushNoIgnore,
 			Root:        root,
 		}
 		if err := sourcePush(cfg, opts, os.Stdout); err != nil {
-			printError("%v\n", err)
-			return err
+			return reportFailure(err)
 		}
 		return nil
 	},
 }
 
 func init() {
-	sourcePushCmd.Flags().IntVar(&sourcePushMaxSizeMB, "max-size", defaultMaxSizeMB, "Maximum upload size in MB")
-	sourcePushCmd.Flags().StringArrayVar(&sourcePushExclude, "exclude", nil, "Exclude paths matching a name, path glob or basename glob (repeatable)")
-	sourcePushCmd.Flags().BoolVar(&sourcePushNoIgnore, "no-gitignore", false, "Upload files that .gitignore excludes (off by default)")
+	sourcePushCmd.Flags().IntVar(&sourcePushMaxSizeMB, "max-size", defaultMaxSizeMB, maxSizeUsage)
+	sourcePushCmd.Flags().StringArrayVar(&sourcePushExclude, "exclude", nil, excludeUsage)
+	sourcePushCmd.Flags().StringArrayVar(&sourcePushKeep, "keep", nil, keepUsage)
+	sourcePushCmd.Flags().BoolVar(&sourcePushNoIgnore, "no-gitignore", false, noIgnoreUsage)
 	sourceCmd.AddCommand(sourcePushCmd)
 	rootCmd.AddCommand(sourceCmd)
 }
@@ -109,6 +119,7 @@ func init() {
 // sourcePushOptions are the import filters plus the directory to pack.
 type sourcePushOptions struct {
 	Exclude     []string
+	Keep        []string
 	MaxSizeMB   int
 	NoGitignore bool
 	// Root is the tree to pack: the directory the binding lives in, never
@@ -118,7 +129,7 @@ type sourcePushOptions struct {
 }
 
 func (o sourcePushOptions) filters() importFilterOptions {
-	return importFilterOptions{Exclude: o.Exclude, MaxSizeMB: o.MaxSizeMB, NoGitignore: o.NoGitignore}
+	return importFilterOptions{Exclude: o.Exclude, Keep: o.Keep, MaxSizeMB: o.MaxSizeMB, NoGitignore: o.NoGitignore}
 }
 
 // pushRoot is the directory `import --local` bound: the parent of the
@@ -201,15 +212,13 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 			repositoryID, remote.RepositoryURL)
 	}
 
-	// AC1: exactly the import filters.
+	// AC1: exactly the import filters, reported as import reports them
+	// (REQ-CROSS-501).
 	files, report, err := collectImportFiles(root, opts.filters())
 	if err != nil {
 		return err
 	}
-	if report.TotalSize > int64(opts.MaxSizeMB)*1024*1024 {
-		return fmt.Errorf("directory too large (%.2f MB > %d MB limit); narrow it with --exclude or raise --max-size",
-			float64(report.TotalSize)/(1024*1024), opts.MaxSizeMB)
-	}
+	printImportReport(out, report)
 	local, err := treeDigest(files)
 	if err != nil {
 		return err
@@ -236,6 +245,12 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 	if err != nil {
 		return err
 	}
+	// REQ-CROSS-500: --max-size bounds the zip; the body must fit the
+	// server's upload limit before anything is sent.
+	sizes := uploadSizes{command: "modernpath source push", zip: archive.Bytes()}
+	if int64(archive.Len()) > int64(opts.MaxSizeMB)*1024*1024 {
+		return sizes.overMaxSize(opts.MaxSizeMB)
+	}
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
 	for key, value := range gitRevisionMetadata(root) {
@@ -252,8 +267,24 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 	if err := form.Close(); err != nil {
 		return err
 	}
+	sizes.body = int64(body.Len())
+	capabilities, err := readUploadCapabilities(client)
+	if err != nil {
+		return err
+	}
+	limit := capabilities.limit
+	if limit.note != "" {
+		printWarning("%s\n", limit.note)
+	}
+	if sizes.body > limit.bytes {
+		return sizes.overLimit(limit.bytes)
+	}
 	fmt.Fprintf(out, "pushing %d files (%.2f MB) at %s\n", len(files), float64(archive.Len())/(1024*1024), shortRevision(local))
 	result, err := postPush(client, pushURL, form.FormDataContentType(), &body)
+	var tooLarge bodyTooLargeError
+	if errors.As(err, &tooLarge) {
+		return sizes.refused(tooLarge.limitOr(limit.bytes))
+	}
 	if err != nil {
 		return err
 	}
@@ -294,6 +325,9 @@ func postPush(client *authenticatedClient, url, contentType string, body io.Read
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		return nil, bodyTooLarge(raw)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, pushRefusal(resp, raw)
 	}

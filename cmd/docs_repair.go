@@ -14,20 +14,17 @@ func runDocsRepair(cmd *cobra.Command, args []string) error {
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
+		return reportFailure(errNoBoundSystem)
 	}
 
-	// Find repository ID for current folder
-	repoID, err := findRepositoryForCurrentDir(cfg)
+	repoID, err := resolveBoundRepository(cfg)
 	if err != nil {
 		printError("Failed to find repository: %v\n", err)
-		printInfo("Make sure the current folder is associated with this system.\n")
-		return err
+		return reportedError{err}
 	}
 
 	fmt.Println()
@@ -43,7 +40,7 @@ func runDocsRepair(cmd *cobra.Command, args []string) error {
 	previewResp, err := getRepairPreview(cfg, repoID)
 	if err != nil {
 		printError("Failed to get repair preview: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	if previewResp.Data.IncompleteCount == 0 {
@@ -100,7 +97,7 @@ func runDocsRepair(cmd *cobra.Command, args []string) error {
 	err = triggerRepair(cfg, repoID)
 	if err != nil {
 		printError("Failed to start repair: %v\n", err)
-		return err
+		return reportedError{err}
 	}
 
 	printSuccess("✅ Repair started! Files are being analyzed in the background.\n")

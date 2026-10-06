@@ -32,8 +32,9 @@ type Config struct {
 	SystemName string `json:"system_name,omitempty"`
 	SystemSlug string `json:"system_slug,omitempty"`
 	// RepositoryID is the upload repository `import --local` created for
-	// this directory, the target of `source push` (REQ-SYS-211 AC6). A config
-	// that predates it resolves the system's single URL-less repository.
+	// this directory, the target of `source push` (REQ-SYS-211 AC6), the docs
+	// verbs and `analysis status` (REQ-CROSS-503). A config that predates it
+	// resolves the system's single URL-less repository.
 	RepositoryID     int               `json:"repository_id,omitempty"`
 	InitMode         string            `json:"init_mode,omitempty"`
 	WorkspaceMembers []WorkspaceMember `json:"workspace_members,omitempty"`
@@ -55,11 +56,12 @@ type Config struct {
 }
 
 // EnvBinding is the per-environment system binding `env --set` stashes and
-// restores.
+// restores, including the upload repository import recorded (REQ-CROSS-503).
 type EnvBinding struct {
 	SystemID       int    `json:"system_id,omitempty"`
 	SystemName     string `json:"system_name,omitempty"`
 	SystemSlug     string `json:"system_slug,omitempty"`
+	RepositoryID   int    `json:"repository_id,omitempty"`
 	CurrentRelease string `json:"current_release,omitempty"`
 }
 
@@ -82,6 +84,7 @@ type legacyConfig struct {
 	SystemID           int                   `json:"system_id,omitempty"`
 	SystemName         string                `json:"system_name,omitempty"`
 	SystemSlug         string                `json:"system_slug,omitempty"`
+	RepositoryID       int                   `json:"repository_id,omitempty"`
 	InitiativeID       int                   `json:"initiative_id,omitempty"`
 	InitiativeName     string                `json:"initiative_name,omitempty"`
 	InitiativeSpecsDir string                `json:"initiative_specs_dir,omitempty"`
@@ -308,8 +311,11 @@ func ReadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// RepositoryID is copied like every other field: one missing from this
+	// block is dropped on read and erased by the next write (REQ-CROSS-503).
 	config := &Config{
 		APIURL:         legacy.APIURL,
+		RepositoryID:   legacy.RepositoryID,
 		LastSyncAt:     legacy.LastSyncAt,
 		AutoSync:       legacy.AutoSync,
 		CurrentRelease: legacy.CurrentRelease,

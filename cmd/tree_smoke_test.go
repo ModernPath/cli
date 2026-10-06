@@ -499,6 +499,14 @@ var leafDispositions = map[string]disposition{
 	"process lane complete":  {kind: dispExecute, args: []string{"process", "lane", "complete", "--apply"}},
 	"import":                 {kind: dispExecute},
 	"new":                    {kind: dispExecute},
+	// REQ-CROSS-503 (EPIC-CLI-029): the lifecycle verbs post to git-sources/*
+	// and status reads the system, the repository and the current run.
+	// docs generate needed a terminal for its prompt; --yes replaces it.
+	"analysis start":     {kind: dispExecute},
+	"analysis reanalyze": {kind: dispExecute, args: []string{"analysis", "reanalyze", "7"}},
+	"analysis reset":     {kind: dispExecute, args: []string{"analysis", "reset", "--yes"}},
+	"analysis status":    {kind: dispExecute},
+	"docs generate":      {kind: dispExecute, args: []string{"docs", "generate", "--yes"}},
 	// REQ-SYS-211: reads the bound system's upload repository before packing.
 	"source push": {kind: dispExecute},
 	"read-doc":    {kind: dispExecute, args: []string{"read-doc", "--list"}},
@@ -589,7 +597,6 @@ var leafDispositions = map[string]disposition{
 	// Server-backed, but they refuse before the call without state the smoke
 	// cannot cheaply build. Asserted as no-call so that fixing the
 	// precondition forces a move to dispExecute rather than passing silently.
-	"docs generate":    {kind: dispNoCall, reason: "needs-precondition"},
 	"factory answer":   {kind: dispNoCall, args: []string{"factory", "answer", "1", "yes"}, reason: "needs-precondition"},
 	"system-docs push": {kind: dispNoCall, reason: "needs-precondition"},
 	// REQ-CROSS-282: working-set check's own sync-payload logic still bails

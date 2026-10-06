@@ -361,7 +361,8 @@ func switchEnvironment(cfg *config.Config, newURL string) error {
 			cfg.Environments = map[string]config.EnvBinding{}
 		}
 		cfg.Environments[bindingKey(oldURL)] = config.EnvBinding{
-			SystemID: cfg.SystemID, SystemName: cfg.SystemName, SystemSlug: cfg.SystemSlug, CurrentRelease: cfg.CurrentRelease,
+			SystemID: cfg.SystemID, SystemName: cfg.SystemName, SystemSlug: cfg.SystemSlug,
+			RepositoryID: cfg.RepositoryID, CurrentRelease: cfg.CurrentRelease,
 		}
 	}
 	if auth.Token != "" {
@@ -375,11 +376,13 @@ func switchEnvironment(cfg *config.Config, newURL string) error {
 		}
 	}
 
+	// The upload repository travels with its system (REQ-CROSS-503), so the
+	// docs verbs and `source push` never aim at another environment's.
 	cfg.APIURL = newURL
 	if b, ok := cfg.Environments[bindingKey(newURL)]; ok {
-		cfg.SystemID, cfg.SystemName, cfg.SystemSlug, cfg.CurrentRelease = b.SystemID, b.SystemName, b.SystemSlug, b.CurrentRelease
+		cfg.SystemID, cfg.SystemName, cfg.SystemSlug, cfg.RepositoryID, cfg.CurrentRelease = b.SystemID, b.SystemName, b.SystemSlug, b.RepositoryID, b.CurrentRelease
 	} else {
-		cfg.SystemID, cfg.SystemName, cfg.SystemSlug, cfg.CurrentRelease = 0, "", "", ""
+		cfg.SystemID, cfg.SystemName, cfg.SystemSlug, cfg.RepositoryID, cfg.CurrentRelease = 0, "", "", 0, ""
 	}
 
 	envName := environmentName(newURL)

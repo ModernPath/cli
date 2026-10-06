@@ -47,7 +47,8 @@ func runDocsPush(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	printSuccess("✅ Successfully pushed %d documents to ModernPath!\n", count)
-	printInfo("View updated docs at: %s/systems/%d/docs\n", cfg.APIURL, cfg.SystemID)
+	// REQ-CROSS-502 C3: the link opens the app host, not the API host.
+	printInfo("View updated docs at: %s\n", systemAppLink(readAppURL(newAuthenticatedClient(cfg)), cfg.APIURL, cfg.SystemID, "documents"))
 
 	return nil
 }
