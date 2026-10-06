@@ -11,9 +11,8 @@ import (
 // workingSetPullScope resolves the current work selection and materializes its
 // scope as an editable directory in the authoring render (SR-CLI-0084). Item
 // and section files are editable (read-only under --for-review); the selection
-// and findings are projections. Inside a scope directory a local edit awaiting
-// push is a draft, not a `.pulled` conflict — so scope files are written whole
-// (push carries the server-side 409, SR-CLI-0085).
+// and findings are projections. A scoped refresh checks CLI-written local
+// content baselines before replacing authored files; server CAS remains separate.
 func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 	return workingSetPullScopeSince(env, forReview, "", now)
 }
@@ -21,6 +20,9 @@ func workingSetPullScope(env *factoryEnv, forReview bool, now time.Time) error {
 // workingSetPullScopeSince is the scope pull; with since (a previous
 // cold-review trace, REQ-CROSS-464) a review pull writes the delta bundle.
 func workingSetPullScopeSince(env *factoryEnv, forReview bool, since string, now time.Time) error {
+	if forReview {
+		return workingSetPullReviewSnapshotSince(env, since, now)
+	}
 	payload, err := fetchWorkSelection(env)
 	if err != nil {
 		return err
@@ -39,49 +41,32 @@ func workingSetPullScopeSince(env *factoryEnv, forReview bool, since string, now
 	if unsafeSnapshotName(scopeExt) {
 		return fmt.Errorf("the selection's scope id %q is not a safe path component — refusing to pull", scopeExt)
 	}
-	members := stringSlice(current["members"])
+	scopeKind := str(current, "scope_kind")
+	if scopeKind != "epic" && scopeKind != "single_sr" {
+		return fmt.Errorf("the current selection has unsupported scope kind %q — refusing to pull", scopeKind)
+	}
+	members, err := selectionMembers(current["members"])
+	if err != nil {
+		return err
+	}
 	for _, mid := range members {
 		if unsafeSnapshotName(mid) {
 			return fmt.Errorf("selection member id %q is not a safe path component — refusing to pull", mid)
 		}
 	}
-	var idx map[string]scopeRecord
-	if forReview {
-		// REQ-CROSS-449: a review reads the epic's served membership — the
-		// frozen selection list can be empty while the epic holds members.
-		if idx, members, err = reviewScopeIndex(env, scopeExt, members); err != nil {
-			return err
-		}
-	} else if idx, err = scopeIndex(env, append([]string{scopeExt}, members...)); err != nil {
+	idx, err := scopeIndex(env, append([]string{scopeExt}, members...))
+	if err != nil {
 		return err
-	}
-	// REQ-CROSS-464: the previous review is read and checked before anything
-	// is written, so a refused --since leaves the directory as it was.
-	var prior map[string]any
-	if since != "" {
-		if prior, err = readSinceTrace(env, since, scopeExt); err != nil {
-			return err
-		}
 	}
 
 	mode := "authoring"
-	if forReview {
-		mode = "review"
-	}
 	ctxID := newContextID(mode)
 
 	dir := filepath.Join(env.Root, workingSetDir, scopeExt)
-	for _, sub := range []string{"", "members", "packet", "findings"} {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
-			return err
-		}
-	}
-
+	plan := scopedPullPlan{files: map[string]scopedPullFile{}}
 	if sr, ok := idx[scopeExt]; ok {
-		content := scopeItemContent(recordFromPayload(sr, members), mode, ctxID, forReview, env, now)
-		if err := atomicWrite(filepath.Join(dir, scopeExt+".md"), []byte(content)); err != nil {
-			return err
-		}
+		content := scopeItemContent(recordFromPayload(sr, members), mode, ctxID, false, env, now)
+		plan.add(scopeExt+".md", []byte(content), "item")
 	}
 
 	for _, mid := range members {
@@ -89,76 +74,41 @@ func workingSetPullScopeSince(env *factoryEnv, forReview bool, since string, now
 		if !ok {
 			continue // the selection may name a member the read has not caught up to
 		}
-		content := scopeItemContent(recordFromPayload(mr, nil), mode, ctxID, forReview, env, now)
-		if err := atomicWrite(filepath.Join(dir, "members", mid+".md"), []byte(content)); err != nil {
-			return err
-		}
+		content := scopeItemContent(recordFromPayload(mr, nil), mode, ctxID, false, env, now)
+		plan.add(filepath.Join("members", mid+".md"), []byte(content), "item")
 	}
 
 	// The scope directory's SELECTION.md is a projection for the authoring/review
 	// context, not the preflight snapshot; the active-release source line rides
 	// the top-level WORK-SELECTION.md (pullSelection), so pass nil here.
-	if err := atomicWrite(filepath.Join(dir, "SELECTION.md"), []byte(renderSelectionBody(payload, nil))); err != nil {
-		return err
-	}
+	plan.add("SELECTION.md", []byte(renderSelectionBody(payload, nil)), "selection")
 
 	// REQ-CROSS-383 (EPIC-CLI-018): scaffold the keys the server's plan check
 	// requires — one denominator for the scaffold and the check. A server that
 	// serves no facts falls back to the frozen-list derivation, named as such.
 	var required []string
-	if !forReview {
-		required = requiredSectionKeys(env, scopeExt, str(current, "scope_kind"), members, idx)
-	}
-	sections, err := pullPacketSections(env, dir, str(current, "scope_kind"), scopeExt, !forReview, required)
+	required, err = requiredSectionKeys(env, scopeExt, scopeKind, members, idx)
 	if err != nil {
 		return err
 	}
-
-	if err := atomicWrite(filepath.Join(dir, "findings", "COLD-REVIEW.md"),
-		[]byte(renderFindingsProjection(env, str(current, "scope_kind"), scopeExt))); err != nil {
+	packet, err := stagePacketSections(env, dir, scopeKind, scopeExt, true, required)
+	if err != nil {
 		return err
 	}
+	plan.addPacket(packet)
+
+	plan.add(filepath.Join("findings", "COLD-REVIEW.md"),
+		[]byte(renderFindingsProjection(env, scopeKind, scopeExt)), "findings")
 
 	stamp := fmt.Sprintf("# working-set context\n\nmode: %s\ncontext_id: %s\nscope: %s:%s\npulled_at: %s\n",
-		mode, ctxID, str(current, "scope_kind"), scopeExt, now.Format(time.RFC3339))
-	bundlePath := filepath.Join(dir, reviewBundleFile)
-	if forReview {
-		// REQ-CROSS-449: one read of the aggregate the review is pinned to; the
-		// stamp is what `process review record` refuses drift against.
-		agg := ""
-		if dc, err := readDeliveryContextFor(env, scopeExt); err == nil {
-			agg = dc.Data.PacketFingerprint
-		}
-		if agg == "" {
-			printWarning("the delivery context of %s serves no packet aggregate — REVIEW.md names none and `process review record` will refuse this pull", scopeExt)
-		} else {
-			stamp += "aggregate: " + agg + "\n"
-		}
-		// REQ-CROSS-464: each record's and section's fingerprint, so the
-		// trace records what this review read and a later round can pull
-		// only what changed.
-		reviewed := reviewedFingerprints(scopeExt, idx, members, sections)
-		for _, r := range reviewed {
-			stamp += reviewedStampPrefix + r.key + " " + r.fingerprint + "\n"
-		}
-		var bundle string
-		if prior != nil {
-			bundle = renderDeltaReviewBundle(env, deltaInput{
-				scopeKind: str(current, "scope_kind"), scopeExt: scopeExt, aggregate: agg, ctxID: ctxID, now: now,
-				idx: idx, members: members, sections: sections, reviewed: reviewed, prior: prior, head: gitHead(env.Root),
-			})
-		} else {
-			bundle = renderReviewBundle(str(current, "scope_kind"), scopeExt, agg, ctxID, now, idx, members, sections)
-		}
-		if err := atomicWrite(bundlePath, []byte(bundle)); err != nil {
-			return err
-		}
-	} else if err := os.Remove(bundlePath); err != nil && !os.IsNotExist(err) {
-		// A bundle a previous review pull left is not this authoring context's.
+		mode, ctxID, scopeKind, scopeExt, now.Format(time.RFC3339))
+	plan.add(contextFile, []byte(stamp), "context")
+	if err := applyScopedPullPlan(dir, plan); err != nil {
 		return err
 	}
-	if err := atomicWrite(filepath.Join(dir, contextFile), []byte(stamp)); err != nil {
-		return err
+	// A narrow review bundle belongs to the previous review context.
+	if err := os.Remove(filepath.Join(dir, reviewBundleFile)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("authoring files were refreshed, but the old review bundle could not be removed: %w", err)
 	}
 
 	printSuccess("pulled scope %s → %s (%s context %s)", scopeExt, filepath.Join(workingSetDir, scopeExt), mode, ctxID)

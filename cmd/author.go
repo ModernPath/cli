@@ -42,6 +42,7 @@ var (
 	authorGateWithdrawReason string
 	authorDecisionRef        string
 	authorTraceFingerprint   string
+	authorTraceReviewContext string
 	authorTraceVerdict       string
 	authorTraceSources       []string
 	authorTracePrereqs       []string
@@ -736,13 +737,19 @@ IN_REVIEW->DONE). A fragment — what the shell leaves of an unquoted arrow —
 is refused before any write; the server refuses it too.
 
 --scope takes bare ids (EPIC-X, REQ-X), never kind:id. A cold-review trace
-inherits the review context the scope was pulled under (working-set pull
---scope --for-review) and is refused without one; independence is judged from
-that context, so a verdict recorded from an authoring pull reads as not
-independent. Purposes the phase checks recognise: cold-review, entry, lower,
-completion.`,
+requires an explicit --review-context from an immutable review snapshot created
+by working-set pull --scope --for-review; its aggregate is the trace pin, and
+its context and digest are added to body_md. --review-context is rejected for
+other purposes. Purposes the phase checks recognise:
+cold-review, entry, lower, completion.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("review-context") && authorGatePurpose != "cold-review" {
+			return fmt.Errorf("--review-context is only valid with --purpose cold-review; nothing was written")
+		}
+		if authorGatePurpose == "cold-review" && strings.TrimSpace(authorTraceReviewContext) == "" {
+			return fmt.Errorf("--purpose cold-review requires --review-context from `working-set pull --scope --for-review`; nothing was written")
+		}
 		env, err := authorEnv()
 		if err != nil {
 			return err
@@ -772,9 +779,20 @@ completion.`,
 		if norm, ok := normalizeScopeTokens(scope); ok {
 			scope = norm
 		}
-		pin, warnings, err := resolveTracePin(env, authorGatePurpose, scope, authorTraceFingerprint)
-		if err != nil {
-			return err
+		pin := ""
+		var warnings []string
+		var selectedReview *selectedReviewSnapshot
+		if authorGatePurpose == "cold-review" && authorTraceReviewContext != "" {
+			selectedReview, err = resolveReviewSnapshot(env, authorTraceReviewContext, scope, authorTraceFingerprint)
+			if err != nil {
+				return err
+			}
+			pin = selectedReview.Manifest.AggregateFingerprint
+		} else {
+			pin, warnings, err = resolveTracePin(env, authorGatePurpose, scope, authorTraceFingerprint)
+			if err != nil {
+				return err
+			}
 		}
 		for _, w := range warnings {
 			printWarning("%s", w)
@@ -792,6 +810,9 @@ completion.`,
 			"sources":                        traceSources(authorTraceSources),
 			"prerequisite_gate_external_ids": authorTracePrereqs,
 			"application_revision":           revision,
+		}
+		if selectedReview != nil {
+			fields["review_context_id"] = selectedReview.Manifest.ContextID
 		}
 		if authorBody != "" {
 			fields["body_md"] = authorBody
@@ -1375,6 +1396,7 @@ func init() {
 	authorTraceCmd.Flags().StringVar(&authorTransTo, "to", "", "the transition's TO state (with --from); inferred by purpose: cold-review entry, entry TODO, lower verify, upper verify, completion DONE")
 	authorTraceCmd.Flags().StringArrayVar(&authorGateScope, "scope", nil, "exact EPIC/UR/SR scope token, repeatable")
 	authorTraceCmd.Flags().StringVar(&authorTraceFingerprint, "fingerprint", "", "the pin evaluated: the packet aggregate (cold-review, entry, completion) or the content hash (lower, upper); read from the store when omitted")
+	authorTraceCmd.Flags().StringVar(&authorTraceReviewContext, "review-context", "", "select an immutable review snapshot context id for cold-review")
 	authorTraceCmd.Flags().StringVar(&authorTraceVerdict, "verdict", "", "PASS | FAIL | STALE")
 	authorTraceCmd.Flags().StringArrayVar(&authorTraceSources, "source", nil, "verdict source reference, repeatable")
 	authorTraceCmd.Flags().StringArrayVar(&authorTracePrereqs, "prerequisite", nil, "prerequisite trace gate id, repeatable")

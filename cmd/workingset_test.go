@@ -61,13 +61,26 @@ type wsFixture struct {
 	packetSections []any
 	// A non-200 status to serve from /sync/packet-sections (0 = normal 200). 404
 	// is an absent endpoint (honest absence); any other non-200 is a real error.
-	packetSectionsStatus int
+	packetSectionsStatus                int
+	packetSectionsStatusAfterAuthorPost int
+	authorOmitPacketFingerprint         bool
+	enforcePacketCAS                    bool
+	packetSectionsReads                 int
+	afterPacketSectionsRead             func(int)
+	deliveryContextStatus               int
+	deliveryContextReads                int
+	afterDeliveryContextRead            func(int)
+	workSelectionReads                  int
+	afterWorkSelectionRead              func(int)
+	itemsStatusAfterAuthorPost          int
 
 	// REQ-CROSS-314 (push): capture author writes and drive per-record 409s.
 	// authorConflict is keyed by a requirement/epic external_id or, for a packet
 	// section, "<scope_kind>:<scope_external_id>:<section_key>".
-	authorPosts    []map[string]any
-	authorConflict map[string]bool
+	authorPosts         []map[string]any
+	authorConflict      map[string]bool
+	afterAuthorPost     func(map[string]any)
+	afterExactItemsRead func([]string)
 
 	// REQ-CROSS-274 feed, consumed by the your-move brief (REQ-CROSS-276/277)
 	feed          map[string]any // served as {"data": feed}
@@ -232,8 +245,12 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 	mux.HandleFunc("/api/v1/sync/items", func(w http.ResponseWriter, r *http.Request) {
 		fx.lastItemsQuery = r.URL.RawQuery
 		fx.itemsHits++
-		if fx.itemsStatus != 0 && fx.itemsStatus != 200 {
-			w.WriteHeader(fx.itemsStatus)
+		status := fx.itemsStatus
+		if len(fx.authorPosts) > 0 && fx.itemsStatusAfterAuthorPost != 0 {
+			status = fx.itemsStatusAfterAuthorPost
+		}
+		if status != 0 && status != 200 {
+			w.WriteHeader(status)
 			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "named item store unavailable"}})
 			return
 		}
@@ -252,6 +269,9 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			}
 		}
 		write(w, "items", items)
+		if fx.afterExactItemsRead != nil {
+			fx.afterExactItemsRead(r.URL.Query()["ids[]"])
+		}
 	})
 	mux.HandleFunc("/api/v1/sync/gates", func(w http.ResponseWriter, r *http.Request) {
 		fx.lastGatesQuery = r.URL.RawQuery
@@ -324,11 +344,24 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 	})
 	mux.HandleFunc("/api/v1/sync/epics", func(w http.ResponseWriter, r *http.Request) { write(w, "epics", fx.epics) })
 	mux.HandleFunc("/api/v1/sync/delivery-context", func(w http.ResponseWriter, r *http.Request) {
+		if fx.deliveryContextStatus != 0 && fx.deliveryContextStatus != 200 {
+			w.WriteHeader(fx.deliveryContextStatus)
+			json.NewEncoder(w).Encode(map[string]any{"error": "delivery context unavailable"})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"data": fx.deliveryContext})
+		fx.deliveryContextReads++
+		if fx.afterDeliveryContextRead != nil {
+			fx.afterDeliveryContextRead(fx.deliveryContextReads)
+		}
 	})
 	mux.HandleFunc("/api/v1/sync/packet-sections", func(w http.ResponseWriter, r *http.Request) {
-		if fx.packetSectionsStatus != 0 && fx.packetSectionsStatus != 200 {
-			w.WriteHeader(fx.packetSectionsStatus)
+		status := fx.packetSectionsStatus
+		if len(fx.authorPosts) > 0 && fx.packetSectionsStatusAfterAuthorPost != 0 {
+			status = fx.packetSectionsStatusAfterAuthorPost
+		}
+		if status != 0 && status != 200 {
+			w.WriteHeader(status)
 			json.NewEncoder(w).Encode(map[string]any{"error": "boom"})
 			return
 		}
@@ -336,6 +369,10 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			"packet_sections":   fx.packetSections,
 			"missing_canonical": []any{"red_strategy", "decisions"},
 		}})
+		fx.packetSectionsReads++
+		if fx.afterPacketSectionsRead != nil {
+			fx.afterPacketSectionsRead(fx.packetSectionsReads)
+		}
 	})
 	mux.HandleFunc("/api/v1/sync/author", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -356,6 +393,24 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "the content has moved since that fingerprint"}})
 			return
 		}
+		if fx.enforcePacketCAS && str(rec, "kind") == "packet_section" && str(rec, "expected_fingerprint") != "" {
+			currentFingerprint := ""
+			for _, raw := range fx.packetSections {
+				section, _ := raw.(map[string]any)
+				if str(section, "section_key") == str(rec, "section_key") {
+					currentFingerprint = str(section, "content_fingerprint")
+					break
+				}
+			}
+			if str(rec, "expected_fingerprint") != currentFingerprint {
+				w.WriteHeader(409)
+				json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "the content has moved since that fingerprint"}})
+				return
+			}
+		}
+		if fx.afterAuthorPost != nil {
+			fx.afterAuthorPost(rec)
+		}
 		data := map[string]any{
 			respKey: map[string]any{"external_id": str(rec, "external_id"), "fingerprint": "served-after-" + conflictKey},
 		}
@@ -367,6 +422,9 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 					fx.requirements = append(fx.requirements, payload)
 				}
 			}
+		}
+		if str(rec, "kind") == "packet_section" && fx.authorOmitPacketFingerprint {
+			delete(data[respKey].(map[string]any), "fingerprint")
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
@@ -422,6 +480,10 @@ func wsServe(t *testing.T, fx *wsFixture) *httptest.Server {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": fx.workSelection})
+		fx.workSelectionReads++
+		if fx.afterWorkSelectionRead != nil {
+			fx.afterWorkSelectionRead(fx.workSelectionReads)
+		}
 	})
 	mux.HandleFunc("/api/v1/sync/work-selection/held", func(w http.ResponseWriter, r *http.Request) {
 		pieces := fx.held

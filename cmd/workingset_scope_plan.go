@@ -1,28 +1,23 @@
 package cmd
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
-// requiredPacketKeys is the canonical section keys the phase table requires for
-// a scope: the fixed four (reconnaissance, state_inventory, red_strategy,
-// decisions — SR-CLI-028-001), plus enrichment:<SR> for each selected system-
-// requirement member the store index knows (for a single_sr scope, its own SR).
-// A user-requirement member and a member the index does not know get none —
-// mirroring the server, which never requires them (REQ-CROSS-332 PD-5).
-// requiredSectionKeys returns the section keys the plan check requires for the
-// scope as the server serves them (facts.sections.required, REQ-CROSS-383);
-// when the server serves none — it predates the key, or the piece cannot be
-// read — the frozen-list derivation is the fallback and the caller is told.
-func requiredSectionKeys(env *factoryEnv, scopeExt, scopeKind string, members []string, idx map[string]scopeRecord) []string {
-	if resp, err := readDeliveryContextFor(env, scopeExt); err == nil && resp.Data.Facts != nil && resp.Data.Facts.Sections.Required != nil {
-		return resp.Data.Facts.Sections.Required
+func requiredSectionKeys(env *factoryEnv, scopeExt, scopeKind string, members []string, idx map[string]scopeRecord) ([]string, error) {
+	resp, err := readDeliveryContextFor(env, scopeExt)
+	if err == nil && resp.Data.Facts != nil && resp.Data.Facts.Sections.Required != nil {
+		return resp.Data.Facts.Sections.Required, nil
+	}
+	var responseErr *deliveryContextHTTPError
+	if err != nil && (!errors.As(err, &responseErr) || responseErr.StatusCode != 404) {
+		return nil, fmt.Errorf("could not read required packet sections before scoped pull: %w", err)
 	}
 	printWarning("the server serves no required section keys for %s — scaffolding from the frozen member list; `process check --phase plan` is the authority", scopeExt)
-	return requiredPacketKeys(scopeKind, scopeExt, members, idx)
+	return requiredPacketKeys(scopeKind, scopeExt, members, idx), nil
 }
 
 // requiredPacketKeys derives the canonical keys from the frozen selection
@@ -47,60 +42,68 @@ func requiredPacketKeys(scopeKind, scopeExt string, members []string, idx map[st
 	return keys
 }
 
-// pullPacketSections writes the served sections and returns them, so the
-// review bundle renders the same read the files hold.
-func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffold bool, requiredKeys []string) ([]map[string]any, error) {
+// stagePacketSections fetches and validates the complete packet response before
+// the caller starts writing any part of a scoped pull.
+func stagePacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffold bool, requiredKeys []string) (stagedPacketSections, error) {
+	staged := stagedPacketSections{files: map[string]scopedPullFile{}}
+	if err := validateRequiredPacketKeys(requiredKeys); err != nil {
+		return stagedPacketSections{}, err
+	}
 	scope := scopeKind + ":" + scopeExt
 	status, body, err := env.call("GET",
 		fmt.Sprintf("/api/v1/sync/packet-sections?system_id=%d&scope=%s", env.SystemID, scope), nil)
 	if err != nil {
-		// A transport failure is a FAILED pull, not honest absence — swallowing it
-		// left a reused scope dir's prior packet files in place, stamped into the
-		// new context.
-		return nil, err
+		return stagedPacketSections{}, err
 	}
 	if status == 404 {
-		// A genuinely absent endpoint (an older server): honest absence. Remove any
-		// packet files a prior pull into this reused scope dir left, so stale
-		// content is never carried into the new context.
-		return nil, os.RemoveAll(filepath.Join(dir, "packet"))
+		staged.absent = true
+		return staged, nil
 	}
 	if status != 200 {
-		return nil, serverRefusal("packet-sections read", status, body)
+		return stagedPacketSections{}, serverRefusal("packet-sections read", status, body)
 	}
 	sections, err := listFromData(body, "packet_sections")
 	if err != nil {
-		return nil, err
+		return stagedPacketSections{}, err
 	}
 	served := map[string]string{}
-	rows := []map[string]any{}
+	filenames := map[string]string{}
 	for _, s := range sections {
-		sm, _ := s.(map[string]any)
+		sm, ok := s.(map[string]any)
+		if !ok {
+			return stagedPacketSections{}, fmt.Errorf("packet section entry is not an object — refusing to pull")
+		}
 		key := str(sm, "section_key")
 		if key == "" {
-			continue
+			return stagedPacketSections{}, fmt.Errorf("packet section has no section_key — refusing to pull")
 		}
-		rows = append(rows, sm)
+		staged.sections = append(staged.sections, sm)
 		fname := packetFileName(key)
 		if unsafeSnapshotName(fname) {
-			return nil, fmt.Errorf("packet section key %q maps to an unsafe file name %q — refusing to pull", key, fname)
+			return stagedPacketSections{}, fmt.Errorf("packet section key %q maps to an unsafe file name %q — refusing to pull", key, fname)
 		}
 		if reservedPacketCollision(key) {
-			return nil, fmt.Errorf("extra packet section key %q maps to the reserved canonical file name %q — rename the extra section", key, fname)
+			return stagedPacketSections{}, fmt.Errorf("extra packet section key %q maps to the reserved canonical file name %q — rename the extra section", key, fname)
 		}
-		if err := atomicWrite(filepath.Join(dir, "packet", fname), []byte(str(sm, "content"))); err != nil {
-			return nil, err
+		if _, exists := served[key]; exists {
+			return stagedPacketSections{}, fmt.Errorf("packet response repeats section key %q — refusing to pull", key)
 		}
+		if prior, exists := filenames[fname]; exists {
+			return stagedPacketSections{}, fmt.Errorf("packet section keys %q and %q map to the same file %q — refusing to pull", prior, key, fname)
+		}
+		content, ok := sm["content"].(string)
+		if !ok {
+			return stagedPacketSections{}, fmt.Errorf("packet section %q has no string content — refusing to pull", key)
+		}
+		staged.files[fname] = scopedPullFile{content: []byte(content), origin: "served-packet", managed: true, packetKey: key}
+		filenames[fname] = key
 		served[key] = str(sm, "content_fingerprint")
 	}
 	// Record the fingerprint each section was pulled at (#6) so push can carry it
 	// as the whole-blob CAS expectation — a concurrent change then 409s instead of
 	// being silently overwritten, the same guarantee item files get from their
 	// served-fingerprint header. A dotfile, skipped by push's `.md` scan.
-	blob, _ := json.Marshal(served)
-	if err := atomicWrite(packetFingerprintManifest(dir), blob); err != nil {
-		return nil, err
-	}
+	staged.fingerprints = served
 
 	// REQ-CROSS-332: on an authoring pull, lay down a stub for every canonical
 	// section the phase table requires that the store does not serve, so the
@@ -109,21 +112,83 @@ func pullPacketSections(env *factoryEnv, dir, scopeKind, scopeExt string, scaffo
 	// sidecar (PD-4). Not on --for-review (PD-2), not on a 404 (returned above).
 	if scaffold {
 		for _, key := range requiredKeys {
-			if _, isServed := served[key]; isServed {
-				continue
-			}
 			fname := packetFileName(key)
-			if unsafeSnapshotName(fname) {
+			if prior, exists := filenames[fname]; exists && prior != key {
+				return stagedPacketSections{}, fmt.Errorf("packet section keys %q and %q map to the same file %q — refusing to pull", prior, key, fname)
+			}
+			if _, isServed := served[key]; isServed {
 				continue
 			}
 			path := filepath.Join(dir, "packet", fname)
 			if _, err := os.Stat(path); err == nil {
 				continue // never overwrite a local file
+			} else if !os.IsNotExist(err) {
+				return stagedPacketSections{}, err
 			}
-			if err := atomicWrite(path, []byte(packetStubMarker(key, scopeKind, scopeExt)+"\n")); err != nil {
-				return nil, err
-			}
+			staged.files[fname] = scopedPullFile{content: []byte(packetStubMarker(key, scopeKind, scopeExt) + "\n"), origin: "stub", managed: true}
+			filenames[fname] = key
 		}
 	}
-	return rows, nil
+	return staged, nil
+}
+
+func (p *scopedPullPlan) add(name string, content []byte, origin string) {
+	managed := origin == "item" || origin == "served-packet" || origin == "stub"
+	p.files[filepath.ToSlash(name)] = scopedPullFile{content: content, origin: origin, managed: managed}
+}
+
+type scopedPullFile struct {
+	content   []byte
+	origin    string
+	managed   bool
+	packetKey string
+}
+
+type scopedPullPlan struct {
+	files              map[string]scopedPullFile
+	packetAbsent       bool
+	packetFingerprints map[string]string
+}
+
+type stagedPacketSections struct {
+	sections     []map[string]any
+	files        map[string]scopedPullFile
+	fingerprints map[string]string
+	absent       bool
+}
+
+func validateRequiredPacketKeys(requiredKeys []string) error {
+	filenames := map[string]string{}
+	keys := map[string]bool{}
+	for _, key := range requiredKeys {
+		if key == "" {
+			return fmt.Errorf("required packet section has an empty key — refusing to pull")
+		}
+		if keys[key] {
+			return fmt.Errorf("required packet section key %q is repeated — refusing to pull", key)
+		}
+		keys[key] = true
+		fname := packetFileName(key)
+		if unsafeSnapshotName(fname) {
+			return fmt.Errorf("required packet section key %q maps to an unsafe file name %q — refusing to pull", key, fname)
+		}
+		if reservedPacketCollision(key) {
+			return fmt.Errorf("required packet section key %q aliases a reserved canonical file %q — refusing to pull", key, fname)
+		}
+		if prior, ok := filenames[fname]; ok {
+			return fmt.Errorf("required packet section keys %q and %q map to the same file %q — refusing to pull", prior, key, fname)
+		}
+		filenames[fname] = key
+	}
+	return nil
+}
+
+// Packet CAS is part of each section's refresh, rather than a separately
+// sorted file write. The persistence step checkpoints only completed sections.
+func (p *scopedPullPlan) addPacket(packet stagedPacketSections) {
+	p.packetAbsent = packet.absent
+	p.packetFingerprints = packet.fingerprints
+	for name, file := range packet.files {
+		p.files[filepath.ToSlash(filepath.Join("packet", name))] = file
+	}
 }

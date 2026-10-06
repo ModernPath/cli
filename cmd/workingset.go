@@ -230,3 +230,5 @@ func init() {
 
 	rootCmd.AddCommand(yourMoveCmd, workingSetCmd)
 }
+
+const reviewSnapshotDir = ".modernpath/working-set-reviews"

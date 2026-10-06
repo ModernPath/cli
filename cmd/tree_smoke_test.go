@@ -477,7 +477,7 @@ var leafDispositions = map[string]disposition{
 	"author epic":          {kind: dispExecute, args: []string{"author", "epic", "EPIC-SMK-001", "--title", "t"}},
 	"author gate":          {kind: dispExecute, args: []string{"author", "gate", "Q-SMK-001", "--title", "t"}},
 	"author gate-withdraw": {kind: dispExecute, args: []string{"author", "gate-withdraw", "Q-SMK-001", "--reason", "smoke"}},
-	"author trace":         {kind: dispExecute, args: []string{"author", "trace", "TRACE-SMK-001", "--title", "t", "--purpose", "cold-review", "--transition", "plan->entry", "--scope", "EPIC-SMK-001", "--fingerprint", "packet-sha256", "--verdict", "FAIL", "--source", "RUN:2026-08-26"}},
+	"author trace":         {kind: dispExecute, args: []string{"author", "trace", "TRACE-SMK-001", "--title", "t", "--purpose", "entry", "--transition", "PROPOSED->TODO", "--scope", "EPIC-SMK-001", "--fingerprint", "packet-sha256", "--verdict", "FAIL", "--source", "RUN:2026-08-26"}},
 	"author advance":       {kind: dispExecute, args: []string{"author", "advance", "REQ-SMK-001", "--to", "IN_PROGRESS", "--expected", "TODO"}},
 	// REQ-CROSS-421: demote reads the item's served status before any write — a server call.
 	"author demote": {kind: dispExecute, args: []string{"author", "demote", "REQ-SMK-001", "--to", "IN_PROGRESS", "--basis", "defect", "--reason", "USER:2026-09-21:smoke"}},

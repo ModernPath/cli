@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Scoped authoring pulls stage required reads and protect edited, deleted and
+  unbaselined managed files with a local hash baseline. Packet 404 preserves
+  unserved and untracked drafts. Push retries reconcile already accepted
+  content without rewriting authored bodies; recovery diagnostics preserve
+  drafts and describe manual archive, fresh pull and reapplication.
+  Accepted scaffold creates can recover missing CAS metadata on retry, and
+  item-only pushes work when the optional packet endpoint returns 404.
+  Pull saves baseline progress after each managed write or deletion, so a later
+  file-write failure does not make completed changes look like local edits.
+  Packet cleanup retains CAS pins until all deletions succeed; changed sections
+  without a pull-time CAS pin require manual recovery before any store write.
+  Withdrawals of absent targets are reported as no-ops when the record has not
+  changed since pull; other files can still push. Ambiguous retries name their
+  targets in recovery guidance. Required-section fallback uses HTTP status.
+  Packet writes, retry reconciliation and restamps refresh metadata for the
+  original staged filename, including aliases such as `reconnaissance.md`.
+- Review pulls create isolated read-only snapshots with a manifest binding the
+  store, system, scope, context, file hashes and aggregate. Findings and
+  cold-review traces select them with `--review-context`, validate snapshot
+  integrity, and retain the selected digest in their existing stored bodies.
+  Cold-review traces no longer inherit an authoring directory's `.context`.
+  The delegated reviewer uses explicit scoped snapshots while retaining the
+  small-change lane's by-ID review bundle and context stamp.
+  Invalid trace snapshot flags refuse before server reads. Review recording
+  rechecks the originally selected digest after finding/disposition writes
+  and before the trace, including replacement manifests with updated hashes.
+  Explicit finding aggregate mismatches refuse the entire review before writes.
+  Disposition batches validate the original snapshot before every update and
+  stop remaining writes on drift; retries skip already accepted dispositions.
+  Finding batches also recheck the original snapshot before each write and
+  stop if its files or manifest change, including a replacement with new hashes.
+
 ## v0.16.0 — the upload path fits a legacy estate
 
 ### Upgrading from v0.15.0: `import --git` is removed

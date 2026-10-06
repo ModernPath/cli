@@ -117,7 +117,7 @@ func TestSRCLI027ReviewFileBreakingAResolutionRuleWritesNothing(t *testing.T) {
  "findings":[{"id":"F-NEW","category":"traceability","severity":"note","owner":"core","source":"r","body":"n"}],
  "dispositions":[{"id":"F-OLD","from":"OPEN","disposition":"RESOLVED","ref":"abc123"}]}`)
 
-	out, err := runRoot(t, "process", "review", "record", "--file", file, "--scope", "EPIC-R")
+	out, err := runRoot(t, "process", "review", "record", "--file", file, "--scope", "EPIC-R", "--review-context", "review-ctx-1")
 	if err == nil || !strings.Contains(err.Error(), "--resolution is required on RESOLVED") || !strings.Contains(err.Error(), "nothing was written") {
 		t.Fatalf("a RESOLVED disposition without its kind refuses the whole review, got %v\n%s", err, out)
 	}

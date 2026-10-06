@@ -11,8 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,22 +28,15 @@ func TestREQCROSS315ColdReviewTraceCarriesTheReviewContext(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	// The reviewer pulled the scope `--for-review`, which stamps a review context
-	// in the scope directory.
-	dir := filepath.Join(env.Root, workingSetDir, "EPIC-CLI-008")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stamp := "# working-set context\n\nmode: review\ncontext_id: review-9f\nscope: epic:EPIC-CLI-008\n"
-	if err := os.WriteFile(filepath.Join(dir, contextFile), []byte(stamp), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	aggregate := strings.Repeat("a", 64)
+	reviewDir := writeReviewConsumerSnapshot(t, env.Root, env.APIURL, env.SystemID, "review-9f", "epic", "EPIC-CLI-008", aggregate)
 
 	err := authorTrace(env, "TRACE-COLD-EPIC-CLI-008", map[string]any{
-		"purpose":     "cold-review",
-		"exact_scope": []string{"EPIC-CLI-008"},
-		"verdict":     "PASS",
-		"fingerprint": "agg",
+		"purpose":           "cold-review",
+		"exact_scope":       []string{"EPIC-CLI-008"},
+		"verdict":           "PASS",
+		"fingerprint":       aggregate,
+		"review_context_id": "review-9f",
 	})
 	if err != nil {
 		t.Fatalf("author trace failed: %v", err)
@@ -52,6 +44,9 @@ func TestREQCROSS315ColdReviewTraceCarriesTheReviewContext(t *testing.T) {
 	record, _ := got["record"].(map[string]any)
 	if record["review_context_id"] != "review-9f" {
 		t.Fatalf("a cold-review trace must carry the review-context id read from the reviewed scope; got %v", record["review_context_id"])
+	}
+	if record["fingerprint"] != aggregate || !strings.Contains(record["body_md"].(string), reviewManifestDigestFromDisk(t, reviewDir)) {
+		t.Fatalf("cold-review trace must persist the selected snapshot pin and digest, got %v", record)
 	}
 }
 

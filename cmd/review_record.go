@@ -10,7 +10,6 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -18,10 +17,11 @@ import (
 )
 
 var (
-	reviewRecordFile  string
-	reviewRecordScope string
-	reviewRecordID    string
-	reviewRecordTitle string
+	reviewRecordContext string
+	reviewRecordFile    string
+	reviewRecordScope   string
+	reviewRecordID      string
+	reviewRecordTitle   string
 )
 
 // reviewFile is the reviewer's report JSON, the schema the installed
@@ -53,11 +53,11 @@ decision), as --resolution does.
 
 The scope is --scope (bare or <kind>:<id>), or the piece you hold (--piece
 when you hold several). It must have been pulled with working-set pull
---scope --for-review: that pull stamps the review context and the packet
-aggregate the reviewer read.
+--scope --for-review. Pass its printed context ID with --review-context;
+the immutable snapshot binds the packet aggregate and rendered file hashes.
 
 It refuses before any write when:
-  - the scope carries no review-mode stamp;
+  - the explicit review snapshot is missing or fails integrity validation;
   - the packet aggregate moved since the review pull (re-pull --for-review
     and review again);
   - the verdict is PASS while a material finding in scope would stay OPEN
@@ -111,19 +111,18 @@ func processReviewRecord(env *factoryEnv) error {
 	if unsafeSnapshotName(ext) {
 		return fmt.Errorf("scope %q is not a safe path component", ext)
 	}
-	dir := filepath.Join(env.Root, workingSetDir, ext)
-	mode, ctxID := readContextStamp(dir)
-	if mode != "review" || ctxID == "" {
-		return fmt.Errorf("%s carries no review-mode stamp — pull it with `working-set pull --scope --for-review` before the review, and record from that pull; nothing was written", ext)
+	scopeTokens := []string{ext}
+	if reviewRecordScope != "" {
+		scopeTokens = append(scopeTokens, reviewRecordScope)
 	}
-	stamped := readContextAggregate(dir)
-	if stamped == "" {
-		return fmt.Errorf("the review pull of %s stamped no packet aggregate — re-pull it with `working-set pull --scope --for-review`; nothing was written", ext)
+	selected, err := resolveReviewSnapshot(env, reviewRecordContext, scopeTokens, "")
+	if err != nil {
+		return err
 	}
-	kind := stampedScopeKind(dir)
-	if k, _ := splitScope(reviewRecordScope); k != "" {
-		kind = k
-	}
+	dir := selected.Directory
+	ctxID := selected.Manifest.ContextID
+	stamped := selected.Manifest.AggregateFingerprint
+	kind := selected.Manifest.ScopeKind
 	scope := kind + ":" + ext
 
 	dc, err := readDeliveryContextFor(env, ext)
@@ -145,6 +144,9 @@ func processReviewRecord(env *factoryEnv) error {
 		}
 		if review.Findings[i].Scope != scope {
 			return fmt.Errorf("finding %s names scope %s, but this review records %s — nothing was written", review.Findings[i].ID, review.Findings[i].Scope, scope)
+		}
+		if aggregate := review.Findings[i].Aggregate; aggregate != "" && aggregate != stamped {
+			return fmt.Errorf("finding %s aggregate pin does not match the selected review snapshot — nothing was written", review.Findings[i].ID)
 		}
 	}
 	for i := range review.Dispositions {
@@ -173,11 +175,14 @@ func processReviewRecord(env *factoryEnv) error {
 	failed := 0
 	if len(review.Findings) > 0 {
 		fmt.Println("findings:")
-		failed += addFindingEntries(env, review.Findings, findingPin{aggregate: stamped, contextID: ctxID})
+		failed += addFindingEntries(env, review.Findings, findingPin{aggregate: stamped, contextID: ctxID, snapshot: selected})
 	}
 	if len(review.Dispositions) > 0 {
+		if err := revalidateReviewSnapshot(env, selected); err != nil {
+			return err
+		}
 		fmt.Println("dispositions:")
-		failed += applyDispositionEntries(env, review.Dispositions)
+		failed += applyDispositionEntries(env, review.Dispositions, selected)
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d finding(s) or disposition(s) were not recorded — the cold-review trace was not recorded; fix them and re-run (what was recorded is skipped)", failed)
@@ -217,6 +222,11 @@ func processReviewRecord(env *factoryEnv) error {
 	// older CLI carries none and records no map.
 	if reviewed := readContextReviewed(dir); len(reviewed) > 0 {
 		fields["reviewed_fingerprints"] = reviewed
+	}
+	// Retain the original digest after finding/disposition writes, even if a
+	// replacement snapshot carries an internally valid manifest.
+	if err := revalidateReviewSnapshot(env, selected); err != nil {
+		return err
 	}
 	fmt.Println("trace:")
 	return authorTrace(env, id, fields)
@@ -289,6 +299,7 @@ func nonEmpty(values ...string) []string {
 }
 
 func init() {
+	processReviewRecordCmd.Flags().StringVar(&reviewRecordContext, "review-context", "", "the immutable snapshot context printed by the review pull")
 	processReviewRecordCmd.Flags().StringVar(&reviewRecordFile, "file", "", "the reviewer's report JSON {verdict, body, source, findings[], dispositions[]}")
 	processReviewRecordCmd.Flags().StringVar(&reviewRecordScope, "scope", "", "the reviewed scope (bare or <kind>:<id>); the held piece when omitted")
 	processReviewRecordCmd.Flags().StringVar(&reviewRecordID, "id", "", "the trace id (default CR-TRACE-<scope>-<review context>)")

@@ -115,6 +115,14 @@ func readDeliveryContextFor(env *factoryEnv, piece string) (*deliveryContextResp
 	return resp, err
 }
 
+type deliveryContextHTTPError struct {
+	StatusCode int
+}
+
+func (e *deliveryContextHTTPError) Error() string {
+	return fmt.Sprintf("delivery-context read returned HTTP %d", e.StatusCode)
+}
+
 func toAnySlice(ids []string) []any {
 	out := make([]any, len(ids))
 	for i, id := range ids {
@@ -136,7 +144,7 @@ func readDeliveryContextOrHeld(env *factoryEnv, piece string) (*deliveryContextR
 		if pieces := stringSlice(body["pieces"]); len(pieces) > 0 {
 			return nil, pieces, nil
 		}
-		return nil, nil, fmt.Errorf("delivery-context read returned HTTP %d", status)
+		return nil, nil, &deliveryContextHTTPError{StatusCode: status}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {

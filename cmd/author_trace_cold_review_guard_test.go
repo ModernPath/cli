@@ -12,8 +12,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,9 +47,11 @@ func TestREQCROSS364TraceRefusesColdReviewWithoutContext(t *testing.T) {
 
 func TestREQCROSS364TraceAllowsColdReviewWithResolvedContext(t *testing.T) {
 	posted := false
+	var got map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/sync/author", func(w http.ResponseWriter, r *http.Request) {
 		posted = true
+		_ = json.NewDecoder(r.Body).Decode(&got)
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"gate": map[string]any{"external_id": "CR-CTX", "state": "pass", "fingerprint": "agg"},
 		}})
@@ -59,26 +60,25 @@ func TestREQCROSS364TraceAllowsColdReviewWithResolvedContext(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	// The reviewer pulled the scope --for-review, stamping a review context.
-	dir := filepath.Join(env.Root, workingSetDir, "REQ-CROSS-358")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stamp := "# working-set context\n\nmode: review\ncontext_id: review-3a\nscope: single_sr:REQ-CROSS-358\n"
-	if err := os.WriteFile(filepath.Join(dir, contextFile), []byte(stamp), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The reviewer selected an immutable review snapshot for this SR.
+	aggregate := strings.Repeat("a", 64)
+	reviewDir := writeReviewConsumerSnapshot(t, env.Root, env.APIURL, env.SystemID, "review-3a", "single_sr", "REQ-CROSS-358", aggregate)
 
 	if err := authorTrace(env, "CR-CTX", map[string]any{
-		"purpose":     "cold-review",
-		"exact_scope": []string{"REQ-CROSS-358"},
-		"verdict":     "PASS",
-		"fingerprint": "agg",
+		"purpose":           "cold-review",
+		"exact_scope":       []string{"REQ-CROSS-358"},
+		"verdict":           "PASS",
+		"fingerprint":       aggregate,
+		"review_context_id": "review-3a",
 	}); err != nil {
 		t.Fatalf("a cold-review trace with a resolved context must post, got: %v", err)
 	}
 	if !posted {
 		t.Fatalf("a cold-review trace with a resolved context must reach the server")
+	}
+	record, _ := got["record"].(map[string]any)
+	if record["review_context_id"] != "review-3a" || record["fingerprint"] != aggregate || !strings.Contains(record["body_md"].(string), reviewManifestDigestFromDisk(t, reviewDir)) {
+		t.Fatalf("cold-review trace must preserve selected context, pin and digest, got %v", record)
 	}
 }
 

@@ -61,6 +61,10 @@ func TestREQCROSS315ProcessFindingsAddPostsTypedPayloadWithReviewContext(t *test
 	srv, root := findingsFixture(t, &captured)
 
 	env := &factoryEnv{Root: root, APIURL: srv.URL, SystemID: 4, token: "t"}
+	aggregate := strings.Repeat("a", 64)
+	writeReviewConsumerSnapshot(t, root, srv.URL, 4, "review-abc123", "epic", "EPIC-F", aggregate)
+	findingsReviewContext = "review-abc123"
+	t.Cleanup(func() { findingsReviewContext = "" })
 	findingsScope = "epic:EPIC-F"
 	findingsExternalID = "F-1"
 	findingsSeverity = "major"
@@ -68,7 +72,7 @@ func TestREQCROSS315ProcessFindingsAddPostsTypedPayloadWithReviewContext(t *test
 	findingsBody = "the cold-review gate has no computable predicate"
 	findingsSource = "the reviewer"
 	findingsOwner = "core"
-	findingsAggregate = "agg-x"
+	findingsAggregate = ""
 
 	if err := processFindingsAdd(env); err != nil {
 		t.Fatalf("process findings add failed: %v", err)
@@ -82,7 +86,10 @@ func TestREQCROSS315ProcessFindingsAddPostsTypedPayloadWithReviewContext(t *test
 		t.Fatalf("expected kind finding, got %v", rec["kind"])
 	}
 	if rec["review_context_id"] != "review-abc123" {
-		t.Fatalf("review_context_id must come from the directory .context, got %v", rec["review_context_id"])
+		t.Fatalf("review_context_id must come from the selected review snapshot, got %v", rec["review_context_id"])
+	}
+	if rec["aggregate_fingerprint"] != aggregate || !strings.Contains(rec["body"].(string), reviewManifestDigestFromDisk(t, filepath.Join(root, reviewSnapshotDir, "EPIC-F", "review-abc123"))) {
+		t.Fatalf("finding body and aggregate must bind the selected immutable snapshot, got %v", rec)
 	}
 	if rec["scope_kind"] != "epic" || rec["scope_external_id"] != "EPIC-F" {
 		t.Fatalf("scope not parsed into kind+id: %v", rec)

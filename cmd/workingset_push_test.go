@@ -15,8 +15,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A requirement payload carrying explicit relations, for the base of a diff.
@@ -29,6 +31,20 @@ func reqWith(id, boundary string, rels []any) map[string]any {
 		m["relations"] = rels
 	}
 	return m
+}
+
+func canonicalScopeRequirement(fx *wsFixture, boundary, fingerprint string) map[string]any {
+	original, ok := fx.requirements[0].(map[string]any)
+	if !ok {
+		panic("scope fixture requirement is not an object")
+	}
+	canonical := make(map[string]any, len(original))
+	for key, value := range original {
+		canonical[key] = value
+	}
+	canonical["boundary"] = boundary
+	canonical["fingerprint"] = fingerprint
+	return canonical
 }
 
 func rel(direction, target, authority string) any {
@@ -55,6 +71,35 @@ func edit(t *testing.T, path string, fn func(string) string) {
 	}
 	if err := os.WriteFile(path, []byte(fn(string(b))), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func scopedBaselineEntryForTest(t *testing.T, dir, rel string) scopedDraftBaselineEntry {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, scopedDraftBaselineFile))
+	if err != nil {
+		t.Fatalf("read local draft baseline: %v", err)
+	}
+	var baseline scopedDraftBaseline
+	if err := json.Unmarshal(raw, &baseline); err != nil {
+		t.Fatalf("decode local draft baseline: %v", err)
+	}
+	entry, ok := baseline.Files[filepath.ToSlash(rel)]
+	if !ok {
+		t.Fatalf("baseline has no managed entry for %s", rel)
+	}
+	return entry
+}
+
+func assertScopedBaselineMatchesFile(t *testing.T, dir, rel string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	entry := scopedBaselineEntryForTest(t, dir, rel)
+	if entry.SHA256 != sha256Hex(content) {
+		t.Fatalf("baseline hash for %s does not match the unchanged local bytes", rel)
 	}
 }
 
@@ -859,5 +904,691 @@ func TestREQCROSS489ScopePullAndPushCarryNoTraceLinks(t *testing.T) {
 		if strings.Contains(string(raw), "traces") || strings.Contains(string(raw), "trace_status") {
 			t.Errorf("a push must not send trace links: %s", raw)
 		}
+	}
+}
+
+// TestSuccessfulItemPushAdvancesTheLocalBaselineBeforeTheNextPull covers
+// REQ-CROSS-332#AC10 and guards the ordinary accepted-push lifecycle.
+func TestSuccessfulItemPushAdvancesTheLocalBaselineBeforeTheNextPull(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	canonical := canonicalScopeRequirement(fx, "the reads and writes", "canonical-after-item-push")
+	fx.authorSyncItems = map[string]any{"REQ-CROSS-310": map[string]any{
+		"kind": "system", "item": canonical, "gates": []any{},
+	}}
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	fx.requirements[0] = canonical
+	if err := workingSetPullScope(env, false, wsNow.Add(time.Minute)); err != nil {
+		t.Fatalf("clean pull after accepted push must not look locally dirty: %v", err)
+	}
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+}
+
+// TestAcceptedItemPatchCanonicalReadFailureThenRetryRecovers covers
+// UR-CLI-DRAFT-PROTECTION-001#AC5 and REQ-CROSS-332#AC11: the accepted patch is visible on retry as semantic
+// equality, so only CLI metadata and its baseline can advance.
+func TestAcceptedItemPatchCanonicalReadFailureThenRetryRecovers(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	authored := readScopeFile(t, path)
+	authoredBody := itemBody(authored)
+	baselineBefore := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+
+	fx.authorPosts = nil
+	fx.itemsStatusAfterAuthorPost = 500
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected canonical item read to fail after accepted patch")
+	}
+	if len(fx.authorPosts) != 1 {
+		t.Fatalf("expected one accepted patch before canonical read failure, got %d posts", len(fx.authorPosts))
+	}
+	if entry := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md")); entry.SHA256 != baselineBefore.SHA256 {
+		t.Fatal("failed canonical read advanced the local draft baseline")
+	}
+
+	canonical := canonicalScopeRequirement(fx, "the reads and writes", "accepted-item-fingerprint")
+	fx.requirements[0] = canonical
+	fx.itemsStatusAfterAuthorPost = 0
+	postsBeforeRetry := len(fx.authorPosts)
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("equality retry should reconcile the accepted patch: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("equality retry posted a duplicate write: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	after := readScopeFile(t, path)
+	afterBody := itemBody(after)
+	if afterBody != authoredBody {
+		t.Fatalf("equality retry changed the authored body\nbefore: %q\nafter:  %q", authoredBody, afterBody)
+	}
+	if !strings.Contains(after, "accepted-item-fingerprint") {
+		t.Fatalf("equality retry did not refresh the canonical CAS metadata:\n%s", after)
+	}
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+}
+
+// TestAcceptedItemRetryPreservesConcurrentEditAtMetadataRestamp covers
+// REQ-CROSS-332#AC11: the final canonical read cannot baseline bytes changed
+// after the retry's initial file staging.
+func TestAcceptedItemRetryPreservesConcurrentEditAtMetadataRestamp(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	fx.itemsStatusAfterAuthorPost = 500
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected accepted item patch followed by canonical read failure")
+	}
+	canonical := canonicalScopeRequirement(fx, "the reads and writes", "retry-race-canonical-fingerprint")
+	fx.requirements[0] = canonical
+	fx.itemsStatusAfterAuthorPost = 0
+	baselineBefore := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+	concurrent := []byte(readScopeFile(t, path) + "\nconcurrent edit during canonical reread\n")
+	reads := 0
+	var callbackErr error
+	fx.afterExactItemsRead = func(_ []string) {
+		reads++
+		if reads == 2 {
+			callbackErr = os.WriteFile(path, concurrent, 0o644)
+		}
+	}
+	postsBeforeRetry := len(fx.authorPosts)
+	err := workingSetPush(env, false)
+	if callbackErr != nil {
+		t.Fatalf("fixture concurrent retry edit: %v", callbackErr)
+	}
+	if reads != 2 {
+		t.Fatalf("expected initial and final canonical reads, got %d", reads)
+	}
+	if err == nil {
+		t.Fatal("retry should refuse metadata restamp after the local bytes changed")
+	}
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("metadata race issued another write: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	if got := readScopeFile(t, path); got != string(concurrent) {
+		t.Fatalf("retry metadata restamp overwrote concurrent bytes\n got: %q\nwant: %q", got, concurrent)
+	}
+	if got := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md")); got.SHA256 != baselineBefore.SHA256 {
+		t.Fatal("retry metadata race falsely advanced the local baseline")
+	}
+}
+
+// TestAcceptedPacketPutReadFailureThenRetryRefreshesCAS covers
+// UR-CLI-DRAFT-PROTECTION-001#AC5 and REQ-CROSS-332#AC11 for a no-op section.
+func TestAcceptedPacketPutReadFailureThenRetryRefreshesCAS(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	const authoredBody = "authored reconnaissance\n"
+	writePacketFile(t, dir, "10-recon.md", authoredBody)
+
+	fx.authorPosts = nil
+	fx.authorOmitPacketFingerprint = true
+	fx.packetSectionsStatusAfterAuthorPost = 500
+	baselineBefore := scopedBaselineEntryForTest(t, dir, filepath.Join("packet", "10-recon.md"))
+	pushErr := workingSetPush(env, false)
+	if packetPostFor(fx, "reconnaissance") == nil {
+		t.Fatalf("expected an accepted packet put before the failed read: %v", fx.authorPosts)
+	}
+	if pushErr == nil {
+		t.Fatal("push reported success after the accepted put's canonical packet read failed")
+	}
+	if entry := scopedBaselineEntryForTest(t, dir, filepath.Join("packet", "10-recon.md")); entry.SHA256 != baselineBefore.SHA256 {
+		t.Fatal("failed canonical packet read advanced the local draft baseline")
+	}
+	postsBeforeRetry := len(fx.authorPosts)
+	fx.packetSectionsStatusAfterAuthorPost = 0
+	_, contextID := readContextStamp(dir)
+	fx.packetSections = []any{map[string]any{
+		"scope_kind": "epic", "scope_external_id": "EPIC-CLI-008",
+		"section_key": "reconnaissance", "content": authoredBody,
+		"content_fingerprint":  "accepted-packet-fingerprint",
+		"authoring_context_id": contextID,
+	}}
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("equality retry should reconcile the accepted packet put: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("equality retry posted a duplicate packet write: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	if got := readScopeFile(t, filepath.Join(dir, "packet", "10-recon.md")); got != authoredBody {
+		t.Fatalf("equality retry changed packet bytes: got %q want %q", got, authoredBody)
+	}
+	if got := readPacketFingerprints(dir)["reconnaissance"]; got != "accepted-packet-fingerprint" {
+		t.Fatalf("equality retry packet CAS fingerprint = %q, want accepted-packet-fingerprint", got)
+	}
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("packet", "10-recon.md"))
+}
+
+// TestAcceptedNewPacketPathGetsBaselineAfterCanonicalConfirmation covers
+// UR-CLI-DRAFT-PROTECTION-001#AC5 and REQ-CROSS-332#AC11.
+func TestAcceptedNewPacketPathGetsBaselineAfterCanonicalConfirmation(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	const body = "new packet notes\n"
+	writePacketFile(t, dir, "notes.md", body)
+	_, contextID := readContextStamp(dir)
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "kind") != "packet_section" || str(rec, "section_key") != "notes" {
+			return
+		}
+		fx.packetSections = append(fx.packetSections, map[string]any{
+			"scope_kind": "epic", "scope_external_id": "EPIC-CLI-008",
+			"section_key": "notes", "content": body,
+			"content_fingerprint": "accepted-notes-fingerprint", "authoring_context_id": contextID,
+		})
+	}
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push newly created packet file: %v", err)
+	}
+	if packetPostFor(fx, "notes") == nil {
+		t.Fatalf("expected accepted notes packet write, got %v", fx.authorPosts)
+	}
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("packet", "notes.md"))
+	postsAfterCreate := len(fx.authorPosts)
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("unchanged push after accepted new packet path: %v", err)
+	}
+	if len(fx.authorPosts) != postsAfterCreate {
+		t.Fatalf("unchanged push repeated the packet write: %v", fx.authorPosts[postsAfterCreate:])
+	}
+	if err := workingSetPullScope(env, false, wsNow); err != nil {
+		t.Fatalf("pull after accepted new packet path: %v", err)
+	}
+	if got := readScopeFile(t, filepath.Join(dir, "packet", "notes.md")); got != body {
+		t.Fatalf("pull changed the packet body: got %q want %q", got, body)
+	}
+}
+
+// TestAcceptedPacketRetryRestampsWithReconciledCAS covers REQ-CROSS-332#AC11.
+func TestAcceptedPacketRetryRestampsWithReconciledCAS(t *testing.T) {
+	fx := scopeFixture()
+	fx.enforcePacketCAS = true
+	env, dir := pulledScope(t, fx)
+	const body = "accepted packet body\n"
+	writePacketFile(t, dir, "10-recon.md", body)
+	_, contextID := readContextStamp(dir)
+	fx.authorOmitPacketFingerprint = true
+	fx.packetSectionsStatusAfterAuthorPost = 500
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "kind") != "packet_section" {
+			return
+		}
+		fx.packetSections = []any{map[string]any{
+			"scope_kind": "epic", "scope_external_id": "EPIC-CLI-008",
+			"section_key": "reconnaissance", "content": body,
+			"content_fingerprint": "accepted-packet-fingerprint", "authoring_context_id": contextID,
+		}}
+	}
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected canonical packet read failure after the accepted write")
+	}
+	accepted := packetPostFor(fx, "reconnaissance")
+	if accepted == nil {
+		t.Fatalf("expected accepted packet write before read failure: %v", fx.authorPosts)
+	}
+	fx.packetSectionsStatusAfterAuthorPost = 0
+	previousRestamp := wsPushRestamp
+	wsPushRestamp = true
+	defer func() { wsPushRestamp = previousRestamp }()
+	postsBeforeRetry := len(fx.authorPosts)
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("--restamp retry should reconcile accepted CAS before restamping: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry+1 {
+		t.Fatalf("expected one successful restamp retry, posts=%v", fx.authorPosts[postsBeforeRetry:])
+	}
+	retry := fx.authorPosts[len(fx.authorPosts)-1]["record"].(map[string]any)
+	if got := str(retry, "expected_fingerprint"); got != "accepted-packet-fingerprint" {
+		t.Fatalf("restamp used stale CAS fingerprint %q, want accepted-packet-fingerprint", got)
+	}
+}
+
+// TestAcceptedPacketRetryAutomaticRestampUsesReconciledCAS covers REQ-CROSS-332#AC11.
+func TestAcceptedPacketRetryAutomaticRestampUsesReconciledCAS(t *testing.T) {
+	fx := scopeFixture()
+	fx.enforcePacketCAS = true
+	env, dir := pulledScope(t, fx)
+	const body = "accepted packet body\n"
+	writePacketFile(t, dir, "10-recon.md", body)
+	_, contextID := readContextStamp(dir)
+	fx.authorOmitPacketFingerprint = true
+	fx.packetSectionsStatusAfterAuthorPost = 500
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "kind") != "packet_section" {
+			return
+		}
+		fx.packetSections = []any{map[string]any{
+			"scope_kind": "epic", "scope_external_id": "EPIC-CLI-008",
+			"section_key": "reconnaissance", "content": body,
+			"content_fingerprint": "accepted-packet-fingerprint", "authoring_context_id": contextID,
+		}}
+	}
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected canonical packet read failure after the accepted write")
+	}
+	if packetPostFor(fx, "reconnaissance") == nil {
+		t.Fatalf("expected accepted packet write before read failure: %v", fx.authorPosts)
+	}
+	fx.packetSectionsStatusAfterAuthorPost = 0
+	fx.deliveryContext = staleFacts("reconnaissance")
+	postsBeforeRetry := len(fx.authorPosts)
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("automatic stale-section retry should reconcile accepted CAS first: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry+1 {
+		t.Fatalf("expected one successful automatic restamp, posts=%v", fx.authorPosts[postsBeforeRetry:])
+	}
+	retry := fx.authorPosts[len(fx.authorPosts)-1]["record"].(map[string]any)
+	if got := str(retry, "expected_fingerprint"); got != "accepted-packet-fingerprint" {
+		t.Fatalf("automatic restamp used stale CAS fingerprint %q, want accepted-packet-fingerprint", got)
+	}
+}
+
+// TestAcceptedItemThenPacketReadFailureThenRetryReconciles covers REQ-CROSS-332
+// #AC11 when the item succeeds before the packet's canonical read fails.
+func TestAcceptedItemThenPacketReadFailureThenRetryReconciles(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	itemPath := memberPath(dir, "REQ-CROSS-310")
+	edit(t, itemPath, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	const packetBody = "accepted packet after item\n"
+	writePacketFile(t, dir, "10-recon.md", packetBody)
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "external_id") == "REQ-CROSS-310" {
+			fx.requirements[0] = canonicalScopeRequirement(fx, str(rec, "boundary"), "accepted-before-packet-failure")
+		}
+	}
+	fx.authorOmitPacketFingerprint = true
+	fx.packetSectionsStatusAfterAuthorPost = 500
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected packet canonical read failure after accepted item and packet writes")
+	}
+	if len(fx.authorPosts) != 2 {
+		t.Fatalf("expected one accepted item patch and one accepted packet put, got %v", fx.authorPosts)
+	}
+	itemAuthoredBody := itemBody(readScopeFile(t, itemPath))
+	itemBaseline := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+	packetBaseline := scopedBaselineEntryForTest(t, dir, filepath.Join("packet", "10-recon.md"))
+	fx.packetSectionsStatusAfterAuthorPost = 0
+	fx.packetSections = []any{map[string]any{
+		"scope_kind": "epic", "scope_external_id": "EPIC-CLI-008",
+		"section_key": "reconnaissance", "content": packetBody,
+		"content_fingerprint":  "accepted-packet-after-item-failure",
+		"authoring_context_id": "accepted-context",
+	}}
+	fx.afterAuthorPost = nil
+	postsBeforeRetry := len(fx.authorPosts)
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("no-op retry should reconcile both accepted writes: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("retry duplicated an accepted write: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	if itemBody(readScopeFile(t, itemPath)) != itemAuthoredBody {
+		t.Fatalf("item authored body changed during reconciliation:\n%s", itemBody(readScopeFile(t, itemPath)))
+	}
+	if got := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md")); got.SHA256 == itemBaseline.SHA256 {
+		t.Fatal("item baseline did not advance after equality retry")
+	}
+	if got := scopedBaselineEntryForTest(t, dir, filepath.Join("packet", "10-recon.md")); got.SHA256 == packetBaseline.SHA256 {
+		t.Fatal("packet baseline did not advance after equality retry")
+	}
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("packet", "10-recon.md"))
+}
+
+// TestAcceptedPacketMetadataFailureKeepsPriorBaseline covers REQ-CROSS-332
+// #AC11: a failed CAS sidecar write cannot bless an accepted packet draft.
+func TestAcceptedPacketMetadataFailureKeepsPriorBaseline(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	writePacketFile(t, dir, "10-recon.md", "packet body accepted\n")
+	baselineBefore := scopedBaselineEntryForTest(t, dir, filepath.Join("packet", "10-recon.md"))
+	manifest := packetFingerprintManifest(dir)
+	var callbackErr error
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "kind") != "packet_section" {
+			return
+		}
+		if err := os.Remove(manifest); err != nil {
+			callbackErr = err
+			return
+		}
+		if err := os.Mkdir(manifest, 0o755); err != nil {
+			callbackErr = err
+			return
+		}
+		callbackErr = os.WriteFile(filepath.Join(manifest, "block"), []byte("keep"), 0o644)
+	}
+	err := workingSetPush(env, false)
+	if callbackErr != nil {
+		t.Fatalf("fixture block after accepted packet PUT: %v", callbackErr)
+	}
+	if err == nil {
+		t.Fatal("accepted packet write with failed CAS metadata refresh must report partial success")
+	}
+	if packetPostFor(fx, "reconnaissance") == nil {
+		t.Fatalf("expected accepted packet put before metadata failure: %v", fx.authorPosts)
+	}
+	if got := scopedBaselineEntryForTest(t, dir, filepath.Join("packet", "10-recon.md")); got.SHA256 != baselineBefore.SHA256 {
+		t.Fatal("failed CAS metadata refresh advanced the packet draft baseline")
+	}
+}
+
+// TestAcceptedItemBaselineFailureThenRetryRepairsCurrentCAS covers REQ-CROSS-332
+// #AC11: retry must repair a stale local hash even when server CAS is current.
+func TestAcceptedItemBaselineFailureThenRetryRepairsCurrentCAS(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	authoredBody := itemBody(readScopeFile(t, path))
+	baselineBefore := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+	canonical := canonicalScopeRequirement(fx, "the reads and writes", "accepted-item-current-cas")
+	fx.authorSyncItems = map[string]any{"REQ-CROSS-310": map[string]any{
+		"kind": "system", "item": canonical, "gates": []any{},
+	}}
+	baselinePath := filepath.Join(dir, scopedDraftBaselineFile)
+	savedBaselinePath := baselinePath + ".saved"
+	var callbackErr error
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "external_id") != "REQ-CROSS-310" {
+			return
+		}
+		// Directory obstruction also fails when CI runs as root, unlike chmod.
+		if err := os.Rename(baselinePath, savedBaselinePath); err != nil {
+			callbackErr = err
+			return
+		}
+		callbackErr = os.Mkdir(baselinePath, 0o755)
+	}
+	err := workingSetPush(env, false)
+	if callbackErr != nil {
+		t.Fatalf("block baseline refresh after accepted item patch: %v", callbackErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "could not refresh the local draft baseline") {
+		t.Fatalf("expected accepted item patch followed by baseline refresh failure, got %v", err)
+	}
+	if err := os.Remove(baselinePath); err != nil {
+		t.Fatalf("remove baseline obstruction: %v", err)
+	}
+	if err := os.Rename(savedBaselinePath, baselinePath); err != nil {
+		t.Fatalf("restore prior baseline: %v", err)
+	}
+	fx.afterAuthorPost = nil
+	if len(fx.authorPosts) != 1 {
+		t.Fatalf("expected one accepted item patch, got %v", fx.authorPosts)
+	}
+	if itemBody(readScopeFile(t, path)) != authoredBody || !strings.Contains(readScopeFile(t, path), "accepted-item-current-cas") {
+		t.Fatalf("accepted canonical refresh did not retain authored body and current CAS:\n%s", readScopeFile(t, path))
+	}
+	if got := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md")); got.SHA256 != baselineBefore.SHA256 {
+		t.Fatal("failed baseline refresh changed the previous baseline entry")
+	}
+	fx.requirements[0] = canonical
+	postsBeforeRetry := len(fx.authorPosts)
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("retry should repair local hash with current CAS and no duplicate patch: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("baseline repair duplicated the accepted patch: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	if itemBody(readScopeFile(t, path)) != authoredBody {
+		t.Fatalf("baseline repair rewrote authored body:\n%s", itemBody(readScopeFile(t, path)))
+	}
+	assertScopedBaselineMatchesFile(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+}
+
+// TestAcceptedItemCanonicalRefreshPreservesConcurrentLocalEdit covers
+// REQ-CROSS-332#AC11: an edit racing an accepted write is never overwritten by
+// the canonical metadata refresh.
+func TestAcceptedItemCanonicalRefreshPreservesConcurrentLocalEdit(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	canonical := canonicalScopeRequirement(fx, "the reads and writes", "accepted-item-race-fingerprint")
+	fx.authorSyncItems = map[string]any{"REQ-CROSS-310": map[string]any{
+		"kind": "system", "item": canonical, "gates": []any{},
+	}}
+	baselineBefore := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md"))
+	concurrent := []byte(readScopeFile(t, path) + "\nconcurrent author edit\n")
+	var callbackErr error
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "external_id") == "REQ-CROSS-310" {
+			callbackErr = os.WriteFile(path, concurrent, 0o644)
+		}
+	}
+	err := workingSetPush(env, false)
+	if callbackErr != nil {
+		t.Fatalf("fixture concurrent edit: %v", callbackErr)
+	}
+	if err == nil {
+		t.Fatal("accepted patch with a concurrent local edit must report a partial refresh failure")
+	}
+	if got := readScopeFile(t, path); got != string(concurrent) {
+		t.Fatalf("canonical refresh overwrote concurrent local bytes\n got: %q\nwant: %q", got, concurrent)
+	}
+	if got := scopedBaselineEntryForTest(t, dir, filepath.Join("members", "REQ-CROSS-310.md")); got.SHA256 != baselineBefore.SHA256 {
+		t.Fatal("concurrent local bytes were falsely baselined")
+	}
+}
+
+// TestPushRetryMissingCASPinRequiresManualArchiveRecovery covers
+// UR-CLI-DRAFT-PROTECTION-001#AC6 and REQ-CROSS-332#AC12.
+func TestPushRetryMissingCASPinRequiresManualArchiveRecovery(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		s = strings.Replace(s, "- **Served fingerprint:** sr310-fp\n", "", 1)
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	fx.authorPosts = nil
+	fx.itemsStatusAfterAuthorPost = 500
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected canonical read to fail after accepted patch with absent CAS pin")
+	}
+	if len(fx.authorPosts) != 1 {
+		t.Fatalf("expected one accepted patch before the failed read, got %v", fx.authorPosts)
+	}
+
+	canonical := canonicalScopeRequirement(fx, "the reads and writes", "accepted-item-with-missing-pin")
+	fx.requirements[0] = canonical
+	fx.itemsStatusAfterAuthorPost = 0
+	before := scopeTreeBytes(t, dir)
+	postsBeforeRetry := len(fx.authorPosts)
+	err := workingSetPush(env, false)
+	assertManualScopeRecoveryInstructions(t, err)
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("retry without the original CAS pin issued another write: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	if after := scopeTreeBytes(t, dir); !reflect.DeepEqual(after, before) {
+		t.Fatalf("manual-recovery refusal changed the scope tree\nbefore: %#v\nafter:  %#v", before, after)
+	}
+}
+
+// TestPushRetryOperationMarkerRequiresManualArchiveRecovery covers the
+// UR-CLI-DRAFT-PROTECTION-001#AC6 and REQ-CROSS-332#AC12 normalization fallback: retry must not rewrite authored
+// operation-marker bytes merely to make the file canonical.
+func TestPushRetryOperationMarkerRequiresManualArchiveRecovery(t *testing.T) {
+	fx := scopeFixture()
+	fx.requirements = []any{reqWith("REQ-CROSS-310", "the reads", []any{rel("declares", "UR-CLI-008", "confirmed")})}
+	fx.workSelection["current"].(map[string]any)["members"] = []any{"REQ-CROSS-310"}
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "- declares UR-CLI-008 [confirmed]", "- withdraw UR-CLI-008", 1)
+	})
+	markerDraft := readScopeFile(t, path)
+	fx.authorPosts = nil
+	fx.itemsStatusAfterAuthorPost = 500
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected canonical read to fail after accepted relation withdrawal")
+	}
+	if patchPostFor(fx, "REQ-CROSS-310") == nil {
+		t.Fatalf("expected accepted relation withdrawal before the failed read: %v", fx.authorPosts)
+	}
+
+	canonical := reqWith("REQ-CROSS-310", "the reads", nil)
+	canonical["fingerprint"] = "accepted-withdrawal-fingerprint"
+	fx.requirements = []any{canonical}
+	fx.itemsStatusAfterAuthorPost = 0
+	before := scopeTreeBytes(t, dir)
+	postsBeforeRetry := len(fx.authorPosts)
+	err := workingSetPush(env, false)
+	assertManualScopeRecoveryInstructions(t, err)
+	if !strings.Contains(err.Error(), "UR-CLI-008") || !strings.Contains(err.Error(), "changed since pull") {
+		t.Fatalf("ambiguous withdrawal retry must name the target and changed store state: %v", err)
+	}
+	if len(fx.authorPosts) != postsBeforeRetry {
+		t.Fatalf("operation-marker retry issued another write: %v", fx.authorPosts[postsBeforeRetry:])
+	}
+	if got := readScopeFile(t, path); got != markerDraft {
+		t.Fatalf("operation-marker fallback rewrote authored bytes\nbefore: %s\nafter:  %s", markerDraft, got)
+	}
+	if after := scopeTreeBytes(t, dir); !reflect.DeepEqual(after, before) {
+		t.Fatalf("operation-marker fallback changed the scope tree\nbefore: %#v\nafter:  %#v", before, after)
+	}
+}
+
+// TestLegacyScopeArchiveFreshPullAndManualReapply covers REQ-CROSS-332#AC12:
+// old unbaselined scope bytes are preserved while an operator uses a fresh CAS.
+func TestLegacyScopeArchiveFreshPullAndManualReapply(t *testing.T) {
+	fx := scopeFixture()
+	env, dir := pulledScope(t, fx)
+	if err := os.Remove(filepath.Join(dir, scopedDraftBaselineFile)); err != nil {
+		t.Fatalf("remove baseline to model a legacy scope: %v", err)
+	}
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	if err := workingSetPullScope(env, false, wsNow.Add(time.Minute)); err == nil {
+		t.Fatal("legacy scope refresh should refuse replacement without a baseline")
+	} else {
+		assertManualScopeRecoveryInstructions(t, err)
+	}
+	archived := scopeTreeBytes(t, dir)
+	archiveDir := dir + ".manual-archive"
+	if err := os.Rename(dir, archiveDir); err != nil {
+		t.Fatalf("archive complete legacy scope: %v", err)
+	}
+	if err := workingSetPullScope(env, false, wsNow.Add(2*time.Minute)); err != nil {
+		t.Fatalf("pull fresh scope: %v", err)
+	}
+	path = memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	fx.authorPosts = nil
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "external_id") == "REQ-CROSS-310" {
+			fx.requirements[0] = canonicalScopeRequirement(fx, str(rec, "boundary"), "legacy-recovered-fingerprint")
+		}
+	}
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push manually reapplied draft with fresh CAS: %v", err)
+	}
+	if len(fx.authorPosts) != 1 {
+		t.Fatalf("manual reapply should issue exactly one accepted patch, got %v", fx.authorPosts)
+	}
+	record, _ := fx.authorPosts[0]["record"].(map[string]any)
+	if str(record, "expected_fingerprint") != "sr310-fp" {
+		t.Fatalf("manual reapply did not use the fresh pull CAS: %v", record)
+	}
+	if after := scopeTreeBytes(t, archiveDir); !reflect.DeepEqual(after, archived) {
+		t.Fatalf("legacy archive bytes changed during recovery\nbefore: %#v\nafter:  %#v", archived, after)
+	}
+}
+
+// TestOperationMarkerArchiveFreshPullAndManualReapply covers
+// REQ-CROSS-332#AC12: a withdrawal already accepted by the store is archived,
+// omitted from the fresh canonical file, and any remaining author edit uses its
+// new CAS without changing the archive.
+func TestOperationMarkerArchiveFreshPullAndManualReapply(t *testing.T) {
+	fx := scopeFixture()
+	fx.requirements = []any{reqWith("REQ-CROSS-310", "the reads", []any{rel("declares", "UR-CLI-008", "confirmed")})}
+	fx.workSelection["current"].(map[string]any)["members"] = []any{"REQ-CROSS-310"}
+	env, dir := pulledScope(t, fx)
+	path := memberPath(dir, "REQ-CROSS-310")
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "- declares UR-CLI-008 [confirmed]", "- withdraw UR-CLI-008", 1)
+	})
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "external_id") == "REQ-CROSS-310" {
+			canonical := reqWith("REQ-CROSS-310", "the reads", nil)
+			canonical["fingerprint"] = "accepted-withdrawal-fingerprint"
+			fx.requirements[0] = canonical
+		}
+	}
+	fx.itemsStatusAfterAuthorPost = 500
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("expected accepted withdrawal followed by failed canonical read")
+	}
+	if len(fx.authorPosts) != 1 {
+		t.Fatalf("expected accepted withdrawal before the failed read, got %v", fx.authorPosts)
+	}
+	fx.itemsStatusAfterAuthorPost = 0
+	fx.afterAuthorPost = nil
+	if err := workingSetPush(env, false); err == nil {
+		t.Fatal("accepted operation marker should require manual archive recovery")
+	} else {
+		assertManualScopeRecoveryInstructions(t, err)
+	}
+	archived := scopeTreeBytes(t, dir)
+	archiveDir := dir + ".manual-archive"
+	if err := os.Rename(dir, archiveDir); err != nil {
+		t.Fatalf("archive complete operation-marker scope: %v", err)
+	}
+	if err := workingSetPullScope(env, false, wsNow.Add(2*time.Minute)); err != nil {
+		t.Fatalf("pull fresh scope after accepted withdrawal: %v", err)
+	}
+	path = memberPath(dir, "REQ-CROSS-310")
+	if strings.Contains(readScopeFile(t, path), "withdraw UR-CLI-008") {
+		t.Fatal("fresh canonical pull retained the accepted withdrawal marker")
+	}
+	edit(t, path, func(s string) string {
+		return strings.Replace(s, "the reads", "the reads and writes", 1)
+	})
+	fx.authorPosts = nil
+	fx.afterAuthorPost = func(rec map[string]any) {
+		if str(rec, "external_id") == "REQ-CROSS-310" {
+			canonical := reqWith("REQ-CROSS-310", str(rec, "boundary"), nil)
+			canonical["fingerprint"] = "manual-reapply-fingerprint"
+			fx.requirements[0] = canonical
+		}
+	}
+	if err := workingSetPush(env, false); err != nil {
+		t.Fatalf("push manually reapplied body with fresh CAS: %v", err)
+	}
+	if len(fx.authorPosts) != 1 {
+		t.Fatalf("manual reapply should issue exactly one patch, got %v", fx.authorPosts)
+	}
+	record, _ := fx.authorPosts[0]["record"].(map[string]any)
+	if str(record, "expected_fingerprint") != "accepted-withdrawal-fingerprint" {
+		t.Fatalf("manual reapply did not use current canonical CAS: %v", record)
+	}
+	if after := scopeTreeBytes(t, archiveDir); !reflect.DeepEqual(after, archived) {
+		t.Fatalf("operation-marker archive changed during recovery\nbefore: %#v\nafter:  %#v", archived, after)
 	}
 }

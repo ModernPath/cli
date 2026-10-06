@@ -160,6 +160,8 @@ func TestAuthorTracePostsTheCompletedMachineVerdict(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
+	aggregate := strings.Repeat("a", 64)
+	reviewDir := writeReviewConsumerSnapshot(t, env.Root, env.APIURL, env.SystemID, "review-au-001", "epic", "EPIC-AU-001", aggregate)
 
 	err := authorTrace(env, "TRACE-COLD-EPIC-AU-001", map[string]any{
 		"title":       "Cold review EPIC-AU-001",
@@ -167,12 +169,11 @@ func TestAuthorTracePostsTheCompletedMachineVerdict(t *testing.T) {
 		"purpose":     "cold-review",
 		"transition":  "plan->entry",
 		"exact_scope": []string{"EPIC-AU-001", "REQ-AU-001"},
-		// REQ-CROSS-364: a cold-review verdict carries the review context it was
-		// recorded under; without one, creation is refused. The reviewer's
-		// --for-review pull stamps it — supplied directly here.
+		// A cold-review verdict explicitly selects the immutable snapshot whose
+		// digest and aggregate are persisted in body_md.
 		"review_context_id":              "review-au-001",
 		"prerequisite_gate_external_ids": []string{"TRACE-PLAN-EPIC-AU-001"},
-		"fingerprint":                    "packet-sha256",
+		"fingerprint":                    aggregate,
 		"verdict":                        "FAIL",
 		"sources":                        []map[string]any{{"ref": "RUN:2026-08-26:review"}},
 		"application_revision":           "deadbeef",
@@ -186,6 +187,9 @@ func TestAuthorTracePostsTheCompletedMachineVerdict(t *testing.T) {
 	record, _ := got["record"].(map[string]any)
 	if record["external_id"] != "TRACE-COLD-EPIC-AU-001" || record["verdict"] != "FAIL" {
 		t.Fatalf("trace record incomplete: %v", record)
+	}
+	if record["fingerprint"] != aggregate || !strings.Contains(record["body_md"].(string), reviewManifestDigestFromDisk(t, reviewDir)) {
+		t.Fatalf("trace must preserve selected snapshot pin and digest: %v", record)
 	}
 	if got["actor"] == nil {
 		t.Fatal("the trace evaluation must be actor-attributed")

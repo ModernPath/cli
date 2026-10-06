@@ -1,9 +1,8 @@
 package cmd
 
 // REQ-CROSS-315 (SR-CLI-0086): `process findings add|list|disposition`. A finding
-// is a store record; `add` carries the review-context id read from the scope
-// directory's `.context` stamp (SR-313) so the cold-review predicate can judge
-// independence. list/disposition are the read and the guarded disposition edit.
+// is a store record; `add --review-context` pins its provenance to a validated
+// immutable review snapshot so the cold-review predicate can judge independence.
 
 import (
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -30,6 +28,7 @@ var (
 	findingsSource              string
 	findingsOwner               string
 	findingsAggregate           string
+	findingsReviewContext       string
 	findingsDisposition         string
 	findingsDispositionRef      string
 	findingsExpectedFingerprint string
@@ -94,43 +93,6 @@ func normalizeScopeTokens(v any) ([]string, bool) {
 	return out, true
 }
 
-// reviewContextID reads the review-context id the scope directory was pulled
-// under (`--for-review` stamps it in `.context`); empty when there is no stamp.
-func reviewContextID(env *factoryEnv, scopeExt string) string {
-	mode, ctxID := readContextStamp(filepath.Join(env.Root, workingSetDir, scopeExt))
-	// A review context is stamped only for a --for-review pull (#8). An ordinary
-	// authoring pull carries no review context, so a finding or verdict recorded
-	// from it is never counted as independent.
-	if mode != "review" {
-		return ""
-	}
-	return ctxID
-}
-
-// reviewContextForScope reads the review-context id the reviewed scope was pulled
-// under, for a cold-review verdict whose exact scope names the item(s) reviewed
-// (#8). The working-set directory of the first scope carrying a `.context` stamp
-// wins; empty when none was pulled --for-review.
-func reviewContextForScope(env *factoryEnv, exactScope any) string {
-	var ids []string
-	switch v := exactScope.(type) {
-	case []string:
-		ids = v
-	case []any:
-		for _, e := range v {
-			if s, ok := e.(string); ok {
-				ids = append(ids, s)
-			}
-		}
-	}
-	for _, id := range ids {
-		if ctx := reviewContextID(env, id); ctx != "" {
-			return ctx
-		}
-	}
-	return ""
-}
-
 // The store's finding vocabularies, named in the refusal when a flag is missing
 // (REQ-CROSS-385): the CLI never picks the most blocking pair on the caller's
 // behalf.
@@ -182,7 +144,35 @@ func processFindingsAdd(env *factoryEnv) error {
 		if err := readJSONFile(findingsFile, &entries); err != nil {
 			return err
 		}
-		if failed := addFindingEntries(env, entries, findingPin{}); failed > 0 {
+		pin := findingPin{}
+		if findingsReviewContext != "" {
+			if len(entries) == 0 {
+				return fmt.Errorf("a review snapshot batch needs at least one finding with a scope")
+			}
+			selected, err := resolveReviewSnapshot(env, findingsReviewContext, []string{entries[0].Scope}, findingsAggregate)
+			if err != nil {
+				return err
+			}
+			// Validate the whole batch before its first write. One selected
+			// snapshot describes one scope, even when other scopes are held.
+			for _, entry := range entries {
+				if strings.TrimSpace(entry.ID) == "" {
+					return fmt.Errorf("each finding needs an id — nothing was written")
+				}
+				kind, ext := splitScope(entry.Scope)
+				if kind != selected.Manifest.ScopeKind || ext != selected.Manifest.ScopeExternalID {
+					return fmt.Errorf("finding %s scope %q does not match the selected review snapshot — nothing was written", entry.ID, entry.Scope)
+				}
+				if entry.Aggregate != "" && entry.Aggregate != selected.Manifest.AggregateFingerprint {
+					return fmt.Errorf("finding %s aggregate pin does not match the selected review snapshot — nothing was written", entry.ID)
+				}
+				if err := checkFindingEntry(env, entry); err != nil {
+					return err
+				}
+			}
+			pin = findingPin{aggregate: selected.Manifest.AggregateFingerprint, contextID: selected.Manifest.ContextID, snapshot: selected}
+		}
+		if failed := addFindingEntries(env, entries, pin); failed > 0 {
 			return fmt.Errorf("%d of %d finding(s) were not recorded — see the lines above; a re-run adds only the missing ones", failed, len(entries))
 		}
 		return nil
@@ -196,11 +186,23 @@ func processFindingsAdd(env *factoryEnv) error {
 	if err := checkFindingEntry(env, entry); err != nil {
 		return err
 	}
-	record := findingRecord(entry, kind, ext, reviewContextID(env, ext))
+	record := findingRecord(entry, kind, ext, "")
+	var selected *selectedReviewSnapshot
+	if findingsReviewContext != "" {
+		resolved, err := resolveReviewSnapshot(env, findingsReviewContext, []string{findingsScope}, findingsAggregate)
+		if err != nil {
+			return err
+		}
+		selected = resolved
+		record["review_context_id"] = selected.Manifest.ContextID
+		record["body"] = appendReviewSnapshotProvenance(findingsBody, selected)
+	}
 	// Derive the packet-revision provenance when --aggregate is omitted (#23), so a
 	// finding is never created without knowing which reviewed packet it describes.
 	agg := findingsAggregate
-	if agg == "" {
+	if selected != nil {
+		agg = selected.Manifest.AggregateFingerprint
+	} else if agg == "" {
 		if dc, err := readDeliveryContext(env); err == nil {
 			agg = dc.Data.PacketFingerprint
 		}
@@ -253,8 +255,10 @@ type dispositionEntry struct {
 
 // findingPin overrides where a batch's findings are pinned: `review record`
 // pins them to the aggregate and review context its pull stamped. Empty
-// fields fall back to the scope's delivery-context read and `.context` stamp.
+// aggregates fall back to the entry or its scope's delivery-context read.
+// An absent context never inherits the authoring directory's stamp.
 type findingPin struct {
+	snapshot  *selectedReviewSnapshot
 	aggregate string
 	contextID string
 }
@@ -420,7 +424,8 @@ func (r *scopeReads) aggregate(ext string) (string, error) {
 
 // addFindingEntries records each finding not yet recorded on its scope,
 // printing one line per entry, and returns how many failed. A failure never
-// stops the rest; a re-run adds only what is missing.
+// stops the rest unless the selected snapshot changes; a re-run adds only
+// what is missing.
 func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) int {
 	reads := newScopeReads(env)
 	failed := 0
@@ -428,7 +433,7 @@ func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) 
 		failed++
 		fmt.Printf("  %-16s failed — %v\n", id, err)
 	}
-	for _, e := range entries {
+	for i, e := range entries {
 		kind, ext := splitScope(e.Scope)
 		if e.ID == "" || kind == "" || ext == "" {
 			fail(e.ID, fmt.Errorf("each finding needs an id and a scope as <kind>:<external-id>"))
@@ -458,10 +463,14 @@ func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) 
 			}
 		}
 		ctxID := pin.contextID
-		if ctxID == "" {
-			ctxID = reviewContextID(env, ext)
-		}
 		record := findingRecord(e, kind, ext, ctxID)
+		if pin.snapshot != nil {
+			if err := revalidateReviewSnapshot(env, pin.snapshot); err != nil {
+				fail(e.ID, err)
+				return failed + len(entries) - i - 1
+			}
+			record["body"] = appendReviewSnapshotProvenance(e.Body, pin.snapshot)
+		}
 		record["aggregate_fingerprint"] = agg
 		data, err := authorPost(env, map[string]any{"action": "create", "record": record})
 		if err != nil {
@@ -479,16 +488,16 @@ func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) 
 // guarding the write on the fingerprint just read. A finding already in the
 // target disposition is reported unchanged. An entry breaking the resolution
 // rules (SR-CLI-027-001/002) is refused before any read. It prints one line
-// per entry and returns how many were refused or failed; a refusal never
-// stops the rest.
-func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry) int {
+// per entry and returns how many were refused or failed. Ordinary refusals
+// continue; a changed selected snapshot stops the remaining writes.
+func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry, snapshot *selectedReviewSnapshot) int {
 	reads := newScopeReads(env)
 	failed := 0
 	fail := func(id, format string, a ...any) {
 		failed++
 		fmt.Printf("  %-16s refused — %s\n", id, fmt.Sprintf(format, a...))
 	}
-	for _, e := range entries {
+	for i, e := range entries {
 		if e.ID == "" || e.Scope == "" || e.From == "" || e.Disposition == "" {
 			fail(e.ID, "each disposition needs id, scope, from and disposition")
 			continue
@@ -516,6 +525,12 @@ func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry) int {
 		if current != e.From {
 			fail(e.ID, "its current disposition is %s, the file expects %s — not written", current, e.From)
 			continue
+		}
+		if snapshot != nil {
+			if err := revalidateReviewSnapshot(env, snapshot); err != nil {
+				fail(e.ID, "%v", err)
+				return failed + len(entries) - i - 1
+			}
 		}
 		fp, err := postDisposition(env, e.ID, e.Disposition, kind, e.Widens, e.Ref, str(row, "content_fingerprint"))
 		if err != nil {
@@ -649,7 +664,7 @@ func processFindingsDisposition(env *factoryEnv) error {
 		if err := readJSONFile(findingsFile, &entries); err != nil {
 			return err
 		}
-		if failed := applyDispositionEntries(env, entries); failed > 0 {
+		if failed := applyDispositionEntries(env, entries, nil); failed > 0 {
 			return fmt.Errorf("%d of %d disposition(s) were not written — see the lines above", failed, len(entries))
 		}
 		return nil
@@ -1105,7 +1120,7 @@ var processFindingsCmd = &cobra.Command{
 
 var processFindingsAddCmd = &cobra.Command{
 	Use:   "add",
-	Short: "Record a finding on a scope (carries the directory's review-context id)",
+	Short: "Record a finding on a scope (optionally pinned to a review snapshot)",
 	Long: `Record one cold-review finding. --category takes one of the nine names
 the server accepts: correctness, security, data_loss, contract, traceability,
 testability, feasibility, scope, other — an unlisted one is refused with
@@ -1139,7 +1154,11 @@ round whose material findings all fall on earlier resolutions: the packet
 was reviewed incomplete (PROCESS.md §Entry packet).
 
 --aggregate is the full packet aggregate the finding was raised against
-(process next -v); --scope is <kind>:<external-id>, kind epic or single_sr.
+(process next -v); --review-context selects an immutable snapshot created by
+working-set pull --scope --for-review; when selected, its aggregate is used
+and its context id and digest are added to the existing finding body. Without
+the selector, an ordinary finding is not attributed to any review snapshot.
+--scope is <kind>:<external-id>, kind epic or single_sr.
 
 --file <findings.json> records a whole review's findings in one call: a JSON
 array of {id, scope, category, severity, owner, source, body, introduced_by}
@@ -1147,7 +1166,12 @@ array of {id, scope, category, severity, owner, source, body, introduced_by}
 is pinned to the aggregate of its own scope, read for that scope, so it works
 while you hold several pieces. Ids the scope already holds are skipped, so a
 re-run after a partial failure adds only what is missing. Each result is
-printed, and the call exits non-zero when any finding was not recorded.`,
+printed, and the call exits non-zero when any finding was not recorded.
+With --review-context, every entry must name the selected snapshot's scope;
+command and entry aggregate pins must match it. Snapshot integrity and all
+entry scopes and pins are checked before any write. Each finding retains the
+selected context, aggregate and snapshot digest.`,
+
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := authorEnv()
 		if err != nil {
@@ -1254,6 +1278,7 @@ func init() {
 	processFindingsAddCmd.Flags().StringVar(&findingsAggregate, "aggregate", "", "the packet aggregate fingerprint it was raised against")
 	processFindingsAddCmd.Flags().StringVar(&findingsIntroducedBy, "introduced-by", "", "the earlier finding (same scope) whose resolution introduced the mechanism this one faults")
 	processFindingsAddCmd.Flags().StringVar(&findingsFile, "file", "", "a JSON array of findings to record in one call")
+	processFindingsAddCmd.Flags().StringVar(&findingsReviewContext, "review-context", "", "select an immutable review snapshot context id")
 
 	processFindingsListCmd.Flags().StringVar(&findingsScope, "scope", "", "the scope as <kind>:<external-id>")
 	processFindingsListCmd.Flags().BoolVar(&findingsAll, "all", false, "the whole system's findings, not only the piece you hold, grouped per scope")

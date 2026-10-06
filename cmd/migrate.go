@@ -1997,6 +1997,10 @@ func authorCreate(env *factoryEnv, kind, externalID string, fields map[string]an
 // fingerprint is the packet/code identity evaluated, not a human gate's
 // content-shadow reference identity.
 func authorTrace(env *factoryEnv, externalID string, fields map[string]any) error {
+	return authorTraceWithSnapshot(env, externalID, fields, true)
+}
+
+func authorTraceWithSnapshot(env *factoryEnv, externalID string, fields map[string]any, validateSnapshot bool) error {
 	record := map[string]any{"kind": "gate", "external_id": externalID}
 	for k, v := range fields {
 		record[k] = v
@@ -2004,32 +2008,39 @@ func authorTrace(env *factoryEnv, externalID string, fields map[string]any) erro
 	// REQ-CROSS-365: `author trace --scope` accepts both the bare external id
 	// (`REQ-CROSS-358`) and the `kind:ext` form (`single_sr:REQ-CROSS-358`).
 	// Normalize each token to its bare id so the stored exact_scope matches the
-	// bare ids the server keys on (phase_facts.ex) and reviewContextForScope
-	// resolves the review context off the working-set dir name (the bare id) — a
-	// kind:ext token would match neither. Normalizing here, before both the post
-	// and the context lookup below, fixes both.
+	// bare ids the server keys on (phase_facts.ex). The explicit review selector
+	// is resolved against the snapshot for one of those ids below.
 	exactScope := fields["exact_scope"]
 	if norm, ok := normalizeScopeTokens(exactScope); ok {
 		exactScope = norm
 		record["exact_scope"] = norm
 	}
-	// REQ-CROSS-315 (#8): a cold-review verdict must carry the review-context id it
-	// was recorded under, or PhaseFacts.cold_review reads independence off a nil
-	// context — the verdict is never independent, cold_review is never satisfied,
-	// and the entry route stays shut. Mirror `process findings add`: read the
-	// context the reviewed scope was pulled under (`--for-review` stamps it),
-	// unless the caller supplied one explicitly.
-	if str(record, "purpose") == "cold-review" && record["review_context_id"] == nil {
-		if ctx := reviewContextForScope(env, exactScope); ctx != "" {
-			record["review_context_id"] = ctx
+	// Cold-review traces require an explicit immutable snapshot. A legacy
+	// authoring-tree .context stamp is not sufficient evidence of which snapshot
+	// was reviewed.
+	if str(record, "purpose") == "cold-review" && validateSnapshot {
+		ctxID := str(record, "review_context_id")
+		if ctxID == "" {
+			return fmt.Errorf("a cold-review trace needs an explicit review context selector from `working-set pull --for-review`")
 		}
-	}
-	// REQ-CROSS-364: a cold-review trace with no resolved review context can never
-	// satisfy cold_review and, because traces are immutable, can never be removed.
-	// Fail fast with a clear message instead of posting the dead row (the server
-	// enforces the same backstop). Scoped to cold-review.
-	if str(record, "purpose") == "cold-review" && str(record, "review_context_id") == "" {
-		return fmt.Errorf("a cold-review trace needs a review context, but none is stamped for scope %v — pull the reviewed scope with `working-set pull --for-review` before recording the verdict", record["exact_scope"])
+		scopeTokens := []string{}
+		switch values := exactScope.(type) {
+		case []string:
+			scopeTokens = values
+		case []any:
+			for _, value := range values {
+				if token, ok := value.(string); ok {
+					scopeTokens = append(scopeTokens, token)
+				}
+			}
+		}
+		selected, err := resolveReviewSnapshot(env, ctxID, scopeTokens, str(record, "fingerprint"))
+		if err != nil {
+			return err
+		}
+		record["review_context_id"] = selected.Manifest.ContextID
+		record["fingerprint"] = selected.Manifest.AggregateFingerprint
+		record["body_md"] = appendReviewSnapshotProvenance(str(record, "body_md"), selected)
 	}
 	data, err := authorPost(env, map[string]any{"action": "evaluate_trace", "record": record})
 	if err != nil {

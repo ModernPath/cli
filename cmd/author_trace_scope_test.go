@@ -13,9 +13,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -69,29 +68,26 @@ func TestREQCROSS365TraceScopeKindExtResolvesReviewContext(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := wsEnv(t, srv)
 
-	// The reviewer pulled the scope --for-review, which stamps a review context in
-	// the scope directory named by the BARE id.
-	dir := filepath.Join(env.Root, workingSetDir, "REQ-CROSS-358")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stamp := "# working-set context\n\nmode: review\ncontext_id: review-7c\nscope: single_sr:REQ-CROSS-358\n"
-	if err := os.WriteFile(filepath.Join(dir, contextFile), []byte(stamp), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The caller selects an immutable snapshot under the bare SR id.
+	aggregate := strings.Repeat("a", 64)
+	reviewDir := writeReviewConsumerSnapshot(t, env.Root, env.APIURL, env.SystemID, "review-7c", "single_sr", "REQ-CROSS-358", aggregate)
 
 	// The caller names the scope as kind:ext. Context resolution keys on the bare
 	// dir name, so normalization must happen before reviewContextForScope runs.
 	if err := authorTrace(env, "CR-TRACE-Y", map[string]any{
-		"purpose":     "cold-review",
-		"exact_scope": []string{"single_sr:REQ-CROSS-358"},
-		"verdict":     "PASS",
-		"fingerprint": "agg",
+		"purpose":           "cold-review",
+		"exact_scope":       []string{"single_sr:REQ-CROSS-358"},
+		"verdict":           "PASS",
+		"fingerprint":       aggregate,
+		"review_context_id": "review-7c",
 	}); err != nil {
 		t.Fatalf("author trace failed: %v", err)
 	}
 	record, _ := got["record"].(map[string]any)
 	if record["review_context_id"] != "review-7c" {
 		t.Fatalf("a kind:ext scope must still resolve the review context off the bare dir name; got %v", record["review_context_id"])
+	}
+	if record["fingerprint"] != aggregate || !reflect.DeepEqual(record["exact_scope"], []any{"REQ-CROSS-358"}) || !strings.Contains(record["body_md"].(string), reviewManifestDigestFromDisk(t, reviewDir)) {
+		t.Fatalf("cold-review trace must bind normalized scope, aggregate and digest: %v", record)
 	}
 }

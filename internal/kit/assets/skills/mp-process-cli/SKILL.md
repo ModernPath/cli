@@ -197,6 +197,22 @@ Advance the phase later with `working-set select <scope> --phase <p>`.
 **Author the packet.** `working-set pull --scope` materializes
 `.modernpath/working-set/<scope>/` — item files and `packet/*.md` sections —
 under an authoring context. Edit, then `working-set push` (`--dry-run` first).
+Pull stages required reads and checks local hashes before replacing or deleting
+managed files. Edited, deleted or unbaselined targets refuse the refresh;
+unserved drafts stay in place. Packet 404 preserves untracked files and edited
+never-served scaffolds. Do not delete the baseline to force a pull.
+After a push error following accepted writes, preserve files and retry: matching
+canonical content reconciles metadata while retaining authored bodies. A local
+edit during reconciliation refuses it. A known scaffold has no pull-time packet
+pin: matching canonical content can establish its accepted pin on retry.
+When missing legacy pins or accepted operation markers require manual recovery,
+rename the whole scope directory
+to a dated recovery path under `.modernpath/working-set/`, pull a fresh scope,
+and compare/reapply wanted edits. Preserve that recovery copy.
+If a file only withdraws already-absent targets and its store fingerprint has
+not changed since pull, push reports a no-op and continues with other files.
+Remove the named withdrawal markers locally; push preserves that file and its
+baseline. A changed or missing fingerprint still requires retry recovery.
 Until the push order is fixed in the tool: a member-record patch and its packet
 sections may go in one push: item patches post first, and every filled section
 the server then reports as stale is re-put unchanged so it carries the current
@@ -233,7 +249,13 @@ Delegate the pass to the installed reviewer, `.claude/agents/rdd-cold-reviewer.m
 (Read, Grep, Glob; no shell): it returns findings and a verdict as JSON, and
 this session records them in one call.
 
-1. `working-set pull --scope --for-review` — a read-only render that stamps a
+1. `working-set pull --scope --for-review` creates an immutable snapshot under
+   `.modernpath/working-set-reviews/<scope>/<context-id>/`, preserving authoring
+   files. `MANIFEST.json` binds store, system, scope, aggregate and file hashes.
+   Pass the printed context ID and exact snapshot directory to the delegated
+   reviewer. It reads that directory's `MANIFEST.json` and `REVIEW.md`; a missing
+   snapshot stops the review rather than selecting another bundle.
+   The snapshot is a read-only render that stamps a
    review context and the packet aggregate in `.context`, and writes the
    whole packet to one `REVIEW.md`: the aggregate header, the epic, the packet
    sections, the URs with their scenarios and the SRs with statement,
@@ -255,13 +277,13 @@ this session records them in one call.
    introduced_by}`, a disposition `{id, from, disposition, ref, resolution,
    widens}` — a `RESOLVED` one names its `resolution`. Save it as
    `review.json`.
-3. `process review record --file review.json` (`--scope`, or the held piece)
+3. `process review record --file review.json --review-context <context-id>` (`--scope`, or the held piece)
    records the new findings (ids already recorded are skipped), applies each
    disposition only while its finding is still in `from`, then records the
    cold-review trace `CR-TRACE-<scope>-<review context>` (`plan->entry`)
    naming the scope and each member, pinned to the aggregate the review pull
    stamped, with the stamped per-item fingerprints as
-   `reviewed_fingerprints`. It refuses before any write without the review stamp, when the
+   `reviewed_fingerprints`. It refuses before any write without a validated snapshot, when the
    aggregate moved since the pull (re-pull `--for-review` and review again),
    or on a PASS that would leave a material finding `OPEN` or `DEFERRED`. A
    failure stops before the trace; a re-run records only what is missing.
@@ -291,10 +313,12 @@ By hand — one record per call, or on a CLI that lacks `review record`:
    The unadorned line is a 12-character display prefix that `--fingerprint`
    accepts and never matches.
 2. Findings: `process findings add --scope <kind>:<id> --id <F-id> --category
-   <c> --severity <s> --owner <o> --body … --aggregate <full aggregate>`, or a
+   <c> --severity <s> --owner <o> --body … --review-context <context-id> --aggregate <full aggregate>`, or a
    whole list with `process findings add --file findings.json` (a JSON array
    of `{id, scope, category, severity, owner, source, body, introduced_by}`,
-   each pinned to its own scope's aggregate). `--introduced-by <F-id>` (the
+   each pinned to its own scope's aggregate). With `--review-context <context-id>`,
+   every entry must name that snapshot's scope and any explicit aggregate must
+   match it; the whole batch is checked before its first write. `--introduced-by <F-id>` (the
    file's `introduced_by`) names the earlier finding of the same scope whose
    resolution introduced the mechanism this one faults (SR-CLI-027-003).
    Dispositions: `process findings disposition --id <F-id> --disposition
@@ -318,15 +342,13 @@ By hand — one record per call, or on a CLI that lacks `review record`:
    with no `--disposition`.
 3. Verdict: `author trace CR-TRACE-<scope>-R<n> --purpose cold-review
    --verdict PASS|FAIL --scope <epic> --scope <each member> --source …
-   --title …`. The pin defaults to the scope's current packet aggregate and
+   --title … --review-context <context-id>`. The pin defaults to the selected snapshot aggregate and
    the transition to `plan->entry` (REQ-CROSS-376/377); a given
    `--fingerprint` must be the full 64-character hash of the right class (a
-   display prefix or a content hash is refused by name; a full hash matching
-   nothing is recorded with a warning), and a transition is `--from`/`--to`
+   display prefix or conflicting snapshot pin is refused), and a transition is `--from`/`--to`
    or one quoted `--transition FROM->TO` — a fragment is refused before any
-   write. The trace inherits the review context the scope was pulled under; a
-   verdict with no review context is refused, and one recorded from an
-   authoring context reads as not independent.
+   write. The trace requires an explicit snapshot selector, validates file
+   integrity, and stores its context, aggregate and digest in the verdict body.
 4. `process check --phase cold_review` → `independent_verdict` and `findings`.
 
 ### Entry
@@ -646,8 +668,11 @@ The verb sequence for one small change, five writing calls and one read:
    which pins it (`author update <SR> --lane-class <class>` to set it alone).
 2. `working-set pull <SR> --for-review` — a read: renders the SR to
    `.modernpath/working-set/<SR>/REVIEW.md` under a fresh review context,
-   stamping the SR's content fingerprint and packet sections. The delegated
-   reviewer reads that file and returns the usual review JSON.
+   stamping the SR's content fingerprint and packet sections. Explicitly request
+   a narrow lane review and pass the SR, printed context ID and exact bundle path
+   to the delegated reviewer. It reads that file and its sibling `.context`,
+   checks their identity and returns the usual review JSON. This by-ID bundle
+   has no snapshot manifest; it is never a fallback for a scoped review.
 3. `process lane review <SR> --file review.json` — one narrow pass, no
    rounds. It refuses before any write without the stamp, without a
    `lane_class`, or when the SR changed since the pull; it holds the SR as a
@@ -757,8 +782,10 @@ What moves what:
 - A decision gate is pinned to the subject it **names**: an epic plus items
   pins to the epic; a single item to that item; several items with no epic is
   refused.
-- Re-pulling `--scope` rotates the authoring context; the review context is
-  stamped by `--for-review` and inherited by the cold-review trace.
+- Re-pulling `--scope` rotates the authoring context. `--for-review` creates an
+  isolated snapshot; findings and cold-review traces select its printed context
+  ID explicitly. Repeated reads detect observable drift, not an endpoint-wide
+  transaction or ABA changes. Findings and process projections are informational.
 
 ## 5. Refusal glossary
 
@@ -779,8 +806,8 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `you already hold … \`replaces\` displaces a piece on a fresh take` | server | `--replaces` on a piece you hold | advance in place; drop `--replaces` |
 | `suspending requires a reason` | server | `--suspend` without `--reason` | add `--reason` |
 | `DERIVED requirement candidates cannot be selected as governed work` | server | selecting a candidate | confirm it first (`rdd-discover`) |
-| `is a --for-review directory … review pulls are read-only and never push` | cli | a push from the review render | pull without `--for-review` to author |
-| `a cold-review trace needs a review context, but none is stamped` | cli | `author trace --purpose cold-review` with no review pull | `working-set pull --scope --for-review`, then record |
+| `is a --for-review directory … review pulls are read-only and never push` | cli | a push from a legacy review-stamped authoring directory | preserve the directory by manual rename, then pull fresh authoring files |
+| `a cold-review trace needs an explicit review context selector` | cli | `author trace --purpose cold-review` without explicit snapshot selection | `working-set pull --scope --for-review`, then record with the printed `--review-context <id>` |
 | `could not determine the packet aggregate fingerprint` | cli | a finding without a resolvable aggregate | pass `--aggregate <full aggregate>` |
 | `--expected-fingerprint is required — a finding disposition is fingerprint-guarded` | cli | a disposition with neither the guard nor the finding's scope | pass `--scope <kind>:<external-id> --from <disposition you saw>` and the CLI reads the fingerprint, or `--expected-fingerprint` from `process findings list` |
 | `--from is required with --scope` | cli | `process findings disposition --scope` without the disposition you saw; nothing was written | add `--from OPEN` (or the disposition you read) |

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,6 +98,11 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 	// POST, so a malformed or unreadable later file cannot abort the command after
 	// an earlier file's mutation has already committed. No write happens until the
 	// whole working set validates.
+	type plannedItem struct {
+		it  itemFile
+		raw []byte
+	}
+	var plannedItems, reconcileItems []plannedItem
 	var writes []*recordWrite
 	fileOf := map[string]itemFile{}
 	for _, it := range items {
@@ -123,9 +129,40 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		if werr != nil {
 			return werr
 		}
+		fp := servedFingerprint(string(raw))
+		pi := plannedItem{it: it, raw: append([]byte(nil), raw...)}
+		if targets := absentWithdrawalTargetsOnly(w.patch, recordFromPayload(base, fallback)); len(targets) > 0 {
+			names := strings.Join(targets, ", ")
+			if fp != "" && fp == str(base.payload, "fingerprint") {
+				printWarning("%s: withdrawal targets %s are already absent and the record is unchanged since pull; no-op — remove the withdrawal marker(s) from this file", it.rel, names)
+				continue
+			}
+			reason := "the store record changed since pull; the withdrawal may have been accepted or applied elsewhere"
+			if fp == "" {
+				reason = "the original served fingerprint is missing; an accepted retry cannot be established"
+			}
+			return manualScopedRecovery(it.rel, fmt.Sprintf("contains withdrawal markers for absent targets %s, but %s", names, reason))
+		}
 		if !w.changes() {
+			entry, known, berr := readScopedDraftBaselineEntry(dir, it.rel)
+			if os.IsNotExist(berr) {
+				return manualScopedRecovery(it.rel, "has no local draft baseline (this scope may have been pulled with an older CLI); nothing was written")
+			}
+			if berr != nil {
+				return berr
+			}
+			if fp != str(base.payload, "fingerprint") || (known && entry.SHA256 != sha256Hex(raw)) {
+				if fp == "" {
+					return manualScopedRecovery(it.rel, "has no original served fingerprint for retry reconciliation")
+				}
+				if !known {
+					return manualScopedRecovery(it.rel, "has no usable local draft baseline for retry reconciliation")
+				}
+				reconcileItems = append(reconcileItems, pi)
+			}
 			continue
 		}
+		plannedItems = append(plannedItems, pi)
 		// The CAS expectation is the fingerprint recorded at pull.
 		w.expected = servedFingerprint(string(raw))
 		plan = append(plan, w.describe())
@@ -139,7 +176,7 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 	}
 	defer printOutOfScopeSkips(scopeExt, outOfScopeSkips, servedScopeMembers)
 
-	plannedSections, err := planPacketSections(env, dir, scopeKind, scopeExt, &plan, &skipped)
+	plannedSections, reconcileSections, err := planPacketSections(env, dir, scopeKind, scopeExt, &plan, &skipped)
 	if err != nil {
 		return err
 	}
@@ -178,6 +215,13 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		return err
 	}
 	conflicts = append(conflicts, pconf...)
+	// Repair metadata for an earlier accepted write before planning any stale
+	// restamps; otherwise the restamp would reuse that write's old pull-time CAS.
+	if len(reconcileSections) > 0 {
+		if err := reconcilePacketSections(dir, scopeKind, scopeExt, reconcileSections); err != nil {
+			return err
+		}
+	}
 
 	// REQ-CROSS-384 (EPIC-CLI-018): a member patch above moved the packet's scope
 	// context, and an earlier push may have left sections behind at an older
@@ -217,13 +261,13 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 			var ferr error
 			fresh, ferr = scopeIndex(env, pushedIDs)
 			if ferr != nil {
-				return fmt.Errorf("push applied %d record(s), but canonical refresh failed; re-pull before editing again: %w", len(pushed), ferr)
+				return fmt.Errorf("push applied %d record(s), but canonical refresh failed; preserve the scope files and retry `working-set push` after the read is available: %w", len(pushed), ferr)
 			}
 		}
 		for _, it := range pushed {
 			rec, ok := fresh[it.ext]
 			if !ok {
-				return fmt.Errorf("push applied %d record(s), but canonical refresh omitted %s; re-pull before editing again", len(pushed), it.ext)
+				return fmt.Errorf("push applied %d record(s), but canonical refresh omitted %s; preserve the scope files and retry `working-set push` after the read is available", len(pushed), it.ext)
 			}
 			var r authoring.Record
 			if rec.kind == "epic" {
@@ -231,12 +275,79 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 			} else {
 				r = recordFromPayload(rec, nil)
 			}
-			if err := atomicWrite(it.path, []byte(scopeItemContent(r, mode, ctxID, false, env, time.Now()))); err != nil {
-				return fmt.Errorf("push applied %d record(s), but could not refresh %s; re-pull before editing again: %w", len(pushed), it.rel, err)
+			content := []byte(scopeItemContent(r, mode, ctxID, false, env, time.Now()))
+			var staged []byte
+			for _, pi := range plannedItems {
+				if pi.it.path == it.path {
+					staged = pi.raw
+					break
+				}
+			}
+			current, rerr := os.ReadFile(it.path)
+			if rerr != nil || !bytes.Equal(current, staged) {
+				return fmt.Errorf("push applied %d record(s), but %s changed before canonical refresh; local bytes and baseline were left untouched", len(pushed), it.rel)
+			}
+			if err := atomicWrite(it.path, content); err != nil {
+				return fmt.Errorf("push applied %d record(s), but could not refresh %s; preserve the scope files and retry `working-set push` after local metadata writes are available: %w", len(pushed), it.rel, err)
+			}
+			if err := refreshScopedDraftBaseline(dir, it.rel, content, false); err != nil {
+				return fmt.Errorf("push applied %d record(s), but could not refresh the local draft baseline for %s; preserve the scope files and retry `working-set push`: %w", len(pushed), it.rel, err)
 			}
 		}
 	}
 
+	if len(reconcileItems) > 0 {
+		reconcileIDs := make([]string, 0, len(reconcileItems))
+		for _, pi := range reconcileItems {
+			reconcileIDs = append(reconcileIDs, pi.it.ext)
+		}
+		fresh, ferr := scopeIndex(env, reconcileIDs)
+		if ferr != nil {
+			return fmt.Errorf("push could not verify canonical state for retry reconciliation; preserve the local scope and retry after the read is available: %w", ferr)
+		}
+		for _, pi := range reconcileItems {
+			canonical, ok := fresh[pi.it.ext]
+			if !ok {
+				return manualScopedRecovery(pi.it.rel, "is absent from the canonical retry read")
+			}
+			var baseRec authoring.Record
+			if canonical.kind == "epic" {
+				baseRec = recordFromPayload(canonical, members)
+			} else {
+				baseRec = recordFromPayload(canonical, nil)
+			}
+			editedRec, err := authoring.Parse(canonical.kind, itemBody(string(pi.raw)))
+			if err != nil {
+				return manualScopedRecovery(pi.it.rel, "cannot be parsed for retry reconciliation")
+			}
+			if p, ref := diff.Diff(baseRec, editedRec); ref != nil || !p.Empty() {
+				return manualScopedRecovery(pi.it.rel, "no longer matches canonical store content")
+			}
+			current, err := os.ReadFile(pi.it.path)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(current, pi.raw) {
+				return fmt.Errorf("%s changed during retry reconciliation — its authored bytes were left untouched", pi.it.rel)
+			}
+			var r authoring.Record
+			if canonical.kind == "epic" {
+				r = recordFromPayload(canonical, members)
+			} else {
+				r = recordFromPayload(canonical, nil)
+			}
+			content, err := refreshedItemWithAuthoredBody(r, pi.raw, mode, ctxID, env, time.Now())
+			if err != nil {
+				return manualScopedRecovery(pi.it.rel, "cannot safely refresh retry metadata")
+			}
+			if err := atomicWrite(pi.it.path, content); err != nil {
+				return fmt.Errorf("%s matched the accepted write, but its canonical header could not be refreshed: %w", pi.it.rel, err)
+			}
+			if err := refreshScopedDraftBaseline(dir, pi.it.rel, content, false); err != nil {
+				return fmt.Errorf("%s matched the accepted write, but its local draft baseline could not be refreshed: %w", pi.it.rel, err)
+			}
+		}
+	}
 	printPlan(plan, skipped, dryRun)
 	if len(restamped) > 0 {
 		fmt.Printf("push: re-stamped %d section(s) whose scope context moved: %s\n", len(restamped), strings.Join(restamped, ", "))
@@ -395,4 +506,61 @@ func printPlan(plan, skipped []string, dryRun bool) {
 	for _, l := range skipped {
 		fmt.Println("  " + l)
 	}
+}
+
+func itemBodyOffset(content string) int {
+	i := strings.Index(content, "**Context:**")
+	if i < 0 {
+		return -1
+	}
+	j := strings.Index(content[i:], "\n\n")
+	if j < 0 {
+		return -1
+	}
+	return i + j + 2
+}
+
+func refreshedItemWithAuthoredBody(rec authoring.Record, raw []byte, mode, ctxID string, env *factoryEnv, now time.Time) ([]byte, error) {
+	canonical := scopeItemContent(rec, mode, ctxID, false, env, now)
+	headerEnd := itemBodyOffset(canonical)
+	authoredStart := itemBodyOffset(string(raw))
+	if headerEnd < 0 || authoredStart < 0 {
+		return nil, fmt.Errorf("cannot locate the snapshot header boundary")
+	}
+	refreshed := make([]byte, 0, headerEnd+len(raw)-authoredStart)
+	refreshed = append(refreshed, canonical[:headerEnd]...)
+	refreshed = append(refreshed, raw[authoredStart:]...)
+	return refreshed, nil
+}
+
+func absentWithdrawalTargetsOnly(p *diff.Patch, base authoring.Record) []string {
+	if len(p.Fields) != 0 || p.CitationsSet || (len(p.Relations) == 0 && len(p.Members) == 0) {
+		return nil
+	}
+	var targets []string
+	if len(p.Relations) > 0 {
+		present := map[string]bool{}
+		for _, r := range base.Relations {
+			present[r.Target] = true
+		}
+		for _, op := range p.Relations {
+			if op.Mode != "withdraw" || present[op.Target] {
+				return nil
+			}
+			targets = append(targets, op.Target)
+		}
+	}
+	if len(p.Members) > 0 {
+		present := map[string]bool{}
+		for _, m := range base.Members {
+			present[m] = true
+		}
+		for _, op := range p.Members {
+			if op.Mode != "withdraw" || present[op.Target] {
+				return nil
+			}
+			targets = append(targets, op.Target)
+		}
+	}
+	return targets
 }

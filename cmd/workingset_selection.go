@@ -600,3 +600,33 @@ type wsSelectOpts struct {
 	// advance keeps the stored value.
 	reconRevision string
 }
+
+// requiredPacketKeys is the canonical section keys the phase table requires for
+// a scope: the fixed four (reconnaissance, state_inventory, red_strategy,
+// decisions — SR-CLI-028-001), plus enrichment:<SR> for each selected system-
+// requirement member the store index knows (for a single_sr scope, its own SR).
+// A user-requirement member and a member the index does not know get none —
+// mirroring the server, which never requires them (REQ-CROSS-332 PD-5).
+// requiredSectionKeys returns the section keys the plan check requires for the
+// scope as the server serves them (facts.sections.required, REQ-CROSS-383);
+// when the server serves none — it predates the key or the endpoint is absent —
+// the frozen-list derivation is the fallback and the caller is told. Other read
+// failures abort before the scoped pull mutates local files.
+func selectionMembers(raw any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("selection members are not a list — refusing to pull")
+	}
+	members := make([]string, 0, len(values))
+	for i, value := range values {
+		member, ok := value.(string)
+		if !ok || member == "" {
+			return nil, fmt.Errorf("selection member %d is not a non-empty string — refusing to pull", i+1)
+		}
+		members = append(members, member)
+	}
+	return members, nil
+}

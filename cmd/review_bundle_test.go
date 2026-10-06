@@ -22,7 +22,7 @@ func reviewBundleFixture() *wsFixture {
 	current["members"] = []any{} // the frozen list is empty; the epic holds three
 	return &wsFixture{
 		workSelection:   sel,
-		deliveryContext: map[string]any{"packet_fingerprint": "agg-review-1"},
+		deliveryContext: map[string]any{"packet_fingerprint": strings.Repeat("a", 64), "facts": map[string]any{"aggregate": strings.Repeat("a", 64), "sections": map[string]any{"required": []any{}}}},
 		epics: []any{map[string]any{
 			"external_id": "EPIC-B", "title": "The bundle epic", "description": "one read for the reviewer",
 			"process_status": "PLANNED", "fingerprint": "epic-b-fp",
@@ -58,14 +58,14 @@ func TestREQCROSS449ReviewPullWritesTheBundleInOrder(t *testing.T) {
 	if err := workingSetPullScope(env, true, wsNow); err != nil {
 		t.Fatalf("pull --scope --for-review: %v", err)
 	}
-	dir := filepath.Join(env.Root, workingSetDir, "EPIC-B")
+	dir := latestReviewTestDirectory(t, env.Root, "EPIC-B")
 	bundle := readScopeFile(t, filepath.Join(dir, "REVIEW.md"))
 
 	header := bundle
 	if i := strings.Index(bundle, "EPIC-B · epic-b-fp"); i > 0 {
 		header = bundle[:i]
 	}
-	if !strings.Contains(header, "epic:EPIC-B") || !strings.Contains(header, "agg-review-1") {
+	if !strings.Contains(header, "epic:EPIC-B") || !strings.Contains(header, strings.Repeat("a", 64)) {
 		t.Errorf("the header names the scope and the aggregate the pull saw:\n%s", header)
 	}
 	order := []string{
@@ -92,7 +92,7 @@ func TestREQCROSS449ReviewPullWritesTheBundleInOrder(t *testing.T) {
 	}
 
 	stamp := readScopeFile(t, filepath.Join(dir, contextFile))
-	if !strings.Contains(stamp, "mode: review") || !strings.Contains(stamp, "aggregate: agg-review-1") {
+	if !strings.Contains(stamp, "mode: review") || !strings.Contains(stamp, "aggregate: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Errorf(".context carries the aggregate the review pull saw:\n%s", stamp)
 	}
 	// The per-file layout stays, now with the served members.
@@ -143,7 +143,7 @@ func TestREQCROSS461BundleShowsEachRequirementsSources(t *testing.T) {
 	if err := workingSetPullScope(env, true, wsNow); err != nil {
 		t.Fatalf("pull --scope --for-review: %v", err)
 	}
-	bundle := readScopeFile(t, filepath.Join(env.Root, workingSetDir, "EPIC-B", "REVIEW.md"))
+	bundle := readScopeFile(t, filepath.Join(latestReviewTestDirectory(t, env.Root, "EPIC-B"), "REVIEW.md"))
 
 	block := func(from, to string) string {
 		i := strings.Index(bundle, from)
@@ -194,7 +194,7 @@ func TestREQCROSS471BundleAndScopePullListTheEpicsFoundReferences(t *testing.T) 
 	if err := workingSetPullScope(env, true, wsNow); err != nil {
 		t.Fatalf("pull --scope --for-review: %v", err)
 	}
-	dir := filepath.Join(env.Root, workingSetDir, "EPIC-B")
+	dir := latestReviewTestDirectory(t, env.Root, "EPIC-B")
 	bundle := readScopeFile(t, filepath.Join(dir, "REVIEW.md"))
 
 	epicBlock := bundle
@@ -220,7 +220,7 @@ func TestREQCROSS471BundleAndScopePullListTheEpicsFoundReferences(t *testing.T) 
 	if err := workingSetPullScope(env, true, wsNow); err != nil {
 		t.Fatalf("pull --scope --for-review: %v", err)
 	}
-	if b := readScopeFile(t, filepath.Join(env.Root, workingSetDir, "EPIC-B", "REVIEW.md")); strings.Contains(b, "Found in chat") {
+	if b := readScopeFile(t, filepath.Join(latestReviewTestDirectory(t, env.Root, "EPIC-B"), "REVIEW.md")); strings.Contains(b, "Found in chat") {
 		t.Errorf("an epic without found references shows no list:\n%s", b)
 	}
 }
@@ -233,7 +233,7 @@ func TestREQCROSS461SingleSRScopeBundleShowsTheScopeRecordsSources(t *testing.T)
 	cur["members"] = []any{}
 	fx := &wsFixture{
 		workSelection:   sel,
-		deliveryContext: map[string]any{"packet_fingerprint": "agg-single"},
+		deliveryContext: reviewDeliveryContext(strings.Repeat("a", 64)),
 		requirements: []any{map[string]any{
 			"external_id": "REQ-CROSS-310", "title": "sr", "context": "CROSS",
 			"work_status": "PROPOSED", "fingerprint": "sr310-fp", "description": "the single SR",
@@ -244,7 +244,7 @@ func TestREQCROSS461SingleSRScopeBundleShowsTheScopeRecordsSources(t *testing.T)
 	if err := workingSetPullScope(env, true, wsNow); err != nil {
 		t.Fatalf("pull --scope --for-review: %v", err)
 	}
-	bundle := readScopeFile(t, filepath.Join(env.Root, workingSetDir, "REQ-CROSS-310", "REVIEW.md"))
+	bundle := readScopeFile(t, filepath.Join(latestReviewTestDirectory(t, env.Root, "REQ-CROSS-310"), "REVIEW.md"))
 	if !strings.Contains(bundle, "- **Sources:** user: USER:2026-09-28:single") {
 		t.Fatalf("a single-SR scope record shows its sources:\n%s", bundle)
 	}
@@ -263,7 +263,7 @@ func TestREQCROSS464ReviewPullStampsEachReviewedFingerprint(t *testing.T) {
 	if err := workingSetPullScope(env, true, wsNow); err != nil {
 		t.Fatalf("pull --scope --for-review: %v", err)
 	}
-	dir := filepath.Join(env.Root, workingSetDir, "EPIC-B")
+	dir := latestReviewTestDirectory(t, env.Root, "EPIC-B")
 	stamp := readScopeFile(t, filepath.Join(dir, contextFile))
 	for _, want := range []string{
 		"reviewed: EPIC-B epic-b-fp", "reviewed: UR-B-1 ur-b-fp", "reviewed: REQ-B-1 sr-b1-fp", "reviewed: REQ-B-2 sr-b2-fp",
@@ -277,7 +277,7 @@ func TestREQCROSS464ReviewPullStampsEachReviewedFingerprint(t *testing.T) {
 	if mode, ctx := readContextStamp(dir); mode != "review" || !strings.HasPrefix(ctx, "review-") {
 		t.Errorf("readContextStamp still parses: %q %q", mode, ctx)
 	}
-	if agg := readContextAggregate(dir); agg != "agg-review-1" {
+	if agg := readContextAggregate(dir); agg != strings.Repeat("a", 64) {
 		t.Errorf("readContextAggregate still parses the full aggregate: %q", agg)
 	}
 	if kind := stampedScopeKind(dir); kind != "epic" {
@@ -285,9 +285,6 @@ func TestREQCROSS464ReviewPullStampsEachReviewedFingerprint(t *testing.T) {
 	}
 	if scope := readStampField(dir, "scope"); scope != "epic:EPIC-B" {
 		t.Errorf("readStampField still parses: %q", scope)
-	}
-	if ctx := reviewContextID(env, "EPIC-B"); ctx == "" {
-		t.Errorf("reviewContextID still parses the stamp")
 	}
 }
 
@@ -351,7 +348,7 @@ func TestREQCROSS464SincePullRendersTheDeltaBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pull --since: %v\n%s", err, out)
 	}
-	dir := filepath.Join(root, workingSetDir, "EPIC-B")
+	dir := latestReviewTestDirectory(t, root, "EPIC-B")
 	bundle := readScopeFile(t, filepath.Join(dir, "REVIEW.md"))
 
 	cut := strings.Index(bundle, "## ")
@@ -359,7 +356,7 @@ func TestREQCROSS464SincePullRendersTheDeltaBundle(t *testing.T) {
 		t.Fatalf("REVIEW.md has no sections:\n%s", bundle)
 	}
 	header := bundle[:cut]
-	for _, want := range []string{"CR-TRACE-EPIC-B-1", oldRev, head, "re-verify", "agg-review-1"} {
+	for _, want := range []string{"CR-TRACE-EPIC-B-1", oldRev, head, "re-verify", strings.Repeat("a", 64)} {
 		if !strings.Contains(header, want) {
 			t.Errorf("the header names %q (the trace, its revision, HEAD, the re-verify note, the full aggregate):\n%s", want, header)
 		}
@@ -387,7 +384,7 @@ func TestREQCROSS464SincePullRendersTheDeltaBundle(t *testing.T) {
 	if prev := between(bundle, "## Previous verdict", "\n## "); !strings.Contains(prev, "FAIL") || !strings.Contains(prev, "the prior round's verdict body") {
 		t.Errorf("the previous verdict is shown:\n%s", bundle)
 	}
-	if agg := readContextAggregate(dir); agg != "agg-review-1" {
+	if agg := readContextAggregate(dir); agg != strings.Repeat("a", 64) {
 		t.Errorf("the stamp aggregate stays the full current one, got %q", agg)
 	}
 }
@@ -400,7 +397,7 @@ func TestREQCROSS464SincePullAtHEADAsksNoReVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pull --since: %v\n%s", err, out)
 	}
-	bundle := readScopeFile(t, filepath.Join(root, workingSetDir, "EPIC-B", "REVIEW.md"))
+	bundle := readScopeFile(t, filepath.Join(latestReviewTestDirectory(t, root, "EPIC-B"), "REVIEW.md"))
 	if !strings.Contains(bundle, "What changed since the last review") {
 		t.Fatalf("a delta bundle is written:\n%s", bundle)
 	}
@@ -439,9 +436,18 @@ func TestREQCROSS464SinceIsRefused(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("refused naming %q, got %v\n%s", tc.want, err, out)
 			}
-			if _, statErr := os.Stat(filepath.Join(root, workingSetDir, "EPIC-B", "REVIEW.md")); statErr == nil {
+			if _, statErr := os.Stat(filepath.Join(root, reviewSnapshotDir, "EPIC-B")); statErr == nil {
 				t.Errorf("a refused --since pull writes no REVIEW.md")
 			}
 		})
 	}
+}
+
+func latestReviewTestDirectory(t *testing.T, root, scope string) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, reviewSnapshotDir, scope))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one review snapshot for %s: %v %v", scope, entries, err)
+	}
+	return filepath.Join(root, reviewSnapshotDir, scope, entries[0].Name())
 }

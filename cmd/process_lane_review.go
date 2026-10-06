@@ -211,7 +211,7 @@ func processLaneReview(env *factoryEnv, sr, file string) error {
 	}
 	if len(review.Dispositions) > 0 {
 		fmt.Println("dispositions:")
-		failed += applyDispositionEntries(env, review.Dispositions)
+		failed += applyDispositionEntries(env, review.Dispositions, nil)
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d finding(s) or disposition(s) were not recorded — the narrow review was not recorded; fix them and re-run (what was recorded is skipped)", failed)
@@ -234,7 +234,9 @@ func processLaneReview(env *factoryEnv, sr, file string) error {
 		fields["body_md"] = review.Body
 	}
 	fmt.Println("trace:")
-	if err := authorTrace(env, "LANE-REVIEW-"+sr+"-"+ctxID, fields); err != nil {
+	// The narrow lane review is bound by its content, section and aggregate
+	// checks above; it does not use the full-packet snapshot workflow.
+	if err := authorTraceWithSnapshot(env, "LANE-REVIEW-"+sr+"-"+ctxID, fields, false); err != nil {
 		return err
 	}
 	if review.Verdict == "FAIL" {

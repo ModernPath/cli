@@ -546,8 +546,10 @@ func runSingleRecordPath(t *testing.T, skill string) (*budgetStore, int) {
 		"--severity", "note", "--owner", "core", "--source", "r", "--body", "a wording note", "--aggregate", budgetAgg)
 	r.run("process", "findings", "add", "--scope", "epic:"+budgetEpic, "--id", "F-CB-2", "--category", "scope",
 		"--severity", "minor", "--owner", "core", "--source", "r", "--body", "a scope remark", "--aggregate", budgetAgg)
+	root, _ := os.Getwd()
+	ctxID := filepath.Base(latestReviewTestDirectory(t, root, budgetEpic))
 	trace := []string{"author", "trace", "CR-TRACE-" + budgetEpic + "-R1", "--purpose", "cold-review", "--verdict", "PASS",
-		"--scope", budgetEpic, "--source", "RUN:2026-09-28:cold-review", "--title", "Cold review of " + budgetEpic}
+		"--scope", budgetEpic, "--source", "RUN:2026-09-28:cold-review", "--title", "Cold review of " + budgetEpic, "--review-context", ctxID}
 	for _, m := range append([]string{budgetUR}, budgetSRs...) {
 		trace = append(trace, "--scope", m)
 	}
@@ -590,7 +592,9 @@ func runBatchPath(t *testing.T, skill string) (*budgetStore, int) {
 	r.run("working-set", "push")
 
 	r.run("working-set", "pull", "--scope", "--for-review")
-	r.run("process", "review", "record", "--file", writePlanFile(t, "review.json", budgetReviewer))
+	root, _ := os.Getwd()
+	ctxID := filepath.Base(latestReviewTestDirectory(t, root, budgetEpic))
+	r.run("process", "review", "record", "--file", writePlanFile(t, "review.json", budgetReviewer), "--review-context", ctxID)
 
 	r.run("process", "enter", budgetEpic)
 	r.run("factory", "answer", "ENTRY-"+budgetEpic, "--options", "approve", "--text", "USER:2026-09-28: approve")
