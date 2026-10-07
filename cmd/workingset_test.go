@@ -1298,6 +1298,37 @@ func TestSelectPostsAnExplicitlyEmptyWaitingOn(t *testing.T) {
 	}
 }
 
+func TestSuspendAndResumeWaitingOn(t *testing.T) {
+	for _, action := range []string{"suspend", "resume"} {
+		for _, tc := range []struct {
+			name    string
+			value   string
+			set     bool
+			present bool
+		}{
+			{name: "omitted"},
+			{name: "blocker", value: "GATE-42", set: true, present: true},
+			{name: "clear", set: true, present: true},
+		} {
+			t.Run(action+"/"+tc.name, func(t *testing.T) {
+				fx := &wsFixture{}
+				env := wsEnv(t, wsServe(t, fx))
+				opts := wsSelectOpts{
+					scope: "EPIC-A", suspend: action == "suspend", resume: action == "resume",
+					reason: "waiting for review", waitingOn: tc.value, waitingOnSet: tc.set,
+				}
+				if err := workingSetSelect(env, opts, wsNow); err != nil {
+					t.Fatal(err)
+				}
+				value, present := fx.lastSelectPost["waiting_on"]
+				if present != tc.present || (present && value != tc.value) {
+					t.Fatalf("waiting_on = %v (present %t), want %q (present %t)", value, present, tc.value, tc.present)
+				}
+			})
+		}
+	}
+}
+
 // A 200 whose envelope lacks the expected key is a FAILURE, not an
 // empty list — your-move must error and leave the previous projection
 // untouched, exactly like a non-200 (§215.4's spirit).

@@ -165,6 +165,9 @@ var workingSetSelectCmd = &cobra.Command{
   working-set select EPIC-X --put-down --outcome returned=plan
       close it, stating how it ended
 
+On select, suspend and resume, an omitted --waiting-on preserves the blocker;
+--waiting-on "" explicitly clears it.
+
 Reads and writes resolve against the authenticated person's pieces; with
 several held, name one with --piece. Re-read the selection immediately before
 mutating it. A pull with --for-review renders the scope read-only under a

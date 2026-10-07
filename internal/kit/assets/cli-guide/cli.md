@@ -712,6 +712,16 @@ modernpath process advance --all --piece EPIC-X --log "go test ./..."
   reports nothing to deliver and no acceptance recorded; its checks are
   NOT_APPLICABLE. Restoring deferred work requires reopening completed owners
   and fresh applicable entry before implementation can resume.
+- `process reconcile` reports the exact trace leaves blocking a reviewed Epic,
+  including purpose, scope, state and expected/observed pins. Fix the failed or
+  stale evaluation and record new current proof. Reapplying a human entry
+  approval does not refresh its old entry audit; record a new independent audit.
+  An unavailable selected authority is reported as a refusal rather than
+  "nothing to do".
+- A DONE scope with current member evidence and its original attributable
+  applied completion receipt can remain settled after canonical section-only
+  edits. Reopened work, live changes and contradictory trace leaves retain
+  their normal guards. The original receipt supplies no new approval.
 
 The `mp-process-cli` skill gives these sequences phase by phase, with the
 single-record verbs as the fallback. Run `modernpath install` after upgrading
@@ -1089,6 +1099,11 @@ them as ambiguous; it does not pick one or report that no work is current.
 Use `--piece <id>` to read a named current selection. Scope-dependent reads
 and writes retain their ambiguity refusals. The overview does not select,
 resume or claim work, and an unavailable or unsupported read remains an error.
+
+`working-set select <id> --suspend --reason "waiting for review" --waiting-on GATE-1`
+stores the blocker shown in that overview. Suspend and resume preserve the
+blocker when `--waiting-on` is omitted; pass `--waiting-on ""` to clear it,
+or a new value to replace it. The closed suspension row retains its history.
 
 `modernpath working-set pull <id>…` downloads only the named records and
 their relevant gate history. The CLI uses the exact-item sync endpoint instead

@@ -484,12 +484,18 @@ func workingSetSelect(env *factoryEnv, opts wsSelectOpts, now time.Time) error {
 		if opts.claim {
 			payload["claim"] = true
 		}
+		if opts.waitingOn != "" || opts.waitingOnSet {
+			payload["waiting_on"] = opts.waitingOn
+		}
 	case opts.suspend:
 		suspend := map[string]any{"reason": opts.reason}
 		if opts.target != "" {
 			suspend["target"] = opts.target
 		}
 		payload["suspend"] = suspend
+		if opts.waitingOn != "" || opts.waitingOnSet {
+			payload["waiting_on"] = opts.waitingOn
+		}
 		// the named scope rides along so the server refuses a mismatch
 		// instead of pausing whatever happens to be current
 		if opts.scope != "" {
