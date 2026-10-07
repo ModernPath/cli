@@ -178,7 +178,7 @@ func workingSetCheck(env *factoryEnv, refresh bool, now time.Time) error {
 			if err != nil {
 				return err
 			}
-			payload, err := fetchWorkSelection(env)
+			payload, err := fetchSelectionSnapshot(env)
 			if err != nil {
 				return err
 			}

@@ -25,9 +25,22 @@ func fetchWorkSelection(env *factoryEnv) (map[string]any, error) {
 // (empty: the sole current piece). `process enter` reads the piece it is
 // entering this way for its reconnaissance revision (SR-CLI-028-002).
 func fetchWorkSelectionFor(env *factoryEnv, piece string) (map[string]any, error) {
+	return fetchWorkSelectionRead(env, piece, false)
+}
+
+// A selection snapshot can show parked work without resolving a current piece.
+// Scope-dependent commands keep using the ordinary caller-scoped read.
+func fetchSelectionSnapshot(env *factoryEnv) (map[string]any, error) {
+	return fetchWorkSelectionRead(env, wsPiece, wsPiece == "")
+}
+
+func fetchWorkSelectionRead(env *factoryEnv, piece string, overview bool) (map[string]any, error) {
 	path := fmt.Sprintf("/api/v1/sync/work-selection?system_id=%d", env.SystemID)
 	if piece != "" {
 		path += "&scope=" + url.QueryEscape(piece)
+	}
+	if overview {
+		path += "&overview=true"
 	}
 	status, body, err := env.call("GET", path, nil)
 	if err != nil {
@@ -123,7 +136,16 @@ func renderSelectionBody(payload map[string]any, src *releaseSource) string {
 	}
 
 	b.WriteString("\n### Current selection\n\n")
-	if current, ok := payload["current"].(map[string]any); ok {
+	if ambiguous, _ := payload["ambiguous_current"].([]any); len(ambiguous) > 0 {
+		pieces := make([]string, 0, len(ambiguous))
+		for _, piece := range ambiguous {
+			if id, ok := piece.(string); ok {
+				pieces = append(pieces, id)
+			}
+		}
+		fmt.Fprintf(&b, "- **Current resolution:** AMBIGUOUS — %s\n", strings.Join(pieces, ", "))
+		b.WriteString("Name one with --piece <id> for scope-dependent commands.\n")
+	} else if current, ok := payload["current"].(map[string]any); ok {
 		fmt.Fprintf(&b, "- **Selected scope:** %s\n", fieldOr(current, "scope_external_id", "—"))
 		fmt.Fprintf(&b, "- **Members:** %s\n", memberList(current))
 		fmt.Fprintf(&b, "- **Scope kind:** %s\n", fieldOr(current, "scope_kind", "—"))
@@ -152,7 +174,7 @@ func renderSelectionBody(payload map[string]any, src *releaseSource) string {
 				str(rm, "scope_external_id"), str(rm, "suspended_status"),
 				fieldOr(rm, "restored_to", "—"),
 				fieldOr(rm, "suspended_reason", "—"), selectionHolder(rm),
-				fieldOr(rm, "suspended_target", "—"), fieldOr(rm, "waiting_on", "—"))
+				fieldOr(rm, "suspended_target", "—"), selectionBlocker(rm))
 		}
 	}
 
@@ -179,6 +201,17 @@ func renderSelectionBody(payload map[string]any, src *releaseSource) string {
 		b.WriteString(rows.String())
 	}
 	return b.String()
+}
+
+func selectionBlocker(row map[string]any) string {
+	gate, waiting := str(row, "blocker_gate_external_id"), str(row, "waiting_on")
+	if gate == "" {
+		return fieldOr(row, "waiting_on", "—")
+	}
+	if waiting != "" && waiting != gate {
+		return gate + " — " + waiting
+	}
+	return gate
 }
 
 // selectionHolder is the Owner column of a parked row (REQ-CROSS-429): who
@@ -377,7 +410,7 @@ func gateBindsRelease(gm map[string]any, slug string) bool {
 }
 
 func pullSelection(env *factoryEnv, now time.Time, preGates []any) (usedGates []any, conflict bool, err error) {
-	payload, err := fetchWorkSelection(env)
+	payload, err := fetchSelectionSnapshot(env)
 	if err != nil {
 		return nil, false, err
 	}

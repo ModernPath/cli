@@ -1070,6 +1070,15 @@ pulls pending intents, and closes the session on interrupt.
 
 ### Working-set record reads
 
+`modernpath working-set pull selection` reads a selection overview into
+`WORK-SELECTION.md`. `WORK-SELECTION` and `WORK-SELECTION.md` are equivalent
+aliases. It shows all parked work in the bound system with its holders,
+reasons and blocker gate IDs. When several current pieces are held, it lists
+them as ambiguous; it does not pick one or report that no work is current.
+Use `--piece <id>` to read a named current selection. Scope-dependent reads
+and writes retain their ambiguity refusals. The overview does not select,
+resume or claim work, and an unavailable or unsupported read remains an error.
+
 `modernpath working-set pull <id>…` downloads only the named records and
 their relevant gate history. The CLI uses the exact-item sync endpoint instead
 of listing every Epic, requirement, gate and backlog record. It preserves

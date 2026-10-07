@@ -50,7 +50,19 @@ var (
 var workingSetPullCmd = &cobra.Command{
 	Use:   "pull [<external-id>...]",
 	Short: "Materialize named items, or the current selection's scope with --scope",
-	Args:  cobra.ArbitraryArgs,
+	Long: `Materialize named items, or the current selection's scope with --scope.
+
+Read the selection overview with any of these aliases:
+  modernpath working-set pull selection
+  modernpath working-set pull WORK-SELECTION
+  modernpath working-set pull WORK-SELECTION.md
+
+The overview shows all parked work, holders and blockers even when several
+current pieces are held. It reports that ambiguity without choosing a piece.
+Use --piece <id> to resolve a named current selection. Reads do not select,
+resume or claim work. Scope-dependent reads and writes still require an
+unambiguous current piece.`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
 		if err != nil {
