@@ -41,3 +41,8 @@ existing-baseline path does not fabricate it.
 - **Completion gates:** «normal completion or dedicated existing-baseline GATES.md gate ids»
 - **Delivered revision:** «repository + revision or not delivered»
 - **Gaps / deferrals / blockers / notes:** «refs or none»
+
+Declared members and relations retain history. Current obligations follow
+`PROCESS.md` §Applicable requirements; OBSOLETE and DEFERRED requirements do not
+block ongoing delivery. A suspended work selection remains a coordination
+fact, distinct from an excluded requirement.

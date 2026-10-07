@@ -169,6 +169,26 @@ func TestREQCROSS317ProcessNextDistinguishesCompleteFromNoSelection(t *testing.T
 	}
 }
 
+func TestProcessNextShowsEmptyApplicableScopeWithoutAcceptance(t *testing.T) {
+	srv := dcDataServer(t, map[string]any{
+		"derived_phase":  "",
+		"derived_reason": "no_applicable_delivery_obligations",
+		"facts_state":    "served",
+	})
+	env := &factoryEnv{Root: t.TempDir(), APIURL: srv.URL, SystemID: 4, token: "t"}
+	var err error
+	out := captureOut(t, func() { err = processNext(env) })
+	if err != nil {
+		t.Fatalf("empty applicable scope: %v", err)
+	}
+	if !strings.Contains(out, "no applicable requirements") || !strings.Contains(out, "no acceptance") {
+		t.Fatalf("empty scope needs an explicit no-op without acceptance: %q", out)
+	}
+	if strings.Contains(out, "loop complete") || strings.Contains(out, "no current selection") {
+		t.Fatalf("excluded work must not be presented as accepted or absent: %q", out)
+	}
+}
+
 func TestREQCROSS317ProcessNextSurfacesEntryOriginUnavailable(t *testing.T) {
 	srv := dcDataServer(t, map[string]any{
 		"derived_phase":      "",

@@ -42,3 +42,8 @@ or `OBSOLETE`, or when triage returns it to an earlier phase.
 | Scope | Selected at | Left at | Outcome | Successor selection |
 |---|---|---|---|---|
 | «EPIC/SR id» | «timestamp» | «timestamp» | DONE / OBSOLETE / returned to «phase» | «scope id or none» |
+
+Declared members and relations retain history. Current obligations follow
+`PROCESS.md` §Applicable requirements; OBSOLETE and DEFERRED requirements do not
+block ongoing delivery. A suspended work selection remains a coordination
+fact, distinct from an excluded requirement.

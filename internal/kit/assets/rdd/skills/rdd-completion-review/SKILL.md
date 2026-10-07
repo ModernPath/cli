@@ -12,7 +12,11 @@ records, and derived views.
 
 ## Procedure
 
-1. Treat completion as unproven. Audit every scoped requirement clause,
+1. Apply `PROCESS.md` §Applicable requirements before evaluating completion.
+   Exclude OBSOLETE and DEFERRED requirements from current obligations without
+   deleting history or marking postponed work DONE. Preserve live obligations
+   in mixed proof; an empty applicable delivery scope creates no acceptance.
+   Treat completion as unproven. Audit every applicable requirement clause,
    acceptance scenario, declared relation, gate, evidence result, and
    completion condition against direct current sources. Already DONE members
    are proof dependencies; keep them DONE when their evidence is current and
@@ -36,8 +40,8 @@ records, and derived views.
    and documents still describe the code; a finding it surfaces is a stop
    condition or routes through `rdd-triage`, never a silent correction.
 5. Record completion trace `PASS` only for the exact eligible fingerprint, and
-   before the human gate exists, so the gate names it as its prerequisite. A
-   `STALE` member-scoped cold-review trace from an earlier round blocks an
+   before the human gate exists, so the gate names it as its prerequisite. An
+   applicable `STALE` member-scoped cold-review trace from an earlier round blocks an
    epic's completion until it is re-evaluated at the current fingerprint; an
    epic-scoped pass does not stand in for it. Only then make the scoped human
    completion gate `OPEN` and present its brief and linked list of relevant

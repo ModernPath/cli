@@ -270,6 +270,8 @@ func processNext(env *factoryEnv) error {
 		switch d.DerivedReason {
 		case "", "no_current_selection":
 			fmt.Println("no current selection — nothing to route")
+		case "no_applicable_delivery_obligations":
+			fmt.Println("no applicable requirements — nothing to deliver; no acceptance recorded")
 		case "complete":
 			fmt.Println("loop complete — every selected member is delivered and accepted")
 			printLane(d.Lane)

@@ -20,3 +20,8 @@
 - **Delivered revision:** «repository + revision or not delivered»
 - **Gaps / deferrals / blockers:** «refs or none»
 - **Completion facts:** «Done; Decisions; Deferred; Discovered; Follow-ups; Gate result»
+
+Declared members and relations retain history. Current obligations follow
+`PROCESS.md` §Applicable requirements; OBSOLETE and DEFERRED requirements do not
+block ongoing delivery. A suspended work selection remains a coordination
+fact, distinct from an excluded requirement.

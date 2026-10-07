@@ -122,8 +122,8 @@ UR and SR use the same status vocabulary.
 | `IN_REVIEW` | Required evidence is complete; delivery, reconciliation, or completion acceptance remains |
 | `DONE` | Delivered trace passed the applicable normal completion or existing-baseline acceptance gate, and human acceptance was applied |
 | `BLOCKED` | Work cannot proceed; blocker and suspended status are recorded |
-| `DEFERRED` | Work is postponed with reason, owner, target, and suspended status |
-| `OBSOLETE` | Terminal rejection or supersession with decision/replacement linked |
+| `DEFERRED` | Work is postponed with reason, owner, target, and suspended status; excluded from ongoing delivery obligations |
+| `OBSOLETE` | Soft-deleted requirement, retained as terminal rejection or supersession with decision/replacement linked; excluded from ongoing delivery obligations |
 
 A directly sourced requirement may start `PROPOSED`. An Epic uses
 `PROPOSED -> TODO -> IN_PROGRESS -> IN_REVIEW -> DONE` and the same side states;
@@ -131,6 +131,73 @@ it has no `DERIVED` state.
 
 On release from `BLOCKED` or `DEFERRED`, restore only the strongest state
 supported by current gates and evidence.
+
+### Applicable requirements
+
+Current requirement obligations exclude `OBSOLETE` and `DEFERRED` URs and SRs.
+They impose no outstanding work, missing-proof, entry-origin, readiness,
+routing, reconciliation, or completion obligation on ongoing delivery. This
+applies to declared Epic members and confirmed required-SR dependencies,
+including required SRs outside the selected Epic. Retain the stored identities,
+relations, postponement metadata, decisions, evidence, and approval history.
+Completing other work never turns a deferred requirement into `DONE`.
+
+`DONE` remains applicable accepted work. Active `BLOCKED` requirements, live
+holds, suspended work selections, and unresolved material findings retain their
+guards. A finding with disposition `DEFERRED` is not a deferred requirement.
+Missing, physically deleted, unknown, or unconfirmed dependencies are not an
+intentional exclusion and cannot be treated as satisfied proof.
+
+An entirely empty applicable delivery scope is an explicit no-op: it creates
+no new acceptance or lifecycle promotion. A live UR whose required SRs are all
+explicitly excluded has zero applicable lower obligations, but still needs its
+own genuine current upper proof, delivery, and applicable human acceptance.
+
+Apply the rule per obligation and input. A gate or trace covering both excluded
+and active work retains all obligations for its live inputs; an excluded member
+does not waive changed live acceptance, failing live evidence, or unknown live
+authority. Equivalent batch and individual completion use the same applicable
+obligations, with any difference in scope or authority explained.
+
+Approval aggregates and section context stamps use the authoritative subject's
+applicable members and content. Excluding or restoring a member changes the
+applicable scope and its aggregate; ordinary progression within the applicable
+set does not. Edits confined to excluded requirements do not change the live
+aggregate or invalidate unrelated live proof through retained historical links.
+Changing a genuine live input retains the declared invalidation consequences.
+No old pin, section stamp, or `STALE` trace becomes current approval or `PASS`
+merely because the denominator changed. Revalidate purpose-specific proof and
+use the applicable existing restamp, review, re-entry, or immaterial reapply
+path; preserve settled acceptance as history without accepting reopened work.
+
+### Resuming deferred requirements
+
+Resumption restores the requirement's current obligations. If doing so changes
+a completed owner's approved scope, reopen that owner through its attributable
+reversed-decision gate before restoring the member. Reopen affected accepted
+URs explicitly when their acceptance changes; reopening an Epic alone does not
+establish a UR's changed authority. Refuse a premature restoration under a
+completed owner with this recovery step. A standalone requirement needs no
+invented parent.
+
+For fresh planning, restore the deferred requirement conservatively to
+`PROPOSED`. Retire only that requirement's old applied entry, if any, atomically
+with its status change and attributed resumption event. Retain the actual
+decision source and old approval history; do not invent a demotion decision,
+entry origin, or passing proof. If retirement fails, none of that command's
+status, event, or retirement effects commit. A shared legacy entry without
+per-member application rows keeps its existing semantics for each untouched
+covered member; one member's retirement cannot retire a sibling or grant entry
+to an unrelated member. Retirement alone supplies no missing historical origin.
+
+Replan the resumed member under its original authority, obtain fresh applicable
+entry, establish proof for new or changed obligations, then obtain successor
+completion over the current live scope. Unchanged siblings retain their states
+and approvals; revalidate their accepted proof at delivery. Other restoration
+destinations require current retained authority and cannot revive a retired
+entry or restore `DONE` from historical acceptance. Each command is atomic;
+an interrupted multi-command sequence resumes from its recorded state and
+receipts, rather than pretending the entire sequence committed together.
 
 Acceptance scenarios, code, test cases, and planning artifacts have no work
 lifecycle. Evidence conclusions are not completion states:
@@ -250,7 +317,7 @@ not a gate answer.
 | Small change `PROPOSED -> TODO` | Its narrow independent pass is `PASS`, it is eligible, and a current lane authorization covers its class and cap; the entry is recorded as an application of that authorization, attributed to the human who answered it |
 | Epic `PROPOSED -> TODO` | Its Entry packet and every selected member's entry trace are complete |
 | Requirement `IN_REVIEW -> DONE` | Its completion predicate is satisfied at the delivered fingerprint |
-| Epic `IN_REVIEW -> DONE` | Every member is already `DONE` or named and completion-eligible in the same gate; the Epic completion predicate is satisfied |
+| Epic `IN_REVIEW -> DONE` | Every applicable member is already `DONE` or named and completion-eligible in the same gate; the Epic completion predicate is satisfied |
 
 One human answer may cover an exact Epic and named requirements. Apply member
 requirement transitions before the Epic and record a `USER:` source for each.
@@ -324,11 +391,11 @@ An agent or deterministic check may apply these only from a current trace-gate
 | Transition | Required proof |
 |---|---|
 | SR `TODO -> IN_PROGRESS` | Approved entry fingerprint and expected lower RED |
-| UR `TODO -> IN_PROGRESS` | Expected upper RED or a required SR is `IN_PROGRESS` |
-| Epic `TODO -> IN_PROGRESS` | An in-scope member is `IN_PROGRESS` |
+| UR `TODO -> IN_PROGRESS` | Expected upper RED or an applicable required SR is `IN_PROGRESS` |
+| Epic `TODO -> IN_PROGRESS` | An applicable in-scope member is `IN_PROGRESS` |
 | SR `IN_PROGRESS -> IN_REVIEW` | Its lower trace is current and passes |
-| UR `IN_PROGRESS -> IN_REVIEW` | Required SRs are `IN_REVIEW/DONE`; current upper evidence passes |
-| Epic `IN_PROGRESS -> IN_REVIEW` | Members are `IN_REVIEW/DONE`; applicable trace gates pass |
+| UR `IN_PROGRESS -> IN_REVIEW` | Applicable required SRs are `IN_REVIEW/DONE`; current upper evidence passes, including when no applicable required SR remains |
+| Epic `IN_PROGRESS -> IN_REVIEW` | Applicable members are `IN_REVIEW/DONE`; applicable trace gates pass; the applicable delivery scope is nonempty |
 
 Agents may also apply evidence-invalidation demotions, and may apply `BLOCKED`
 from an established impediment and release it when the impediment is gone.
@@ -840,19 +907,19 @@ establish required selected UR upper RED
 
 Run the loop as follows:
 
-1. Establish the expected upper RED for every selected UR requiring new
+1. Establish the expected upper RED for every selected applicable UR requiring new
    evidence. A standalone SR has no upper step.
 2. If an SR trace is unmet, select one approved clause, establish its focused
    lower RED, implement the smallest passing behavior, and perform scoped
    behavior-preserving cleanup.
 3. Run the SR's focused and boundary-appropriate regression gates on the
    cleaned content, then rerun each affected UR scenario.
-4. Re-evaluate every selected SR lower trace and UR upper trace independently.
+4. Re-evaluate every selected applicable SR lower trace and UR upper trace independently.
    A trace `FAIL` caused by unmet approved behavior starts another iteration;
    it does not request human input.
-5. Exit to `IN_REVIEW` only when every selected SR lower trace is current and
-   `PASS`, and every selected UR upper trace is current and `PASS` with all of
-   its required SRs in `IN_REVIEW` or `DONE`.
+5. Exit to `IN_REVIEW` only when every selected applicable SR lower trace is current and
+   `PASS`, and every selected applicable UR upper trace is current and `PASS` with all of
+   its applicable required SRs in `IN_REVIEW` or `DONE`.
 
 Under a current autopilot grant, §Autopilot's batch cadence replaces the
 per-clause rhythm of steps 2–4, at closeout as during the sprint: a clause
@@ -932,14 +999,15 @@ browser for UI, endpoint/contract for APIs, integration for persistence and
 integrations, schema conformance for cross-service contracts, and harness/smoke
 for operations.
 
-Invalidating required evidence atomically:
+Invalidating applicable required evidence atomically:
 
 1. changes result validity;
 2. makes dependent trace gates `STALE` and supersedes dependent unclosed human
    gates;
 3. removes affected evidence conclusions;
 4. demotes dependent `IN_REVIEW`/`DONE` Epic, UR, and SR items to `IN_PROGRESS`;
-5. propagates only through declared relations.
+5. propagates only through declared relations and changed live inputs; retained
+   excluded-only links do not invalidate unrelated ongoing work.
 
 Supplemental evidence causes no demotion. Re-verification may restore
 `IN_REVIEW`; restoring `DONE` at a new fingerprint requires a successor human
@@ -954,15 +1022,17 @@ A normal completion human gate may open only when named items are `IN_REVIEW`,
 code is delivered, evidence is current at the delivered revision, state is reconciled,
 candidate relations are excluded, and gaps/deferrals/decisions are disclosed.
 The delivered revision is the one the authorized integration path produced,
-not the branch head that fed it. A member-scoped trace from an earlier round
-that is `STALE` still counts against its Epic — an Epic-scoped pass does not
-stand in for it — until it is re-evaluated at the current fingerprint.
+not the branch head that fed it. An applicable member-scoped trace from an
+earlier round that is `STALE` still counts against its Epic — an Epic-scoped
+pass does not stand in for it — until it is re-evaluated at the current
+fingerprint. Excluded-only proof does not block current work; mixed-scope proof
+retains its live obligations.
 
 | Item | `DONE` predicate after human acceptance |
 |---|---|
 | SR | Its lower trace is delivered, current, and reconciled |
-| UR | All scenarios have current upper evidence; every required SR has a complete lower trace; result is delivered and reconciled |
-| Epic | Every member is `DONE`; applicable member and declared Epic gates pass; Epic scope is delivered and reconciled |
+| UR | All scenarios have current upper evidence; every applicable required SR has a complete lower trace; result is delivered and reconciled |
+| Epic | Every applicable member is `DONE`; applicable member and declared Epic gates pass; the nonempty applicable Epic scope is delivered and reconciled |
 
 Completing one item never advances an optional related item unless that item
 independently satisfies its predicate and is named in the human gate.

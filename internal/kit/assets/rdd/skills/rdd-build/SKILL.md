@@ -37,7 +37,7 @@ code, tests, and current records.
 7. Re-evaluate the selected SR clauses and affected UR scenarios. Repeat from
    step 3 while an unmet result is caused by approved behavior in this SR.
 8. Move the SR to `IN_REVIEW` when its lower trace passes. An affected UR moves
-   to `IN_REVIEW` only when its upper trace passes and every required SR is
+   to `IN_REVIEW` only when its upper trace passes and every applicable required SR is
    `IN_REVIEW` or `DONE`.
 9. Reconcile the affected graph and derived views. Return remaining approved
    trace failures to `rdd-deliver` for another AI iteration. Hand fully eligible

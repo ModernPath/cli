@@ -12,6 +12,11 @@ scope, Item ownership, and Planning and readiness sections of `PROCESS.md`.
 
 ## Procedure
 
+Apply `PROCESS.md` §Applicable requirements: retain declared membership and
+history, but plan current obligations only for applicable requirements.
+Excluded-only content cannot create live proof obligations; mixed scope
+retains its live obligations.
+
 1. Confirm every requirement and relation the proposed scope depends on is
    authoritative. Take the scope from the stored relation graph — declared
    members, required SRs, gates — never from a keyword search over records.
@@ -55,7 +60,7 @@ scope, Item ownership, and Planning and readiness sections of `PROCESS.md`.
    applies it, not at its definition: a defined value may be unused, or one of
    several the code selects between. Keep the packet focused on facts the
    builder and gates need; do not split behavior to meet a document length limit.
-5. Enrich every selected SR with its implementation context, explicit change
+5. Enrich every selected applicable SR with its implementation context, explicit change
    boundary, and lower-RED strategy. Define a separate upper-RED strategy for
    each selected UR scenario requiring new evidence. Re-validating unchanged,
    previously proven behavior needs no new RED. A lower-RED strategy names

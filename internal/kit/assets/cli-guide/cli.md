@@ -701,6 +701,17 @@ modernpath process advance --all --piece EPIC-X --log "go test ./..."
   needs no `--piece` when the SR is itself one of the pieces you hold.
 - `process next` with several held pieces prints one block per piece instead
   of refusing.
+- Live requirements under a retained OBSOLETE owning Epic can complete together
+  at the Epic packet pin or individually at their member pins, with current proof
+  and human approval. The owner stays OBSOLETE. Entry, deleted authority and
+  DONE/DEFERRED owners retain their existing guards.
+- Delivery checks ignore OBSOLETE and DEFERRED requirements. Their records,
+  postponement metadata and approval history remain stored. A live user
+  requirement with no applicable required SRs still needs its current upper
+  proof. If a selected scope has no applicable requirements, `process next`
+  reports nothing to deliver and no acceptance recorded; its checks are
+  NOT_APPLICABLE. Restoring deferred work requires reopening completed owners
+  and fresh applicable entry before implementation can resume.
 
 The `mp-process-cli` skill gives these sequences phase by phase, with the
 single-record verbs as the fallback. Run `modernpath install` after upgrading

@@ -12,6 +12,12 @@ all semantics; this skill owns phase order and continuation.
 
 ## Run the loop
 
+Use `PROCESS.md` §Applicable requirements throughout the loop. Excluded
+requirements remain in history but do not block ongoing work or become DONE
+when their siblings complete. A live UR with no applicable required SRs still
+needs its own genuine upper proof. Resume deferred work through §Resuming
+deferred requirements, preserving unchanged siblings and prior receipts.
+
 For a source-scoped published baseline still in PENDING_VERIFICATION, take the
 separate rdd-reverse-engineer-verify → rdd-reverse-engineer-accept path. Its
 single reviewed human decision applies verified and delivered proof directly
@@ -52,7 +58,7 @@ human to resume. Never infer or supply the answer.
 When the human resumes after applied entry approval, iterate without further
 human input while the approved scope remains unchanged:
 
-1. Evaluate every selected UR upper trace and SR lower trace. Establish any
+1. Evaluate every selected applicable UR upper trace and SR lower trace. Establish any
    required initial RED observations.
 2. Select the next unmet approved SR clause. Apply `rdd-build` or `rdd-verify`
    until its lower trace is current and passing.
