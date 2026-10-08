@@ -114,6 +114,17 @@ func recordFromPayload(rec scopeRecord, members []string) authoring.Record {
 	return out
 }
 
+// reviewItemRecord is the read-only record of a review copy. It lists every
+// stored citation, as the review bundle does; an editable record lists only
+// the citations push can send back.
+func reviewItemRecord(rec scopeRecord, members []string) authoring.Record {
+	out := recordFromPayload(rec, members)
+	if rec.kind != "epic" {
+		out.SourceCitations = citationLabels(rec.payload["source_citations"])
+	}
+	return out
+}
+
 // mapFieldProjection renders a structured (map) mutable field's value for a
 // read-only projection block: a string verbatim, anything else as indented JSON.
 func mapFieldProjection(v any) string {

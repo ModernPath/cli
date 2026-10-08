@@ -79,7 +79,15 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 				}
 				return err
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(body)
+			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(body); err != nil {
+				return err
+			}
+			if name == "publish" {
+				if warning := reverseReceiptWarning(body); warning != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), warning)
+				}
+			}
+			return nil
 		}
 		root.AddCommand(command)
 	}
@@ -211,6 +219,32 @@ func reverseCall(env *factoryEnv, method, suffix string, payload any) (map[strin
 		return nil, fmt.Errorf("reverse-engineering response is missing its data object; no success can be confirmed")
 	}
 	return body, nil
+}
+
+// reverseReceiptWarning names the requirements a publish created without a
+// context or without a test citation. Publication is never refused for
+// either. A receipt without both lists, from an older server or a replayed
+// older group, gets no warning.
+func reverseReceiptWarning(body map[string]any) string {
+	result, _ := dataOf(body)["result"].(map[string]any)
+	noContext, hasContext := result["requirements_without_context"].([]any)
+	noTest, hasTest := result["requirements_without_test_citation"].([]any)
+	if !hasContext || !hasTest || len(noContext)+len(noTest) == 0 {
+		return ""
+	}
+	return "warning: the group was published; requirements without a context: " + countedIDs(noContext) +
+		"; requirements without a test citation: " + countedIDs(noTest)
+}
+
+func countedIDs(ids []any) string {
+	if len(ids) == 0 {
+		return "0"
+	}
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = fmt.Sprint(id)
+	}
+	return fmt.Sprintf("%d (%s)", len(ids), strings.Join(names, ", "))
 }
 
 func readReverseJSON(cmd *cobra.Command, path string, target any) error {
@@ -452,7 +486,10 @@ out is listed as an exclusion. A path is a literal name: no patterns, no
 trailing slash. Non-Git roots cannot be scoped.
 
 A tracked symbolic link in a Git repository is left out and listed as an
-exclusion. It is never followed.`}
+exclusion. It is never followed.
+
+Files under a .claude folder are agent workspace metadata: they are left out
+and listed as exclusions, and a path under .claude cannot be named.`}
 	command.Flags().StringArray("repository", nil, "explicit repository identity and directory, key=directory (repeatable)")
 	command.Flags().StringArray("path", nil, "limit a Git repository to a path, key=relative/path (repeatable); the rest is listed as exclusions")
 	_ = command.MarkFlagRequired("repository")
@@ -488,6 +525,12 @@ func parseReverseScopes(values []string) (map[string][]string, error) {
 			return nil, fmt.Errorf("path %q ends with a slash; name the directory without it", path)
 		case !reverseSafePath(path):
 			return nil, fmt.Errorf("path %q is not a safe relative path", path)
+		case reverseAgentPath(path):
+			where := "is in"
+			if path == ".claude" || strings.HasSuffix(path, "/.claude") {
+				where = "is"
+			}
+			return nil, fmt.Errorf("path %q %s a .claude folder, which holds agent workspace metadata and is left out of every inventory", path, where)
 		}
 		scopes[key] = append(scopes[key], path)
 	}

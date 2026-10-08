@@ -192,11 +192,12 @@ and retain the observation as evidence.
 
 Without --run the snapshot is the whole repository. With --run the snapshot is
 the files that run's authorization recorded for the repository: use it for a
-run that was inventoried with --path, so the proof measures the same files
-that were captured. The input's snapshot_digest must be the one that run captured.
+run that was inventoried with --path, or whose capture holds files under
+.claude, which a new inventory leaves out, so the proof measures the same
+files that were captured. The input's snapshot_digest must be the one that run captured.
 The repository must still be clean as a whole.`}
 	c.Flags().String("file", "", "key, repository_key, local root, tested_revision and snapshot_digest JSON (required)")
-	c.Flags().String("run", "", "run whose authorized files are the snapshot, for a run inventoried with --path (optional; the whole repository when omitted)")
+	c.Flags().String("run", "", "run whose authorized files are the snapshot, for a run inventoried with --path or whose capture holds files under .claude (optional; the whole repository when omitted)")
 	_ = c.MarkFlagRequired("file")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		file, _ := cmd.Flags().GetString("file")
@@ -317,6 +318,11 @@ func collectScopedAsBuiltDelivery(input asBuiltDeliveryInput, scope *asBuiltDeli
 		return nil, fmt.Errorf("tested revision does not match the current repository revision")
 	}
 	if repo.SnapshotDigest != input.SnapshotDigest {
+		// A run authorized before the inventory left .claude out may hold such
+		// files; only the form that names the run measures exactly them.
+		if scope == nil && reverseHasAgentExclusion(repo.Exclusions) {
+			return nil, fmt.Errorf("snapshot digest does not match the current repository content; a new inventory leaves out files under .claude, so if the run's capture holds such files, run delivery-proof with --run <run id> to measure the files that run authorized")
+		}
 		return nil, fmt.Errorf("snapshot digest does not match the current repository content")
 	}
 	origin := gitOut(input.Root, "remote", "get-url", "origin")
@@ -385,6 +391,15 @@ func collectScopedAsBuiltDelivery(input asBuiltDeliveryInput, scope *asBuiltDeli
 		report["measured_files"] = len(scope.Files)
 	}
 	return report, nil
+}
+
+func reverseHasAgentExclusion(exclusions []reverseExclusion) bool {
+	for _, exclusion := range exclusions {
+		if exclusion.Reason == reverseAgentReason {
+			return true
+		}
+	}
+	return false
 }
 
 func passwordPresent(user *url.Userinfo) bool {

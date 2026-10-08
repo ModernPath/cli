@@ -253,6 +253,151 @@ func TestSRRDDONBOARD010LimitsCountIncludedFilesOnly(t *testing.T) {
 	}
 }
 
+// SR-RDD-ONBOARD-025: the size refusal states the total it counted, the limit,
+// the largest top-level folders with the repository root as one entry, and
+// that tracked and untracked unignored files both count — with and without
+// named paths, and without printing an inventory.
+func TestSRRDDONBOARD025SizeRefusalStatesWhatItCounted(t *testing.T) {
+	root := scopeRepo(t, map[string]string{
+		"big/a.bin":    strings.Repeat("x", 20_000_000),
+		"docs/c.txt":   strings.Repeat("d", 1_000),
+		"f1/one.txt":   strings.Repeat("1", 300),
+		"f2/two.txt":   strings.Repeat("2", 200),
+		"f3/three.txt": strings.Repeat("3", 100),
+		"root.txt":     strings.Repeat("r", 500),
+	})
+	// An untracked, unignored file counts like a tracked one.
+	scopeWrite(t, root, map[string]string{"media/b.bin": strings.Repeat("m", 12_000_000)})
+	ordered := func(t *testing.T, text string, parts ...string) {
+		t.Helper()
+		at := 0
+		for _, part := range parts {
+			i := strings.Index(text[at:], part)
+			if i < 0 {
+				t.Fatalf("the refusal must hold %q after position %d, in order:\n%s", part, at, text)
+			}
+			at += i + len(part)
+		}
+	}
+
+	_, out, err := scopeInventory(t, "--repository", "repo="+root)
+	if err == nil {
+		t.Fatal("the repository over the limit was accepted")
+	}
+	if strings.Contains(out, `"repositories"`) {
+		t.Fatalf("an inventory was printed with the refusal: %s", out)
+	}
+	ordered(t, err.Error(),
+		"exceeds the 32000000-byte source limit; narrow and disclose the scope",
+		"total 32002100 bytes", "the limit is 32000000 bytes",
+		"Tracked files and untracked files that are not ignored both count",
+		"big (20000000 bytes)", "media (12000000 bytes)", "docs (1000 bytes)",
+		"files in the repository root (500 bytes)", "f1 (300 bytes).")
+	for _, unlisted := range []string{"f2 (", "f3 ("} {
+		if strings.Contains(err.Error(), unlisted) {
+			t.Fatalf("only the five largest entries are listed, got %q:\n%v", unlisted, err)
+		}
+	}
+
+	_, out, err = scopeInventory(t, "--repository", "repo="+root, "--path", "repo=big", "--path", "repo=media", "--path", "repo=f1")
+	if err == nil {
+		t.Fatal("named paths over the limit were accepted")
+	}
+	if strings.Contains(out, `"repositories"`) {
+		t.Fatalf("an inventory was printed with the refusal: %s", out)
+	}
+	ordered(t, err.Error(),
+		"within the named paths; name fewer or smaller paths",
+		"total 32000300 bytes", "the limit is 32000000 bytes",
+		"Tracked files and untracked files that are not ignored both count",
+		"big (20000000 bytes)", "media (12000000 bytes)", "f1 (300 bytes).")
+	for _, unnamed := range []string{"docs (", "repository root (", "f2 ("} {
+		if strings.Contains(err.Error(), unnamed) {
+			t.Fatalf("a folder outside the named paths was counted (%q):\n%v", unnamed, err)
+		}
+	}
+}
+
+// SR-RDD-ONBOARD-024: in a Git root, tracked and unignored files with a .claude
+// path component are left out of the file list, each disclosed as a file
+// exclusion with the agent-metadata reason; the managed instruction files and
+// editor folders stay in; the digest and the counts cover the included files.
+func TestSRRDDONBOARD024GitInventoryLeavesClaudeOut(t *testing.T) {
+	root := scopeRepo(t, map[string]string{
+		"app.go":                          "package app",
+		"AGENTS.md":                       "managed",
+		"CLAUDE.md":                       "managed",
+		".github/copilot-instructions.md": "managed",
+		".vscode/settings.json":           "{}",
+		".claude/settings.json":           "{\"hooks\":{}}",
+		"pkg/lib.go":                      "package pkg",
+		"pkg/.claude/agents/review.md":    "agent",
+	})
+	scopeWrite(t, root, map[string]string{".claude/skills/rdd/SKILL.md": "untracked skill"})
+	inventory, out, err := scopeInventory(t, "--repository", "repo="+root)
+	if err != nil {
+		t.Fatalf("inventory refused: %v: %s", err, out)
+	}
+	repo := inventory.Repositories[0]
+	files := []reverseFile{
+		{".github/copilot-instructions.md", reverseDigest([]byte("managed")), 7},
+		{".vscode/settings.json", reverseDigest([]byte("{}")), 2},
+		{"AGENTS.md", reverseDigest([]byte("managed")), 7},
+		{"CLAUDE.md", reverseDigest([]byte("managed")), 7},
+		{"app.go", reverseDigest([]byte("package app")), 11},
+		{"pkg/lib.go", reverseDigest([]byte("package pkg")), 11},
+	}
+	if !reflect.DeepEqual(repo.Files, files) {
+		t.Fatalf("the file list must leave .claude out and keep the rest:\n got %+v\nwant %+v", repo.Files, files)
+	}
+	for _, path := range []string{".claude/settings.json", ".claude/skills/rdd/SKILL.md", "pkg/.claude/agents/review.md"} {
+		if !scopeExcluded(repo.Exclusions, path, "file", "agent workspace metadata") {
+			t.Fatalf("%s is not disclosed as a file exclusion with the agent-metadata reason: %+v", path, repo.Exclusions)
+		}
+	}
+	if repo.SnapshotDigest != reverseSnapshot(files) || inventory.Files != 6 || inventory.Bytes != 45 {
+		t.Fatalf("digest and counts must cover the included files only: %s %d files %d bytes", repo.SnapshotDigest, inventory.Files, inventory.Bytes)
+	}
+
+	inventory, out, err = scopeInventory(t, "--repository", "repo="+root, "--path", "repo=pkg")
+	if err != nil {
+		t.Fatalf("scoped inventory refused: %v: %s", err, out)
+	}
+	repo = inventory.Repositories[0]
+	if !reflect.DeepEqual(scopePaths(repo.Files), []string{"pkg/lib.go"}) || !scopeExcluded(repo.Exclusions, "pkg/.claude/agents/review.md", "file", "agent workspace metadata") {
+		t.Fatalf("a .claude folder inside a named path must be left out and disclosed: %+v %+v", repo.Files, repo.Exclusions)
+	}
+}
+
+// SR-RDD-ONBOARD-024: a named path that is or lies under a .claude folder
+// refuses, names the path, says whether it is the folder or lies in one, and
+// prints no inventory.
+func TestSRRDDONBOARD024NamedClaudePathRefuses(t *testing.T) {
+	root := scopeRepo(t, map[string]string{
+		"app.go":                       "package app",
+		".claude/settings.json":        "{}",
+		".claude/skills/rdd/SKILL.md":  "skill",
+		"pkg/.claude/agents/review.md": "agent",
+	})
+	for named, where := range map[string]string{
+		".claude":               "is",
+		"pkg/.claude":           "is",
+		".claude/skills":        "is in",
+		".claude/settings.json": "is in",
+	} {
+		t.Run(named, func(t *testing.T) {
+			_, out, err := scopeInventory(t, "--repository", "repo="+root, "--path", "repo="+named)
+			want := `path "` + named + `" ` + where + ` a .claude folder, which holds agent workspace metadata and is left out of every inventory`
+			if err == nil || err.Error() != want {
+				t.Fatalf("a named path under .claude must refuse and name the path:\n got %v\nwant %s", err, want)
+			}
+			if strings.Contains(out, `"repositories"`) {
+				t.Fatalf("an inventory was printed with the refusal: %s", out)
+			}
+		})
+	}
+}
+
 // A path scope takes what Git would track: untracked files are included, ignored
 // files are not.
 func TestSRRDDONBOARD010PathScopeTakesUntrackedAndSkipsIgnoredFiles(t *testing.T) {

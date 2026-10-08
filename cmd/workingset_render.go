@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,11 +129,78 @@ func citationLine(m map[string]any, fallback string) string {
 	if !present {
 		return fallback
 	}
-	refs := citationRefs(v)
-	if len(refs) == 0 {
+	labels := citationLabels(v)
+	if len(labels) == 0 {
 		return "—"
 	}
-	return strings.Join(refs, " · ")
+	return strings.Join(labels, " · ")
+}
+
+// citationLabels names every stored citation for a read-only render, one
+// "<kind>: <label>" entry each. The editable list (citationRefs) keeps only
+// the citations push can send back, because push sends kind and reference
+// only and would drop a typed identity.
+func citationLabels(v any) []string {
+	items, _ := v.([]any)
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		switch c := it.(type) {
+		case string:
+			out = append(out, c)
+		case map[string]any:
+			label := citationLabel(c)
+			if kind := str(c, "kind"); kind != "" {
+				label = kind + ": " + label
+			}
+			out = append(out, label)
+		default:
+			out = append(out, unresolvedCitation)
+		}
+	}
+	return out
+}
+
+const unresolvedCitation = "Unresolved source"
+
+// citationLabel names a citation in the order the web app does: the typed
+// identity (repository, revision and path), else the stored reference, else
+// the path, the source file id or the document id; a legacy process source
+// falls back to its id.
+func citationLabel(c map[string]any) string {
+	repository, revision, path := citationText(c, "repository_key"), citationText(c, "revision"), citationText(c, "path")
+	if repository != "" && revision != "" && path != "" {
+		return repository + "@" + revision + ":" + path
+	}
+	for _, key := range []string{"ref", "source_tag"} {
+		if v := citationText(c, key); v != "" {
+			return v
+		}
+	}
+	keys := []string{"path", "source_file_id", "system_doc_id"}
+	if str(c, "kind") == "process_source" {
+		keys = append(keys, "id")
+	}
+	for _, key := range keys {
+		if v := citationText(c, key); v != "" {
+			return v
+		}
+	}
+	return unresolvedCitation
+}
+
+// citationText reads a citation field stored as text or as a number.
+func citationText(c map[string]any, key string) string {
+	switch v := c[key].(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case json.Number:
+		return v.String()
+	}
+	return ""
 }
 
 // acceptanceServed reports whether the payload carries an acceptance key at

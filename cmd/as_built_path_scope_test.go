@@ -212,6 +212,62 @@ func TestSRRDDASBUILTCLI002InputDigestMustBeTheRunsCapture(t *testing.T) {
 	}
 }
 
+// claudeDeliveryFixture is a pushed checkout holding a file under .claude, and
+// the authorization an older inventory recorded for it, with that file in.
+func claudeDeliveryFixture(t *testing.T) (string, asBuiltDeliveryInput, reverseRepository) {
+	t.Helper()
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	gitRun(t, t.TempDir(), "init", "--bare", "--initial-branch=main", remote)
+	root := filepath.Join(t.TempDir(), "checkout")
+	gitRun(t, t.TempDir(), "clone", remote, root)
+	scopeWrite(t, root, map[string]string{"catalog.txt": "configured product", ".claude/settings.json": "{}"})
+	scopeCommit(t, root, "catalog")
+	gitRun(t, root, "push", "origin", "main")
+	files := []reverseFile{
+		{".claude/settings.json", reverseDigest([]byte("{}")), 2},
+		{"catalog.txt", reverseDigest([]byte("configured product")), 18},
+	}
+	revision := gitRun(t, root, "rev-parse", "HEAD")
+	authorized := reverseRepository{Key: "catalog", Revision: revision, Files: files, SnapshotDigest: reverseSnapshot(files)}
+	input := asBuiltDeliveryInput{Key: "observation", RepositoryKey: "catalog", Root: root, TestedRevision: revision, SnapshotDigest: authorized.SnapshotDigest}
+	return root, input, authorized
+}
+
+// SR-RDD-ONBOARD-024: the whole-repository delivery proof of an older run
+// whose capture holds a .claude file no longer matches a new inventory; it
+// refuses and points to the form that names the run.
+func TestSRRDDONBOARD024UnscopedDeliveryProofPointsToTheRunForm(t *testing.T) {
+	_, input, _ := claudeDeliveryFixture(t)
+	report, err := collectAsBuiltDelivery(input)
+	if err == nil {
+		t.Fatalf("the whole-repository proof measured a capture that holds .claude files: %v", report)
+	}
+	for _, want := range []string{"snapshot digest does not match the current repository content", ".claude", "--run"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal must say %q: %v", want, err)
+		}
+	}
+}
+
+// Regression guard for SR-RDD-ONBOARD-024: a run authorized with a file under
+// .claude still captures it, and the delivery proof that names the run still
+// measures it.
+func TestSRRDDONBOARD024OlderAuthorizationWithClaudeFileStillCapturesAndMeasures(t *testing.T) {
+	root, input, authorized := claudeDeliveryFixture(t)
+	files, err := reverseSourceBundle(authorized, root)
+	if err != nil || len(files) != 2 || files[0]["path"] != ".claude/settings.json" {
+		t.Fatalf("capture no longer bundles the authorized .claude file: %v %v", files, err)
+	}
+	state := &scopeRunServer{repositories: []reverseRepository{authorized}}
+	out, err := scopeDeliveryProof(t, state.start(t), input)
+	if err != nil {
+		t.Fatalf("the delivery proof that names the run refused: %v: %s", err, out)
+	}
+	if state.posts != 1 || state.report["snapshot_digest"] != authorized.SnapshotDigest || state.report["measured_files"] != float64(2) {
+		t.Fatalf("the proof did not measure the authorized .claude file: posts=%d report=%v", state.posts, state.report)
+	}
+}
+
 // Regression guard: without a named run the report's key set is exactly the
 // delivered one. The server replays a retained report by comparing every key
 // but observed_at, so an added key would turn a retry into a conflict.

@@ -33,6 +33,13 @@
   stop remaining writes on drift; retries skip already accepted dispositions.
   Finding batches also recheck the original snapshot before each write and
   stop if its files or manifest change, including a replacement with new hashes.
+- `reverse-engineer publish` prints one warning line naming the requirements
+  created without a bounded context or without a test citation, and the
+  working-set read-only render shows every stored citation by its typed
+  identity. A new `inventory` leaves files under `.claude` out and refuses a
+  named path under it, `delivery-proof` without `--run` points to `--run` for
+  an older capture that holds such files, and the size refusal states the
+  total counted and the largest top-level folders.
 
 ## v0.16.0 — the upload path fits a legacy estate
 

@@ -242,12 +242,12 @@ func workingSetPullReviewSnapshotSince(env *factoryEnv, since string, now time.T
 	ctxID := newContextID("review")
 	plan := scopedPullPlan{files: map[string]scopedPullFile{}}
 	if sr, ok := itemsBefore[scopeExt]; ok {
-		content := scopeItemContent(recordFromPayload(sr, members), "review", ctxID, true, env, now)
+		content := scopeItemContent(reviewItemRecord(sr, members), "review", ctxID, true, env, now)
 		plan.add(scopeExt+".md", []byte(content), "item")
 	}
 	for _, member := range members {
 		if item, ok := itemsBefore[member]; ok {
-			content := scopeItemContent(recordFromPayload(item, nil), "review", ctxID, true, env, now)
+			content := scopeItemContent(reviewItemRecord(item, nil), "review", ctxID, true, env, now)
 			plan.add(filepath.Join("members", member+".md"), []byte(content), "item")
 		}
 	}

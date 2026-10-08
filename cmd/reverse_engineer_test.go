@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,151 @@ func reCommand(t *testing.T, server *httptest.Server, input string, args ...stri
 	command.SetArgs(args)
 	err := command.Execute()
 	return out.String(), err
+}
+
+// reCommandStreams runs a reverse-engineer command with the output and error
+// streams kept apart.
+func reCommandStreams(t *testing.T, server *httptest.Server, input string, args ...string) (string, string, error) {
+	t.Helper()
+	command := newReverseEngineerCommand(func() (*factoryEnv, error) { return wsEnv(t, server), nil })
+	var out, errOut bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&errOut)
+	command.SetIn(strings.NewReader(input))
+	command.SetArgs(args)
+	err := command.Execute()
+	return out.String(), errOut.String(), err
+}
+
+// receiptServer answers a publish with the given body.
+func receiptServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// encodedReceipt is the output the publish command prints for a served body.
+func encodedReceipt(t *testing.T, body string) string {
+	t.Helper()
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	_ = json.NewEncoder(&out).Encode(decoded)
+	return out.String()
+}
+
+// SR-RDD-ONBOARD-022: a receipt that lists requirements without a context or
+// without a test citation gets one warning line on the error stream; the
+// receipt on the output stream is printed as before.
+func TestSRRDDONBOARD022PublishWarnsAboutMissingContextAndTestCitation(t *testing.T) {
+	body := `{"data":{"id":"receipt","result":{"created_requirements":3,"requirement_ids":["SR-A","SR-B","SR-C"],` +
+		`"requirements_without_context":["SR-A","SR-B"],"requirements_without_test_citation":["SR-C"]}}}`
+	out, errOut, err := reCommandStreams(t, receiptServer(t, body), `{"requirements":[]}`, "publish", "--run", "r", "--group", "g", "--file", "-")
+	if err != nil {
+		t.Fatalf("publish refused: %v", err)
+	}
+	if out != encodedReceipt(t, body) {
+		t.Fatalf("the receipt on the output stream changed:\n got %q\nwant %q", out, encodedReceipt(t, body))
+	}
+	want := "warning: the group was published; requirements without a context: 2 (SR-A, SR-B); requirements without a test citation: 1 (SR-C)\n"
+	if errOut != want {
+		t.Fatalf("the error stream must hold one warning line with both counts:\n got %q\nwant %q", errOut, want)
+	}
+
+	body = `{"data":{"id":"receipt","result":{"requirements_without_context":[],"requirements_without_test_citation":["SR-C","SR-D"]}}}`
+	_, errOut, err = reCommandStreams(t, receiptServer(t, body), `{"requirements":[]}`, "publish", "--run", "r", "--group", "g", "--file", "-")
+	want = "warning: the group was published; requirements without a context: 0; requirements without a test citation: 2 (SR-C, SR-D)\n"
+	if err != nil || errOut != want {
+		t.Fatalf("one non-empty list still warns with both counts:\n got %q %v\nwant %q", errOut, err, want)
+	}
+}
+
+// Regression guard for SR-RDD-ONBOARD-022: no warning when both lists are
+// empty, when the receipt predates them, or when it holds only one of them;
+// the receipt on the output stream is printed as before.
+func TestSRRDDONBOARD022PublishPrintsNoWarningWithoutGaps(t *testing.T) {
+	for name, body := range map[string]string{
+		"both lists empty": `{"data":{"id":"receipt","result":{"requirements_without_context":[],"requirements_without_test_citation":[]}}}`,
+		"older receipt":    `{"data":{"id":"receipt","result":{"created_requirements":2,"requirement_ids":["SR-A","SR-B"]}}}`,
+		"one list only":    `{"data":{"id":"receipt","result":{"requirements_without_context":["SR-A"]}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, errOut, err := reCommandStreams(t, receiptServer(t, body), `{"requirements":[]}`, "publish", "--run", "r", "--group", "g", "--file", "-")
+			if err != nil || errOut != "" {
+				t.Fatalf("no warning is printed: %q %v", errOut, err)
+			}
+			if out != encodedReceipt(t, body) {
+				t.Fatalf("the receipt on the output stream changed:\n got %q\nwant %q", out, encodedReceipt(t, body))
+			}
+		})
+	}
+}
+
+// refusalServer answers every reverse-engineering call with one refusal.
+func refusalServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// Regression guard for SR-RDD-ONBOARD-020: publish prints every field of a
+// refused citation's detail, the reason word included, and a bare refusal
+// from an older server as before.
+func TestSRRDDONBOARD020PublishPrintsTheRefusedCitation(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"citation position",
+			`{"error":{"code":"source_not_authorized","details":{"reason":"source_not_authorized","cause":"capture_of_another_run","requirement":"SR-A","citation_index":2}}}`,
+			"reverse-engineering refused (server 422): cause: capture_of_another_run\ncitation_index: 2\nreason: source_not_authorized\nrequirement: SR-A"},
+		{"deleted test record",
+			`{"error":{"code":"source_not_authorized","details":{"reason":"source_not_authorized","cause":"test_record_deleted","requirement":"SR-B","source_file_id":"6f1c2b9e-0000-4000-8000-000000000003"}}}`,
+			"reverse-engineering refused (server 422): cause: test_record_deleted\nreason: source_not_authorized\nrequirement: SR-B\nsource_file_id: 6f1c2b9e-0000-4000-8000-000000000003"},
+		{"older server", `{"error":"source_not_authorized"}`, "reverse-engineering refused (server 422): source_not_authorized"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := reCommand(t, refusalServer(t, 422, tc.body), `{"requirements":[]}`, "publish", "--run", "r", "--group", "g", "--file", "-")
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("printed refusal:\n got %v\nwant %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// Regression guard for SR-RDD-ONBOARD-021: refresh-traces prints the reason
+// word and the failing rule, with the entry position where one applies.
+func TestSRRDDONBOARD021RefreshTracesPrintsTheFailingRule(t *testing.T) {
+	input := `{"corpus_fingerprint":"graph","requirements":[{"kind":"system","external_id":"SR-A","expected_fingerprint":"content"}]}`
+	for _, tc := range []struct{ name, body, want string }{
+		{"entry rule",
+			`{"error":{"code":"invalid_trace_refresh","details":{"reason":"invalid_trace_refresh","rule":"duplicate_external_id","entry_index":1}}}`,
+			"reverse-engineering refused (server 422): entry_index: 1\nreason: invalid_trace_refresh\nrule: duplicate_external_id"},
+		{"group key",
+			`{"error":{"code":"invalid_trace_refresh","details":{"reason":"invalid_trace_refresh","rule":"group_key"}}}`,
+			"reverse-engineering refused (server 422): reason: invalid_trace_refresh\nrule: group_key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := reCommand(t, refusalServer(t, 422, tc.body), input, "refresh-traces", "--run", "r", "--group", "g", "--file", "-")
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("printed refusal:\n got %v\nwant %s", err, tc.want)
+			}
+		})
+	}
 }
 
 func TestSRRDDONBOARD008StructuredPublication(t *testing.T) {
@@ -196,6 +342,39 @@ func TestSRRDDONBOARD007GitWorktreeAndIgnoredFiles(t *testing.T) {
 	encoded, _ := json.Marshal(manifest.Repositories[0].Files)
 	if !strings.Contains(string(encoded), "visible.jsp") || strings.Contains(string(encoded), "ignored.xml") || len(manifest.Repositories[0].Revision) != 40 {
 		t.Fatalf("wrong worktree inventory: %+v", manifest)
+	}
+}
+
+// SR-RDD-ONBOARD-024: a root that is not a Git repository leaves a .claude
+// directory out as one subtree exclusion with the agent-metadata reason.
+func TestSRRDDONBOARD024NonGitInventoryLeavesClaudeOut(t *testing.T) {
+	root := t.TempDir()
+	scopeWrite(t, root, map[string]string{
+		"view.jsp":                     "source",
+		".claude/settings.json":        "{}",
+		".claude/skills/rdd/SKILL.md":  "skill",
+		"pkg/.claude/agents/review.md": "agent",
+		"pkg/model.xml":                "model",
+		"AGENTS.md":                    "managed",
+		"CLAUDE.md":                    "managed",
+	})
+	manifest, err := buildReverseInventory([]string{"plain=" + root})
+	if err != nil {
+		t.Fatalf("inventory refused: %v", err)
+	}
+	repo := manifest.Repositories[0]
+	if got := scopePaths(repo.Files); !reflect.DeepEqual(got, []string{"AGENTS.md", "CLAUDE.md", "pkg/model.xml", "view.jsp"}) {
+		t.Fatalf("files under .claude entered the inventory: %v", got)
+	}
+	for _, path := range []string{".claude", "pkg/.claude"} {
+		if !scopeExcluded(repo.Exclusions, path, "subtree", "agent workspace metadata") {
+			t.Fatalf("%s is not one subtree exclusion with the agent-metadata reason: %+v", path, repo.Exclusions)
+		}
+	}
+	for _, exclusion := range repo.Exclusions {
+		if strings.HasPrefix(exclusion.Path, ".claude/") || strings.HasPrefix(exclusion.Path, "pkg/.claude/") {
+			t.Fatalf("a path inside an excluded .claude directory is listed again: %+v", exclusion)
+		}
 	}
 }
 

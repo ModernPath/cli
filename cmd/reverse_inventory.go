@@ -74,6 +74,21 @@ func reverseSafePath(path string) bool {
 	return true
 }
 
+// reverseAgentReason discloses the agent workspace that modernpath install
+// writes under .claude. Only a new inventory leaves it out: reverseSafePath,
+// which capture and source reads share with the server, keeps its list, so a
+// run authorized with such a file still captures and reads it.
+const reverseAgentReason = "agent workspace metadata"
+
+func reverseAgentPath(path string) bool {
+	for _, part := range strings.Split(path, "/") {
+		if part == ".claude" {
+			return true
+		}
+	}
+	return false
+}
+
 func reverseRead(root, path string) ([]byte, error) {
 	if !reverseSafePath(path) {
 		return nil, fmt.Errorf("unsafe source path %q", path)
@@ -248,12 +263,19 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 					return err
 				}
 				relative = filepath.ToSlash(relative)
-				if !reverseSafePath(relative) {
+				reason := ""
+				switch {
+				case !reverseSafePath(relative):
+					reason = "private or workspace metadata"
+				case reverseAgentPath(relative):
+					reason = reverseAgentReason
+				}
+				if reason != "" {
 					kind := "file"
 					if entry.IsDir() {
 						kind = "subtree"
 					}
-					repo.Exclusions = append(repo.Exclusions, reverseExclusion{relative, "private or workspace metadata", kind})
+					repo.Exclusions = append(repo.Exclusions, reverseExclusion{relative, reason, kind})
 					if entry.IsDir() {
 						return filepath.SkipDir
 					}
@@ -282,7 +304,7 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 		}
 		sort.Strings(paths)
 		seen := map[string]bool{}
-		var size int64
+		eligible := []string{}
 		for _, path := range paths {
 			if path == "" || seen[path] {
 				continue
@@ -292,12 +314,20 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "private or workspace metadata", "file"})
 				continue
 			}
+			if reverseAgentPath(path) {
+				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, reverseAgentReason, "file"})
+				continue
+			}
 			// Git lists a tracked link as one path. It is left out and disclosed,
 			// never followed; a non-Git walk keeps refusing it in reverseRead.
 			if gitRoot && reverseIsLink(root, path) {
 				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "symbolic link", "file"})
 				continue
 			}
+			eligible = append(eligible, path)
+		}
+		var size int64
+		for _, path := range eligible {
 			content, err := reverseRead(root, path)
 			if err != nil {
 				return result, err
@@ -305,9 +335,9 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 			size += int64(len(content))
 			if size > 32_000_000 {
 				if len(scopes[key]) > 0 {
-					return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit within the named paths; name fewer or smaller paths", key)
+					return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit within the named paths; name fewer or smaller paths. %s", key, reverseSizeDetail(root, eligible, gitRoot))
 				}
-				return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit; narrow and disclose the scope", key)
+				return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit; narrow and disclose the scope. %s", key, reverseSizeDetail(root, eligible, gitRoot))
 			}
 			repo.Files = append(repo.Files, reverseFile{path, reverseDigest(content), int64(len(content))})
 		}
@@ -427,6 +457,53 @@ func reverseScopeExclusions(ignored, outOfScope []reverseExclusion) []reverseExc
 		}
 	}
 	return append(kept, outOfScope...)
+}
+
+// reverseSizeDetail says what the byte refusal counted: the total size of the
+// files the inventory would include, taken from the file system without
+// reading them, and the five largest top-level folders, the files in the
+// repository root counted as one entry.
+func reverseSizeDetail(root string, paths []string, gitRoot bool) string {
+	var total int64
+	sizes := map[string]int64{}
+	for _, path := range paths {
+		info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		total += info.Size()
+		folder, _, nested := strings.Cut(path, "/")
+		if !nested {
+			folder = ""
+		}
+		sizes[folder] += info.Size()
+	}
+	folders := make([]string, 0, len(sizes))
+	for folder := range sizes {
+		folders = append(folders, folder)
+	}
+	sort.Slice(folders, func(i, j int) bool {
+		if sizes[folders[i]] != sizes[folders[j]] {
+			return sizes[folders[i]] > sizes[folders[j]]
+		}
+		return folders[i] < folders[j]
+	})
+	if len(folders) > 5 {
+		folders = folders[:5]
+	}
+	largest := make([]string, len(folders))
+	for i, folder := range folders {
+		name := folder
+		if name == "" {
+			name = "files in the repository root"
+		}
+		largest[i] = fmt.Sprintf("%s (%d bytes)", name, sizes[folder])
+	}
+	detail := fmt.Sprintf("The files the inventory would include total %d bytes; the limit is 32000000 bytes.", total)
+	if gitRoot {
+		detail += " Tracked files and untracked files that are not ignored both count."
+	}
+	return detail + " Largest top-level folders: " + strings.Join(largest, ", ") + "."
 }
 
 // reverseIsLink reports whether a listed path is a symbolic link, without

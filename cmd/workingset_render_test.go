@@ -6,8 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/modernpath/cli/internal/authoring/diff"
 )
 
 // REQ-CROSS-381 (EPIC-CLI-018): working-set pull renders every stored field a
@@ -94,6 +97,171 @@ func TestREQCROSS381AServedEmptyFieldReadsAsEmptyNotWithheld(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("a served-but-empty field reads as empty (%q), never as withheld:\n%s", want, got)
 		}
+	}
+}
+
+// typedCitations are stored citations of every form: a reference, a typed
+// identity without one, each typed fallback, and two legacy process sources.
+func typedCitations() []any {
+	return []any{
+		map[string]any{"kind": "code", "ref": "lib/billing.ex"},
+		map[string]any{"kind": "code", "repository_key": "app", "revision": "abc123", "path": "lib/typed.ex", "sha256": strings.Repeat("1", 64), "source_file_id": "6f1c2b9e-0000-4000-8000-000000000001"},
+		map[string]any{"kind": "test", "path": "test/only_path_test.exs", "source_file_id": "6f1c2b9e-0000-4000-8000-000000000002"},
+		map[string]any{"kind": "test", "source_file_id": "6f1c2b9e-0000-4000-8000-000000000003"},
+		map[string]any{"kind": "document", "system_doc_id": "doc-77", "version": 3},
+		map[string]any{"kind": "process_source", "id": "USER:2026-10-07:legacy"},
+		map[string]any{"kind": "process_source", "source_tag": "USER:2026-10-07:tagged"},
+	}
+}
+
+const typedCitationLine = "code: lib/billing.ex · code: app@abc123:lib/typed.ex · test: test/only_path_test.exs · " +
+	"test: 6f1c2b9e-0000-4000-8000-000000000003 · document: doc-77 · process_source: USER:2026-10-07:legacy · " +
+	"process_source: USER:2026-10-07:tagged"
+
+// SR-RDD-ONBOARD-023: the by-id render shows one entry, with its kind, for
+// every stored citation; one without a reference by its typed identity.
+func TestSRRDDONBOARD023PullRendersEveryStoredCitation(t *testing.T) {
+	req := wsReq("REQ-TC-001", "Typed citations")
+	req["description"] = "the statement"
+	req["source_citations"] = typedCitations()
+	env := wsEnv(t, wsServe(t, &wsFixture{requirements: []any{req}}))
+	if err := workingSetPull(env, []string{"REQ-TC-001"}, wsNow); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(env.Root, workingSetDir, "REQ-TC-001.md"))
+	if want := "Statement / source:** the statement / " + typedCitationLine + "\n"; !strings.Contains(string(raw), want) {
+		t.Fatalf("every stored citation must render (%q):\n%s", want, raw)
+	}
+}
+
+// SR-RDD-ONBOARD-023: a dash only when the store holds no citation; a record
+// whose citations all lack a reference does not read as having none.
+func TestSRRDDONBOARD023DashOnlyWhenNoCitationIsStored(t *testing.T) {
+	req := wsReq("REQ-TC-002", "Only typed citations")
+	req["description"] = "the statement"
+	req["source_citations"] = []any{
+		map[string]any{"kind": "code", "repository_key": "app", "revision": "abc123", "path": "lib/typed.ex"},
+		map[string]any{"kind": "test", "source_file_id": "6f1c2b9e-0000-4000-8000-000000000003"},
+	}
+	env := wsEnv(t, wsServe(t, &wsFixture{requirements: []any{req}}))
+	if err := workingSetPull(env, []string{"REQ-TC-002"}, wsNow); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(env.Root, workingSetDir, "REQ-TC-002.md"))
+	got := string(raw)
+	if strings.Contains(got, "Statement / source:** the statement / —") {
+		t.Fatalf("a record with stored citations reads as having none:\n%s", got)
+	}
+	if want := "Statement / source:** the statement / code: app@abc123:lib/typed.ex · test: 6f1c2b9e-0000-4000-8000-000000000003\n"; !strings.Contains(got, want) {
+		t.Fatalf("the stored citations must render (%q):\n%s", want, got)
+	}
+}
+
+// SR-RDD-ONBOARD-023: the review render — the bundle and the per-file copy
+// beside it — shows the same entries as the by-id render.
+func TestSRRDDONBOARD023ReviewRenderShowsEveryStoredCitation(t *testing.T) {
+	fx := reviewBundleFixture()
+	fx.requirements[0].(map[string]any)["source_citations"] = typedCitations()
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPullScope(env, true, wsNow); err != nil {
+		t.Fatalf("pull --scope --for-review: %v", err)
+	}
+	dir := latestReviewTestDirectory(t, env.Root, "EPIC-B")
+	bundle := readScopeFile(t, filepath.Join(dir, "REVIEW.md"))
+	if want := "- **Sources:** " + typedCitationLine + "\n"; !strings.Contains(bundle, want) {
+		t.Errorf("the review bundle must show every stored citation (%q):\n%s", want, bundle)
+	}
+	member := readScopeFile(t, filepath.Join(dir, "members", "REQ-B-1.md"))
+	for _, entry := range strings.Split(typedCitationLine, " · ") {
+		if !strings.Contains(member, "- "+entry+"\n") {
+			t.Errorf("the per-file review copy must list %q:\n%s", entry, member)
+		}
+	}
+}
+
+// SR-RDD-ONBOARD-023: a citation is labelled in the web app's order — the typed
+// identity first, even when a differing reference is stored beside it, then
+// the reference — in the by-id render, the review bundle and the per-file copy.
+func TestSRRDDONBOARD023TypedIdentityLabelsACitationFirst(t *testing.T) {
+	citations := []any{
+		map[string]any{"kind": "code", "ref": "lib/stored_ref.ex", "repository_key": "web", "revision": "def456", "path": "lib/typed_with_ref.ex"},
+		map[string]any{"kind": "code", "ref": "lib/billing.ex"},
+		map[string]any{"kind": "code", "repository_key": "app", "revision": "abc123", "path": "lib/typed.ex"},
+	}
+	const line = "code: web@def456:lib/typed_with_ref.ex · code: lib/billing.ex · code: app@abc123:lib/typed.ex"
+
+	req := wsReq("REQ-TC-003", "Typed identity first")
+	req["description"] = "the statement"
+	req["source_citations"] = citations
+	env := wsEnv(t, wsServe(t, &wsFixture{requirements: []any{req}}))
+	if err := workingSetPull(env, []string{"REQ-TC-003"}, wsNow); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(env.Root, workingSetDir, "REQ-TC-003.md"))
+	if want := "Statement / source:** the statement / " + line + "\n"; !strings.Contains(string(raw), want) {
+		t.Errorf("the by-id render must label the typed identity first (%q):\n%s", want, raw)
+	}
+	if strings.Contains(string(raw), "lib/stored_ref.ex") {
+		t.Errorf("a citation with a typed identity must not be labelled by its reference:\n%s", raw)
+	}
+
+	fx := reviewBundleFixture()
+	fx.requirements[0].(map[string]any)["source_citations"] = citations
+	env = wsEnv(t, wsServe(t, fx))
+	if err := workingSetPullScope(env, true, wsNow); err != nil {
+		t.Fatalf("pull --scope --for-review: %v", err)
+	}
+	dir := latestReviewTestDirectory(t, env.Root, "EPIC-B")
+	if bundle := readScopeFile(t, filepath.Join(dir, "REVIEW.md")); !strings.Contains(bundle, "- **Sources:** "+line+"\n") {
+		t.Errorf("the review bundle must label the typed identity first (%q):\n%s", line, bundle)
+	}
+	member := readScopeFile(t, filepath.Join(dir, "members", "REQ-B-1.md"))
+	for _, entry := range strings.Split(line, " · ") {
+		if !strings.Contains(member, "- "+entry+"\n") {
+			t.Errorf("the per-file review copy must list %q:\n%s", entry, member)
+		}
+	}
+}
+
+// Regression guard for SR-RDD-ONBOARD-023: the editable citation list of a
+// scope pull keeps only the citations push can send back, and the push plan
+// derived from it still sends kind and reference only — a typed identity is
+// never listed there, so an edit cannot drop it.
+func TestSRRDDONBOARD023EditableCitationsAndPushPlanAreUnchanged(t *testing.T) {
+	fx := reviewBundleFixture()
+	fx.workSelection["current"].(map[string]any)["members"] = []any{"REQ-B-1"}
+	fx.requirements[0].(map[string]any)["source_citations"] = typedCitations()
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPullScope(env, false, wsNow); err != nil {
+		t.Fatalf("pull --scope: %v", err)
+	}
+	member := readScopeFile(t, filepath.Join(env.Root, workingSetDir, "EPIC-B", "members", "REQ-B-1.md"))
+	if !strings.Contains(member, "```authoring:citations\n- code: lib/billing.ex\n- process_source: USER:2026-10-07:tagged\n```") {
+		t.Fatalf("the editable citation list must hold only the citations with a reference:\n%s", member)
+	}
+	for _, typed := range []string{"app@abc123", "test/only_path_test.exs", "doc-77", "USER:2026-10-07:legacy"} {
+		if strings.Contains(member, typed) {
+			t.Fatalf("a typed identity entered the editable list (%q):\n%s", typed, member)
+		}
+	}
+
+	base := recordFromPayload(scopeRecord{kind: "system", payload: fx.requirements[0].(map[string]any)}, nil)
+	if p, refusal := diff.Diff(base, base); refusal != nil || !p.Empty() {
+		t.Fatalf("an unedited record must plan nothing: %+v %v", p, refusal)
+	}
+	edited := base
+	edited.SourceCitations = append(append([]string{}, base.SourceCitations...), "test: test/new_test.exs")
+	p, refusal := diff.Diff(base, edited)
+	if refusal != nil {
+		t.Fatalf("a citation edit was refused: %v", refusal)
+	}
+	want := []any{
+		map[string]any{"kind": "code", "ref": "lib/billing.ex"},
+		map[string]any{"kind": "process_source", "ref": "USER:2026-10-07:tagged"},
+		map[string]any{"kind": "test", "ref": "test/new_test.exs"},
+	}
+	if got := buildPatchRecord("system", "REQ-B-1", "sr-b1-fp", "ctx", p)["source_citations"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("push must send kind and reference only:\n got %v\nwant %v", got, want)
 	}
 }
 
