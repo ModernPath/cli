@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.17.0 — drafts survive a refresh, reviews keep their evidence, and onboarding works area by area
+
+### Upgrading from v0.16.0
+
+- Run `modernpath install` after upgrading so the embedded process kit,
+  reviewer instructions, CLI guide and tooling skill match this release.
+- `author context --file` needs a server advertising `author.set_context`;
+  an older server refuses it before any requirement reads or writes.
+  System-wide reverse-engineering coverage and run listing also need the
+  corresponding server reads. Verify supported server deployments before
+  publishing this release.
+
+### Draft protection and review evidence
 
 - Scoped authoring pulls stage required reads and protect edited, deleted and
   unbaselined managed files with a local hash baseline. Packet 404 preserves
@@ -40,6 +52,39 @@
   named path under it, `delivery-proof` without `--run` points to `--run` for
   an older capture that holds such files, and the size refusal states the
   total counted and the largest top-level folders.
+
+
+### Baseline a repository area by area
+
+- `reverse-engineer inventory --like-run <run>` inventories again the area
+  an earlier run covered and reports which files differ. It cannot be
+  combined with `--path`.
+- Tracked file identities use committed Git content, keeping the capture
+  consistent with Git attributes and local working-tree changes.
+- `reverse-engineer coverage --system` reads coverage across the system's
+  runs; `--files` includes the file detail. `reverse-engineer runs` lists
+  runs with pagination, and `--all` follows every page.
+- At a moved tip, `reverse-engineer delivery-proof --run <run>` names the
+  captured revision and whether it is an ancestor of the tested tip. It
+  refuses proof when the tested commit lacks an authorized file.
+- The onboarding skills describe how a multi-area sweep runs, where to keep
+  verification inputs, and the publication and coverage checks.
+
+### Assign bounded contexts in bulk
+
+- `author context --file <entries.json>` sets the bounded context code and
+  name of up to 500 requirements in one server write. Entries can give their
+  own context or use `--context` and `--context-name`. If any entry is refused,
+  nothing is written; pull the requirements again after an accepted write.
+- `author update --context-name` sets a requirement's bounded context name.
+
+### Delivery guidance and setup
+
+- Updated process and tooling instructions cover parked work, blockers across
+  suspension and resumption, active obligations, obsolete historical owners,
+  exact reconciliation blockers and fresh entry audits.
+- The canonical CLI guide is embedded in the installed kit, with installation
+  channels, upgrade commands and clearer production sign-in guidance.
 
 ## v0.16.0 — the upload path fits a legacy estate
 
