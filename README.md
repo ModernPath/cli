@@ -3,9 +3,11 @@
 This directory contains the Go implementation of the `modernpath` command.
 
 The single user and technical guide is
-[`docs/cli.md`](../../docs/cli.md). Do not maintain installation, connection,
+[`docs/cli.md`](https://github.com/ModernPath/cli/blob/main/docs/cli.md). Do not maintain installation, connection,
 or command examples in this contributor README; update the canonical guide and
-the relevant Cobra help together.
+the relevant Cobra help together. In this monorepo, the canonical source is
+`modernpath-core/docs/cli.md`; the source export publishes it as `docs/cli.md`
+in `ModernPath/cli`. Keep the embedded guide in sync with that source.
 
 ## Contributor entry points
 

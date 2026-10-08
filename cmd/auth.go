@@ -141,8 +141,9 @@ var authCmd = &cobra.Command{
 	Long: `Sign in to the ModernPath platform.
 
 The credential is bound to the environment this checkout targets: --api-url,
-then --local, then the binding set with 'modernpath env --set=<env>', then
-production.
+then --local, then --test, then the binding set with 'modernpath env --set=<env>',
+then production. A fresh repository targets production. To replace a saved
+local binding, run 'modernpath env --set=production' before signing in.
 
 If you have access to more than one workspace, the browser sign-in lists
 them and asks which one to use. The choice is stored and reused on the next

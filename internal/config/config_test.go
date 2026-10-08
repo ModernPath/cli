@@ -506,3 +506,32 @@ func TestWriteAuthProvisionsAndDoesNotDuplicateTheIgnoreRules(t *testing.T) {
 		t.Fatalf("auth.json must appear exactly once, got %d in:\n%s", got, raw)
 	}
 }
+
+func TestAPIURLDefaultsAndExplicitBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		binding string
+		want    string
+	}{
+		{"fresh repository", "", "https://api.modernpath.ai"},
+		{"binding without URL", `{"system_id":42}`, "https://api.modernpath.ai"},
+		{"explicit local", `{"api_url":"http://localhost:4000"}`, LocalAPIURL},
+		{"explicit custom", `{"api_url":"https://core.example.com"}`, "https://core.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := chdirTemp(t)
+			if tc.binding != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".modernpath", ConfigFile), []byte(tc.binding), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := ReadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.APIURL != tc.want {
+				t.Fatalf("API URL = %q, want %q", got.APIURL, tc.want)
+			}
+		})
+	}
+}
