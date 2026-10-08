@@ -452,6 +452,102 @@ func TestSRRDDONBOARD035TipWithoutAnAuthorizedFileRefusesWithoutEvidence(t *test
 	}
 }
 
+// scopeDeliveryProofStreams runs the scoped delivery proof with stdout and
+// stderr kept apart.
+func scopeDeliveryProofStreams(t *testing.T, server *httptest.Server, input asBuiltDeliveryInput, scoped bool) (string, string, error) {
+	t.Helper()
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"delivery-proof", "--file", "-"}
+	if scoped {
+		args = append(args, "--run", "scoped-run")
+	}
+	return reCommandStreams(t, server, string(raw), args...)
+}
+
+// SR-RDD-ONBOARD-046 AC1: at a tip past the captured commit the command states
+// the proof on stderr — the server's result word, the tip, the captured
+// revision, the ancestry and the files measured — so the agent sees what the
+// retained report says without opening it.
+func TestAsBuiltDeliveryProofStatesTheProofAtANewerTip(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	captured := featureCommit(t, root)
+	unrelatedCommits(t, root, 2)
+	gitRun(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "merge", "-q", "--no-ff", "-m", "merge feature", "feature")
+	gitRun(t, root, "push", "-q", "origin", "main")
+	tip := gitRun(t, root, "rev-parse", "HEAD")
+	scoped.Revision = captured
+	input.TestedRevision = tip
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	out, errOut, err := scopeDeliveryProofStreams(t, state.start(t), input, true)
+	if err != nil {
+		t.Fatalf("delivery proof at a newer tip refused: %v\n%s", err, out)
+	}
+	want := "delivery proof recorded at " + tip + " · captured " + captured + " · ancestor: true · 1 file measured\n"
+	if errOut != want {
+		t.Fatalf("stderr must state the proof:\n got %q\nwant %q", errOut, want)
+	}
+}
+
+// SR-RDD-ONBOARD-046 AC2: at the captured revision the line names the tip and
+// the files measured; without --run only the tip.
+func TestAsBuiltDeliveryProofStatesTheProofAtTheCapturedRevisionAndUnscoped(t *testing.T) {
+	_, input, scoped := scopeDeliveryFixture(t)
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	_, errOut, err := scopeDeliveryProofStreams(t, state.start(t), input, true)
+	if err != nil {
+		t.Fatalf("scoped delivery proof refused: %v", err)
+	}
+	if want := "delivery proof recorded at " + input.TestedRevision + " · 1 file measured\n"; errOut != want {
+		t.Fatalf("stderr must state the proof:\n got %q\nwant %q", errOut, want)
+	}
+
+	_, whole := asBuiltDeliveryFixture(t)
+	state = &scopeRunServer{}
+	_, errOut, err = scopeDeliveryProofStreams(t, state.start(t), whole, false)
+	if err != nil {
+		t.Fatalf("whole-repository delivery proof refused: %v", err)
+	}
+	if want := "delivery proof recorded at " + whole.TestedRevision + "\n"; errOut != want {
+		t.Fatalf("stderr must state the proof:\n got %q\nwant %q", errOut, want)
+	}
+}
+
+// SR-RDD-ONBOARD-046 AC3: stdout is one JSON object carrying the server's
+// receipt under data and the collected report under report, the same report
+// the server retained.
+func TestAsBuiltDeliveryProofPrintsTheReportBesideTheReceipt(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	captured := featureCommit(t, root)
+	gitRun(t, root, "merge", "-q", "--squash", "feature")
+	scopeCommit(t, root, "feature, squashed")
+	gitRun(t, root, "push", "-q", "origin", "main")
+	scoped.Revision = captured
+	input.TestedRevision = gitRun(t, root, "rev-parse", "HEAD")
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	out, _, err := scopeDeliveryProofStreams(t, state.start(t), input, true)
+	if err != nil {
+		t.Fatalf("delivery proof refused: %v\n%s", err, out)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal([]byte(out), &printed); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%s", err, out)
+	}
+	data, _ := printed["data"].(map[string]any)
+	if data["result"] != "recorded" || data["report_digest"] == nil {
+		t.Fatalf("stdout must keep the server's receipt under data: %v", printed)
+	}
+	report, _ := printed["report"].(map[string]any)
+	if !reflect.DeepEqual(report, state.report) {
+		t.Fatalf("stdout must carry the retained report under report:\n got %v\nwant %v", report, state.report)
+	}
+	if report["captured_revision"] != captured {
+		t.Fatalf("the printed report must name the captured revision: %v", report)
+	}
+}
+
 // Pin: a proof at the captured revision names neither the captured revision
 // nor an ancestry, so its report keeps its keys.
 func TestSRRDDONBOARD035ReportAtTheCapturedRevisionGainsNoKeys(t *testing.T) {

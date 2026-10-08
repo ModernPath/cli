@@ -34,8 +34,10 @@ created or changed, by the person or by the agent after the person agreed: an
 inventory of a dirty repository marks the whole capture dirty, and a run
 captured dirty cannot be accepted as built, whatever is committed later,
 without a new authorized run with its own capture. As-built acceptance also
-needs the tested commit to be the tip of the remote default branch (the
-`mp-process-cli` verification steps). Put untracked files that are not source
+needs the tested commit to be the tip of the remote default branch — which may
+lie past the captured commit, when the commits between changed none of the
+files the run authorized (the `mp-process-cli` verification steps). Put
+untracked files that are not source
 into the repository's local exclude file: ignored files are left out and
 disclosed, and tracked files are listed whatever the ignore rules say, except
 symbolic links, private paths and files under `.claude`, which are left out and
@@ -175,9 +177,13 @@ without a test in the end report. These reusable inputs are staging
 artifacts, not another requirement store.
 
 Before a run's first publication, show the person the bounded contexts the run
-derived that the sweep has not confirmed yet, a code and a name each, drawn
-from the recovered behavior with analysis subsystems as an input only; the
-person confirms or changes them, in either run mode. This is a naming
+derived that the sweep has not confirmed yet, a code and a name each, shown in
+the question itself, each with the files and the requirements it covers, and
+written as the same list to
+`.modernpath/reverse-engineering.runs/<folder>/contexts-proposed.md` so the
+person can read it before answering, drawn from the recovered behavior with
+analysis subsystems as an input only; the person confirms or changes them, in
+either run mode. This is a naming
 confirmation of the list, asked once per run, not an approval of content; a
 run whose contexts are all confirmed asks nothing. Record a confirmed context
 on every requirement created, never an unconfirmed one; a reuse entry carries

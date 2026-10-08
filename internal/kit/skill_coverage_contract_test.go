@@ -131,6 +131,8 @@ func TestReverseEngineerSkillPreparesTheRepository(t *testing.T) {
 		"Commit the files `modernpath install` created or changed, by the person or by the agent after the person agreed",
 		"a run captured dirty cannot be accepted as built, whatever is committed later, without a new authorized run with its own capture",
 		"the tip of the remote default branch",
+		// SR-RDD-ONBOARD-049: the tip may lie past the capture
+		"which may lie past the captured commit, when the commits between changed none of the files the run authorized",
 		"into the repository's local exclude file",
 		"tracked files are listed whatever the ignore rules say, except symbolic links, private paths and files under `.claude`, which are left out and disclosed",
 		"The repository stays clean and at one commit from the first inventory until acceptance, and the kit is not updated during a sweep.",
@@ -147,7 +149,8 @@ func TestReverseEngineerSkillRecordsContextAndTests(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireInstalledMarkers(t, "the installed rdd-reverse-engineer does not record contexts and tests", installedReverseEngineeringInstructions(t, root), []string{
-		"Before a run's first publication, show the person the bounded contexts the run derived that the sweep has not confirmed yet, a code and a name each",
+		// SR-RDD-ONBOARD-049: shown in the question with what each covers
+		"Before a run's first publication, show the person the bounded contexts the run derived that the sweep has not confirmed yet, a code and a name each, shown in the question itself, each with the files and the requirements it covers, and written as the same list to `.modernpath/reverse-engineering.runs/<folder>/contexts-proposed.md` so the person can read it before answering",
 		"with analysis subsystems as an input only",
 		"the person confirms or changes them, in either run mode",
 		"This is a naming confirmation of the list, asked once per run, not an approval of content",

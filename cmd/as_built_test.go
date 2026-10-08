@@ -153,6 +153,137 @@ func TestSRRDDASBUILTCLI001ExecutionProofRetainsExactReportAndDurableIDs(t *test
 	}
 }
 
+// executionProofInput is a complete execution report with n identical results,
+// each editable before it is sent.
+func executionProofInput(n int) map[string]any {
+	report := `{"command":"existing tests","environment":"local","executed_tests":[{"test_case_ref":"catalog test","result":"pass"}]}`
+	results := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		results = append(results, map[string]any{"target_external_id": "SR-X", "target_type": "requirement", "target_clause": "AC-X", "test_case_ref": "catalog test", "role": "LOWER", "result": "pass", "content_fingerprint": "exact", "revision": "tested-sha", "detail": map[string]any{"assertion": "product is visible", "production_subject": "catalog.products"}})
+	}
+	return map[string]any{"key": "execution", "kind": "local_test", "sha": "tested-sha", "ran_at": "2026-09-27T09:00:00Z", "raw_evidence": report, "results": results}
+}
+
+// executionProofServer records the posted payload and answers a recorded run.
+func executionProofServer(t *testing.T) (*httptest.Server, *map[string]any, *int) {
+	t.Helper()
+	var received map[string]any
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/sync/contract" {
+			w.WriteHeader(404)
+			return
+		}
+		posts++
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"run": map[string]any{"id": "run-uuid"}, "results": []map[string]string{{"id": "result-uuid"}}, "report_digest": "sha256:server-retained"}})
+	}))
+	t.Cleanup(server.Close)
+	return server, &received, &posts
+}
+
+// SR-RDD-ONBOARD-045 AC1: result and role are case-normalized before the
+// check, so a report written as PASS / upper is sent as pass / UPPER.
+func TestAsBuiltExecutionProofNormalizesResultAndRole(t *testing.T) {
+	server, received, _ := executionProofServer(t)
+	input := executionProofInput(1)
+	input["results"].([]map[string]any)[0]["result"] = "PASS"
+	input["results"].([]map[string]any)[0]["role"] = "upper"
+	raw, _ := json.Marshal(input)
+	out, err := reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	if err != nil || !strings.Contains(out, "result-uuid") {
+		t.Fatalf("a report with a differently cased result and role was refused: %v\n%s", err, out)
+	}
+	results, _ := (*received)["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("posted results: %v", (*received)["results"])
+	}
+	sent, _ := results[0].(map[string]any)
+	if sent["result"] != "pass" || sent["role"] != "UPPER" {
+		t.Fatalf("the posted result must carry the normalized vocabulary, got result=%v role=%v", sent["result"], sent["role"])
+	}
+}
+
+// SR-RDD-ONBOARD-045 AC2: a value outside the vocabulary is refused naming
+// the result position, the field, the value and the accepted values.
+func TestAsBuiltExecutionProofNamesTheValueOutsideTheVocabulary(t *testing.T) {
+	server, _, posts := executionProofServer(t)
+	input := executionProofInput(4)
+	input["results"].([]map[string]any)[3]["result"] = "ok"
+	raw, _ := json.Marshal(input)
+	_, err := reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	want := `results[3].result "ok": expected pass|fail|error|skip|inconclusive`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must read %q, got %v", want, err)
+	}
+	if *posts != 0 {
+		t.Fatalf("a refused report was posted")
+	}
+	input = executionProofInput(2)
+	input["results"].([]map[string]any)[1]["role"] = "both"
+	raw, _ = json.Marshal(input)
+	_, err = reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	if want = `results[1].role "both": expected LOWER|UPPER`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must read %q, got %v", want, err)
+	}
+	input = executionProofInput(1)
+	input["results"].([]map[string]any)[0]["target_type"] = "epic"
+	raw, _ = json.Marshal(input)
+	_, err = reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	if want = `results[0].target_type "epic": expected requirement`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must read %q, got %v", want, err)
+	}
+}
+
+// SR-RDD-ONBOARD-045 AC3: a missing field and a foreign revision are named
+// with the result position.
+func TestAsBuiltExecutionProofNamesTheMissingFieldAndTheForeignRevision(t *testing.T) {
+	server, _, posts := executionProofServer(t)
+	input := executionProofInput(2)
+	input["results"].([]map[string]any)[0]["detail"].(map[string]any)["assertion"] = ""
+	raw, _ := json.Marshal(input)
+	_, err := reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	if want := "results[0].detail.assertion is required"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must read %q, got %v", want, err)
+	}
+	input = executionProofInput(2)
+	input["results"].([]map[string]any)[1]["revision"] = "other-sha"
+	raw, _ = json.Marshal(input)
+	_, err = reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	if want := `results[1].revision "other-sha": expected the report's sha tested-sha`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must read %q, got %v", want, err)
+	}
+	if *posts != 0 {
+		t.Fatalf("a refused report was posted")
+	}
+}
+
+// SR-RDD-ONBOARD-045 AC4: the raw report's executed_tests results are checked
+// against the same lowercase vocabulary; the raw string is still sent as is.
+func TestAsBuiltExecutionProofChecksTheExecutedTestsResults(t *testing.T) {
+	server, received, posts := executionProofServer(t)
+	input := executionProofInput(1)
+	input["raw_evidence"] = `{"command":"existing tests","environment":"local","executed_tests":[{"test_case_ref":"catalog test","result":"PASS"}]}`
+	raw, _ := json.Marshal(input)
+	_, err := reCommand(t, server, string(raw), "execution-proof", "--file", "-")
+	want := `raw_evidence.executed_tests[0].result "PASS": expected pass|fail|error|skip|inconclusive`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must read %q, got %v", want, err)
+	}
+	if *posts != 0 {
+		t.Fatalf("a refused report was posted")
+	}
+	report := `{"command":"existing tests","environment":"local","executed_tests":[{"test_case_ref":"catalog test","result":"inconclusive"}]}`
+	input["raw_evidence"] = report
+	raw, _ = json.Marshal(input)
+	if _, err := reCommand(t, server, string(raw), "execution-proof", "--file", "-"); err != nil {
+		t.Fatalf("the server's inconclusive result was refused: %v", err)
+	}
+	if (*received)["raw_evidence"] != report {
+		t.Fatalf("the raw report must be sent unchanged: %v", (*received)["raw_evidence"])
+	}
+}
+
 func TestSRRDDASBUILTCLI001ExecutionProofRequiresServerRetainedDigest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/sync/contract" {

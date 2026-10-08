@@ -165,8 +165,17 @@ const unresolvedCitation = "Unresolved source"
 // citationLabel names a citation in the order the web app does: the typed
 // identity (repository, revision and path), else the stored reference, else
 // the path, the source file id or the document id; a legacy process source
-// falls back to its id.
+// falls back to its id. A citation that names its test case shows it after
+// the file (SR-RDD-ONBOARD-047).
 func citationLabel(c map[string]any) string {
+	label := citationFileLabel(c)
+	if ref := citationText(c, "test_case_ref"); ref != "" && label != unresolvedCitation {
+		return label + " › " + ref
+	}
+	return label
+}
+
+func citationFileLabel(c map[string]any) string {
 	repository, revision, path := citationText(c, "repository_key"), citationText(c, "revision"), citationText(c, "path")
 	if repository != "" && revision != "" && path != "" {
 		return repository + "@" + revision + ":" + path
@@ -301,9 +310,17 @@ func renderItemBody(item wsItem, gates []any) string {
 			servedOr(m, "description", notServed), citationLine(m, notServed))
 		fmt.Fprintf(&b, "- **Context / stage:** %s / %s\n",
 			fieldOr(m, "context", notServed), fieldOr(m, "stage", notServed))
+		// SR-RDD-ONBOARD-047: a user requirement carries the actor and the
+		// intended outcome the publisher wrote (the `intended_use` column).
+		if isUR {
+			fmt.Fprintf(&b, "- **Actor / outcome:** %s / %s\n",
+				servedOr(m, "actor", notServed), servedOr(m, "intended_use", notServed))
+		}
 		fmt.Fprintf(&b, "- **Priority:** %s\n", servedOr(m, "priority", notServed))
+		// The release follows the owner's rule: a served-null release is "—",
+		// only a key the read does not carry keeps the marker.
 		fmt.Fprintf(&b, "- **Owner / release:** %s / %s\n",
-			servedOr(m, "owner", notServed), fieldOr(m, "release", notServed))
+			servedOr(m, "owner", notServed), servedOr(m, "release", notServed))
 		// REQ-CROSS-223: the full declared relation list, falling back to the
 		// single parent. A served-but-empty slot reads "—" (no relations
 		// declared), never an absence marker claiming a cause it lacks.

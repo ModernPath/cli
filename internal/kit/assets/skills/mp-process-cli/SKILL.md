@@ -924,7 +924,7 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `source_not_authorized` (from `reverse-engineer refresh-traces`) | server | the word comes bare: a stored code or test citation of a named requirement has no valid source file id, cites a document, or fails the publish checks against the capture of the run given to `--run`; nothing was recorded | "Refusals in a sweep" in the onboarding section; correct the citation, then refresh again |
 | `stale_corpus` (from `reverse-engineer refresh-traces`) | server | the input's `corpus_fingerprint` is not the current one: requirements, links or lifecycles changed after the preflight it came from; nothing was recorded | `reverse-engineer preflight` again and its `data.corpus_fingerprint` in the input, with the same run and the same group key |
 | `stale_corpus` (from `reverse-engineer authorize`) | server | the requirements changed after the saved preflight; nothing was recorded. `reverse-engineer publish` never answers `stale_corpus` | onboarding step 4 |
-| `existing_requirement_conflict` / `parent_not_found` / `parent_not_governed` (from `reverse-engineer publish`) | server | a record the group names collides: an `external_id` the group creates already exists in the system; a reuse entry names a requirement whose fingerprint moved from its `reuse_fingerprint`, or one that is missing, deleted, DERIVED or OBSOLETE; a parent is missing or deleted, or is not governed (DERIVED or OBSOLETE under a confirmed system requirement). Publish checks nothing of the corpus outside the records the group names, and nothing of the group is recorded | when the record is the run's own — a parent in a group not yet published, a reuse entry of a requirement you corrected — publish the parent first or rebuild the entry from the current fingerprint. Otherwise the record was created or changed outside the run and the run is no longer current (stop list item 5): stop and show the person the refusal. Sending the same group again does not help, and another run does not clear it; do not authorize one without the person |
+| `existing_requirement_conflict` / `parent_not_found` / `parent_not_governed` (from `reverse-engineer publish`) | server | a record the group names collides: an `external_id` the group creates already exists in the system; a reuse entry names a requirement whose fingerprint moved from its `reuse_fingerprint`, or one that is missing, deleted, DERIVED or OBSOLETE; a parent is missing or deleted, or is not governed (DERIVED or OBSOLETE under a confirmed system requirement). Publish checks nothing of the corpus outside the records the group names, and nothing of the group is recorded | the refusal's `details` name the `requirement`, the `rule` it broke and, for a parent rule, the `parent`; correct that entry and publish the same group in the same run. When the record is the run's own — a parent in a group not yet published, a reuse entry of a requirement you corrected — publish the parent first or rebuild the entry from the current fingerprint. Otherwise the record was created or changed outside the run and the run is no longer current (stop list item 5): stop and show the person the refusal. Sending the same group again does not help, and another run does not clear it; do not authorize one without the person |
 | `invalid_trace_refresh` | server | the `reverse-engineer refresh-traces` input was refused before anything was read; the refusal names the `rule` that failed and, for an entry, its `entry_index` (zero-based). Rules in order: `group_key`, `top_level_keys`, `corpus_fingerprint`, `requirement_count`, `entry_keys`, `kind`, `external_id`, `expected_fingerprint`, `duplicate_external_id` | send the accepted input: a group key of 1 to 255 bytes; top-level keys exactly `corpus_fingerprint` and `requirements`; 1 to 500 entries, each exactly `kind: "system"`, `external_id` and a nonempty `expected_fingerprint`; no `external_id` twice |
 
 ## Reverse-engineering onboarding (store-backed)
@@ -958,7 +958,8 @@ them again. New runs follow the sequence below.
      captured dirty cannot be accepted as built, whatever is committed later,
      without a new authorized run with its own capture. As-built acceptance
      also needs the tested commit to be the tip of the remote default branch
-     (verification step 3 below).
+     (verification step 3 below), which may lie past the captured commit, when
+     the commits between changed none of the files the run authorized.
    - Put untracked files that are not source, such as build output and editor
      files, into the repository's local exclude file (`git rev-parse
      --git-path info/exclude` names it). Ignored files are left out of the
@@ -1265,9 +1266,12 @@ shows a requirement without one as Unclassified.
 In each run, after the source is captured and the behavior derived and before
 anything is published, show the person the contexts the run derived that are
 not yet in `.modernpath/reverse-engineering.runs/confirmed-contexts.json`, a
-code and a name each. Draw them from the behavior you derived; the analysis
-subsystems are an input only, since a subsystem is not a bounded context. The
-person confirms or changes them, in either run mode. This is a naming
+code and a name each, shown in the question itself, each with the files and
+the requirements it covers, and written as the same list to
+`.modernpath/reverse-engineering.runs/<folder>/contexts-proposed.md` so the
+person can read it before answering. Draw them from the behavior you derived;
+the analysis subsystems are an input only, since a subsystem is not a bounded
+context. The person confirms or changes them, in either run mode. This is a naming
 confirmation of the list, asked once per run, not an approval of each
 context's content. A run whose derived contexts are all on the list asks
 nothing. Add the confirmed contexts to the file, a list of `{"context":
@@ -1462,10 +1466,13 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    `compliance_test_run`. Reusing a key replays the retained execution; changed
    reports or results require a new key. Each result includes `target_external_id`,
    `target_type: "requirement"`, `target_clause`, exact `test_case_ref`,
-   `role: "LOWER" | "UPPER"`, `result`, `content_fingerprint`, full `revision`,
-   and `detail: {assertion, production_subject}`. The report enumerates
-   `executed_tests: [{test_case_ref, result}]`, `command`, `environment` and,
-   for CI, `ci: {provider, repository, run, job, attempt, tested_commit}`.
+   `role: "LOWER" | "UPPER"`, `result: "pass" | "fail" | "error" | "skip" |
+   "inconclusive"` (the CLI normalizes the case of both), `content_fingerprint`,
+   full `revision`, and `detail: {assertion, production_subject}`. The report
+   enumerates `executed_tests: [{test_case_ref, result}]` with the same result
+   values, lowercase, `command`, `environment` and, for CI, `ci: {provider,
+   repository, run, job, attempt, tested_commit}`. A refused report names the
+   result position, the field, the value and the accepted values.
 3. For every repository, `modernpath reverse-engineer delivery-proof --file
    .modernpath/reverse-engineering.runs/<folder>/delivery.json` takes `key`,
    `repository_key`, local `root`, exact `tested_revision` and captured

@@ -149,6 +149,30 @@ func TestSRRDDONBOARD020PublishPrintsTheRefusedCitation(t *testing.T) {
 	}
 }
 
+// Regression guard for SR-RDD-ONBOARD-044 AC4: a collision refusal's details
+// — requirement, rule, parent, work_status — print as the citation refusal's
+// do, so the agent corrects the named entry without a CLI change.
+func TestSRRDDONBOARD044PublishPrintsTheCollisionRefusal(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"missing parent",
+			`{"error":{"code":"parent_not_found","details":{"reason":"parent_not_found","requirement":"SR-X-002","parent":"UR-X-001","rule":"missing"}}}`,
+			"reverse-engineering refused (server 422): parent: UR-X-001\nreason: parent_not_found\nrequirement: SR-X-002\nrule: missing"},
+		{"ungoverned parent",
+			`{"error":{"code":"parent_not_governed","details":{"reason":"parent_not_governed","requirement":"SR-X-002","parent":"UR-X-001","work_status":"DERIVED"}}}`,
+			"reverse-engineering refused (server 422): parent: UR-X-001\nreason: parent_not_governed\nrequirement: SR-X-002\nwork_status: DERIVED"},
+		{"reuse rule",
+			`{"error":{"code":"existing_requirement_conflict","details":{"reason":"existing_requirement_conflict","requirement":"UR-X-001","rule":"reuse_fingerprint_moved"}}}`,
+			"reverse-engineering refused (server 422): reason: existing_requirement_conflict\nrequirement: UR-X-001\nrule: reuse_fingerprint_moved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := reCommand(t, refusalServer(t, 422, tc.body), `{"requirements":[]}`, "publish", "--run", "r", "--group", "g", "--file", "-")
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("printed refusal:\n got %v\nwant %s", err, tc.want)
+			}
+		})
+	}
+}
+
 // Regression guard for SR-RDD-ONBOARD-021: refresh-traces prints the reason
 // word and the failing rule, with the entry position where one applies.
 func TestSRRDDONBOARD021RefreshTracesPrintsTheFailingRule(t *testing.T) {

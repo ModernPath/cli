@@ -413,6 +413,8 @@ func TestProcessCliSkillExplainsSweepRefusals(t *testing.T) {
 		"| `invalid_trace_refresh` | server |",
 		// publish never answers stale_corpus; a collision is a stop
 		"`reverse-engineer publish` never answers `stale_corpus`",
+		// SR-RDD-ONBOARD-049 / 044: the collision refusal names what to correct
+		"the refusal's `details` name the `requirement`, the `rule` it broke and, for a parent rule, the `parent`; correct that entry and publish the same group in the same run",
 		"stop and show the person the refusal. Sending the same group again does not help, and another run does not clear it; do not authorize one without the person",
 		// each collision, and the stop it is when the record came from outside the run
 		"an `external_id` the group creates already exists in the system; a reuse entry names a requirement whose fingerprint moved from its `reuse_fingerprint`, or one that is missing, deleted, DERIVED or OBSOLETE; a parent is missing or deleted, or is not governed (DERIVED or OBSOLETE under a confirmed system requirement)",
@@ -485,6 +487,9 @@ func TestProcessCliSkillPreparesTheRepository(t *testing.T) {
 		"or you do after the person agreed to a commit in their repository",
 		"an inventory of a dirty repository marks the whole capture dirty, and a run captured dirty cannot be accepted as built, whatever is committed later, without a new authorized run with its own capture",
 		"the tip of the remote default branch (verification step 3 below)",
+		// SR-RDD-ONBOARD-049: the tip may lie past the capture; the sentence
+		// says so where it is read, in the preparation step
+		"the tip of the remote default branch (verification step 3 below), which may lie past the captured commit, when the commits between changed none of the files the run authorized",
 		// the delivery proof of a run at a newer tip names the run
 		"Add `--run CAPTURE-RUN` for a run inventoried with `--path`, for a run whose capture holds files under `.claude`, which a new inventory leaves out, and for acceptance at a default-branch tip past the commit the run captured",
 		"and at a newer tip the captured revision and whether it is an ancestor of the tip; that is shown, not required",
@@ -569,8 +574,9 @@ func TestProcessCliSkillSaysWhatARequirementCarries(t *testing.T) {
 	requireSkillMarkers(t, "the onboarding sequence does not say what a requirement carries", section, []string{
 		// the context fields in the contract
 		"Each requirement also carries `context`, the bounded-context code, and `context_name`, its name, each at most 255 characters. Heartbeat groups requirements by the code.",
-		// contexts confirmed before each run's first publish, only new ones
-		"after the source is captured and the behavior derived and before anything is published, show the person the contexts the run derived that are not yet in `.modernpath/reverse-engineering.runs/confirmed-contexts.json`, a code and a name each",
+		// contexts confirmed before each run's first publish, only new ones —
+		// shown in the question with what each covers (SR-RDD-ONBOARD-049)
+		"after the source is captured and the behavior derived and before anything is published, show the person the contexts the run derived that are not yet in `.modernpath/reverse-engineering.runs/confirmed-contexts.json`, a code and a name each, shown in the question itself, each with the files and the requirements it covers, and written as the same list to `.modernpath/reverse-engineering.runs/<folder>/contexts-proposed.md` so the person can read it before answering",
 		"the analysis subsystems are an input only",
 		"The person confirms or changes them, in either run mode.",
 		"This is a naming confirmation of the list, asked once per run, not an approval of each context's content.",
@@ -596,6 +602,23 @@ func TestProcessCliSkillSaysWhatARequirementCarries(t *testing.T) {
 	if old := "A test citation can retain `test_case_ref`"; strings.Contains(section, old) {
 		t.Errorf("the contract still calls test_case_ref optional: %q", old)
 	}
+	// SR-RDD-ONBOARD-049: the bare sentence let the agent ask for a confirmation
+	// that showed the person nothing to confirm.
+	if old := "a code and a name each. Draw them from"; strings.Contains(section, old) {
+		t.Errorf("the context confirmation again shows the person only a code and a name: %q", old)
+	}
+}
+
+// SR-RDD-ONBOARD-049: the verification step states the execution-proof
+// vocabulary, so an agent writes the words the CLI and the server accept
+// instead of learning them from a refusal.
+func TestProcessCliSkillStatesTheProofVocabulary(t *testing.T) {
+	section := normalizedSkillSection(t, onboardingHeading)
+	requireSkillMarkers(t, "the verification step does not state the proof vocabulary", section, []string{
+		"`role: \"LOWER\" | \"UPPER\"`",
+		"`result: \"pass\" | \"fail\" | \"error\" | \"skip\" | \"inconclusive\"` (the CLI normalizes the case of both)",
+		"The report enumerates `executed_tests: [{test_case_ref, result}]` with the same result values, lowercase,",
+	})
 }
 
 // SR-RDD-ONBOARD-019: a customer's coverage was reported complete with 710

@@ -44,6 +44,31 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The export folder is the server's slug for the system at this moment;
+	// the bound slug was recorded at import or connect. The server's is read
+	// before any download — from the authenticated system list, never from
+	// the archive being validated — and a drift is named with its remedy
+	// (SR-RDD-ONBOARD-048). The binding is not rewritten here: the local
+	// store and the export folder are keyed on it.
+	served, err := servedSystemSlug(client, cfg.SystemID)
+	if err != nil {
+		if errors.Is(err, api.ErrUnauthorized) {
+			err = env.credentialRejected()
+		}
+		printError("Failed to identify bound system: %v\n", err)
+		return err
+	}
+	slug := cfg.SystemSlug
+	if slug == "" {
+		// A factory-only binding can omit the slug.
+		slug = served
+	}
+	if slug != served {
+		err = fmt.Errorf("the server's export folder for system %d is .modernpath/%s, this workspace is bound to .modernpath/%s; refresh the binding with modernpath factory connect", cfg.SystemID, served, slug)
+		printError("%v\n", err)
+		return err
+	}
+
 	// Download system export (documentation only, not specs)
 	printInfo("Downloading system documentation...\n")
 
@@ -61,28 +86,6 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 	// Validate and replace only the bound system's documentation tree. `init`
 	// keeps its separate extract-into-the-directory-being-initialized behavior.
 	printInfo("Extracting documentation...\n")
-	slug := cfg.SystemSlug
-	if slug == "" {
-		// A factory-only binding can omit the slug. Resolve it from the
-		// authenticated system list, not from the archive being validated.
-		var systems []api.System
-		systems, err = client.ListSystems()
-		if err != nil {
-			printError("Failed to identify bound system: %v\n", err)
-			return err
-		}
-		for _, system := range systems {
-			if system.ID == cfg.SystemID {
-				slug = system.Slug
-				break
-			}
-		}
-		if slug == "" {
-			err = fmt.Errorf("bound system %d has no reachable export slug", cfg.SystemID)
-			printError("Failed to identify bound system: %v\n", err)
-			return err
-		}
-	}
 	configDir, err := config.WorkspaceConfigDir()
 	if err != nil {
 		return err
@@ -116,4 +119,19 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 
 	printSuccess("Documentation sync complete!\n")
 	return nil
+}
+
+// servedSystemSlug reads the export slug the server derives for the bound
+// system now.
+func servedSystemSlug(client *api.Client, systemID int) (string, error) {
+	systems, err := client.ListSystems()
+	if err != nil {
+		return "", err
+	}
+	for _, system := range systems {
+		if system.ID == systemID && system.Slug != "" {
+			return system.Slug, nil
+		}
+	}
+	return "", fmt.Errorf("bound system %d has no reachable export slug", systemID)
 }

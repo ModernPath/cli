@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -133,42 +134,129 @@ func asBuiltExecutionCommand(load func() (*factoryEnv, error)) *cobra.Command {
 		if _, err := time.Parse(time.RFC3339, input.RanAt); err != nil {
 			return fmt.Errorf("invalid ran_at: %w", err)
 		}
-		for _, r := range input.Results {
-			if r.Target == "" || r.TargetType != "requirement" || r.Clause == "" || r.Test == "" || (r.Role != "LOWER" && r.Role != "UPPER") || r.Revision != input.SHA || r.Fingerprint == "" || r.Detail.Assertion == "" || r.Detail.ProductionSubject == "" || (r.Result != "pass" && r.Result != "fail" && r.Result != "error" && r.Result != "skip") {
-				return fmt.Errorf("every clause needs exact requirement, LOWER/UPPER role, execution identity, revision, result and semantic assertion/production subject")
-			}
+		if err := asBuiltCheckExecutionResults(&input); err != nil {
+			return err
 		}
 		env, err := load()
 		if err != nil {
 			return err
 		}
-		return asBuiltRecordEvidence(cmd, env, map[string]any{"external_id": "ASBUILT-EXEC-" + reverseDigest([]byte(input.Key)), "kind": input.Kind, "sha": input.SHA, "ran_at": input.RanAt, "raw_evidence": input.RawEvidence, "results": input.Results})
+		_, err = asBuiltRecordEvidence(cmd, env, map[string]any{"external_id": "ASBUILT-EXEC-" + reverseDigest([]byte(input.Key)), "kind": input.Kind, "sha": input.SHA, "ran_at": input.RanAt, "raw_evidence": input.RawEvidence, "results": input.Results}, nil)
+		return err
 	}
 	return c
 }
 
-func asBuiltRecordEvidence(cmd *cobra.Command, env *factoryEnv, payload map[string]any) error {
+// The execution-proof vocabulary: the server's result words (lowercase) and
+// the trace roles (uppercase). The CLI normalizes the case of both before the
+// check, so a report written as PASS or lower is accepted and sent normalized.
+var (
+	asBuiltResultWords = []string{"pass", "fail", "error", "skip", "inconclusive"}
+	asBuiltRoleWords   = []string{"LOWER", "UPPER"}
+)
+
+// asBuiltCheckExecutionResults normalizes and checks every per-clause result
+// and the raw report's executed_tests, one refusal per finding, naming the
+// position, the field, the value and what is expected (SR-RDD-ONBOARD-045).
+func asBuiltCheckExecutionResults(input *asBuiltExecution) error {
+	for i := range input.Results {
+		r := &input.Results[i]
+		// The refusal quotes the value as written; the normalized one is sent.
+		result, role := r.Result, r.Role
+		r.Result = strings.ToLower(result)
+		r.Role = strings.ToUpper(role)
+		for _, field := range []struct{ name, value string }{
+			{"target_external_id", r.Target}, {"target_clause", r.Clause}, {"test_case_ref", r.Test},
+			{"content_fingerprint", r.Fingerprint}, {"detail.assertion", r.Detail.Assertion}, {"detail.production_subject", r.Detail.ProductionSubject},
+		} {
+			if field.value == "" {
+				return fmt.Errorf("results[%d].%s is required", i, field.name)
+			}
+		}
+		if r.TargetType != "requirement" {
+			return fmt.Errorf("results[%d].target_type %q: expected requirement", i, r.TargetType)
+		}
+		if !slices.Contains(asBuiltRoleWords, r.Role) {
+			return fmt.Errorf("results[%d].role %q: expected %s", i, role, strings.Join(asBuiltRoleWords, "|"))
+		}
+		if !slices.Contains(asBuiltResultWords, r.Result) {
+			return fmt.Errorf("results[%d].result %q: expected %s", i, result, strings.Join(asBuiltResultWords, "|"))
+		}
+		if r.Revision != input.SHA {
+			return fmt.Errorf("results[%d].revision %q: expected the report's sha %s", i, r.Revision, input.SHA)
+		}
+	}
+	// The raw report is sent as written; only its named results are checked,
+	// because the server counts a named pass by the lowercase word.
+	var report struct {
+		ExecutedTests []struct {
+			Result string `json:"result"`
+		} `json:"executed_tests"`
+	}
+	if err := json.Unmarshal([]byte(input.RawEvidence), &report); err != nil {
+		return nil
+	}
+	for i, executed := range report.ExecutedTests {
+		if !slices.Contains(asBuiltResultWords, executed.Result) {
+			return fmt.Errorf("raw_evidence.executed_tests[%d].result %q: expected %s", i, executed.Result, strings.Join(asBuiltResultWords, "|"))
+		}
+	}
+	return nil
+}
+
+// asBuiltRecordEvidence posts the evidence and prints the server's receipt as
+// one JSON value. With a report, the collected report is printed beside the
+// receipt under "report", so the agent retains what the server retained
+// without a second read (SR-RDD-ONBOARD-046); the receipt's data is returned.
+func asBuiltRecordEvidence(cmd *cobra.Command, env *factoryEnv, payload, report map[string]any) (map[string]any, error) {
 	if env.SystemID <= 0 {
-		return fmt.Errorf("connect this workspace to a system first")
+		return nil, fmt.Errorf("connect this workspace to a system first")
 	}
 	payload["system_id"] = env.SystemID
 	payload["runner"] = map[string]any{"kind": "agent", "agent_slug": "modernpath-cli"}
 	status, body, err := env.call("POST", "/api/v1/sync/evidence", payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if status != 200 {
-		return serverRefusal("as-built evidence refused", status, body)
+		return nil, serverRefusal("as-built evidence refused", status, body)
 	}
 	data := dataOf(body)
 	run, ok := data["run"].(map[string]any)
 	if !ok || str(run, "id") == "" {
-		return fmt.Errorf("evidence was recorded but response lacks its durable run id; read evidence before retrying")
+		return nil, fmt.Errorf("evidence was recorded but response lacks its durable run id; read evidence before retrying")
 	}
 	if str(data, "report_digest") == "" {
-		return fmt.Errorf("server did not return the retained report digest; update the server before collecting as-built proof")
+		return nil, fmt.Errorf("server did not return the retained report digest; update the server before collecting as-built proof")
 	}
-	return json.NewEncoder(cmd.OutOrStdout()).Encode(body)
+	printed := body
+	if report != nil {
+		printed = map[string]any{"data": data, "report": report}
+	}
+	return data, json.NewEncoder(cmd.OutOrStdout()).Encode(printed)
+}
+
+// asBuiltDeliveryLine states a recorded delivery proof in one line from the
+// report the server retained, opening with the server's result word so it
+// never reads as the as-built acceptance, which is a later gate.
+func asBuiltDeliveryLine(data, report map[string]any) string {
+	parts := []string{fmt.Sprintf("delivery proof %s at %s", str(data, "result"), str(report, "integrated_revision"))}
+	if captured := str(report, "captured_revision"); captured != "" {
+		ancestry, _ := report["ancestry"].(map[string]any)
+		ancestor := str(ancestry, "result")
+		if detail := str(ancestry, "error"); detail != "" {
+			ancestor += " (" + detail + ")"
+		}
+		parts = append(parts, "captured "+captured, "ancestor: "+ancestor)
+	}
+	if measured, ok := report["measured_files"].(int); ok {
+		noun := "files"
+		if measured == 1 {
+			noun = "file"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s measured", measured, noun))
+	}
+	return strings.Join(parts, " · ")
 }
 
 type asBuiltDeliveryInput struct {
@@ -245,7 +333,12 @@ not required: a squash merge never keeps the captured commit.`}
 				return err
 			}
 		}
-		return asBuiltRecordEvidence(cmd, env, map[string]any{"external_id": "ASBUILT-DELIVERY-" + reverseDigest([]byte(input.Key)), "kind": "manual", "sha": input.TestedRevision, "ran_at": report["observed_at"], "raw_evidence": string(raw)})
+		data, err := asBuiltRecordEvidence(cmd, env, map[string]any{"external_id": "ASBUILT-DELIVERY-" + reverseDigest([]byte(input.Key)), "kind": "manual", "sha": input.TestedRevision, "ran_at": report["observed_at"], "raw_evidence": string(raw)}, report)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), asBuiltDeliveryLine(data, report))
+		return nil
 	}
 	return c
 }

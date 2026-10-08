@@ -265,6 +265,114 @@ func TestSRRDDONBOARD023EditableCitationsAndPushPlanAreUnchanged(t *testing.T) {
 	}
 }
 
+// SR-RDD-ONBOARD-047 AC2: a user requirement renders the actor and the
+// intended outcome the publisher wrote, and the served release; a served-but-
+// empty slot reads "—", the marker stays for keys the read does not carry.
+func TestWorkingSetRenderShowsUserRequirementActorOutcomeAndRelease(t *testing.T) {
+	full := wsUserReq("UR-AO-001", "Operator sweeps")
+	full["actor"] = "operator"
+	full["intended_use"] = "Sweep the instrument host"
+	full["release"] = "modernpath-v1-09"
+	full["owner"] = nil
+	bare := wsUserReq("UR-AO-002", "Nothing served")
+	bare["actor"] = nil
+	bare["intended_use"] = ""
+	bare["release"] = nil
+	bare["owner"] = nil
+	env := wsEnv(t, wsServe(t, &wsFixture{userRequirements: []any{full, bare}}))
+	if err := workingSetPull(env, []string{"UR-AO-001", "UR-AO-002"}, wsNow); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(env.Root, workingSetDir, "UR-AO-001.md"))
+	got := string(raw)
+	for _, want := range []string{
+		"- **Actor / outcome:** operator / Sweep the instrument host\n",
+		"- **Owner / release:** — / modernpath-v1-09\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a served user-requirement field must render (%q):\n%s", want, got)
+		}
+	}
+	raw, _ = os.ReadFile(filepath.Join(env.Root, workingSetDir, "UR-AO-002.md"))
+	got = string(raw)
+	for _, want := range []string{"- **Actor / outcome:** — / —\n", "- **Owner / release:** — / —\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a served-but-empty user-requirement field reads as empty (%q):\n%s", want, got)
+		}
+	}
+	unserved := wsUserReq("UR-AO-003", "Older server")
+	env = wsEnv(t, wsServe(t, &wsFixture{userRequirements: []any{unserved}}))
+	if err := workingSetPull(env, []string{"UR-AO-003"}, wsNow); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	raw, _ = os.ReadFile(filepath.Join(env.Root, workingSetDir, "UR-AO-003.md"))
+	if want := "- **Actor / outcome:** " + notServed + " / " + notServed + "\n"; !strings.Contains(string(raw), want) {
+		t.Errorf("a key the read does not carry keeps the marker (%q):\n%s", want, raw)
+	}
+}
+
+// SR-RDD-ONBOARD-047 AC3: a citation that names its test case shows it after
+// the file, in the by-id render, the review bundle and the per-file copy.
+func TestWorkingSetRenderShowsTheCitationTestCaseReference(t *testing.T) {
+	citations := []any{
+		map[string]any{"kind": "test", "repository_key": "fixture", "revision": "128b1f0", "path": "tests/validate_protocol.py", "test_case_ref": "validate_protocol.py::crc8"},
+		map[string]any{"kind": "code", "repository_key": "fixture", "revision": "128b1f0", "path": "src/protocol.py"},
+	}
+	const line = "test: fixture@128b1f0:tests/validate_protocol.py › validate_protocol.py::crc8 · code: fixture@128b1f0:src/protocol.py"
+
+	req := wsReq("REQ-TC-004", "Test case reference")
+	req["description"] = "the statement"
+	req["source_citations"] = citations
+	env := wsEnv(t, wsServe(t, &wsFixture{requirements: []any{req}}))
+	if err := workingSetPull(env, []string{"REQ-TC-004"}, wsNow); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(env.Root, workingSetDir, "REQ-TC-004.md"))
+	if want := "Statement / source:** the statement / " + line + "\n"; !strings.Contains(string(raw), want) {
+		t.Errorf("the by-id render must show the test case reference (%q):\n%s", want, raw)
+	}
+
+	fx := reviewBundleFixture()
+	fx.requirements[0].(map[string]any)["source_citations"] = citations
+	env = wsEnv(t, wsServe(t, fx))
+	if err := workingSetPullScope(env, true, wsNow); err != nil {
+		t.Fatalf("pull --scope --for-review: %v", err)
+	}
+	dir := latestReviewTestDirectory(t, env.Root, "EPIC-B")
+	if bundle := readScopeFile(t, filepath.Join(dir, "REVIEW.md")); !strings.Contains(bundle, "- **Sources:** "+line+"\n") {
+		t.Errorf("the review bundle must show the test case reference (%q):\n%s", line, bundle)
+	}
+	member := readScopeFile(t, filepath.Join(dir, "members", "REQ-B-1.md"))
+	for _, entry := range strings.Split(line, " · ") {
+		if !strings.Contains(member, "- "+entry+"\n") {
+			t.Errorf("the per-file review copy must list %q:\n%s", entry, member)
+		}
+	}
+}
+
+// Regression guard for SR-RDD-ONBOARD-047 AC4: the editable citation list and
+// the push plan read kind and reference only, so a test case reference never
+// enters them and an unedited record still plans nothing.
+func TestWorkingSetRenderKeepsTheEditableCitationsWithoutTheTestCaseReference(t *testing.T) {
+	fx := reviewBundleFixture()
+	fx.workSelection["current"].(map[string]any)["members"] = []any{"REQ-B-1"}
+	fx.requirements[0].(map[string]any)["source_citations"] = []any{
+		map[string]any{"kind": "test", "ref": "tests/validate_protocol.py", "repository_key": "fixture", "revision": "128b1f0", "path": "tests/validate_protocol.py", "test_case_ref": "validate_protocol.py::crc8"},
+	}
+	env := wsEnv(t, wsServe(t, fx))
+	if err := workingSetPullScope(env, false, wsNow); err != nil {
+		t.Fatalf("pull --scope: %v", err)
+	}
+	member := readScopeFile(t, filepath.Join(env.Root, workingSetDir, "EPIC-B", "members", "REQ-B-1.md"))
+	if !strings.Contains(member, "```authoring:citations\n- test: tests/validate_protocol.py\n```") {
+		t.Fatalf("the editable citation list must hold kind and reference only:\n%s", member)
+	}
+	base := recordFromPayload(scopeRecord{kind: "system", payload: fx.requirements[0].(map[string]any)}, nil)
+	if p, refusal := diff.Diff(base, base); refusal != nil || !p.Empty() {
+		t.Fatalf("an unedited record must plan nothing: %+v %v", p, refusal)
+	}
+}
+
 // REQ-CROSS-382 (EPIC-CLI-018): an epic pull renders every declared member,
 // user requirements and system requirements alike, in declared order.
 func TestREQCROSS382EpicPullRendersUserRequirementMembers(t *testing.T) {
