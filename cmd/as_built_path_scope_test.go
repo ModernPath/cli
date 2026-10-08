@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -285,5 +286,183 @@ func TestSRRDDASBUILTCLI002WholeRepositoryReportKeysAreUnchanged(t *testing.T) {
 	want := []string{"command", "commands", "default_branch", "dirty", "integrated_revision", "observed_at", "origin", "repository_key", "snapshot_digest", "tested_revision"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("whole-repository report keys changed:\n got %v\nwant %v", keys, want)
+	}
+}
+
+// SR-RDD-ONBOARD-035: a run's delivery proof at a default-branch tip that
+// moved past the captured commit, with the authorized files unchanged. The
+// tested revision is the tip; the report names the captured revision and
+// whether it is an ancestor of the tip, which is shown, never required.
+
+// unrelatedCommits commits n changes outside the authorized path.
+func unrelatedCommits(t *testing.T, root string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		scopeWrite(t, root, map[string]string{"other/c.txt": fmt.Sprintf("gamma %d", i)})
+		scopeCommit(t, root, fmt.Sprintf("unrelated %d", i))
+	}
+}
+
+// featureCommit commits a change outside the authorized path on a new branch
+// and returns to main; the feature commit is the captured revision.
+func featureCommit(t *testing.T, root string) string {
+	t.Helper()
+	gitRun(t, root, "checkout", "-q", "-b", "feature")
+	scopeWrite(t, root, map[string]string{"other/feature.txt": "feature"})
+	scopeCommit(t, root, "feature")
+	captured := gitRun(t, root, "rev-parse", "HEAD")
+	gitRun(t, root, "checkout", "-q", "main")
+	return captured
+}
+
+// movedTipProof records the delivery proof at the pushed tip of root for a
+// run that captured the authorized files at captured.
+func movedTipProof(t *testing.T, root string, input asBuiltDeliveryInput, scoped reverseRepository, captured string) (*scopeRunServer, string) {
+	t.Helper()
+	gitRun(t, root, "push", "-q", "origin", "main")
+	tip := gitRun(t, root, "rev-parse", "HEAD")
+	scoped.Revision = captured
+	input.TestedRevision = tip
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	out, err := scopeDeliveryProof(t, state.start(t), input)
+	if err != nil {
+		t.Fatalf("delivery proof at a moved tip with unchanged authorized files refused: %v: %s", err, out)
+	}
+	if state.posts != 1 || state.report["integrated_revision"] != tip || state.report["tested_revision"] != tip {
+		t.Fatalf("the proof was not recorded at the tip: posts=%d report=%v", state.posts, state.report)
+	}
+	return state, tip
+}
+
+// reportAncestry checks the captured revision and the ancestry statement with
+// its command, and returns the statement.
+func reportAncestry(t *testing.T, report map[string]any, captured, tip, result string) map[string]any {
+	t.Helper()
+	if report["captured_revision"] != captured {
+		t.Fatalf("report does not carry the captured revision %s: %v", captured, report)
+	}
+	ancestry, ok := report["ancestry"].(map[string]any)
+	if !ok {
+		t.Fatalf("report does not state the ancestry: %v", report)
+	}
+	command := str(ancestry, "command")
+	if ancestry["result"] != result || !strings.Contains(command, "merge-base --is-ancestor") ||
+		!strings.Contains(command, captured) || !strings.Contains(command, tip) {
+		t.Fatalf("want ancestry %s with its command naming %s and %s, got %v", result, captured, tip, ancestry)
+	}
+	return ancestry
+}
+
+func TestSRRDDONBOARD035MergedTipTwentyCommitsAheadReportsAncestorTrue(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	captured := featureCommit(t, root)
+	unrelatedCommits(t, root, 19)
+	gitRun(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "merge", "-q", "--no-ff", "-m", "merge feature", "feature")
+	state, tip := movedTipProof(t, root, input, scoped, captured)
+	reportAncestry(t, state.report, captured, tip, "true")
+}
+
+func TestSRRDDONBOARD035SquashedTipReportsAncestorFalseAndIsAccepted(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	captured := featureCommit(t, root)
+	gitRun(t, root, "merge", "-q", "--squash", "feature")
+	scopeCommit(t, root, "feature, squashed")
+	state, tip := movedTipProof(t, root, input, scoped, captured)
+	reportAncestry(t, state.report, captured, tip, "false")
+}
+
+func TestSRRDDONBOARD035CloneWithoutTheCapturedCommitReportsAncestryUnknownAndIsAccepted(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	gitRun(t, t.TempDir(), "clone", "-q", gitRun(t, root, "remote", "get-url", "origin"), elsewhere)
+	scopeWrite(t, elsewhere, map[string]string{"other/c.txt": "changed elsewhere"})
+	scopeCommit(t, elsewhere, "never pushed")
+	captured := gitRun(t, elsewhere, "rev-parse", "HEAD")
+	state, tip := movedTipProof(t, root, input, scoped, captured)
+	ancestry := reportAncestry(t, state.report, captured, tip, "unknown")
+	if strings.TrimSpace(str(ancestry, "error")) == "" {
+		t.Fatalf("an unknown ancestry must carry Git's error text: %v", ancestry)
+	}
+}
+
+// Pin: at a moved tip a changed authorized file, a tested revision that is
+// not the fetched tip and a dirty repository still refuse, and record nothing.
+func TestSRRDDONBOARD035MovedTipKeepsTheRefusals(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	scoped.Revision = featureCommit(t, root)
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	server := state.start(t)
+	refuses := func(step, reason string, proof asBuiltDeliveryInput) {
+		t.Helper()
+		if _, err := scopeDeliveryProof(t, server, proof); err == nil || !strings.Contains(err.Error(), reason) {
+			t.Fatalf("%s: refusal does not say %q: %v", step, reason, err)
+		}
+		if state.posts != 0 {
+			t.Fatalf("%s: a refused proof was recorded", step)
+		}
+	}
+
+	unrelatedCommits(t, root, 1)
+	unpushed := input
+	unpushed.TestedRevision = gitRun(t, root, "rev-parse", "HEAD")
+	refuses("tested revision is not the fetched tip", "integration proof is missing", unpushed)
+
+	gitRun(t, root, "push", "-q", "origin", "main")
+	scopeWrite(t, root, map[string]string{"other/c.txt": "dirty"})
+	refuses("dirty repository", "dirty", unpushed)
+	gitRun(t, root, "checkout", "--", "other/c.txt")
+
+	scopeWrite(t, root, map[string]string{"pkg/a.txt": "alpha changed"})
+	scopeCommit(t, root, "change inside the named path")
+	gitRun(t, root, "push", "-q", "origin", "main")
+	changed := input
+	changed.TestedRevision = gitRun(t, root, "rev-parse", "HEAD")
+	refuses("authorized file changed at the tip", "snapshot digest does not match the current repository content", changed)
+}
+
+// SR-RDD-ONBOARD-035 AC2: a tip that removed an authorized file refuses and
+// records nothing, even when an ignored copy on disk holds the captured bytes
+// and keeps the checkout clean. The fetched tip does not hold the file, so a
+// digest of the copy would prove a delivery that never happened.
+func TestSRRDDONBOARD035TipWithoutAnAuthorizedFileRefusesWithoutEvidence(t *testing.T) {
+	root, input, scoped := scopeDeliveryFixture(t)
+	captured := gitRun(t, root, "rev-parse", "HEAD")
+	gitRun(t, root, "rm", "-q", "pkg/a.txt")
+	scopeCommit(t, root, "remove the authorized file")
+	gitRun(t, root, "push", "-q", "origin", "main")
+	tip := gitRun(t, root, "rev-parse", "HEAD")
+	scopeWrite(t, root, map[string]string{"pkg/a.txt": "alpha", ".git/info/exclude": "/pkg/a.txt\n"})
+	if status := gitRun(t, root, "status", "--porcelain", "--untracked-files=normal"); status != "" {
+		t.Fatalf("fixture must leave the checkout clean: %q", status)
+	}
+	scoped.Revision = captured
+	input.TestedRevision = tip
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	out, err := scopeDeliveryProof(t, state.start(t), input)
+	if err == nil {
+		t.Fatalf("delivery proof succeeded at a tip that does not hold an authorized file: %s", out)
+	}
+	for _, want := range []string{"pkg/a.txt", tip} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal must name %q: %v", want, err)
+		}
+	}
+	if state.posts != 0 {
+		t.Fatalf("a refused proof was recorded: posts=%d report=%v", state.posts, state.report)
+	}
+}
+
+// Pin: a proof at the captured revision names neither the captured revision
+// nor an ancestry, so its report keeps its keys.
+func TestSRRDDONBOARD035ReportAtTheCapturedRevisionGainsNoKeys(t *testing.T) {
+	_, input, scoped := scopeDeliveryFixture(t)
+	state := &scopeRunServer{repositories: []reverseRepository{scoped}}
+	if out, err := scopeDeliveryProof(t, state.start(t), input); err != nil {
+		t.Fatalf("scoped delivery proof refused: %v: %s", err, out)
+	}
+	for _, key := range []string{"captured_revision", "ancestry"} {
+		if _, ok := state.report[key]; ok {
+			t.Fatalf("a proof at the captured revision must not carry %s: %v", key, state.report)
+		}
 	}
 }

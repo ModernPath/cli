@@ -230,6 +230,176 @@ func TestSRRDDONBOARD007StoredCoverage(t *testing.T) {
 	}
 }
 
+// requestLog answers each path with its body and records every request, the
+// sync contract read included, as "METHOD /path?query".
+func requestLog(t *testing.T, bodies map[string]string, requests *[]string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*requests = append(*requests, r.Method+" "+r.URL.RequestURI())
+		body, ok := bodies[r.URL.RequestURI()]
+		if r.Method != "GET" || !ok {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// SR-RDD-ONBOARD-029: coverage --system calls the system coverage read of the
+// bound system and prints its body; --files asks for the file list; --run
+// reads one run as before.
+func TestSRRDDONBOARD029CoverageSystemCallsTheSystemRead(t *testing.T) {
+	system := `{"data":{"scope":"system_inventory_against_current_system_graph","totals":{"included_files":3}}}`
+	listed := `{"data":{"scope":"system_inventory_against_current_system_graph","files":[{"path":"src/a.xml"}]}}`
+	run := `{"data":{"scope":"authorized_run_inventory_against_current_system_graph"}}`
+	bodies := map[string]string{
+		"/api/v1/systems/4/reverse-engineering/coverage":             system,
+		"/api/v1/systems/4/reverse-engineering/coverage?files=true":  listed,
+		"/api/v1/systems/4/reverse-engineering/runs/run-id/coverage": run,
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+		path string
+	}{
+		{"system", []string{"coverage", "--system"}, system, "GET /api/v1/systems/4/reverse-engineering/coverage"},
+		{"system with files", []string{"coverage", "--system", "--files"}, listed, "GET /api/v1/systems/4/reverse-engineering/coverage?files=true"},
+		{"one run", []string{"coverage", "--run", "run-id"}, run, "GET /api/v1/systems/4/reverse-engineering/runs/run-id/coverage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			out, err := reCommand(t, requestLog(t, bodies, &requests), "", tc.args...)
+			if err != nil {
+				t.Fatalf("coverage refused: %v", err)
+			}
+			if out != encodedReceipt(t, tc.want) {
+				t.Fatalf("the body is not printed as received:\n got %q\nwant %q", out, encodedReceipt(t, tc.want))
+			}
+			if !reflect.DeepEqual(requests, []string{tc.path}) {
+				t.Fatalf("requests: %v, want exactly [%s]", requests, tc.path)
+			}
+		})
+	}
+}
+
+// SR-RDD-ONBOARD-029: coverage with neither --run nor --system, or with both,
+// refuses before any call and names the two forms; --files belongs to the
+// system form.
+func TestSRRDDONBOARD029CoverageRefusesNeitherOrBothForms(t *testing.T) {
+	for name, args := range map[string][]string{
+		"neither":          {"coverage"},
+		"both":             {"coverage", "--run", "run-id", "--system"},
+		"files with --run": {"coverage", "--run", "run-id", "--files"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var requests []string
+			_, err := reCommand(t, requestLog(t, map[string]string{}, &requests), "", args...)
+			if err == nil {
+				t.Fatal("coverage was accepted")
+			}
+			for _, form := range []string{"--run", "--system"} {
+				if !strings.Contains(err.Error(), form) {
+					t.Fatalf("the refusal does not name %s: %v", form, err)
+				}
+			}
+			if len(requests) != 0 {
+				t.Fatalf("a refused coverage reached the server: %v", requests)
+			}
+		})
+	}
+}
+
+// SR-RDD-ONBOARD-031: runs calls the list read of the bound system and prints
+// its body as received; --cursor asks for the page after a printed next_cursor.
+func TestSRRDDONBOARD031RunsPrintsTheListRead(t *testing.T) {
+	first := `{"data":{"runs":[{"id":"r2","key":"area-two"},{"id":"r1","key":"area-one"}],"page_size":50,"next_cursor":"r1"}}`
+	next := `{"data":{"runs":[{"id":"r0","key":"area-zero"}],"page_size":50,"next_cursor":null}}`
+	bodies := map[string]string{
+		"/api/v1/systems/4/reverse-engineering/runs":           first,
+		"/api/v1/systems/4/reverse-engineering/runs?cursor=r1": next,
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+		path string
+	}{
+		{"first page", []string{"runs"}, first, "GET /api/v1/systems/4/reverse-engineering/runs"},
+		{"named page", []string{"runs", "--cursor", "r1"}, next, "GET /api/v1/systems/4/reverse-engineering/runs?cursor=r1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			out, err := reCommand(t, requestLog(t, bodies, &requests), "", tc.args...)
+			if err != nil {
+				t.Fatalf("runs refused: %v", err)
+			}
+			if out != encodedReceipt(t, tc.want) {
+				t.Fatalf("the body is not printed as received:\n got %q\nwant %q", out, encodedReceipt(t, tc.want))
+			}
+			if !reflect.DeepEqual(requests, []string{tc.path}) {
+				t.Fatalf("requests: %v, want exactly [%s]", requests, tc.path)
+			}
+		})
+	}
+}
+
+// SR-RDD-ONBOARD-031: runs --all follows next_cursor until the last page and
+// prints one body holding every run in the order served; a cursor the server
+// hands back twice stops the command instead of looping.
+func TestSRRDDONBOARD031RunsAllFollowsEveryPage(t *testing.T) {
+	var requests []string
+	server := requestLog(t, map[string]string{
+		"/api/v1/systems/4/reverse-engineering/runs":           `{"data":{"runs":[{"id":"r3"},{"id":"r2"}],"page_size":2,"next_cursor":"r2"}}`,
+		"/api/v1/systems/4/reverse-engineering/runs?cursor=r2": `{"data":{"runs":[{"id":"r1"}],"page_size":2,"next_cursor":null}}`,
+	}, &requests)
+	out, err := reCommand(t, server, "", "runs", "--all")
+	if err != nil {
+		t.Fatalf("runs --all refused: %v", err)
+	}
+	want := encodedReceipt(t, `{"data":{"runs":[{"id":"r3"},{"id":"r2"},{"id":"r1"}],"page_size":2,"next_cursor":null}}`)
+	if out != want {
+		t.Fatalf("every page's runs in one body:\n got %q\nwant %q", out, want)
+	}
+	if !reflect.DeepEqual(requests, []string{
+		"GET /api/v1/systems/4/reverse-engineering/runs",
+		"GET /api/v1/systems/4/reverse-engineering/runs?cursor=r2",
+	}) {
+		t.Fatalf("pages requested: %v", requests)
+	}
+
+	requests = nil
+	looping := requestLog(t, map[string]string{
+		"/api/v1/systems/4/reverse-engineering/runs":           `{"data":{"runs":[{"id":"r2"}],"next_cursor":"r2"}}`,
+		"/api/v1/systems/4/reverse-engineering/runs?cursor=r2": `{"data":{"runs":[{"id":"r1"}],"next_cursor":"r2"}}`,
+	}, &requests)
+	if _, err := reCommand(t, looping, "", "runs", "--all"); err == nil || len(requests) != 2 {
+		t.Fatalf("a repeated cursor must stop the command after the repeat: %v %v", err, requests)
+	}
+}
+
+// SR-RDD-ONBOARD-031: runs is listed with the other reverse-engineer commands
+// and, as a read, never consults the server's capability contract.
+func TestSRRDDONBOARD031RunsIsListedAndNeedsNoCapability(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"reverse-engineer", "runs"})
+	if err != nil || command.Name() != "runs" {
+		t.Fatalf("runs is not a reverse-engineer command: %v", err)
+	}
+	var requests []string
+	server := requestLog(t, map[string]string{
+		"/api/v1/sync/contract":                      `{"data":{"version":1,"capabilities":{"reverse_engineering.authorize":["not-in-this-build"]}}}`,
+		"/api/v1/systems/4/reverse-engineering/runs": `{"data":{"runs":[],"page_size":50,"next_cursor":null}}`,
+	}, &requests)
+	if _, err := reCommand(t, server, "", "runs"); err != nil {
+		t.Fatalf("runs refused against a contract this build lacks: %v", err)
+	}
+	if !reflect.DeepEqual(requests, []string{"GET /api/v1/systems/4/reverse-engineering/runs"}) {
+		t.Fatalf("runs consulted more than the list read: %v", requests)
+	}
+}
+
 func TestSRRDDONBOARD008RefusalsDoNotRetryOrWidenScope(t *testing.T) {
 	writes := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +425,7 @@ func TestSRRDDONBOARD008RefusalsDoNotRetryOrWidenScope(t *testing.T) {
 }
 
 func TestSRRDDONBOARD008CommandsAndStableCapabilities(t *testing.T) {
-	for _, name := range []string{"preflight", "inventory", "authorize", "capture-source", "source-status", "publish", "status", "candidates", "preview", "decide", "read-source"} {
+	for _, name := range []string{"preflight", "inventory", "authorize", "capture-source", "source-status", "publish", "status", "coverage", "runs", "candidates", "preview", "decide", "read-source"} {
 		command, _, err := rootCmd.Find([]string{"reverse-engineer", name})
 		if err != nil || command.Name() != name {
 			t.Errorf("missing command %s", name)

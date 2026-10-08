@@ -3,9 +3,11 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -178,11 +180,13 @@ type asBuiltDeliveryInput struct {
 }
 
 // asBuiltDeliveryScope is the file list a run's authorization recorded for one
-// repository: what a delivery proof of a path-scoped run measures.
+// repository: what a delivery proof of a path-scoped run measures, and the
+// revision those files were captured at.
 type asBuiltDeliveryScope struct {
-	RunID          string
-	SnapshotDigest string
-	Files          []reverseFile
+	RunID            string
+	SnapshotDigest   string
+	Files            []reverseFile
+	CapturedRevision string
 }
 
 func asBuiltDeliveryCommand(load func() (*factoryEnv, error)) *cobra.Command {
@@ -195,7 +199,14 @@ the files that run's authorization recorded for the repository: use it for a
 run that was inventoried with --path, or whose capture holds files under
 .claude, which a new inventory leaves out, so the proof measures the same
 files that were captured. The input's snapshot_digest must be the one that run captured.
-The repository must still be clean as a whole.`}
+The repository must still be clean as a whole.
+
+The tested revision must be the tip of the remote default branch. With --run
+the tip may be past the commit the run captured, when the authorized files at
+the tip are the captured ones. The report then names the captured revision and
+whether it is an ancestor of the tip: true, false, or unknown with Git's error
+text, for example in a clone that lacks the captured commit. This is shown,
+not required: a squash merge never keeps the captured commit.`}
 	c.Flags().String("file", "", "key, repository_key, local root, tested_revision and snapshot_digest JSON (required)")
 	c.Flags().String("run", "", "run whose authorized files are the snapshot, for a run inventoried with --path or whose capture holds files under .claude (optional; the whole repository when omitted)")
 	_ = c.MarkFlagRequired("file")
@@ -257,14 +268,16 @@ func asBuiltRunScope(env *factoryEnv, runID, key string) (*asBuiltDeliveryScope,
 		if len(repository.Files) == 0 {
 			return nil, fmt.Errorf("run %s authorizes no files for repository %q", runID, key)
 		}
-		return &asBuiltDeliveryScope{RunID: runID, SnapshotDigest: repository.SnapshotDigest, Files: repository.Files}, nil
+		return &asBuiltDeliveryScope{RunID: runID, SnapshotDigest: repository.SnapshotDigest, Files: repository.Files, CapturedRevision: repository.Revision}, nil
 	}
 	return nil, fmt.Errorf("run %s does not authorize repository %q", runID, key)
 }
 
 // asBuiltObserve reads the repository's revision, clean state and snapshot
 // digest: of the whole repository, or of the files a run authorized. The clean
-// state is the whole repository's in both forms.
+// state is the whole repository's in both forms, and a clean checkout is
+// hashed as committed at HEAD: an authorized file that HEAD does not hold
+// refuses, even when an ignored copy on disk holds the captured bytes.
 func asBuiltObserve(input asBuiltDeliveryInput, scope *asBuiltDeliveryScope) (reverseRepository, error) {
 	if scope == nil {
 		inventory, err := buildReverseInventory([]string{input.RepositoryKey + "=" + input.Root})
@@ -281,9 +294,23 @@ func asBuiltObserve(input asBuiltDeliveryInput, scope *asBuiltDeliveryScope) (re
 	if err != nil {
 		return reverseRepository{}, err
 	}
+	// A clean checkout is measured as committed at HEAD, as its inventory is.
+	committed := ""
+	if !dirty {
+		committed = revision
+	}
+	paths := make([]string, len(scope.Files))
+	for i, file := range scope.Files {
+		paths[i] = file.Path
+	}
+	reader, err := openCommittedReverseContent(root, committed, paths)
+	if err != nil {
+		return reverseRepository{}, err
+	}
+	defer reader.close()
 	files := make([]reverseFile, len(scope.Files))
 	for i, file := range scope.Files {
-		content, err := reverseRead(root, file.Path)
+		content, err := reader.read(file.Path)
 		if err != nil {
 			return reverseRepository{}, fmt.Errorf("authorized file unavailable: %w", err)
 		}
@@ -389,8 +416,47 @@ func collectScopedAsBuiltDelivery(input asBuiltDeliveryInput, scope *asBuiltDeli
 	if scope != nil {
 		report["authorization_run_id"] = scope.RunID
 		report["measured_files"] = len(scope.Files)
+		// At a tip past the captured commit the authorized files were proven
+		// identical above; the report names the captured revision and whether
+		// it is an ancestor of the tip. That is disclosed, never required: a
+		// squash merge never keeps the captured commit.
+		if scope.CapturedRevision != "" && scope.CapturedRevision != tip {
+			report["captured_revision"] = scope.CapturedRevision
+			report["ancestry"] = asBuiltAncestry(input.Root, scope.CapturedRevision, tip)
+		}
 	}
 	return report, nil
+}
+
+var asBuiltCommitID = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// asBuiltAncestry states whether captured is an ancestor of tip, with its
+// command: "true", "false", or "unknown" with the error text when Git cannot
+// answer, as in a clone that lacks the captured commit.
+func asBuiltAncestry(root, captured, tip string) map[string]any {
+	args := []string{"git", "merge-base", "--is-ancestor", captured, tip}
+	ancestry := map[string]any{"command": strings.Join(args, " ")}
+	if !asBuiltCommitID.MatchString(captured) {
+		ancestry["result"] = "unknown"
+		ancestry["error"] = "the captured revision is not a commit id"
+		return ancestry
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		ancestry["result"] = "true"
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		ancestry["result"] = "false"
+	default:
+		ancestry["result"] = "unknown"
+		ancestry["error"] = firstNonEmpty(strings.TrimSpace(stderr.String()), err.Error())
+	}
+	return ancestry
 }
 
 func reverseHasAgentExclusion(exclusions []reverseExclusion) bool {

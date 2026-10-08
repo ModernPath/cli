@@ -212,7 +212,9 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 				return result, fmt.Errorf("repository %s has unreadable Git revision: %w", key, err)
 			}
 			repo.Revision = strings.TrimSpace(string(revision))
-			status, err := git("status", "--porcelain", "-z")
+			// Untracked files make the repository dirty whatever
+			// status.showUntrackedFiles says: clean means every file is committed.
+			status, err := git("status", "--porcelain", "-z", "--untracked-files=normal")
 			if err != nil {
 				return result, err
 			}
@@ -303,44 +305,22 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 			}
 		}
 		sort.Strings(paths)
-		seen := map[string]bool{}
-		eligible := []string{}
-		for _, path := range paths {
-			if path == "" || seen[path] {
-				continue
-			}
-			seen[path] = true
-			if !reverseSafePath(path) {
-				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "private or workspace metadata", "file"})
-				continue
-			}
-			if reverseAgentPath(path) {
-				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, reverseAgentReason, "file"})
-				continue
-			}
-			// Git lists a tracked link as one path. It is left out and disclosed,
-			// never followed; a non-Git walk keeps refusing it in reverseRead.
-			if gitRoot && reverseIsLink(root, path) {
-				repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "symbolic link", "file"})
-				continue
-			}
-			eligible = append(eligible, path)
+		// A clean Git repository is read as committed at its revision; a dirty
+		// one, and a root that is not Git, from disk.
+		committed := ""
+		if gitRoot && !repo.Dirty {
+			committed = repo.Revision
 		}
-		var size int64
-		for _, path := range eligible {
-			content, err := reverseRead(root, path)
-			if err != nil {
-				return result, err
-			}
-			size += int64(len(content))
-			if size > 32_000_000 {
-				if len(scopes[key]) > 0 {
-					return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit within the named paths; name fewer or smaller paths. %s", key, reverseSizeDetail(root, eligible, gitRoot))
-				}
-				return result, fmt.Errorf("repository %s exceeds the 32000000-byte source limit; narrow and disclose the scope. %s", key, reverseSizeDetail(root, eligible, gitRoot))
-			}
-			repo.Files = append(repo.Files, reverseFile{path, reverseDigest(content), int64(len(content))})
+		content, err := openReverseContent(root, committed, paths)
+		if err != nil {
+			return result, fmt.Errorf("repository %s: %w", key, err)
 		}
+		files, size, err := reverseInventoryFiles(&repo, root, key, paths, gitRoot, len(scopes[key]) > 0, content)
+		content.close()
+		if err != nil {
+			return result, err
+		}
+		repo.Files = files
 		if len(repo.Files) == 0 {
 			return result, fmt.Errorf("repository %s has no eligible source files", key)
 		}
@@ -350,7 +330,7 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 			if err != nil {
 				return result, err
 			}
-			status, err := git("status", "--porcelain", "-z")
+			status, err := git("status", "--porcelain", "-z", "--untracked-files=normal")
 			if err != nil {
 				return result, err
 			}
@@ -366,6 +346,66 @@ func buildScopedReverseInventory(declarations []string, scopes map[string][]stri
 		result.Repositories = append(result.Repositories, repo)
 	}
 	return result, nil
+}
+
+// reverseInventoryFiles leaves out and discloses the paths an inventory never
+// holds, refuses a file with a content filter, and hashes the rest through the
+// shared reader within the repository's byte limit.
+func reverseInventoryFiles(repo *reverseRepository, root, key string, paths []string, gitRoot, scoped bool, content *reverseContent) ([]reverseFile, int64, error) {
+	seen := map[string]bool{}
+	eligible := []string{}
+	for _, path := range paths {
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		if !reverseSafePath(path) {
+			repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "private or workspace metadata", "file"})
+			continue
+		}
+		if reverseAgentPath(path) {
+			repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, reverseAgentReason, "file"})
+			continue
+		}
+		// Git lists a tracked link as one path. It is left out and disclosed,
+		// never followed; a non-Git walk keeps refusing it in reverseRead. The
+		// committed tree names a link also where the checkout made it a file.
+		if gitRoot && (reverseIsLink(root, path) || content.link(path)) {
+			repo.Exclusions = append(repo.Exclusions, reverseExclusion{path, "symbolic link", "file"})
+			continue
+		}
+		eligible = append(eligible, path)
+	}
+	if gitRoot {
+		filtered, err := reverseFiltered(root, eligible)
+		if err != nil {
+			return nil, 0, fmt.Errorf("repository %s: %w", key, err)
+		}
+		if len(filtered) > 0 {
+			listed := filtered
+			if len(listed) > 10 {
+				listed = append(listed[:10:10], fmt.Sprintf("and %d more", len(filtered)-10))
+			}
+			return nil, 0, fmt.Errorf("repository %s has files with a Git content filter attribute: %s. Git LFS and other content filters store content that is not the file, so these files cannot be inventoried; name paths that leave them out with --path", key, strings.Join(listed, ", "))
+		}
+	}
+	files := []reverseFile{}
+	var size int64
+	for _, path := range eligible {
+		data, err := content.read(path)
+		if err != nil {
+			return nil, 0, err
+		}
+		size += int64(len(data))
+		if size > 32_000_000 {
+			if scoped {
+				return nil, 0, fmt.Errorf("repository %s exceeds the 32000000-byte source limit within the named paths; name fewer or smaller paths. %s", key, reverseSizeDetail(root, eligible, gitRoot, content))
+			}
+			return nil, 0, fmt.Errorf("repository %s exceeds the 32000000-byte source limit; narrow and disclose the scope. %s", key, reverseSizeDetail(root, eligible, gitRoot, content))
+		}
+		files = append(files, reverseFile{path, reverseDigest(data), int64(len(data))})
+	}
+	return files, size, nil
 }
 
 // reverseScopedPaths lists the tracked and unignored files under each named
@@ -428,7 +468,7 @@ func reverseOutOfScope(listed, included []string) []reverseExclusion {
 			continue
 		}
 		seen[target] = true
-		exclusions = append(exclusions, reverseExclusion{target, "outside the authorized scope", kind})
+		exclusions = append(exclusions, reverseExclusion{target, reverseOutOfScopeReason, kind})
 	}
 	sort.Slice(exclusions, func(i, j int) bool { return exclusions[i].Path < exclusions[j].Path })
 	return exclusions
@@ -460,23 +500,28 @@ func reverseScopeExclusions(ignored, outOfScope []reverseExclusion) []reverseExc
 }
 
 // reverseSizeDetail says what the byte refusal counted: the total size of the
-// files the inventory would include, taken from the file system without
-// reading them, and the five largest top-level folders, the files in the
-// repository root counted as one entry.
-func reverseSizeDetail(root string, paths []string, gitRoot bool) string {
+// files the inventory would include, without reading them, and the five
+// largest top-level folders, the files in the repository root counted as one
+// entry. A committed file counts its committed size, any other file its size
+// on disk.
+func reverseSizeDetail(root string, paths []string, gitRoot bool, content *reverseContent) string {
 	var total int64
 	sizes := map[string]int64{}
 	for _, path := range paths {
-		info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
-		if err != nil || !info.Mode().IsRegular() {
-			continue
+		size, committed := content.size(path)
+		if !committed {
+			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			size = info.Size()
 		}
-		total += info.Size()
+		total += size
 		folder, _, nested := strings.Cut(path, "/")
 		if !nested {
 			folder = ""
 		}
-		sizes[folder] += info.Size()
+		sizes[folder] += size
 	}
 	folders := make([]string, 0, len(sizes))
 	for folder := range sizes {
@@ -527,7 +572,7 @@ func reverseGitIdentity(root string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("unreadable Git revision: %w", err)
 	}
-	status, err := exec.Command("git", "-C", root, "status", "--porcelain", "-z").Output()
+	status, err := exec.Command("git", "-C", root, "status", "--porcelain", "-z", "--untracked-files=normal").Output()
 	if err != nil {
 		return "", false, err
 	}
@@ -542,6 +587,23 @@ func reverseSourceBundle(repository reverseRepository, path string) ([]map[strin
 	if len(repository.Files) == 0 || len(repository.Files) > 50_000 || reverseSnapshot(repository.Files) != repository.SnapshotDigest {
 		return nil, fmt.Errorf("invalid authorized source inventory")
 	}
+	// A repository recorded clean is captured as committed at the recorded
+	// revision, whatever the working tree holds now and wherever HEAD is: the
+	// bytes sent are the bytes the inventory hashed. A repository recorded
+	// dirty, and a path not tracked at that revision, are read from disk.
+	committed := ""
+	if !repository.Dirty && reverseObjectID(repository.Revision) {
+		committed = repository.Revision
+	}
+	paths := make([]string, len(repository.Files))
+	for i, file := range repository.Files {
+		paths[i] = file.Path
+	}
+	reader, err := openReverseContent(root, committed, paths)
+	if err != nil {
+		return nil, fmt.Errorf("capture reads the files of a repository recorded clean from the recorded revision through Git: %w; fetch that revision, or capture from the checkout that was inventoried", err)
+	}
+	defer reader.close()
 	files := make([]map[string]string, 0, len(repository.Files))
 	seen := map[string]bool{}
 	var size int64
@@ -554,7 +616,7 @@ func reverseSourceBundle(repository reverseRepository, path string) ([]map[strin
 		if file.Size < 0 || size > 32_000_000 {
 			return nil, fmt.Errorf("authorized source inventory exceeds repository byte limit")
 		}
-		content, err := reverseRead(root, file.Path)
+		content, err := reader.read(file.Path)
 		if err != nil {
 			return nil, err
 		}

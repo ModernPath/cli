@@ -6,6 +6,7 @@
     "author.evaluate_trace": ["review_context", "trace_pin_default"],
     "author.finding": ["finding_resolution"],
     "author.gate": ["entry_gate_members"],
+    "author.set_context": ["set_context"],
     "author.update": ["edit_fingerprint"],
     "batch": ["batch_multi_status"],
     "evidence": ["evidence_revision"],

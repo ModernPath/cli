@@ -29,6 +29,7 @@ var Implemented = []string{
 	"governed_answer_review",   // factory answer attaches the review a governed gate needs
 	"review_context",           // a cold-review verdict carries its review context (EPIC-CLI-008)
 	"selection_piece",          // working-set --piece names the held selection (REQ-CROSS-345)
+	"set_context",              // one write sets the context of many requirements (SR-RDD-ONBOARD-033)
 	"trace_pin_default",        // a loop trace pins to the full aggregate (REQ-CROSS-376)
 }
 

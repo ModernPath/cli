@@ -117,12 +117,19 @@ func TestSRRDDONBOARD011SymlinkTargetIsNeverRead(t *testing.T) {
 	}
 }
 
-// Regression guard: capture keeps refusing an authorized path that has become a link.
+// Regression guard: a capture that reads the working tree, the capture of a
+// run recorded dirty, keeps refusing an authorized path that has become a
+// link. A run recorded clean is captured from its revision through Git and
+// never opens the working tree (SR-RDD-ONBOARD-038).
 func TestSRRDDONBOARD011CaptureStillRefusesSymlink(t *testing.T) {
 	root := scopeRepo(t, map[string]string{"a.txt": "alpha", "b.txt": "beta"})
+	scopeWrite(t, root, map[string]string{"untracked.txt": "makes the repository dirty"})
 	inventory, err := buildReverseInventory([]string{"repo=" + root})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !inventory.Repositories[0].Dirty {
+		t.Fatal("fixture: the repository must be recorded dirty")
 	}
 	if err := os.Remove(filepath.Join(root, "b.txt")); err != nil {
 		t.Fatal(err)

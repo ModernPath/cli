@@ -1040,8 +1040,8 @@ var authorUpdateCmd = &cobra.Command{
 --expected-fingerprint is required and a stale one conflicts instead of
 overwriting; --criteria replaces the scenarios/criteria whole.
 
-Keep the scalar flags — --title, --stage, --priority, --owner, --context and
-each --source tag — under 255 characters. A value over the bound is refused
+Keep the scalar flags — --title, --stage, --priority, --owner, --context,
+--context-name and each --source tag — under 255 characters. A value over the bound is refused
 as a 422 naming the field and the limit, and nothing is written. Prose
 belongs in --detail, which is unbounded; --description, --boundary,
 --rationale and --verification-method take a paragraph.
@@ -1075,8 +1075,8 @@ the --source that decided it) and its body — --notes, --observed,
 --why-unrouted, --candidate-route, --affected, and --gap-kind/--consequence/
 --affected-trace on a gap. A backlog record has no requirement fields:
 --detail, --description, --stage, --priority, --owner, --boundary,
---rationale, --verification-method, --context and --criteria are refused
-there, and prose goes in --notes.`,
+--rationale, --verification-method, --context, --context-name and --criteria
+are refused there, and prose goes in --notes.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := authorEnv()
@@ -1125,6 +1125,8 @@ func authorUpdateRecord(cmd *cobra.Command) (map[string]any, error) {
 	// REQ-CROSS-310 (SR-CLI-0081): --context and repeatable --source ride the
 	// edit — the server accepts both, and a working-set pull renders them.
 	setStr("context", "context", authorContext)
+	// SR-RDD-ONBOARD-034: the context name rides next to its code.
+	setStr("context-name", "context_name", authorContextName)
 	if cmd.Flags().Changed("source") {
 		record["source_citations"] = sourceCitations(authorSources)
 	}
@@ -1186,7 +1188,7 @@ func readTypedCitations(path string) ([]map[string]any, error) {
 
 // requirementOnlyFlags are the author update flags a backlog record has no
 // field for.
-var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "lane-class", "context", "criteria", "citations-file"}
+var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "lane-class", "context", "context-name", "criteria", "citations-file"}
 
 // refuseRequirementFieldsOnBacklog refuses, before any request, a requirement
 // or epic field on a backlog record. The server reads only the backlog content
@@ -1452,6 +1454,7 @@ func init() {
 	authorBacklogCmd.Flags().StringVar(&authorBacklogNotes, "notes", "", "free notes (markdown)")
 	// REQ-CROSS-310 (SR-CLI-0081): --context and repeatable --source ride the edit.
 	authorUpdateCmd.Flags().StringVar(&authorContext, "context", "", "new bounded-context code")
+	authorUpdateCmd.Flags().StringVar(&authorContextName, "context-name", "", "new bounded-context name")
 	authorUpdateCmd.Flags().StringArrayVar(&authorSources, "source", nil, "source citation (e.g. USER:2026-09-01:x), repeatable")
 	authorUpdateCmd.MarkFlagsMutuallyExclusive("source", "citations-file")
 	authorRelateCmd.Flags().StringArrayVar(&authorParents, "parent", nil,

@@ -97,10 +97,7 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 	add("preflight", "Read current system scope, corpus fingerprint and recommended mode (read-only)", "GET", fixed("/reverse-engineering/preflight"), false)
 	add("authorize", "Record the explicit source-scoped baseline or derived authorization", "POST", fixed("/reverse-engineering/runs"), true)
 	add("status", "Read a durable run and its group receipts", "GET", reverseRunPath, false)
-	add("coverage", "Measure authorized inventory against current governed and candidate traces", "GET", func(cmd *cobra.Command) (string, error) {
-		path, err := reverseRunPath(cmd)
-		return path + "/coverage", err
-	}, false)
+	add("coverage", "Measure one run's or the whole system's authorized inventory against current governed and candidate traces", "GET", reverseCoveragePath, false)
 	add("read-document", "Read the exact authorized SystemDoc snapshot, never the live document", "GET", func(cmd *cobra.Command) (string, error) {
 		path, err := reverseRunPath(cmd)
 		if err != nil {
@@ -169,9 +166,14 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			command.Flags().String("key", "", "a stable name for the run; the same key and content return the same run")
 			command.Flags().String("documents", "", "all or none: attach the analysis documents the preflight lists, so requirements can cite them")
 			command.Flags().String("file", "", "exact JSON intent file, instead of the other flags; - reads stdin")
-		case "status", "publish", "refresh-traces", "read-document", "coverage":
+		case "status", "publish", "refresh-traces", "read-document":
 			command.Flags().String("run", "", "authorized run id (required)")
 			_ = command.MarkFlagRequired("run")
+		case "coverage":
+			command.Long = reverseCoverageHelp
+			command.Flags().String("run", "", "authorized run id: measure that run's inventory")
+			command.Flags().Bool("system", false, "measure every run's inventory of the connected system, each file counted once")
+			command.Flags().Bool("files", false, "with --system, also list every counted file")
 		case "acceptance-apply", "acceptance-status":
 			command.Flags().String("gate", "", "dedicated acceptance gate id (required)")
 			_ = command.MarkFlagRequired("gate")
@@ -191,7 +193,7 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			_ = command.MarkFlagRequired("document")
 		}
 	}
-	root.AddCommand(reverseInventoryCommand(), reverseCaptureCommand(load), asBuiltExecutionCommand(load), asBuiltDeliveryCommand(load))
+	root.AddCommand(reverseInventoryCommand(load), reverseCaptureCommand(load), reverseRunsCommand(load), asBuiltExecutionCommand(load), asBuiltDeliveryCommand(load))
 	applyGroupUnknownArgGuard(root)
 	return root
 }
@@ -202,6 +204,110 @@ func reverseRunPath(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("--run is required")
 	}
 	return "/reverse-engineering/runs/" + url.PathEscape(id), nil
+}
+
+const reverseCoverageHelp = `Measure an authorized inventory against the current governed and candidate
+traces. Give exactly one of:
+
+  --run <run id>  one run's inventory, with every file of that run listed
+  --system        every run's inventory of the connected system
+
+The system form joins the runs' files by repository key, path and sha256, so a
+file counts once, whichever run captured it, and a link made through one run's
+capture counts for the same file in another run. When runs hold different
+hashes of a path, the most recently authorized run's hash counts and the others
+are listed as earlier versions. It prints totals, per repository and per run;
+--files adds the list of counted files. Files no run authorized are not
+measured, and one repository inventoried under different keys is not joined.`
+
+// reverseCoveragePath reads one run's coverage with --run or the whole
+// system's with --system; exactly one of them is given.
+func reverseCoveragePath(cmd *cobra.Command) (string, error) {
+	run, _ := cmd.Flags().GetString("run")
+	system, _ := cmd.Flags().GetBool("system")
+	files, _ := cmd.Flags().GetBool("files")
+	switch {
+	case (run != "") == system:
+		return "", fmt.Errorf("coverage reads one run with --run <run id> or the whole system with --system; give one of the two")
+	case system && files:
+		return "/reverse-engineering/coverage?files=true", nil
+	case system:
+		return "/reverse-engineering/coverage", nil
+	case files:
+		return "", fmt.Errorf("--files belongs to coverage --system; coverage --run lists the run's files already")
+	}
+	return "/reverse-engineering/runs/" + url.PathEscape(run) + "/coverage", nil
+}
+
+func reverseRunsCommand(load func() (*factoryEnv, error)) *cobra.Command {
+	command := &cobra.Command{Use: "runs", Short: "List the system's runs, newest first, fifty to a page (read-only)", Args: cobra.NoArgs,
+		Long: `List the connected system's reverse-engineering runs, newest first. Each run
+shows its key, mode, who authorized it and when, the authorization source, each
+repository with its revision, file count and capture state (ready, queued,
+revoked or none), the number of published groups and the latest group.
+
+One page holds fifty runs. When more runs exist, the page's next_cursor names
+the next page: give it to --cursor. --all follows every page and prints all
+runs in one body.`}
+	command.Flags().Bool("all", false, "follow every page and print all runs in one body")
+	command.Flags().String("cursor", "", "start at the page a previous page's next_cursor names")
+	command.RunE = func(cmd *cobra.Command, _ []string) error {
+		all, _ := cmd.Flags().GetBool("all")
+		cursor, _ := cmd.Flags().GetString("cursor")
+		env, err := load()
+		if err != nil {
+			return err
+		}
+		var body map[string]any
+		if all {
+			body, err = reverseAllRuns(env, cursor)
+		} else {
+			body, err = reverseRunsPage(env, cursor)
+		}
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(body)
+	}
+	return command
+}
+
+func reverseRunsPage(env *factoryEnv, cursor string) (map[string]any, error) {
+	path := "/reverse-engineering/runs"
+	if cursor != "" {
+		path += "?" + url.Values{"cursor": {cursor}}.Encode()
+	}
+	return reverseCall(env, "GET", path, nil)
+}
+
+// reverseAllRuns follows next_cursor to the last page and returns that page's
+// body holding every page's runs in the order served. A cursor served twice
+// stops the walk, so a misbehaving server cannot loop it.
+func reverseAllRuns(env *factoryEnv, cursor string) (map[string]any, error) {
+	seen := map[string]bool{cursor: cursor != ""}
+	runs := []any{}
+	for {
+		body, err := reverseRunsPage(env, cursor)
+		if err != nil {
+			return nil, err
+		}
+		data := dataOf(body)
+		page, ok := data["runs"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("the run list response has no runs; nothing is printed")
+		}
+		runs = append(runs, page...)
+		next, _ := data["next_cursor"].(string)
+		if next == "" {
+			data["runs"] = runs
+			return body, nil
+		}
+		if seen[next] {
+			return nil, fmt.Errorf("the server named the same next page twice (%s); stopped after %d runs and printed nothing", next, len(runs))
+		}
+		seen[next] = true
+		cursor = next
+	}
 }
 
 func reverseCall(env *factoryEnv, method, suffix string, payload any) (map[string]any, error) {
@@ -278,7 +384,15 @@ func readReverseJSON(cmd *cobra.Command, path string, target any) error {
 }
 
 func reverseCaptureCommand(load func() (*factoryEnv, error)) *cobra.Command {
-	command := &cobra.Command{Use: "capture-source", Short: "Capture exactly the authorized repository files; refuse changed bytes or symlinks", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "capture-source", Short: "Capture exactly the authorized repository files; refuse changed bytes or symlinks", Args: cobra.NoArgs,
+		Long: `Upload exactly the files the run authorized for one repository, each checked
+against its authorized size and hash.
+
+For a repository the run recorded clean, the files are read as committed at the
+recorded revision through Git, whatever the working tree holds now and wherever
+HEAD is; the checkout must hold that revision. For a repository recorded dirty,
+or a file not tracked at that revision, the file on disk is read, and a changed
+file or a symbolic link refuses the capture.`}
 	command.Flags().String("run", "", "authorized run id (required)")
 	command.Flags().String("repository", "", "repository key in the authorization (required)")
 	command.Flags().String("root", "", "local repository directory (required; not sent to server)")
@@ -468,7 +582,7 @@ func reverseAuthorizeGuidance(err error) error {
 	return fmt.Errorf("%w — nothing was recorded; %s", err, next)
 }
 
-func reverseInventoryCommand() *cobra.Command {
+func reverseInventoryCommand(load func() (*factoryEnv, error)) *cobra.Command {
 	command := &cobra.Command{Use: "inventory", Short: "Inventory explicitly declared repositories, including non-Git roots and legacy source formats", Args: cobra.NoArgs,
 		Long: `Read-only local inventory. Repeat --repository key=directory for every repository;
 the parent workspace need not be Git. Git worktrees use their tracked/unignored
@@ -476,6 +590,12 @@ files. Non-Git roots are walked with explicit generated/secret exclusions.
 All safe regular files are included, including XML, JSP, XSL and XSLT. Review
 the returned exclusions and byte/file denominators before authorizing upload.
 No file bytes, local absolute paths or credentials are sent to the server.
+
+In a clean Git repository each file is hashed as committed, so a checkout that
+converts line endings gives the same inventory as one that does not. In a dirty
+repository, or a root that is not Git, files are hashed as they are on disk. A
+file with a Git content filter attribute, such as Git LFS, refuses the
+inventory: the content Git stores for it is not the file.
 
 To baseline part of a large Git repository, repeat --path key=relative/path
 for the directories or files to include. Name the tests with the code they
@@ -489,13 +609,49 @@ A tracked symbolic link in a Git repository is left out and listed as an
 exclusion. It is never followed.
 
 Files under a .claude folder are agent workspace metadata: they are left out
-and listed as exclusions, and a path under .claude cannot be named.`}
+and listed as exclusions, and a path under .claude cannot be named.
+
+To inventory again the area an earlier run covered, give --like-run with the
+run id and declare each repository of that run with --repository. The paths are
+derived from the run's files and its out-of-scope exclusions: for each file, the
+shallowest folder with nothing left out under it, and a file in the repository
+root by its name. A run with no out-of-scope exclusions covers the whole
+repository. A folder that held a single file cannot be told apart from that
+file, so the folder is inventoried. The inventory is the one those paths give
+with --path. Every file that changed, is missing or is new since the run is
+listed on the error stream with the count; the inventory itself holds no
+comparison. --like-run reads the run from the connected system and cannot be
+combined with --path.`}
 	command.Flags().StringArray("repository", nil, "explicit repository identity and directory, key=directory (repeatable)")
 	command.Flags().StringArray("path", nil, "limit a Git repository to a path, key=relative/path (repeatable); the rest is listed as exclusions")
+	command.Flags().String("like-run", "", "inventory again the area an earlier run covered; the files that differ are listed on the error stream")
 	_ = command.MarkFlagRequired("repository")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		roots, _ := cmd.Flags().GetStringArray("repository")
 		named, _ := cmd.Flags().GetStringArray("path")
+		if runID, _ := cmd.Flags().GetString("like-run"); runID != "" {
+			if len(named) > 0 {
+				return fmt.Errorf("--like-run derives the paths from the run; give --path or --like-run, not both")
+			}
+			env, err := load()
+			if err != nil {
+				return err
+			}
+			like, err := reverseLikeRunScopes(env, runID, roots)
+			if err != nil {
+				return err
+			}
+			inventory, err := buildScopedReverseInventory(roots, like.scopes)
+			if err != nil {
+				return err
+			}
+			for _, repository := range inventory.Repositories {
+				for _, line := range reverseLikeRunReport(runID, like.scopes[repository.Key], like.earlier[repository.Key], repository) {
+					printWarning("%s", line)
+				}
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(inventory)
+		}
 		scopes, err := parseReverseScopes(named)
 		if err != nil {
 			return err

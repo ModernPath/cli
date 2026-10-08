@@ -487,6 +487,8 @@ var leafDispositions = map[string]disposition{
 	"author member": {kind: dispExecute, args: []string{"author", "member", "EPIC-SMK-001", "--member", "REQ-SMK-000"}},
 	// REQ-CROSS-442: apply reads the plan's records before it writes.
 	"author apply": {kind: dispExecute, args: []string{"author", "apply", "--file", "plan.json"}},
+	// SR-RDD-ONBOARD-034: reads the server contract before anything else.
+	"author context": {kind: dispExecute, args: []string{"author", "context", "--file", "contexts.json", "--context", "CAT", "--context-name", "Catalog"}},
 	// REQ-CROSS-450: review record reads the held piece before any check.
 	"process review record": {kind: dispExecute, args: []string{"process", "review", "record", "--file", "review.json"}},
 	// REQ-CROSS-458: each lane verb loads the binding (the reachability call)
@@ -521,6 +523,7 @@ var leafDispositions = map[string]disposition{
 	"reverse-engineer preflight":         {kind: dispExecute},
 	"reverse-engineer coverage":          {kind: dispExecute, args: []string{"reverse-engineer", "coverage", "--run", "smoke"}},
 	"reverse-engineer candidates":        {kind: dispExecute},
+	"reverse-engineer runs":              {kind: dispExecute},
 	"reverse-engineer status":            {kind: dispExecute, args: []string{"reverse-engineer", "status", "--run", "smoke"}},
 	"reverse-engineer source-status":     {kind: dispExecute, args: []string{"reverse-engineer", "source-status", "--capture", "smoke"}},
 	"reverse-engineer read-source":       {kind: dispExecute, args: []string{"reverse-engineer", "read-source", "--source", "smoke"}},
@@ -780,6 +783,7 @@ func seedSmokeWorkspace(t *testing.T, dir string) {
 	mk("epics/EPIC-X-001/specs/requirements.md", "# spec\n")
 	mk("README.md", "# r\n")
 	mk("plan.json", `{"epic":{"id":"EPIC-SMK-001","title":"t"}}`)
+	mk("contexts.json", `["REQ-SMK-001"]`)
 	mk("review.json", `{"verdict":"FAIL","body":"b","source":"RUN:smoke","findings":[],"dispositions":[]}`)
 	git := func(args ...string) {
 		_ = exec.Command("git", append([]string{"-C", dir}, args...)...).Run()
