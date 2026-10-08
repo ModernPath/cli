@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.18.0 — refusals name what to correct, proofs are visible, imported names hold
 
 ### Upgrading from v0.17.0
