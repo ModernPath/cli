@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.18.0 — refusals name what to correct, proofs are visible, imported names hold
+
+### Upgrading from v0.17.0
+
+- Run `modernpath install` after upgrading so the embedded process kit, the
+  reverse-engineering skill and the tooling skill match this release.
+- The collision refusal details of `reverse-engineer publish` and the actor,
+  intended use and release of a user requirement's read-back come from the
+  server; against an older server the refusal prints its bare word and the
+  read-back shows those slots as not served. Verify supported server
+  deployments before publishing this release.
+
+### A sweep's agent can act on every refusal
+
+- `reverse-engineer publish` prints the details of a collision refusal as it
+  prints a citation refusal: the requirement, the rule it broke (`id_exists`,
+  `reuse_missing`, `reuse_deleted`, `reuse_fingerprint_moved`,
+  `reuse_not_governed`, `missing`, `deleted`) and, for a parent rule, the
+  parent and its work status. The glossary row names the remedy: correct that
+  entry and publish the same group in the same run.
+- `reverse-engineer execution-proof` checks the report field by field. A
+  refusal names the result position, the field, the value as written and the
+  values accepted (`results[3].result "ok": expected
+  pass|fail|error|skip|inconclusive`); `result` is lower-cased and `role`
+  upper-cased before the check and sent normalized; `inconclusive` is
+  accepted; the raw report's `executed_tests[].result` is checked against the
+  same lowercase vocabulary and the raw report is still sent as written.
+
+### Every proof is visible
+
+- `reverse-engineer delivery-proof` prints one line on stderr from the
+  retained report — `delivery proof <result> at <tip> · captured <revision> ·
+  ancestor: <true|false|unknown> · <n> files measured`, the later parts only
+  when the report carries them — and its JSON output carries the collected
+  report under `report` beside the server's receipt under `data`. The posted
+  report is unchanged.
+- `working-set pull` renders a user requirement's `Actor / outcome` line and
+  its served release; a citation that names its test case shows it after the
+  file (`test: repo@rev:path › test_case_ref`) in the item file, the review
+  bundle and the per-file review copy. The editable citation list and push are
+  unchanged. A system requirement whose release is served as null now reads
+  "—" where it read the not-served marker.
+
+### Imported systems keep their folder
+
+- `modernpath import` marks the given name as person-set on the server, so
+  analysis keeps it and the export folder and the binding stay the folder's
+  name. `docs sync` reads the server's export slug before any download and,
+  when it differs from the bound one, refuses naming both folders and
+  `modernpath factory connect`; it does not rewrite the binding.
+- The onboarding text shows the derived contexts in the confirmation question
+  itself, each with the files and requirements it covers, and writes the same
+  list to `contexts-proposed.md`; it states the execution-proof result
+  vocabulary; and it says the remote tip may lie past the captured commit when
+  the commits between changed none of the run's files.
+
 ## v0.17.0 — drafts survive a refresh, reviews keep their evidence, and onboarding works area by area
 
 ### Upgrading from v0.16.0
