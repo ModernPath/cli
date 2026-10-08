@@ -381,7 +381,9 @@ or to a question — is a decision about that gate or question, never an
 instruction to enter the next phase: the agent applies it, reports what
 moved, and waits for the human's word before any further phase, in the
 complete loop as in a focused pass. Under an autopilot grant the agent
-continues instead (§Autopilot).
+continues instead (§Autopilot). An authorized source-scoped
+reverse-engineering run, baseline or derived, continues within that
+authorization (§Source-scoped baseline onboarding).
 
 ### Automatic transitions
 

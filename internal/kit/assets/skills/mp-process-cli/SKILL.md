@@ -920,6 +920,12 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `a lane-batch gate may open only when every member can complete in the lane` | server | a member not lane-entered, not IN_REVIEW, without evidence or an eligibility PASS at its delivered revision | the causes are listed; fix each, then `process lane complete` again |
 | `was rejected in` | server | advancing a member the lane-batch answer rejected | fix it and include it in a new batch |
 | `entered through the small-change lane — it completes through a lane-batch gate` | server | `process complete` on a lane SR | `process lane complete` |
+| `source_not_authorized` (from `reverse-engineer publish`) | server | a source citation was refused; the refusal names its `cause`, the `requirement` and the `citation_index` (its zero-based position in that requirement's `source_citations`), or the `source_file_id` for a deleted test record. The first failing citation refuses the whole group and nothing of the group is recorded | the check for that cause under "Refusals in a sweep" in the onboarding section; fix the citation and publish the same group key again. The same refusal a second time is a stop |
+| `source_not_authorized` (from `reverse-engineer refresh-traces`) | server | the word comes bare: a stored code or test citation of a named requirement has no valid source file id, cites a document, or fails the publish checks against the capture of the run given to `--run`; nothing was recorded | "Refusals in a sweep" in the onboarding section; correct the citation, then refresh again |
+| `stale_corpus` (from `reverse-engineer refresh-traces`) | server | the input's `corpus_fingerprint` is not the current one: requirements, links or lifecycles changed after the preflight it came from; nothing was recorded | `reverse-engineer preflight` again and its `data.corpus_fingerprint` in the input, with the same run and the same group key |
+| `stale_corpus` (from `reverse-engineer authorize`) | server | the requirements changed after the saved preflight; nothing was recorded. `reverse-engineer publish` never answers `stale_corpus` | onboarding step 4 |
+| `existing_requirement_conflict` / `parent_not_found` / `parent_not_governed` (from `reverse-engineer publish`) | server | a record the group names collides: an `external_id` the group creates already exists in the system; a reuse entry names a requirement whose fingerprint moved from its `reuse_fingerprint`, or one that is missing, deleted, DERIVED or OBSOLETE; a parent is missing or deleted, or is not governed (DERIVED or OBSOLETE under a confirmed system requirement). Publish checks nothing of the corpus outside the records the group names, and nothing of the group is recorded | when the record is the run's own — a parent in a group not yet published, a reuse entry of a requirement you corrected — publish the parent first or rebuild the entry from the current fingerprint. Otherwise the record was created or changed outside the run and the run is no longer current (stop list item 5): stop and show the person the refusal. Sending the same group again does not help, and another run does not clear it; do not authorize one without the person |
+| `invalid_trace_refresh` | server | the `reverse-engineer refresh-traces` input was refused before anything was read; the refusal names the `rule` that failed and, for an entry, its `entry_index` (zero-based). Rules in order: `group_key`, `top_level_keys`, `corpus_fingerprint`, `requirement_count`, `entry_keys`, `kind`, `external_id`, `expected_fingerprint`, `duplicate_external_id` | send the accepted input: a group key of 1 to 255 bytes; top-level keys exactly `corpus_fingerprint` and `requirements`; 1 to 500 entries, each exactly `kind: "system"`, `external_id` and a nonempty `expected_fingerprint`; no `external_id` twice |
 
 ## Reverse-engineering onboarding (store-backed)
 
@@ -930,14 +936,65 @@ Before resuming, use `modernpath reverse-engineer status --run ID` to recover
 stored authorization, source identities and group receipts. Reuse unchanged
 inputs/keys and reconcile acknowledged groups with the unpublished remainder;
 do not repeat mode approval or recapture completed sources. Resume incomplete
-captures as needed. A conflict requires reconciliation, not another key. New
-runs follow the sequence below.
+captures as needed. A conflict requires reconciliation, not another key.
+`modernpath reverse-engineer runs --all` lists the system's runs with their
+authorization sources when a run id is not at hand. Read the run mode as
+"Run mode" under "Running a sweep" says, and continue the confirmed contexts
+and the open questions from the sweep's working folder; do not ask for any of
+them again. New runs follow the sequence below.
 
 1. `modernpath factory status` verifies the authenticated system binding.
    `modernpath process prepare-inputs` reports local/server document freshness
    without refreshing. Search/read fresh local documents first; use
    `modernpath docs sync` only for missing or stale exports. Use live search/read
    for material missing locally or when a current authoritative answer is needed.
+
+   Before the first inventory of a Git repository, prepare the repository:
+   - Commit the files that `modernpath install` created or changed; `git
+     status` lists them (`.claude/`, `.modernpath/rdd/`, `.gitignore`,
+     `AGENTS.md`, `CLAUDE.md` and others). The person commits them, or you do
+     after the person agreed to a commit in their repository. The reason: an
+     inventory of a dirty repository marks the whole capture dirty, and a run
+     captured dirty cannot be accepted as built, whatever is committed later,
+     without a new authorized run with its own capture. As-built acceptance
+     also needs the tested commit to be the tip of the remote default branch
+     (verification step 3 below).
+   - Put untracked files that are not source, such as build output and editor
+     files, into the repository's local exclude file (`git rev-parse
+     --git-path info/exclude` names it). Ignored files are left out of the
+     inventory and disclosed as exclusions. Tracked files are listed whatever
+     the ignore rules say, except symbolic links, private paths and files under
+     `.claude`, which are left out and disclosed.
+   - Create the working folder and the run's sub-folder (below). From the
+     first inventory until acceptance the repository stays clean and at one
+     commit: commit nothing during a sweep ("Working rules" under "Running a
+     sweep").
+
+   The working folder holds every file a sweep saves:
+   `.modernpath/reverse-engineering.runs/` in the workspace root, where the
+   `modernpath` commands run. Its name has a dot, which no system slug can
+   take, so the document export never replaces it. Directly in it are the
+   files of the whole sweep: `confirmed-contexts.json`, `open-questions.md`
+   and `run-mode-changes.json`. Each run has its own sub-folder,
+   `.modernpath/reverse-engineering.runs/<folder>/`, for its inventory,
+   preflight, run, capture, group, receipt, refresh and coverage files. The
+   input files of its verification and of candidate decisions go there too
+   (execution, delivery, proof, acceptance, apply, selection and decision
+   files), because `delivery-proof` refuses a dirty repository. Choose
+   `<folder>` before the inventory, from letters, digits and hyphens, and
+   propose the same text as the run name in step 4; if the person changes the
+   run name, the folder keeps its name. A redirect does not create a folder,
+   so create it first: `mkdir -p .modernpath/reverse-engineering.runs/<folder>`,
+   or in PowerShell `New-Item -ItemType Directory -Force
+   .modernpath\reverse-engineering.runs\<folder>`. Do not save these files in
+   the repository root or in a temp folder: in the root, a file that is not
+   ignored makes the repository dirty and is listed by the inventory that
+   writes it; a temp folder can be emptied while it holds the only copy of an
+   unpublished group. The folder is ignored by the rule `/.modernpath/*` that
+   `modernpath install` writes into `.gitignore`. In a repository without that
+   rule, for example one connected but not installed, add
+   `/.modernpath/reverse-engineering.runs/` to the local exclude file first;
+   otherwise the saved files make the repository dirty.
 2. `modernpath reverse-engineer inventory --repository key=/absolute/root`
    (repeat the `--repository` flag in one command for each repository;
    one run has one inventory file) emits frozen paths, hashes, sizes, revision,
@@ -958,7 +1015,11 @@ runs follow the sequence below.
    is for the person naming it to decide. A subfolder given as
    the repository root is not a substitute: it inventories as unversioned and
    dirty, so its requirements cannot be accepted as built.
-   Save the output unchanged when you run it: add `> inventory.json` to the
+   To inventory again the area an earlier run covered, give `--like-run <run
+   id>` instead of `--path`: the error stream names every file that changed,
+   is missing or is new since that run.
+   Save the output unchanged when you run it: add
+   `> .modernpath/reverse-engineering.runs/<folder>/inventory.json` to the
    command. A large inventory does not belong in your context; read from the
    file only the totals (`file_count`, `byte_count`) and, for each entry of
    `repositories`, its `key`, `revision`, `dirty` and how many `files` and
@@ -967,32 +1028,40 @@ runs follow the sequence below.
    `cmd` the redirect does that. In PowerShell it does not: PowerShell's own
    redirect re-encodes the output. In PowerShell, let `cmd` save
    `inventory.json` and `preflight.json`, for example
-   `cmd /c "modernpath reverse-engineer preflight > preflight.json"`.
+   `cmd /c "modernpath reverse-engineer preflight > .modernpath\reverse-engineering.runs\<folder>\preflight.json"`.
    If step 4 refuses a saved file as invalid JSON, or because its snapshot
    digest does not match, the file was re-encoded when it was saved: save it
    again this way and never edit it. `run.json` in step 4 is not read back by
    the CLI and needs no such care.
-3. `modernpath reverse-engineer preflight > preflight.json` saves, under
+3. `modernpath reverse-engineer preflight >
+   .modernpath/reverse-engineering.runs/<folder>/preflight.json` saves, under
    `data`, the existing-corpus fingerprint, the requirement count, the
    recommended mode and the document descriptors. The recommendation is not
    authorization: the person chooses **baseline** or **derived** in the one
-   question of step 4.
+   question of step 4. Preflight recommends derived whenever the system has a
+   requirement, so in a planned area-by-area baseline it recommends derived
+   for every run after the first. Show the recommendation with that
+   explanation; the person still chooses baseline or derived.
 4. Authorize from the two saved files. Do not write a JSON file, and
    do not run `inventory` or `preflight` again, except after a refusal as
    described below: the saved files are what the person approves. After the
    person has answered:
-   `modernpath reverse-engineer authorize --inventory inventory.json
-   --preflight preflight.json --mode baseline --source "USER:<date>:<name>
-   approved <mode>, documents <all|none>" --key <run name>
-   --documents all > run.json`.
-   Every flag is required and none has a default. The mode and the document
-   choice are the person's answers. You propose the run name for `--key` — short
-   and stable, for example `billing-baseline` — and you write `--source` from
-   the answer, in at most 255 bytes. `<name>` is the person who answered; ask
-   for it in the same question when you do not know it. The response is the
-   whole run, with every file and every attached document, so it goes to
-   `run.json`: read only `data.id` from that file for step 5. Actor, system,
-   Base and process revision are server-owned.
+   `modernpath reverse-engineer authorize --inventory
+   .modernpath/reverse-engineering.runs/<folder>/inventory.json --preflight
+   .modernpath/reverse-engineering.runs/<folder>/preflight.json --mode baseline
+   --source "USER:<date>:<name> approved <mode>, documents <all|none>, run mode <autonomous|confirm>"
+   --key <run name> --documents all
+   > .modernpath/reverse-engineering.runs/<folder>/run.json`.
+   Every flag is required and none has a default. The mode, the document
+   choice and the run mode are the person's answers. You propose the run name
+   for `--key` — short and stable, for example `billing-baseline`, the same
+   text as the run's sub-folder — and you write `--source` from the answer, in
+   at most 255 bytes, ending with one of the two fixed wordings of the run
+   mode: `run mode autonomous` or `run mode confirm`. `<name>` is the person
+   who answered; ask for it in the same question when you do not know it. The
+   response is the whole run, with every file and every attached document, so
+   it goes to `run.json`: read only `data.id` from that file for step 5.
+   Actor, system, Base and process revision are server-owned.
 
    **Before authorizing, show the person** what they approve, read from the
    two files, in plain words and in one message:
@@ -1005,7 +1074,7 @@ runs follow the sequence below.
      "Baselined — not verified"; derived proposes candidates for later review.
      State how many requirements the system already has
      (`data.requirement_count`) and `data.recommended_mode` as a
-     recommendation, never as the answer;
+     recommendation, never as the answer, with the explanation of step 3;
    - the analysis documents: how many the preflight lists (`data.documents`)
      and what attaching them does — the run's requirements can then cite
      them; without them requirements cite code and tests only. Recommend
@@ -1013,22 +1082,29 @@ runs follow the sequence below.
      true, the system has more documents than one run can attach and `all`
      cannot be authorized from the saved files: say so and offer `none` only.
      The person still answers;
+   - the run mode and what each choice means: autonomous — you continue
+     through capture, every publication group, coverage and the read-back
+     without asking, and stop only for the stop list under "Running a sweep";
+     confirm — you report after each publication group and wait for the
+     person;
    - the run name. You propose the run name; the person can change it.
-   Ask once: one question that covers the mode, the documents and the run
-   name. Then run the command with what the person said.
+   Ask once: one question that covers the mode, the documents, the run name
+   and the run mode. Then run the command with what the person said.
 
    **If the authorization is refused**, nothing was recorded, and the same run
    name can be used again. A refusal never lets you change the mode, the
-   document choice or the run name yourself. The two rules below are for
-   these three server reasons only:
+   document choice, the run mode or the run name yourself. The two rules below
+   are for these three server reasons only:
    - `stale_corpus` (the requirements changed) or `document_not_authorized`
      (a document changed): run `preflight` again and save it as
-     `preflight-new.json`. Then compare the four fields of the two files:
+     `.modernpath/reverse-engineering.runs/<folder>/preflight-new.json`. Then
+     compare the four fields of the two files:
      `data.requirement_count`, `data.recommended_mode`, the number of
      `data.documents` and `data.documents_truncated`. If nothing differs,
      authorize again with the same answers and `--preflight
-     preflight-new.json`, and tell the person that you did. If something
-     differs, show the difference and ask again before you authorize.
+     .modernpath/reverse-engineering.runs/<folder>/preflight-new.json`, and
+     tell the person that you did. If something differs, show the difference
+     and ask again before you authorize.
    - `document_snapshot_too_large` (too much document text for one run): stop
      and tell the person. The error and the help name `--documents none` as
      the next step; that is the mechanism, not permission. `--documents none`
@@ -1042,33 +1118,281 @@ runs follow the sequence below.
    needs no new review.
 
    A file built another way can still be given with `authorize --file
-   authorization.json`. Its fields are `key`, `mode`, `authorization_source`,
+   .modernpath/reverse-engineering.runs/<folder>/authorization.json`. Its
+   fields are `key`, `mode`, `authorization_source`,
    `corpus_fingerprint`, `repositories` (from inventory) and `documents` (from
    preflight; each has `kind`, `id`, `version`, `fingerprint`). The two forms
    cannot be mixed, and the file form's errors carry no next step.
 5. For each repository, `modernpath reverse-engineer capture-source --run ID
    --repository key --root /absolute/root`. Poll `source-status --capture ID`
-   until ready; use returned immutable source-file IDs. Interrupted captures
+   until ready, then save it once with
+   `> .modernpath/reverse-engineering.runs/<folder>/capture-<key>.json` and
+   take the immutable source-file IDs from that file. A requirement cites the
+   source file ids of the capture of the run it is published to, never those
+   of an earlier run's capture of the same files. Interrupted captures
    resume without provider OAuth or FileAnalysis. `read-source --source ID`
    returns exact captured bytes; `read-document --run ID --document ID` returns
    the authorized immutable document snapshot.
 6. Prepare the complete requested requirement batch locally: exact UR/SR IDs,
    criteria/scenarios, citations, relationships, stable keys and fingerprints.
    Check duplicates and cross-context joins before the first publication.
-   `modernpath reverse-engineer publish --run ID --group stable-key --file group.json`
+   Read "Running a sweep" before the first publish. Before the run's first
+   publish, confirm the bounded contexts new to the sweep ("Bounded
+   contexts"). Find and cite the tests that cover each group's code, naming
+   the executed test in `test_case_ref`. Compare the staged requirements with
+   the existing ones by the files they cite: read the existing requirements
+   that cite the same files (earlier receipts name their ids, and
+   `working-set pull <id>` shows each one's citations), and reuse such a
+   requirement or merge the staged one into it instead of publishing the same
+   behavior under a new id.
+   `modernpath reverse-engineer publish --run ID --group stable-key --file
+   .modernpath/reverse-engineering.runs/<folder>/group-<stable-key>.json
+   > .modernpath/reverse-engineering.runs/<folder>/receipt-<stable-key>.json`
    publishes a coherent graph atomically. Split only for supported limits or
    dependencies; publish referenced parents first. Retain each returned receipt,
    then perform one consolidated read-back/audit. `status --run ID` recovers
    durable group receipts after interruption; retry identical inputs/keys only
    when needed. Do not derive/publish/read back each row separately.
-7. `modernpath reverse-engineer coverage --run ID` measures the frozen inventory
-   against stored traces. It separates governed/candidate linkage, captures,
-   assessments and exclusions. It is not execution evidence or behavior-class
-   enumeration. Follow the publication skill's linked coverage reference for a
-   separate behavior-denominator checker; `audit-citations.mjs --min=N` checks
-   citation counts/validity, not percentage coverage. `modernpath coverage` does
-   not measure retired local ledgers in a store-backed workspace. Read the actual Ledger and Requirements surfaces
-   before claiming baseline-ready or candidate-ready.
+   A publish prints one warning line naming the requirements it created
+   without a context and without a test citation; the receipt lists them under
+   `data.result` as `requirements_without_context` and
+   `requirements_without_test_citation`.
+   List the requirements published without a test in the end report. A
+   refused publish: the glossary rows for `source_not_authorized` and the
+   collision refusals, and "Refusals in a sweep" below.
+7. `modernpath reverse-engineer coverage --run ID >
+   .modernpath/reverse-engineering.runs/<folder>/coverage.json` measures the
+   frozen inventory against stored traces. It separates governed/candidate
+   linkage, captures, assessments and exclusions. It is not execution
+   evidence or behavior-class enumeration. Follow the publication skill's
+   linked coverage reference for a separate behavior-denominator checker;
+   `audit-citations.mjs --min=N` checks citation counts/validity, not
+   percentage coverage. `modernpath coverage` does not measure retired local
+   ledgers in a store-backed workspace. Read the actual Ledger and
+   Requirements surfaces before claiming baseline-ready or candidate-ready.
+
+   A run is finished when `data.assessments.unresolved_files` is 0 and every
+   entry of `data.files` has `governed` or `candidate` true, or an
+   `assessment` of `reviewed` or `unsupported`. No single total answers it: a
+   linked file without an assessment counts as `unassessed`, and
+   `data.coverage.unlinked_files` counts reviewed files too. Read the totals
+   and the files that fail the condition from the saved file, not the whole
+   list. An `unresolved` assessment says that work remains; it is never used
+   to complete a count. Linked means a governed or candidate link from a
+   system requirement: a file cited only by a user requirement is not linked.
+   The report is for one run: a link counts for it only when it was made
+   through a capture of the same repository key and file list, whichever run
+   made it. A file with `governed` and `candidate` both false, although a
+   requirement from an earlier run covers it, is assessed as `reviewed` with
+   that requirement named in the reason. The finish condition is the
+   completeness of the sweep over this run's files, not verification, and
+   counts and percentages define no passing gate. `coverage --system` reads
+   every run of the system at once, each file counted once; a run's finish
+   condition is read from `coverage --run`.
+
+### Running a sweep
+
+A sweep is the whole effort over one or more runs, for example one run per
+area of a large repository. A run is finished when the condition of step 7
+holds.
+
+#### Run mode
+
+The person chooses the run mode of each run in the authorization question of
+step 4, and you write it into `--source` as `run mode autonomous` or `run mode
+confirm`.
+
+- Autonomous run mode: continue through capture, every publication group,
+  coverage and the read-back without asking, and stop only for the stop list
+  below. The one planned question is the confirmation of bounded contexts new
+  to the sweep, asked once per run before that run's first publish and not at
+  all when the run adds none ("Bounded contexts"). Everything else goes on the
+  open-questions list, which you report once, at the end.
+- Confirm run mode: report after each publication group and wait for the
+  person.
+
+A later session reads the run mode from
+`data.authorization.authorization_source` of `status --run ID` and does not
+ask for it again. The stored source cannot be changed: the same run name with
+another source is refused as `idempotency_conflict`. So when the person
+changes the run mode, write the change to
+`.modernpath/reverse-engineering.runs/run-mode-changes.json`: one entry per
+run, keyed by the run id, holding the run mode the person gave. Write the
+whole file under a new name and rename it over the old one, so that a crash
+leaves it missing or unreadable, never short. A later session reads that file
+before the stored source. A run is autonomous only when its stored source says
+`run mode autonomous` and the change file is missing, or is readable and holds
+no entry for that run that says `confirm`. In every other case work in the
+confirm run mode: a source that says `run mode confirm`; a source without the
+run-mode wording, such as one written through the file form or by hand; an
+unreadable change file; or an entry for the run that says `confirm`. A change
+to autonomous on a run authorized as confirm therefore holds for the current
+session only.
+
+#### Stop list
+
+In the autonomous run mode, stop and ask the person only when:
+
+1. a new run needs authorization;
+2. a refusal has no next step in this skill, or the same refusal comes a
+   second time;
+3. the authorized source changed (`capture-source` refuses with `authorized
+   source changed`);
+4. a publish would change an existing requirement;
+5. the run is no longer current: a publish is refused for a collision with a
+   record created or changed outside the run (an `external_id` the group
+   creates already exists, a reuse entry names a requirement whose
+   fingerprint moved, or a parent is missing or not governed; the collision
+   row of the refusal glossary);
+6. a sign-in or a permission is refused.
+
+Show the refusal as printed, with its cause from this skill. Everything else —
+a question about intent, a file you cannot classify, a requirement that fits
+no confirmed context — goes on the open-questions list,
+`.modernpath/reverse-engineering.runs/open-questions.md`. Append each question
+when it arises and mark it answered when the person answers. A resumed session
+continues the list, and the end report is made from it: for each run, whether
+it is finished, with the coverage counts; the groups held back; the
+requirements published without a test or without a context; and the open
+questions.
+
+#### Bounded contexts
+
+Each requirement a run creates carries a bounded context: a code in `context`
+and a name in `context_name`. Heartbeat groups requirements by the code and
+shows a requirement without one as Unclassified.
+
+In each run, after the source is captured and the behavior derived and before
+anything is published, show the person the contexts the run derived that are
+not yet in `.modernpath/reverse-engineering.runs/confirmed-contexts.json`, a
+code and a name each. Draw them from the behavior you derived; the analysis
+subsystems are an input only, since a subsystem is not a bounded context. The
+person confirms or changes them, in either run mode. This is a naming
+confirmation of the list, asked once per run, not an approval of each
+context's content. A run whose derived contexts are all on the list asks
+nothing. Add the confirmed contexts to the file, a list of `{"context":
+"<code>", "context_name": "<name>"}` entries. It sits above the run folders,
+so every run of the sweep reads it before its first publish and asks only
+about the contexts it adds. When the file is missing or unreadable, ask the
+person to confirm the whole list again; never guess.
+
+Set a confirmed context on every requirement you create, never one the person
+has not confirmed. A reuse entry carries no context. For a requirement that
+fits no confirmed context after the run's planned question: in the confirm run
+mode, ask. In the autonomous run mode, do not publish the group that holds it,
+nor any group whose requirements name a parent in a held group (publish would
+refuse it as `parent_not_found`); put the question on the open-questions list,
+continue with the other groups, report the run as unfinished, and publish the
+held groups after the person has confirmed the context. A held group leaves
+its files unassessed, so the next run waits for that answer.
+
+#### What a publish checks
+
+A publish compares only the records its group names. It is refused, and
+nothing of the group is recorded, when an `external_id` the group creates
+already exists in the system; when a reuse entry names a requirement that is
+missing, deleted, DERIVED or OBSOLETE, or whose fingerprint is not its
+`reuse_fingerprint`; or when a parent is missing or deleted, or is DERIVED or
+OBSOLETE under a confirmed system requirement. Publish does not compare the
+system's corpus with what the run last saw: another run's publish, an author
+edit, a context code, a trace refresh, an applied gate answer, a candidate
+decision or an acceptance does not stop a run. A group that holds only source
+assessments is accepted at any time, as long as each assessed file is in the
+run's inventory. `corpus_after` on a receipt and `data.corpus_fingerprint` of
+preflight are records, not a check that publish makes: comparing them before
+a publish says nothing about whether it will be accepted.
+
+The corpus fingerprint is what `authorize` and `refresh-traces` compare. It
+covers the system's requirements, criteria, trace links, test cases, epics
+and memberships, so it changes with every group that creates a requirement,
+a link or an epic (not a group of only source assessments or reuse entries),
+an author edit, a context code, a `refresh-traces` call that creates a link
+(also one made with the same run), a lifecycle change such as applying a gate
+answer, a candidate decision and an acceptance. Answering a gate without
+applying it does not change it. A preflight saved before such a change is
+refused as `stale_corpus` by `authorize` (step 4) and by `refresh-traces`
+(refusal glossary).
+
+#### Working rules
+
+- Runs publish one after another. Authorize the next run only after the
+  previous one has published every group, its source assessments included,
+  so that it meets the finish condition of step 7, or after the person
+  decided to leave it unfinished. The next run reuses the earlier run's
+  confirmed contexts and assesses the files its requirements cover, and every
+  group that creates a requirement, a link or an epic changes the corpus
+  fingerprint that the next authorization is checked against.
+- Fold a correction to a requirement into its group before the group is
+  published. A requirement already published is corrected with an author
+  edit; that does not stop the run, but it changes the requirement's
+  fingerprint, so rebuild any staged reuse entry or refresh input that names
+  it.
+- A requirement cites the source file ids of the capture of the run it is
+  published to, never those of an earlier run's capture of the same files:
+  publish refuses them as `capture_of_another_run`.
+- A file of this run that the coverage output shows with `governed` and
+  `candidate` both false, although a requirement from an earlier run covers
+  it, is assessed as `reviewed` with that requirement named in the reason.
+- Changes to published citations and `refresh-traces` belong to
+  verification, after the run has published its last group: a refresh needs
+  the corpus fingerprint of a current preflight, and every group that creates
+  a requirement, a link or an epic changes it.
+  Set contexts on requirements already published, with `author context
+  --file`, after the run's last group and before verification records
+  execution proof: it refuses a requirement with current execution proof,
+  because a new context would void that proof.
+- The repository stays clean and at one commit from the first inventory until
+  acceptance: commit nothing in it during a sweep. A run captured dirty cannot
+  be accepted as built without a new authorized run with its own capture. A
+  later commit that reaches the default branch leaves a run captured before it
+  acceptable as built only at that newer tip, through `delivery-proof --run`
+  (verification step 3), and only when the commit changed none of the files
+  the run authorized.
+- The kit is not updated during a sweep. If the person decides to update it
+  anyway, install it between runs and commit the result before the next
+  inventory; never leave it uncommitted, because the next inventory would
+  then mark its run dirty. A run captured before that commit is accepted as
+  built only at the new tip as above, which fails when the update changed a
+  file the run authorized, for example `AGENTS.md` in a run over the whole
+  repository. Such a run can then be accepted as built only through a new
+  authorized run with its own capture (`inventory --like-run <run id>`
+  inventories the same area again), with the citations of its requirements
+  moved to the new capture's file ids and a trace refresh.
+
+### Refusals in a sweep
+
+The refusal glossary has rows for `source_not_authorized`, `stale_corpus`,
+the collision refusals and `invalid_trace_refresh`; this section gives the
+causes of `source_not_authorized` and `document_not_authorized`, and step 4
+the refusals of `authorize`. Any other refusal is stop-list item 2. A
+refused publish or trace refresh records nothing, so the same group key can
+be sent again once the cause is fixed; the same refusal a second time is a
+stop (stop list).
+
+`source_not_authorized` from `publish` names the `cause`, the `requirement`
+and the `citation_index`, the zero-based position of the citation in that
+requirement's `source_citations`. The first failing citation refuses the
+whole group. `source-status --capture <id>` for this run's capture shows
+`data.state`, `data.run_id` and `data.files[]` with each file's id,
+repository key, revision, path and sha256. Find the entry of `data.files[]`
+by the cited `source_file_id`, never by path: an earlier run's capture of the
+same file has the same path, revision and hash under another id.
+
+| `cause` | Meaning | Read that shows it |
+|---|---|---|
+| `no_source_citations` | the requirement has no `source_citations`; the refusal names no position | the requirement in the group file |
+| `unresolved_not_authorized` | a `kind: "unresolved"` citation on a row that is not a candidate (a baseline row without `exception_reason`), or one whose repository key and path are not in the run's authorization, or whose reason is blank | the row's `exception_reason`; the path under `data.authorization.repositories[].files` in `run.json` |
+| `invalid_citation` | the citation is not an object, or its `source_file_id` is missing or not a UUID | the citation in the group file |
+| `not_from_ready_capture` | the id names no captured file of this system, or its source is no longer available: the repository was unlinked from the system, the capture is not ready, or its manifest is missing or revoked (a superseded manifest is still valid) | `read-source --source <id>` answers `not_found` or `source_unavailable`; `source-status --capture <id>` shows `data.state` |
+| `capture_of_another_run` | the id belongs to a ready capture of another run, for example an earlier run's capture of the same file | the id is not among `data.files[].id` of this run's capture; cite the id of this run's entry for the same path |
+| `unsupported_kind` | `kind` is not `code`, `test` or `document` | the citation in the group file |
+| `source_identity_differs` | the repository key, revision, path or sha256 differs from the captured file with that id | the entry of `data.files[]` that has the cited id |
+| `test_record_deleted` | the test record of a cited test file was deleted; the refusal names the `source_file_id` instead of a position | no read shows the deleted record: stop and show the person |
+
+A citation with `system_doc_id` refuses as `document_not_authorized` instead,
+when the run did not attach that document, its version or fingerprint
+differ, or the citation's `kind` is not `document`; `run.json` lists the
+run's documents under `data.authorization.document_snapshots`.
 
 ### Existing-proof verification and acceptance
 
@@ -1104,9 +1428,13 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    actual test name to a registered TestCase or a captured test citation's
    `test_case_ref`; inspect the behavior asserted, not only names or counts.
    After changing captured citations on existing pending SR baselines, run
-   `modernpath reverse-engineer preflight`, then
+   `modernpath reverse-engineer preflight >
+   .modernpath/reverse-engineering.runs/<folder>/preflight-refresh.json`, then
    `modernpath reverse-engineer refresh-traces --run CAPTURE-RUN --group stable-key
-   --file refresh.json`. Input is exactly `corpus_fingerprint` from preflight and
+   --file .modernpath/reverse-engineering.runs/<folder>/refresh-<stable-key>.json`,
+   in the capture run's sub-folder. A refusal: the glossary rows for
+   `stale_corpus`, `invalid_trace_refresh` and `source_not_authorized` from
+   `refresh-traces`. Input is exactly `corpus_fingerprint` from preflight and
    `requirements: [{kind: "system", external_id, expected_fingerprint}]`, using
    each requirement's current content fingerprint. The capture run must belong
    to the signed-in actor, be baseline-authorized and contain every persisted
@@ -1121,7 +1449,12 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    A new refresh needs current graph/content fingerprints. Refresh grants neither
    test PASS nor acceptance. `publish` reuse does not refresh existing links.
 2. Run the existing tests or inspect genuine retained execution reports.
-   `modernpath reverse-engineer execution-proof --file execution.json` records
+   Put any output the test run writes into the repository and Git does not
+   ignore, such as reports or coverage files, into the local exclude file
+   before step 3: `delivery-proof` refuses a dirty repository. Save the input
+   files of this step and the next ones in the capture run's sub-folder.
+   `modernpath reverse-engineer execution-proof --file
+   .modernpath/reverse-engineering.runs/<folder>/execution.json` records
    through the existing evidence channel and returns durable run/result IDs
    and the exact report digest. It does not execute tests. Input is `key`,
    `kind`, full tested `sha`, actual `ran_at`, exact JSON-string `raw_evidence`
@@ -1134,8 +1467,9 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    `executed_tests: [{test_case_ref, result}]`, `command`, `environment` and,
    for CI, `ci: {provider, repository, run, job, attempt, tested_commit}`.
 3. For every repository, `modernpath reverse-engineer delivery-proof --file
-   delivery.json` takes `key`, `repository_key`, local `root`, exact
-   `tested_revision` and captured `snapshot_digest`. It checks the clean
+   .modernpath/reverse-engineering.runs/<folder>/delivery.json` takes `key`,
+   `repository_key`, local `root`, exact `tested_revision` and captured
+   `snapshot_digest`. It checks the clean
    snapshot before/after fetching the advertised remote default branch and
    retains a distinct integration report in the evidence store. The tested
    revision must be the fetched tip; a failed fetch or non-tip revision refuses.
@@ -1147,16 +1481,25 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    retry preserves the original observation and digest; changed intent under
    the same key conflicts. Reuse current retained observations when available.
    This makes no deployment claim.
-   For a run inventoried with `--path`, add `--run CAPTURE-RUN`: the command
-   reads that run's authorization first and takes its snapshot over exactly the
-   files authorized for the repository, so the digest equals the captured one.
-   The input JSON is unchanged and the repository must still be clean as a
-   whole. `snapshot_digest` must be the digest that run captured: any other
-   digest, even that of the current files, refuses and records nothing. The report then also carries
-   `authorization_run_id` and `measured_files`. A run that cannot be read, or
-   that does not authorize the repository key, refuses before any observation.
-   Without `--run` a scoped run's digest never matches the whole repository.
-4. `modernpath reverse-engineer proof-preview --file proof.json` evaluates
+   Add `--run CAPTURE-RUN` for a run inventoried with `--path`, for a run
+   whose capture holds files under `.claude`, which a new inventory leaves
+   out, and for acceptance at a default-branch tip past the commit the run
+   captured: the command reads that run's authorization first and takes its
+   snapshot over exactly the files authorized for the repository, so the
+   digest equals the captured one. The input JSON is unchanged and the
+   repository must still be clean as a whole. `snapshot_digest` must be the
+   digest that run captured: any other digest, even that of the current
+   files, refuses and records nothing. With `--run` the tip may be past the
+   commit the run captured when the authorized files at the tip are the
+   captured ones; the tested revision is still the tip. The report then also
+   carries `authorization_run_id` and `measured_files`, and at a newer tip
+   the captured revision and whether it is an ancestor of the tip; that is
+   shown, not required, since a squash merge never keeps the captured commit.
+   A run that cannot be read, or that does not authorize the repository key,
+   refuses before any observation. Without `--run` a scoped run's digest
+   never matches the whole repository.
+4. `modernpath reverse-engineer proof-preview --file
+   .modernpath/reverse-engineering.runs/<folder>/proof.json` evaluates
    without record or lifecycle writes. Input has `version: 1`, `requirements`
    and `delivery`. Each requirement has `kind: "SR" | "UR"`, `external_id`,
    exact `content_fingerprint` and `clauses`. Each clause has `clause`,
@@ -1167,7 +1510,8 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    must exactly match every active criterion, with no omissions or duplicates.
    Read eligibility, denominator,
    gaps, exact pending scope and `proof_digest`. Unknown fields refuse.
-5. `modernpath reverse-engineer acceptance-open --file acceptance.json` takes
+5. `modernpath reverse-engineer acceptance-open --file
+   .modernpath/reverse-engineering.runs/<folder>/acceptance.json` takes
    `key`, exact `proof`, returned `proof_digest` and the standard five-field
    human `brief`: exactly `what`, `why_now`, `changes_if_approved`,
    `risk_if_wrong` and `recommendation`, all nonempty strings. It rechecks proof,
@@ -1182,7 +1526,8 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    USER:…`. Its gate read attaches both review pins. The answer boundary
    rechecks current evidence; permission to implement tooling is not acceptance.
 7. `modernpath reverse-engineer acceptance-apply --gate ASBUILT-… --file
-   apply.json` takes `key`, exact `proof_digest` and `gate_fingerprint`.
+   .modernpath/reverse-engineering.runs/<folder>/apply.json` takes `key`,
+   exact `proof_digest` and `gate_fingerprint`.
    Application rechecks all proof and atomically moves exactly the pending
    named scope to DONE, keeps compliance status unchanged and stores a receipt.
    Any currently authorized signed-in member may apply that exact reviewed
@@ -1211,10 +1556,19 @@ author/sync operations. These write commands run only from the main session.
 SR `parent_external_ids` names exact UR parents; a parentless SR needs a rationale.
 Do not send authority, approval, release or work-status fields as intent.
 
+Each requirement also carries `context`, the bounded-context code, and
+`context_name`, its name, each at most 255 characters. Heartbeat groups
+requirements by the code. Use only contexts the person confirmed ("Bounded
+contexts" under "Running a sweep"); publish accepts a requirement without one
+and the receipt names it.
+
 File citations use `kind: "code" | "test" | "document"`, `source_file_id`,
 `repository_key`, `revision`, `path`, `sha256`, and optional locator fields.
-A test citation can retain `test_case_ref` for the exact executed test identity;
-the readable `ref` remains the normalized source address.
+When a test is cited and the executed test's name is known, name it in
+`test_case_ref`: the as-built proof binds a criterion to the executed test by
+that name. The readable `ref` remains the normalized source address.
+A user requirement needs a code citation and a test citation of its own for
+its upper proof, which uses its captured citations directly.
 Document citations use `system_doc_id`, `version`, `fingerprint`; the server
 validates them against the run and supplies their readable reference.
 Typed citations publish SR→source/test edges and parents publish UR→SR edges.
@@ -1242,12 +1596,18 @@ each names `repository_key`, `snapshot_digest`, `path`, `sha256`, `outcome`
 (`reviewed`, `unresolved`, `unsupported`) and a nonempty `reason`. Latest durable
 assessment wins; an assessment is not a code trace or verified coverage.
 
+One group holds at most 500 requirements, 100 criteria per requirement and
+5000 source assessments.
+
 ### Exact candidate decisions
 
-`candidates` reads typed records and proposed trace IDs. `preview --file selection.json`
+`candidates` reads typed records and proposed trace IDs. Save both input files
+below in the sub-folder of the run that published the candidates.
+`preview --file .modernpath/reverse-engineering.runs/<folder>/selection.json`
 takes `requirements: [{kind, external_id, decision}]` and independent `links: [trace-id]`.
 Decisions are `accept_as_built`, `accept_desired`, `reject`, `defer`. No Epic is needed.
-After explicit approval of that preview, `decide --file decision.json` takes the
+After explicit approval of that preview, `decide --file
+.modernpath/reverse-engineering.runs/<folder>/decision.json` takes the
 same exact selection plus returned `fingerprint`, stable `key` and `source: "USER:…"`.
 As-built becomes Base/PENDING_VERIFICATION; desired intent becomes PROPOSED;
 rejected becomes OBSOLETE; deferred remains DERIVED. Unselected links remain

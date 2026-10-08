@@ -28,18 +28,56 @@ answer; the authoritative source wins a disagreement. Always read the authoritat
 requirement corpus and fingerprint through the sanctioned tool before authorizing
 a run. An empty directory or cache does not prove an empty system.
 
+Before the first inventory of a Git repository, prepare it as the
+`mp-process-cli` onboarding says. Commit the files `modernpath install`
+created or changed, by the person or by the agent after the person agreed: an
+inventory of a dirty repository marks the whole capture dirty, and a run
+captured dirty cannot be accepted as built, whatever is committed later,
+without a new authorized run with its own capture. As-built acceptance also
+needs the tested commit to be the tip of the remote default branch (the
+`mp-process-cli` verification steps). Put untracked files that are not source
+into the repository's local exclude file: ignored files are left out and
+disclosed, and tracked files are listed whatever the ignore rules say, except
+symbolic links, private paths and files under `.claude`, which are left out and
+disclosed. Keep every saved file in the sweep's working folder that the
+`mp-process-cli` onboarding names, never in the repository root or a temp
+folder. The repository stays clean and at one commit from the first inventory
+until acceptance, and the kit is not updated during a sweep. If the person
+decides to update it anyway, it is installed between runs and committed, never
+left uncommitted; a run captured before that commit whose authorized files the
+update changed can then be accepted as built only through a new authorized run
+with its own capture and with the citations of its requirements moved to it.
+
 ## Resume checks
 
 If a run already exists, read its authorization, captured sources and group
 receipts before collecting or publishing again. Reuse unchanged authorization,
 keys and prepared inputs; reconcile acknowledged receipts with the unpublished
 remainder. Retry identical input only when recovery requires it. A conflict is
-not permission to invent a new key or overwrite an existing requirement.
+not permission to invent a new key or overwrite an existing requirement. Read
+the run mode from the run's authorization source and the sweep's run-mode
+change file as the `mp-process-cli` onboarding says, and do not ask for it
+again: the run is autonomous only when its source says so and the change file
+holds no confirm entry for it; otherwise, and also when the change file is
+unreadable, confirm after each publication group.
 
 Resume against the run's captured source identities. Reconcile corpus changes
-against its own receipts; external changes or materially changed source scope
-require fresh scope authorization. Never replace unavailable historical evidence
-with latest code or ask again for an unchanged authorized run.
+against its own receipts; external changes to the authorized source or
+materially changed source scope require fresh scope authorization. Never
+replace unavailable historical evidence with latest code or ask again for an
+unchanged authorized run.
+
+Of the corpus, a publication group is refused only for a collision with a
+record it names, never because the rest of the corpus changed. Runs publish
+one after another: authorize the next run only after the previous one has
+published every group, its source assessments included, and meets the finish
+condition, or after the person decided to leave it unfinished. Fold a
+correction into a group before publishing it. A later run cites the source
+file ids of its own capture; a file covered by a requirement from an earlier
+run is assessed as reviewed, naming that requirement. Contexts on published
+requirements are set before verification records execution proof; citation
+changes and trace refreshes belong to verification. The `mp-process-cli`
+onboarding gives the checks and the refusals.
 
 ## Steps
 
@@ -63,6 +101,18 @@ already contains that exact authorization:
 - **DERIVED additions for approval:** distinct proposed requirements and links
   await exact later review, separate from the confirmed corpus. Existing
   governed content remains unchanged. Recommend this when requirements already exist.
+
+Preflight recommends derived whenever the system has a requirement, which in a
+planned area-by-area baseline is every run after the first. Show the
+recommendation with that explanation; the person still chooses baseline or
+derived.
+
+In the same question as the mode, the person chooses the run mode, written into
+the run's authorization source: autonomous, where the agent continues through
+capture, every group, coverage and the read-back and stops only for the stop
+list of the `mp-process-cli` onboarding; or confirm, where it reports after
+each publication group and waits. Call this choice the run mode, never just
+the mode: the mode is baseline or derived.
 
 Record the chosen mode/source authorization through the sanctioned operation.
 Do not substitute generic requirement birth with a forced status, raw API writes
@@ -117,7 +167,21 @@ Prepare the full requested scope locally before the first requirement
 publication: URs, SRs, scenarios, criteria, citations and relationships, with
 stable run/group keys and input fingerprints. Check duplicates, exact existing
 identity reuse, unresolved citations and cross-context joins across the batch.
-These reusable inputs are staging artifacts, not another requirement store.
+Compare the staged requirements with the existing corpus by the files they
+cite, and reuse or merge into an existing requirement instead of publishing
+the same behavior under a new id. Identify the tests that cover each group's
+code and cite them, naming the executed test; list the requirements published
+without a test in the end report. These reusable inputs are staging
+artifacts, not another requirement store.
+
+Before a run's first publication, show the person the bounded contexts the run
+derived that the sweep has not confirmed yet, a code and a name each, drawn
+from the recovered behavior with analysis subsystems as an input only; the
+person confirms or changes them, in either run mode. This is a naming
+confirmation of the list, asked once per run, not an approval of content; a
+run whose contexts are all confirmed asks nothing. Record a confirmed context
+on every requirement created, never an unconfirmed one; a reuse entry carries
+none.
 
 Publish coherent atomic groups of related requirements. Split only for supported
 limits or dependencies, sending referenced parents before dependent groups.
@@ -130,7 +194,8 @@ Apply the authorized mode:
 
 - **Baseline:** new grounded rows become PENDING_VERIFICATION in Base with
   confirmed UR–SR and SR–code/test relationships. Reuse only exact unchanged
-  identities. No row/context approval round follows publication.
+  identities. No row/context approval round follows publication; the naming
+  confirmation of new bounded contexts comes before it.
 - **DERIVED:** publish distinct candidate IDs, proposed criteria/links, sources,
   conflicts, consequences and a confirmation brief. Compare exact typed existing
   identities and current/proposed content without overwriting approved content.
@@ -184,8 +249,11 @@ delivery entry or DONE.
 Retain the authorized scope and source/run identities, prepared batch and group
 keys, publication receipts, exact persisted IDs/links, coverage scripts/reports,
 and all gaps or unpublished groups. Include design documents only when in scope.
-Unresolved in-scope work and unchecked coverage remain incomplete. Continue a requested full
-sweep across remaining authorized contexts without per-context reapproval.
+Unresolved in-scope work and unchecked coverage remain incomplete. A run is
+finished only when the finish condition of the coverage reference holds. Continue a requested full
+sweep across remaining authorized contexts without per-context reapproval,
+in the run mode the person chose; the end report is made from the open
+questions kept in the sweep's working folder.
 
 Finish with a usable baseline or a reviewable candidate set and an honest
 remainder. Existing-proof verification of published baselines belongs to

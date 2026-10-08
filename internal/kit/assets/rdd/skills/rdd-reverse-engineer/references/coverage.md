@@ -48,3 +48,19 @@ Report counts with their denominators, exclusions, unresolved references and
 uncovered items for each inventory. Unresolved in-scope work remains incomplete.
 Preserve meaningful requirement granularity and finish the requested authorized
 scope; a row count is not permission to truncate a full sweep.
+
+## When a run is finished
+
+A run is finished when no file of its inventory is unresolved and every file
+is linked to a system requirement, or assessed as reviewed or unsupported with
+a reason. This is the completeness of the sweep over the run's files, not
+verification of behavior, and it is not execution evidence. An unresolved
+assessment states that work remains; it is never used to complete a count.
+
+The finish condition is measured for one run. A link counts for it only when it
+was made through a capture of the same repository key and file list, whichever
+run made it, and a file cited only by a user requirement does not count as
+linked. A
+file the run's coverage shows with neither a governed nor a candidate link,
+although a requirement from an earlier run covers it, is assessed as reviewed
+with that requirement named in the reason.
