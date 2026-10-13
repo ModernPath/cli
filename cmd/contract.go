@@ -87,6 +87,14 @@ func (e *factoryEnv) checkWrite(method, apiPath string, payload any) error {
 // missing capability. `consequence` says what the server cannot do.
 func (e *factoryEnv) requireServerCapability(write, name, consequence string) error {
 	c := e.ensureContract()
+	if isUnavailable(c.readErr) {
+		// A write kept during an outage is checked when it is replayed
+		// (REQ-CROSS-538 AC2, CODE-OUTAGE-3-4).
+		if e.keep != nil {
+			return nil
+		}
+		return c.readErr
+	}
 	if c.readErr != nil {
 		return fmt.Errorf("could not read the server's sync contract: %v — retry, or check the binding (modernpath status)", c.readErr)
 	}

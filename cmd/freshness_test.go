@@ -258,7 +258,7 @@ func TestFreshnessLineSurvivesAFailedFeed(t *testing.T) {
 	pinFreshnessFresh(t)
 	env := wsEnv(t, wsServe(t, &wsFixture{failFeed: true, contractVersion: 2}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"ff","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"ff","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "sync contract 2")
 	want(t, readBriefLog(t, env.Root), "freshness:contract")
 }

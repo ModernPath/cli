@@ -10,8 +10,10 @@ import (
 	"testing"
 )
 
-func driftEnv(url string) *factoryEnv {
-	return &factoryEnv{Root: ".", APIURL: url, SystemID: 1, token: "t"}
+// driftEnv roots the env in a temp dir: a refused connection records the
+// outage under Root (REQ-CROSS-535), which must not leak into other tests.
+func driftEnv(t *testing.T, url string) *factoryEnv {
+	return &factoryEnv{Root: t.TempDir(), APIURL: url, SystemID: 1, token: "t"}
 }
 
 func TestDriftReportSuccessIsQuiet(t *testing.T) {
@@ -22,7 +24,7 @@ func TestDriftReportSuccessIsQuiet(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if err := reportDriftTarget(driftEnv(server.URL), "REQ-X-001", []string{"a.go"}, "abc", "def"); err != nil {
+	if err := reportDriftTarget(driftEnv(t, server.URL), "REQ-X-001", []string{"a.go"}, "abc", "def"); err != nil {
 		t.Fatalf("a 200 answer must not be an error: %v", err)
 	}
 	if got != "POST /api/v1/sync/evidence/drift" {
@@ -37,7 +39,7 @@ func TestDriftReportHTTPErrorIsNamed(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := reportDriftTarget(driftEnv(server.URL), "REQ-X-001", nil, "abc", "def")
+	err := reportDriftTarget(driftEnv(t, server.URL), "REQ-X-001", nil, "abc", "def")
 	if err == nil {
 		t.Fatal("HTTP 500 must be an error — the server recorded nothing")
 	}
@@ -50,7 +52,7 @@ func TestDriftReportTransportErrorIsAnError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	server.Close() // connection refused from here on
 
-	if err := reportDriftTarget(driftEnv(server.URL), "REQ-X-001", nil, "abc", "def"); err == nil {
+	if err := reportDriftTarget(driftEnv(t, server.URL), "REQ-X-001", nil, "abc", "def"); err == nil {
 		t.Fatal("a transport failure must be an error — the server never heard the report")
 	}
 }

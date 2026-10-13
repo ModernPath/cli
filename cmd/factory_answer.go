@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -23,7 +25,9 @@ var factoryAnswerCmd = &cobra.Command{
 	Short: "Record a USER: decision on a gate (first-wins on the server)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		env, err := factoryEnvLoad()
+		// REQ-CROSS-538: kept on this machine during an outage, on the review
+		// pins of the gate's working-set snapshot.
+		env, err := keeping("factory answer")(factoryEnvLoad())
 		if err != nil {
 			return err
 		}
@@ -52,17 +56,26 @@ func factoryAnswer(env *factoryEnv, externalID, text, options, source string) er
 	// CLI path sent it, so governed gates could only be answered in Mission
 	// Control. Fetch the gate and, when governed, attach that review; a non-
 	// governed gate takes none (the server refuses a review on one).
-	if gs, gb, ge := env.call("GET",
-		fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", externalID, env.SystemID), nil); ge == nil && gs == 200 {
+	var pins gatePins
+	gs, gb, ge := env.call("GET",
+		fmt.Sprintf("/api/v1/sync/gates/%s?system_id=%d", externalID, env.SystemID), nil)
+	if isUnavailable(ge) && env.keep != nil {
+		// REQ-CROSS-538: an answer is kept only against the pins the
+		// developer saw; a gate with no snapshot carrying its content pin
+		// waits for the server.
+		var found bool
+		if pins, found = snapshotGatePins(env.Root, externalID); !found || pins.content == "" {
+			return ge
+		}
+	}
+	if ge == nil && gs == 200 {
 		if g, ok := dataOf(gb)["gate"].(map[string]any); ok {
+			pins = gatePins{content: str(g, "content_fingerprint"), scope: str(g, "evaluated_scope_fingerprint")}
 			// REQ-CROSS-372: the server's own signal decides — answer_readiness
 			// .requires_review — with the purpose as the fallback for a server
 			// that predates it (REQ-CROSS-354 later changes the predicate in
 			// one place, on the server).
-			readiness, _ := g["answer_readiness"].(map[string]any)
-			requires, served := readiness["requires_review"].(bool)
-			purpose := str(g, "purpose")
-			if (served && requires) || (!served && (purpose == "entry" || purpose == "completion")) {
+			if answerRequiresReview(g) {
 				payload["review"] = map[string]any{
 					"content_fingerprint":         str(g, "content_fingerprint"),
 					"evaluated_scope_fingerprint": str(g, "evaluated_scope_fingerprint"),
@@ -71,6 +84,18 @@ func factoryAnswer(env *factoryEnv, externalID, text, options, source string) er
 		}
 	}
 	status, body, err := env.call("POST", "/api/v1/sync/gates/"+externalID+"/answer", payload)
+	if errors.Is(err, errKept) {
+		// The USER: source is fixed now: the date the answer was given.
+		if source == "" {
+			source = "USER:" + time.Now().UTC().Format("2006-01-02")
+			payload["source_tag"] = source
+		}
+		basis := map[string]any{"content_fingerprint": pins.content}
+		if pins.scope != "" {
+			basis["evaluated_scope_fingerprint"] = pins.scope
+		}
+		return env.keepCollected(err, keptEntry{Record: externalID, Basis: basis, Fixed: map[string]any{"source_tag": source}})
+	}
 	if err != nil {
 		return err
 	}

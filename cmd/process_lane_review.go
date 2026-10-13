@@ -207,11 +207,19 @@ func processLaneReview(env *factoryEnv, sr, file string) error {
 	failed := 0
 	if len(review.Findings) > 0 {
 		fmt.Println("findings:")
-		failed += addFindingEntries(env, review.Findings, findingPin{aggregate: agg, contextID: ctxID})
+		n, err := addFindingEntries(env, review.Findings, findingPin{aggregate: agg, contextID: ctxID})
+		if err != nil {
+			return err
+		}
+		failed += n
 	}
 	if len(review.Dispositions) > 0 {
 		fmt.Println("dispositions:")
-		failed += applyDispositionEntries(env, review.Dispositions, nil)
+		n, err := applyDispositionEntries(env, review.Dispositions, nil)
+		if err != nil {
+			return err
+		}
+		failed += n
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d finding(s) or disposition(s) were not recorded — the narrow review was not recorded; fix them and re-run (what was recorded is skipped)", failed)

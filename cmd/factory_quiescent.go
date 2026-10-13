@@ -42,9 +42,12 @@ func hookLog(root, trigger, outcome, reason string) {
 
 // acquireSyncLock returns a release func, or nil when another sync holds the
 // lock (a stale lock older than 10 minutes is broken — D-AS-2).
-func acquireSyncLock(root string) func() {
-	path := syncLockPath(root)
+func acquireSyncLock(root string) func() { return acquireAgeLock(syncLockPath(root)) }
 
+// acquireAgeLock takes the lock file at path, or returns nil when another
+// process holds it; a lock older than 10 minutes is broken. The replay lock
+// (REQ-CROSS-539) is taken the same way.
+func acquireAgeLock(path string) func() {
 	if info, err := os.Stat(path); err == nil {
 		if time.Since(info.ModTime()) < quiescentLockStaleAfter {
 			return nil

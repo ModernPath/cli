@@ -201,7 +201,8 @@ func (e *factoryEnv) postSyncBatch(batchBody map[string]any) (int, map[string]an
 	)
 	for attempt := 1; ; attempt++ {
 		status, body, err = e.call("POST", "/api/v1/sync/batch", batchBody)
-		retriable := status >= 500 || (status == 0 && err != nil)
+		// REQ-CROSS-536: a confirmed outage is not retried.
+		retriable := (status >= 500 || (status == 0 && err != nil)) && !isUnavailable(err)
 		if !retriable || attempt >= syncRetryMaxAttempts {
 			return status, body, err
 		}

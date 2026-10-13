@@ -45,7 +45,7 @@ func briefFor(t *testing.T, fx *wsFixture, sid string) (string, *factoryEnv) {
 	t.Helper()
 	env := wsEnv(t, wsServe(t, fx))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"`+sid+`","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"`+sid+`","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	return out.String(), env
 }
 
@@ -160,7 +160,7 @@ func TestSCNSTALE001BriefSaysTheBuildIsBehindTheLatestRelease(t *testing.T) {
 	env := wsEnv(t, wsServe(t, fx))
 	writeReleaseCache(t, env.Root, "v9.9.9", freshnessNow())
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"rel","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"rel","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "behind the latest release")
 	want(t, out.String(), "9.9.9")
 	want(t, out.String(), "upgrade")
@@ -174,7 +174,7 @@ func TestSCNSTALE002BriefSaysTheBuildIsBehindTheCheckedOutSource(t *testing.T) {
 	freshnessGit = stubGit(t, "modernpath-core/tools/modernpath/go.mod", strings.Repeat("b", 40), "", errors.New("exit 1"))
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture(), contractVersion: 1}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"src","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"src","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "behind the checked-out CLI source")
 	want(t, out.String(), "install-local.sh")
 }
@@ -189,7 +189,7 @@ func TestSCNSTALE003BriefSaysTheKitDrifted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"kit","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"kit","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "drifted")
 	want(t, out.String(), "modernpath install")
 }
@@ -200,7 +200,7 @@ func TestSCNSTALE004BriefSaysTheServerSpeaksANewerContract(t *testing.T) {
 	pinFreshnessFresh(t)
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture(), contractVersion: 2}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"ctr","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"ctr","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "sync contract 2")
 	want(t, out.String(), "rebuild")
 }
@@ -211,7 +211,7 @@ func TestSCNSTALE005FreshOrOfflineIsSilentAndQuick(t *testing.T) {
 	pinFreshnessFresh(t)
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture(), contractVersion: 1}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"fresh","source":"startup"}`), &out, 2*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"fresh","source":"startup"}`), &out, 2*time.Second, hookRoot(env), hookLoader(env))
 	if strings.Contains(out.String(), "⚠") {
 		t.Fatalf("a current build prints no freshness line:\n%s", out.String())
 	}
@@ -221,7 +221,7 @@ func TestSCNSTALE005FreshOrOfflineIsSilentAndQuick(t *testing.T) {
 	env = wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture(), contractVersion: 1}))
 	start := time.Now()
 	out.Reset()
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"hang","source":"startup"}`), &out, 5*time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"hang","source":"startup"}`), &out, 5*time.Second, hookRoot(env), hookLoader(env))
 	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
 		t.Fatalf("a hanging release lookup delayed the brief by %v", elapsed)
 	}

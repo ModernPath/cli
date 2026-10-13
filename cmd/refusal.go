@@ -20,10 +20,19 @@ import (
 // transport kept, never <nil>.
 func serverRefusal(what string, status int, body map[string]any) error {
 	if what == "" {
-		return fmt.Errorf("server %d: %s", status, refusalText(body))
+		return serverRefusalError{status: status, msg: fmt.Sprintf("server %d: %s", status, refusalText(body))}
 	}
-	return fmt.Errorf("%s (server %d): %s", what, status, refusalText(body))
+	return serverRefusalError{status: status, msg: fmt.Sprintf("%s (server %d): %s", what, status, refusalText(body))}
 }
+
+// serverRefusalError keeps the status, so outage replay can tell a server
+// fault (5xx) from a refusal (REQ-CROSS-539 AC6, CODE-OUTAGE-4-1).
+type serverRefusalError struct {
+	status int
+	msg    string
+}
+
+func (e serverRefusalError) Error() string { return e.msg }
 
 func refusalText(body map[string]any) string {
 	text := refusalBodyText(body)

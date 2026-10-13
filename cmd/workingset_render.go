@@ -489,6 +489,10 @@ func writeGateBlock(b *strings.Builder, gm map[string]any) {
 	// A served empty list is an absence — `none` — not an unserved field.
 	fmt.Fprintf(b, "- **Prerequisites:** %s\n", prerequisitesOr(gm))
 	fmt.Fprintf(b, "- **Fingerprint:** %s\n", servedOr(gm, "fingerprint", notServed))
+	// REQ-CROSS-538: the two review pins an answer is kept against while the
+	// server is unavailable.
+	fmt.Fprintf(b, "- **Content fingerprint:** %s\n", fieldOr(gm, "content_fingerprint", "—"))
+	fmt.Fprintf(b, "- **Scope fingerprint:** %s\n", fieldOr(gm, "evaluated_scope_fingerprint", "—"))
 	fmt.Fprintf(b, "- **Application:** %s\n", fieldOr(gm, "applied_state", notServed))
 	fmt.Fprintf(b, "- **Predecessor / successor:** %s\n", gateLineage(gm))
 	if lines := gateBriefLines(gm); len(lines) > 0 {

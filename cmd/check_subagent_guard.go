@@ -46,6 +46,7 @@ var subagentReadVerbs = map[string]bool{
 	"factory next-id": true, "factory reconcile": true, "factory release show": true,
 	"factory status": true,
 	"hooks doctor":   true, "hooks status": true,
+	"outage status":        true,
 	"process backlog list": true, "process check": true, "process findings list": true,
 	"process lane": true, "process next": true, "process prepare-inputs": true,
 	"read-doc": true, "read-file": true, "requirements list": true, "requirements search": true,
@@ -543,6 +544,14 @@ func invocationDenied(args []shWord, fromStdin bool) bool {
 	if c.HasSubCommands() && (len(positional) > 0 || fromStdin) {
 		// An unknown or non-literal subcommand: `process lane $V`.
 		return true
+	}
+	return storeWriteVerb(c)
+}
+
+// storeWriteVerb reports whether c is a command outside the read allowlist.
+func storeWriteVerb(c *cobra.Command) bool {
+	if c == nil {
+		return false
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(c.CommandPath(), rootCmd.Name()))
 	return !subagentReadVerbs[name]

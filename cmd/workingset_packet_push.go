@@ -196,7 +196,7 @@ func applyPacketSections(env *factoryEnv, dir, ctxID, scopeKind, scopeExt string
 		}
 		status, resp, err := postAuthor(env, map[string]any{"action": ps.action, "record": record})
 		if err != nil {
-			return conflicts, fmt.Errorf("packet section %s: %v", ps.key, err)
+			return conflicts, fmt.Errorf("packet section %s: %w", ps.key, err)
 		}
 		switch {
 		case status == 409:

@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -239,10 +241,15 @@ information, so which process text a packet was reviewed under stays readable;
 it just no longer pins a decision.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := authorEnv()
-		if err != nil {
-			return err
+		if err == nil {
+			err = processNext(env)
 		}
-		return processNext(env)
+		// REQ-CROSS-537: an outage answers from the last WORK-SELECTION.md
+		// and GATES.md snapshots.
+		if isUnavailable(err) {
+			return processNextFromSnapshot(outageRoot(env), err, os.Stdout, time.Now())
+		}
+		return err
 	},
 }
 

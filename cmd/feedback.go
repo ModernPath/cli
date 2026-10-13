@@ -139,15 +139,22 @@ func runFeedback(line string, attachLast bool, ref int) error {
 const feedbackOrganizationID = "371734807656268047"
 
 func feedbackEnvLoad() (*factoryEnv, error) {
-	env, err := factoryCredentialLoad()
-	if err != nil {
-		return nil, err
+	env, known := outageCredentialLoad()
+	if env == nil {
+		return nil, known
 	}
 	claims, ok := zitadel.TokenClaims(env.token)
 	if !ok || claims.OrganizationID != feedbackOrganizationID || claims.Issuer != zitadel.ProdProfile.Issuer {
 		return nil, fmt.Errorf("tooling feedback requires a credential for the ModernPath production workspace; nothing was written")
 	}
-	systems, err := listSystemsFn(env.APIURL, env.token)
+	// REQ-CROSS-536: a known or confirmed outage returns the env with it.
+	if known != nil {
+		return env, known
+	}
+	systems, err := env.reachabilityProbe()
+	if isUnavailable(err) {
+		return env, err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("could not verify the ModernPath feedback destination: %w", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modernpath/cli/internal/api"
 )
@@ -21,8 +22,14 @@ import (
 // other caller here, so tests cannot point it at a fake server without this
 // seam — mirrors the existing var zitadelLogin / var openBrowserFn pattern.
 var listSystemsFn = func(apiURL, token string) ([]api.System, error) {
-	return api.NewClient(apiURL, token).ListSystems()
+	client := api.NewClient(apiURL, token)
+	client.HTTPClient.Timeout = probeTimeout
+	return client.ListSystems()
 }
+
+// probeTimeout bounds the reachability probe's request (REQ-CROSS-536: well
+// under the api client's own 30 s default); a variable so a test can shrink it.
+var probeTimeout = 5 * time.Second
 
 // systemReachable reports whether id appears in the authenticated
 // credential's own system list.

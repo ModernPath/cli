@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -65,35 +66,44 @@ unambiguous current piece.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := factoryEnvLoad()
-		if err != nil {
-			return err
+		if err == nil {
+			err = workingSetPullRun(env, args)
 		}
-		if wsPullSince != "" {
-			// REQ-CROSS-464: a delta bundle is a later round of an epic's
-			// review; the narrow review is one pass with no rounds.
-			if !wsPullScope && wsPullForReview {
-				return fmt.Errorf("--since is refused with a by-id pull: the small-change lane's narrow review is one pass with no later rounds — pull the scope with --scope --for-review --since")
-			}
-			if !wsPullScope || !wsPullForReview {
-				return fmt.Errorf("--since renders a later review round: use it with --scope --for-review")
-			}
+		// REQ-CROSS-537: a by-id pull in an outage names the snapshots on
+		// this machine and leaves them as they are.
+		if isUnavailable(err) && !wsPullScope && !wsPullForReview && wsPiece == "" && len(args) > 0 {
+			return workingSetPullFromSnapshots(outageRoot(env), args, err, os.Stdout, time.Now())
 		}
-		if wsPullScope {
-			return workingSetPullScopeSince(env, wsPullForReview, wsPullSince, time.Now().UTC())
-		}
-		if wsPullForReview {
-			// REQ-CROSS-458: a by-id review pull renders one system
-			// requirement for the small-change lane's narrow review.
-			if len(args) == 0 {
-				return fmt.Errorf("--for-review needs --scope (an epic's review) or a system requirement's id (a small change's narrow review)")
-			}
-			return workingSetPullForReview(env, args, time.Now().UTC())
-		}
-		if len(args) == 0 {
-			return fmt.Errorf("name at least one external id, or use --scope to pull the current selection")
-		}
-		return workingSetPull(env, args, time.Now().UTC())
+		return err
 	},
+}
+
+func workingSetPullRun(env *factoryEnv, args []string) error {
+	if wsPullSince != "" {
+		// REQ-CROSS-464: a delta bundle is a later round of an epic's
+		// review; the narrow review is one pass with no rounds.
+		if !wsPullScope && wsPullForReview {
+			return fmt.Errorf("--since is refused with a by-id pull: the small-change lane's narrow review is one pass with no later rounds — pull the scope with --scope --for-review --since")
+		}
+		if !wsPullScope || !wsPullForReview {
+			return fmt.Errorf("--since renders a later review round: use it with --scope --for-review")
+		}
+	}
+	if wsPullScope {
+		return workingSetPullScopeSince(env, wsPullForReview, wsPullSince, time.Now().UTC())
+	}
+	if wsPullForReview {
+		// REQ-CROSS-458: a by-id review pull renders one system
+		// requirement for the small-change lane's narrow review.
+		if len(args) == 0 {
+			return fmt.Errorf("--for-review needs --scope (an epic's review) or a system requirement's id (a small change's narrow review)")
+		}
+		return workingSetPullForReview(env, args, time.Now().UTC())
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("name at least one external id, or use --scope to pull the current selection")
+	}
+	return workingSetPull(env, args, time.Now().UTC())
 }
 
 var workingSetCheckCmd = &cobra.Command{
@@ -130,11 +140,16 @@ instead of "nothing to do". --restamp re-puts every filled canonical section
 regardless. --dry-run prints the op plan (and what would be re-stamped at
 the current context) without applying anything.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// REQ-CROSS-538: during an outage the edited files stay as they are
+		// and one kept push names the piece.
 		env, err := factoryEnvLoad()
-		if err != nil {
-			return err
+		if err == nil {
+			err = workingSetPush(env, wsPushDryRun)
 		}
-		return workingSetPush(env, wsPushDryRun)
+		if isUnavailable(err) && env != nil {
+			return keepPush(env, err, wsPiece, wsPushDryRun)
+		}
+		return err
 	},
 }
 

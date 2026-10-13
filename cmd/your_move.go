@@ -70,19 +70,23 @@ var yourMoveCmd = &cobra.Command{
 		// Hook mode owns the whole exchange — it reads the agent's stdin payload,
 		// prints its envelope (or {}), and never fails the session (§277).
 		if yourMoveHook != "" {
-			runBriefHook(yourMoveHook, os.Stdin, os.Stdout, time.Duration(yourMoveDeadline)*time.Second, factoryEnvLoad)
+			runBriefHook(yourMoveHook, os.Stdin, os.Stdout, time.Duration(yourMoveDeadline)*time.Second, workspaceRoot, factoryEnvLoad)
 			return nil
 		}
 		env, err := factoryEnvLoad()
-		if err != nil {
-			return err
+		if err == nil {
+			err = yourMoveWithBrief(env, briefOpts{
+				more:    yourMoveMore,
+				queue:   yourMoveQueue,
+				domain:  yourMoveDomain,
+				release: yourMoveRelease,
+				now:     time.Now().UTC(),
+			}, os.Stdout)
 		}
-		return yourMoveWithBrief(env, briefOpts{
-			more:    yourMoveMore,
-			queue:   yourMoveQueue,
-			domain:  yourMoveDomain,
-			release: yourMoveRelease,
-			now:     time.Now().UTC(),
-		}, os.Stdout)
+		// REQ-CROSS-537: an outage answers from the last GATES.md snapshot.
+		if isUnavailable(err) {
+			return yourMoveFromSnapshot(outageRoot(env), err, os.Stdout, time.Now())
+		}
+		return err
 	},
 }

@@ -115,7 +115,7 @@ func TestBriefMarksDefectLaneItems(t *testing.T) {
 	env := wsEnv(t, wsServe(t, fx))
 
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"lane-1","hook_event_name":"SessionStart","source":"startup"}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"lane-1","hook_event_name":"SessionStart","source":"startup"}`), &out, time.Second, hookRoot(env), hookLoader(env))
 	text := out.String()
 	if !strings.Contains(text, "REQ-CROSS-274") || !strings.Contains(text, "⚑ defect") {
 		t.Errorf("the defect-lane item must carry the chip:\n%s", text)

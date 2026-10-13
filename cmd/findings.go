@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -172,7 +173,13 @@ func processFindingsAdd(env *factoryEnv) error {
 			}
 			pin = findingPin{aggregate: selected.Manifest.AggregateFingerprint, contextID: selected.Manifest.ContextID, snapshot: selected}
 		}
-		if failed := addFindingEntries(env, entries, pin); failed > 0 {
+		// REQ-CROSS-538: a batch is not kept; it waits for the server.
+		env.keep = nil
+		failed, err := addFindingEntries(env, entries, pin)
+		if err != nil {
+			return err
+		}
+		if failed > 0 {
 			return fmt.Errorf("%d of %d finding(s) were not recorded — see the lines above; a re-run adds only the missing ones", failed, len(entries))
 		}
 		return nil
@@ -203,7 +210,11 @@ func processFindingsAdd(env *factoryEnv) error {
 	if selected != nil {
 		agg = selected.Manifest.AggregateFingerprint
 	} else if agg == "" {
-		if dc, err := readDeliveryContext(env); err == nil {
+		dc, err := readDeliveryContext(env)
+		if isUnavailable(err) {
+			return err
+		}
+		if err == nil {
 			agg = dc.Data.PacketFingerprint
 		}
 	}
@@ -425,15 +436,22 @@ func (r *scopeReads) aggregate(ext string) (string, error) {
 // addFindingEntries records each finding not yet recorded on its scope,
 // printing one line per entry, and returns how many failed. A failure never
 // stops the rest unless the selected snapshot changes; a re-run adds only
-// what is missing.
-func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) int {
+// what is missing. An outage or a limited request stops the batch and is
+// returned (REQ-CROSS-538 AC5).
+func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) (failed int, stop error) {
 	reads := newScopeReads(env)
-	failed := 0
 	fail := func(id string, err error) {
+		if stopsBatch(err) {
+			stop = err
+			return
+		}
 		failed++
 		fmt.Printf("  %-16s failed — %v\n", id, err)
 	}
 	for i, e := range entries {
+		if stop != nil {
+			return failed, stop
+		}
 		kind, ext := splitScope(e.Scope)
 		if e.ID == "" || kind == "" || ext == "" {
 			fail(e.ID, fmt.Errorf("each finding needs an id and a scope as <kind>:<external-id>"))
@@ -467,7 +485,7 @@ func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) 
 		if pin.snapshot != nil {
 			if err := revalidateReviewSnapshot(env, pin.snapshot); err != nil {
 				fail(e.ID, err)
-				return failed + len(entries) - i - 1
+				return failed + len(entries) - i - 1, stop
 			}
 			record["body"] = appendReviewSnapshotProvenance(e.Body, pin.snapshot)
 		}
@@ -480,7 +498,14 @@ func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) 
 		row, _ := data["finding"].(map[string]any)
 		fmt.Printf("  %-16s added on %s  %s\n", e.ID, e.Scope, str(row, "fingerprint"))
 	}
-	return failed
+	return failed, stop
+}
+
+// stopsBatch reports an error a batch does not go on past: the server
+// unavailable or limiting requests. The rest would meet it too.
+func stopsBatch(err error) bool {
+	var limiting serverLimitingError
+	return isUnavailable(err) || errors.As(err, &limiting)
 }
 
 // applyDispositionEntries sets each listed finding's disposition, writing only
@@ -489,15 +514,24 @@ func addFindingEntries(env *factoryEnv, entries []findingEntry, pin findingPin) 
 // target disposition is reported unchanged. An entry breaking the resolution
 // rules (SR-CLI-027-001/002) is refused before any read. It prints one line
 // per entry and returns how many were refused or failed. Ordinary refusals
-// continue; a changed selected snapshot stops the remaining writes.
-func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry, snapshot *selectedReviewSnapshot) int {
+// continue; a changed selected snapshot stops the remaining writes. An outage
+// or a limited request stops the batch and is returned (REQ-CROSS-538 AC5).
+func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry, snapshot *selectedReviewSnapshot) (failed int, stop error) {
 	reads := newScopeReads(env)
-	failed := 0
 	fail := func(id, format string, a ...any) {
+		for _, v := range a {
+			if err, ok := v.(error); ok && stopsBatch(err) {
+				stop = err
+				return
+			}
+		}
 		failed++
 		fmt.Printf("  %-16s refused — %s\n", id, fmt.Sprintf(format, a...))
 	}
 	for i, e := range entries {
+		if stop != nil {
+			return failed, stop
+		}
 		if e.ID == "" || e.Scope == "" || e.From == "" || e.Disposition == "" {
 			fail(e.ID, "each disposition needs id, scope, from and disposition")
 			continue
@@ -529,7 +563,7 @@ func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry, snapsh
 		if snapshot != nil {
 			if err := revalidateReviewSnapshot(env, snapshot); err != nil {
 				fail(e.ID, "%v", err)
-				return failed + len(entries) - i - 1
+				return failed + len(entries) - i - 1, stop
 			}
 		}
 		fp, err := postDisposition(env, e.ID, e.Disposition, kind, e.Widens, e.Ref, str(row, "content_fingerprint"))
@@ -543,7 +577,7 @@ func applyDispositionEntries(env *factoryEnv, entries []dispositionEntry, snapsh
 		}
 		fmt.Printf("  %-16s %s → %s  %s\n", e.ID, current, label, fp)
 	}
-	return failed
+	return failed, stop
 }
 
 // checkReviewEntries runs every local rule on a review file's findings and
@@ -664,7 +698,13 @@ func processFindingsDisposition(env *factoryEnv) error {
 		if err := readJSONFile(findingsFile, &entries); err != nil {
 			return err
 		}
-		if failed := applyDispositionEntries(env, entries, nil); failed > 0 {
+		// REQ-CROSS-538: a batch is not kept; it waits for the server.
+		env.keep = nil
+		failed, err := applyDispositionEntries(env, entries, nil)
+		if err != nil {
+			return err
+		}
+		if failed > 0 {
 			return fmt.Errorf("%d of %d disposition(s) were not written — see the lines above", failed, len(entries))
 		}
 		return nil
@@ -1173,11 +1213,17 @@ entry scopes and pins are checked before any write. Each finding retains the
 selected context, aggregate and snapshot digest.`,
 
 	RunE: func(cmd *cobra.Command, args []string) error {
-		env, err := authorEnv()
+		// REQ-CROSS-538: with --aggregate, kept on this machine during an
+		// outage; without it the aggregate is read from the server, so it waits.
+		env, err := keeping("process findings add")(authorEnv())
 		if err != nil {
 			return err
 		}
-		return processFindingsAdd(env)
+		err = processFindingsAdd(env)
+		return env.keepCollected(err, keptEntry{
+			Record: findingsExternalID,
+			Basis:  env.keptBasis("aggregate_fingerprint"),
+		})
 	},
 }
 
@@ -1259,11 +1305,17 @@ in the target disposition is reported unchanged. The call exits non-zero
 when any disposition was not written. There is no flag that resolves every
 open finding: a disposition names its finding.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		env, err := authorEnv()
+		// REQ-CROSS-538: with --expected-fingerprint, kept on this machine
+		// during an outage; without it the fingerprint is read, so it waits.
+		env, err := keeping("process findings disposition")(authorEnv())
 		if err != nil {
 			return err
 		}
-		return processFindingsDisposition(env)
+		err = processFindingsDisposition(env)
+		return env.keepCollected(err, keptEntry{
+			Record: findingsExternalID,
+			Basis:  env.keptBasis("expected_fingerprint"),
+		})
 	},
 }
 

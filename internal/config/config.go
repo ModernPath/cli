@@ -486,9 +486,10 @@ func WriteAuth(auth *Auth) error {
 func ensureSensitiveIgnore(configDir string) error { return EnsureLocalIgnores(configDir) }
 
 // localIgnores are the files the CLI keeps for itself under .modernpath and
-// git must never see: the credential, the command history (REQ-CROSS-387)
-// and the once-per-session notices (REQ-CROSS-389).
-var localIgnores = []string{"auth.json", "cli-history.log", "cli-notices.json"}
+// git must never see: the credential, the command history (REQ-CROSS-387),
+// the once-per-session notices (REQ-CROSS-389), the server availability state
+// (REQ-CROSS-535) and the writes kept during an outage (REQ-CROSS-538).
+var localIgnores = []string{"auth.json", "cli-history.log", "cli-notices.json", "server-availability.json", "outage-journal/"}
 
 // EnsureLocalIgnores adds every missing local-only entry to the directory's
 // .gitignore, creating the file when absent.

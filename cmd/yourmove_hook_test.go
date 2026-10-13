@@ -7,12 +7,17 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/modernpath/cli/internal/api"
 )
 
 func readBriefLog(t *testing.T, root string) string {
@@ -28,12 +33,17 @@ func hookLoader(env *factoryEnv) func() (*factoryEnv, error) {
 	return func() (*factoryEnv, error) { return env, nil }
 }
 
+// hookRoot is the root resolver the brief is given: the test's own workspace.
+func hookRoot(env *factoryEnv) func() string {
+	return func() string { return env.Root }
+}
+
 // §277.1/.2 — a first SessionStart delivers the compact brief once; a repeat is {}.
 func TestYourMoveHookDeliversOncePerSession(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture()}))
 
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}`), &out, time.Second, hookRoot(env), hookLoader(env))
 
 	want(t, out.String(), `"hookEventName":"SessionStart"`)
 	want(t, out.String(), "## Your move —")
@@ -42,7 +52,7 @@ func TestYourMoveHookDeliversOncePerSession(t *testing.T) {
 	want(t, readBriefLog(t, env.Root), "s1 · startup · delivered")
 
 	var out2 bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"s1","source":"resume"}`), &out2, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"s1","source":"resume"}`), &out2, time.Second, hookRoot(env), hookLoader(env))
 	if strings.TrimSpace(out2.String()) != "{}" {
 		t.Fatalf("a briefed session must be {}: %s", out2.String())
 	}
@@ -53,7 +63,7 @@ func TestYourMoveHookDeliversOncePerSession(t *testing.T) {
 func TestYourMoveHookCompactSkips(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture()}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"fresh","source":"compact"}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"fresh","source":"compact"}`), &out, time.Second, hookRoot(env), hookLoader(env))
 	if strings.TrimSpace(out.String()) != "{}" {
 		t.Fatalf("compact must be {}: %s", out.String())
 	}
@@ -64,7 +74,7 @@ func TestYourMoveHookCompactSkips(t *testing.T) {
 func TestYourMoveHookNoSessionIdPrintsAndFlags(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture()}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{}`), &out, time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "## Your move —")
 	want(t, readBriefLog(t, env.Root), "none · none · delivered · no-session-id")
 }
@@ -74,7 +84,7 @@ func TestYourMoveHookDeadlineExceeded(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture(), feedDelay: 2 * time.Second}))
 	var out bytes.Buffer
 	start := time.Now()
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"slow","source":"startup"}`), &out, 200*time.Millisecond, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"slow","source":"startup"}`), &out, 200*time.Millisecond, hookRoot(env), hookLoader(env))
 	elapsed := time.Since(start)
 
 	if strings.TrimSpace(out.String()) != "{}" {
@@ -91,6 +101,7 @@ func TestYourMoveHookNoConfigIsSilent(t *testing.T) {
 	root := chdirTemp(t)
 	var out bytes.Buffer
 	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"x","source":"startup"}`), &out, time.Second,
+		func() string { return root },
 		func() (*factoryEnv, error) { return nil, fmt.Errorf("no config") })
 	if strings.TrimSpace(out.String()) != "{}" {
 		t.Fatalf("no config must be {}: %s", out.String())
@@ -102,7 +113,7 @@ func TestYourMoveHookNoConfigIsSilent(t *testing.T) {
 func TestYourMoveHookServerErrorIsSilent(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{failFeed: true}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"e","source":"startup"}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"e","source":"startup"}`), &out, time.Second, hookRoot(env), hookLoader(env))
 	if strings.TrimSpace(out.String()) != "{}" {
 		t.Fatalf("server error must be {}: %s", out.String())
 	}
@@ -113,7 +124,7 @@ func TestYourMoveHookServerErrorIsSilent(t *testing.T) {
 func TestYourMoveHookWritesNoProjection(t *testing.T) {
 	env := wsEnv(t, wsServe(t, &wsFixture{feed: feedFixture()}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"p","source":"startup"}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"p","source":"startup"}`), &out, time.Second, hookRoot(env), hookLoader(env))
 	if _, err := os.Stat(filepath.Join(env.Root, yourMoveDir, "GATES.md")); !os.IsNotExist(err) {
 		t.Fatalf("hook mode must not write GATES.md")
 	}
@@ -133,8 +144,64 @@ func TestREQCROSS317HookBriefCarriesTheScopedPhaseLine(t *testing.T) {
 		})},
 	}))
 	var out bytes.Buffer
-	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"scoped","source":"startup"}`), &out, time.Second, hookLoader(env))
+	runBriefHook("SessionStart", strings.NewReader(`{"session_id":"scoped","source":"startup"}`), &out, time.Second, hookRoot(env), hookLoader(env))
 	want(t, out.String(), "cold_review")
 	want(t, out.String(), "plan")
 	want(t, out.String(), "diverges")
+}
+
+// REQ-CROSS-536 AC3 (EPIC-CLI-OUTAGE) — environment loading that hangs does
+// not hold the SessionStart brief past its deadline, and the once-per-session
+// record still lands under the workspace root, not the directory the hook was
+// started from. Driven through `your-move --hook` as installed, so the brief
+// uses the production root resolver and factoryEnvLoad; the probe is what
+// hangs, until the test releases it after the hook returned. Released, it
+// fails as an outage does, so the abandoned load ends after recording the
+// outage and the test waits for that record before the workspace is removed:
+// nothing writes under it during cleanup (CODE-OUTAGE-1-7).
+func TestBriefEnvLoadHonorsDeadline(t *testing.T) {
+	srv, _ := countingStore(t)
+	root := outageWorkspace(t, srv.URL)
+	sub := filepath.Join(root, "pkg", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	release := make(chan struct{})
+	saved := listSystemsFn
+	listSystemsFn = func(apiURL, _ string) ([]api.System, error) {
+		<-release
+		return nil, &url.Error{Op: "Get", URL: apiURL + "/api/systems", Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}
+	}
+	t.Cleanup(func() { listSystemsFn = saved })
+
+	started := time.Now()
+	code, out := runCLIWithStdin(t, `{"session_id":"hang-sub","hook_event_name":"SessionStart","source":"startup"}`,
+		"your-move", "--hook", "SessionStart", "--deadline", "1")
+	took := time.Since(started)
+
+	// Join the abandoned load: it ends once it has recorded the outage.
+	close(release)
+	for wait := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(availabilityPath(root)); err == nil {
+			break
+		}
+		if time.Now().After(wait) {
+			t.Fatalf("the abandoned environment load did not end")
+		}
+	}
+
+	if code != 0 {
+		t.Errorf("the hook must exit 0, got %d; output:\n%s", code, out)
+	}
+	if bound := 2 * time.Second; took > bound {
+		t.Errorf("the hook returned after %v; want within its 1 s deadline (bound %v) while the environment load hangs", took, bound)
+	}
+	if log := readBriefLog(t, root); !strings.Contains(log, "hang-sub") {
+		t.Errorf("the once-per-session record must be written under the workspace root %s; log holds %q", root, log)
+	}
+	if _, err := os.Stat(filepath.Join(sub, ".modernpath", "session-briefs.log")); err == nil {
+		t.Errorf("the record was written under the starting subdirectory, not the workspace root")
+	}
 }

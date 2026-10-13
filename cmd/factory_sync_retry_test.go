@@ -33,6 +33,12 @@ func TestPostSyncBatchRetriesOn5xxThenSucceeds(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		// REQ-CROSS-535: the edge times out the heavy chunk while the server
+		// itself answers the reachability probe — not an outage.
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
 		if hits.Add(1) <= 2 { // first two attempts time out at the gateway
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
@@ -65,6 +71,12 @@ func TestPostSyncBatchGivesUpAfterMaxAttempts(t *testing.T) {
 		// REQ-CROSS-390: this fake predates the contract read (an older server).
 		if r.URL.Path == "/api/v1/sync/contract" {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// REQ-CROSS-535: the probe answers, so a persistent chunk 504 is still
+		// the gateway's, not an outage.
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
 			return
 		}
 		hits.Add(1)

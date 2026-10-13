@@ -6,6 +6,7 @@ package cmd
 // documented hookSpecificOutput.additionalContext envelope, and {} on every
 // other path — a repeat, a compaction, a failure, an unbound workspace, a
 // deadline — always exiting 0, so the hook never costs the user their session.
+// REQ-CROSS-537: an outage briefs from the last GATES.md snapshot instead.
 // The idempotence key is the payload's session_id, stamped in
 // .modernpath/session-briefs.log (gitignored, content-free — the sync-hooks.log
 // precedent). The per-prompt context hook is unchanged.
@@ -40,17 +41,21 @@ type briefFetch struct {
 	// responses, carried in the result so it is never read from the shared
 	// env after the deadline (F-CLI021-R1-08).
 	servedContract string
+	// envErr is the env load's failure; nothing was fetched.
+	envErr error
 }
 
-func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Duration, loadEnv func() (*factoryEnv, error)) {
+// resolveRoot names the workspace root the compaction and once-per-session
+// checks key on, without the network, before the deadline starts (REQ-CROSS-536);
+// an empty answer is the current directory. loadEnv runs inside the deadline.
+func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Duration, resolveRoot func() string, loadEnv func() (*factoryEnv, error)) {
 	raw, _ := io.ReadAll(in)
 	var p sessionStartPayload
 	_ = json.Unmarshal(raw, &p)
 
-	env, err := loadEnv()
-	root := "."
-	if env != nil {
-		root = env.Root
+	root := resolveRoot()
+	if root == "" {
+		root = "."
 	}
 	sid := orNone(p.SessionID)
 	src := orNone(p.Source)
@@ -67,15 +72,23 @@ func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Durat
 		briefLog(root, sid, src, "already-briefed", "")
 		return
 	}
-	if err != nil || env == nil {
-		fmt.Fprint(out, "{}")
-		briefLog(root, sid, src, "failed", "no workspace config")
-		return
-	}
 
 	started := time.Now()
 	done := make(chan briefFetch, 1)
+	// REQ-CROSS-416: the local freshness inputs — kit drift, source
+	// provenance, the release cache or one bounded GET — are gathered beside
+	// the feed fetch, never after it, and only once the env has loaded.
+	local := make(chan localFreshness, 1)
 	go func() {
+		env, err := loadEnv()
+		if err == nil && env == nil {
+			err = fmt.Errorf("no workspace config")
+		}
+		if err != nil {
+			done <- briefFetch{envErr: err}
+			return
+		}
+		go func() { local <- gatherLocalFreshness(root) }()
 		data, ferr := fetchFeed(env, "active")
 		// REQ-CROSS-415 (EPIC-CLI-021): the second pure read — the caller's held
 		// pieces and what moved on them, which also carries the REQ-CROSS-317
@@ -85,11 +98,6 @@ func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Durat
 		held, ok := readHeldPieces(env)
 		done <- briefFetch{data: data, err: ferr, held: held, heldOK: ok, servedContract: env.contractVersion}
 	}()
-	// REQ-CROSS-416: the local freshness inputs — kit drift, source
-	// provenance, the release cache or one bounded GET — are gathered beside
-	// the feed fetch, never after it.
-	local := make(chan localFreshness, 1)
-	go func() { local <- gatherLocalFreshness(root) }()
 
 	// freshness is the line (or "") for the outcome at hand; it waits for the
 	// local inputs only until the deadline and reads the contract only from
@@ -112,8 +120,35 @@ func runBriefHook(event string, in io.Reader, out io.Writer, deadline time.Durat
 		return briefEnvelope(event, freshnessNote(line))
 	}
 
+	// REQ-CROSS-537: an outage, met at the env load or at the feed read,
+	// briefs from the last GATES.md snapshot; with none it is {} as before.
+	fromSnapshot := func(outage error) {
+		if answer, ok := gatesSnapshotAnswer(root, outage, time.Now()); ok {
+			fmt.Fprint(out, briefEnvelope(event, answer))
+			briefLog(root, sid, src, "outage-snapshot", "")
+			return
+		}
+		fmt.Fprint(out, "{}")
+		briefLog(root, sid, src, "failed", "outage · no snapshot")
+	}
+
 	select {
 	case r := <-done:
+		// envErr and err never both hold: nothing is fetched without an env.
+		if isUnavailable(r.envErr) {
+			fromSnapshot(r.envErr)
+			return
+		}
+		if isUnavailable(r.err) {
+			fromSnapshot(r.err)
+			return
+		}
+		// The env did not load: {} as before.
+		if r.envErr != nil {
+			fmt.Fprint(out, "{}")
+			briefLog(root, sid, src, "failed", "no workspace config")
+			return
+		}
 		signal, line := freshness(r.servedContract)
 		if r.err != nil {
 			fmt.Fprint(out, envelopeFor(signal, line))

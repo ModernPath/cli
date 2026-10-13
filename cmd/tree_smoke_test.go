@@ -596,6 +596,10 @@ var leafDispositions = map[string]disposition{
 	"init workspace":  {kind: dispNoCall, reason: "local-only"},
 	"install":         {kind: dispNoCall, reason: "local-only"},
 	"work review":     {kind: dispNoCall, reason: "local-only"},
+	// EPIC-CLI-OUTAGE: both read the local journal; with nothing kept, replay
+	// sends nothing.
+	"outage status": {kind: dispNoCall, reason: "local-only"},
+	"outage replay": {kind: dispExecute}, // REQ-CROSS-539: loads the env (the probe) before replaying
 
 	// Server-backed, but they refuse before the call without state the smoke
 	// cannot cheaply build. Asserted as no-call so that fixing the

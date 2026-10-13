@@ -175,14 +175,22 @@ func processReviewRecord(env *factoryEnv) error {
 	failed := 0
 	if len(review.Findings) > 0 {
 		fmt.Println("findings:")
-		failed += addFindingEntries(env, review.Findings, findingPin{aggregate: stamped, contextID: ctxID, snapshot: selected})
+		n, err := addFindingEntries(env, review.Findings, findingPin{aggregate: stamped, contextID: ctxID, snapshot: selected})
+		if err != nil {
+			return err
+		}
+		failed += n
 	}
 	if len(review.Dispositions) > 0 {
 		if err := revalidateReviewSnapshot(env, selected); err != nil {
 			return err
 		}
 		fmt.Println("dispositions:")
-		failed += applyDispositionEntries(env, review.Dispositions, selected)
+		n, err := applyDispositionEntries(env, review.Dispositions, selected)
+		if err != nil {
+			return err
+		}
+		failed += n
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d finding(s) or disposition(s) were not recorded — the cold-review trace was not recorded; fix them and re-run (what was recorded is skipped)", failed)

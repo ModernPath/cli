@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,13 +22,26 @@ import (
 // unpushed and reports every other file independently; a `--for-review`
 // directory is refused outright.
 func workingSetPush(env *factoryEnv, dryRun bool) error {
-	payload, err := fetchWorkSelection(env)
+	return workingSetPushPiece(env, wsPiece, dryRun)
+}
+
+// errNoCurrentSelection is a selection read that names no current piece: for
+// a named piece, it is no longer held (REQ-CROSS-539).
+var errNoCurrentSelection = errors.New("no current work selection — nothing to push")
+
+// pushConflictError is a push whose files conflicted with the store.
+type pushConflictError struct{ error }
+
+// workingSetPushPiece is workingSetPush for a named piece ("" for the sole
+// current one): a replayed kept push names its piece (REQ-CROSS-539, D13).
+func workingSetPushPiece(env *factoryEnv, piece string, dryRun bool) error {
+	payload, err := fetchWorkSelectionFor(env, piece)
 	if err != nil {
 		return err
 	}
 	current, _ := payload["current"].(map[string]any)
 	if current == nil {
-		return fmt.Errorf("no current work selection — nothing to push")
+		return errNoCurrentSelection
 	}
 	scopeExt := str(current, "scope_external_id")
 	scopeKind := str(current, "scope_kind")
@@ -353,7 +367,7 @@ func workingSetPush(env *factoryEnv, dryRun bool) error {
 		fmt.Printf("push: re-stamped %d section(s) whose scope context moved: %s\n", len(restamped), strings.Join(restamped, ", "))
 	}
 	if len(conflicts) > 0 {
-		return fmt.Errorf("%d file(s) conflicted — the store moved since pull: %s; re-pull those and retry", len(conflicts), strings.Join(conflicts, ", "))
+		return pushConflictError{fmt.Errorf("%d file(s) conflicted — the store moved since pull: %s; re-pull those and retry", len(conflicts), strings.Join(conflicts, ", "))}
 	}
 	return nil
 }

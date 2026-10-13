@@ -200,11 +200,13 @@ Examples:
 		if err != nil {
 			return err
 		}
-		env, err := authorEnv()
+		// REQ-CROSS-538: kept on this machine during an outage.
+		env, err := keeping("author backlog")(authorEnv())
 		if err != nil {
 			return err
 		}
-		return errOnly(authorCreate(env, "backlog", args[0], fields))
+		err = errOnly(authorCreate(env, "backlog", args[0], fields))
+		return env.keepCollected(err, keptEntry{Record: args[0]})
 	},
 }
 
@@ -1079,7 +1081,10 @@ the --source that decided it) and its body — --notes, --observed,
 are refused there, and prose goes in --notes.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		env, err := authorEnv()
+		// REQ-CROSS-538: kept on this machine during an outage, on its
+		// expected fingerprint; a second kept edit of the record waits on the
+		// first.
+		env, err := keeping("author update")(authorEnv())
 		if err != nil {
 			return err
 		}
@@ -1087,7 +1092,12 @@ are refused there, and prose goes in --notes.`,
 		if err != nil {
 			return err
 		}
-		return errOnly(authorUpdate(env, authorUpdateKind, args[0], record))
+		err = errOnly(authorUpdate(env, authorUpdateKind, args[0], record))
+		return env.keepCollected(err, keptEntry{
+			Record:  args[0],
+			Basis:   env.keptBasis("expected_fingerprint"),
+			chained: true,
+		})
 	},
 }
 

@@ -83,12 +83,23 @@ func runContext(cmd *cobra.Command, args []string) error {
 		// on a conclusion, spawn a detached `focus --infer`. No prompt text and
 		// no extra request on the hook's deadline unless a ref is confirmed.
 		recordFocusSignalFromPrompt(".", prompt)
-		fmt.Print(contextHookOutputWithin(
+		// REQ-CROSS-536: while an outage is fresh the hook says so in one line
+		// and calls nothing. A stale outage is asked again; kept writes alone
+		// do not stop the fetch, their line follows the served context.
+		root := workspaceRoot()
+		if _, down := knownUnavailable(root, time.Now()); down {
+			line := outageHookLine(root)
+			logContextOutcome("outage", 0, line)
+			fmt.Print(briefEnvelope(contextHookEvent, line))
+			return nil
+		}
+		out := contextHookOutputWithin(
 			time.Duration(contextDeadlineSeconds)*time.Second,
 			contextHookEvent,
 			prompt,
 			fetchHookContextOutcome,
-		))
+		)
+		fmt.Print(withHookLine(contextHookEvent, out, outageHookLine(root)))
 		return nil
 	}
 
@@ -111,6 +122,23 @@ func runContext(cmd *cobra.Command, args []string) error {
 	}
 	printInfo("no context: %s\n", outcome.reason)
 	return nil
+}
+
+// withHookLine appends line to the hook's envelope: after the context it
+// carries, or alone when it carries none.
+func withHookLine(event, out, line string) string {
+	if line == "" {
+		return out
+	}
+	var envelope struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if json.Unmarshal([]byte(out), &envelope) != nil || envelope.HookSpecificOutput.AdditionalContext == "" {
+		return briefEnvelope(event, line)
+	}
+	return briefEnvelope(event, envelope.HookSpecificOutput.AdditionalContext+"\n\n"+line)
 }
 
 // promptFromHookPayload pulls the user's text out of the agent's stdin JSON.
@@ -297,6 +325,8 @@ func fetchContextOutcomeWith(load func() (*factoryEnv, error), prompt string) co
 		reason := strings.TrimSpace(fmt.Sprintf("server error %d %s", resp.StatusCode, detail))
 		return contextOutcome{reason: reason, err: errors.New(reason)}
 	}
+	// REQ-CROSS-535: the server answered; a recorded outage is over.
+	clearUnavailable(env.Root, time.Now())
 
 	// REQ-CROSS-433: a 200 the CLI cannot use is still a failure, and carries an
 	// error so the manual path exits on it like it does on a 500. Only "not

@@ -39,6 +39,20 @@ var exportHeartbeatEvery = 15 * time.Second
 // statement about the credential rather than as the status line.
 var ErrUnauthorized = errors.New("the server rejected the credential (HTTP 401)")
 
+// StatusError is a non-2xx answer the client does not otherwise interpret. It
+// keeps the status, the raw body and the headers, so a caller can tell a
+// gateway's answer from the server's own refusal (REQ-CROSS-535).
+type StatusError struct {
+	Op     string
+	Code   int
+	Body   string
+	Header http.Header
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d - %s", e.Op, e.Code, e.Body)
+}
+
 // NewAuthenticatedRequest creates an HTTP request with auth token from config.
 // This is a convenience function for commands that don't use the full API client.
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
@@ -244,7 +258,7 @@ func (c *Client) ListSystems() ([]System, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to list systems: HTTP %d - %s", resp.StatusCode, string(body))
+		return nil, &StatusError{Op: "failed to list systems", Code: resp.StatusCode, Body: string(body), Header: resp.Header}
 	}
 
 	var systems []System

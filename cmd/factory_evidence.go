@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,18 +116,26 @@ failed. --file cannot be combined with the per-run flags.`,
 				}
 			}
 		}
-		env, err := factoryEnvLoad()
+		// REQ-CROSS-538: during an outage the runs are kept on this machine,
+		// with their run ids, ran_at and branch fixed now.
+		env, err := keeping("factory evidence")(factoryEnvLoad())
 		if err != nil {
 			return err
 		}
 		if evidenceFile != "" {
-			return factoryEvidenceFile(env, evidenceFile)
+			err = factoryEvidenceFile(env, evidenceFile)
+		} else {
+			err = factoryEvidenceRun(env, evidenceOpts{
+				kind: evidenceKind, log: evidenceLog, totals: evidenceTotals,
+				pass: evidencePass, fail: evidenceFail, skip: evidenceSkip,
+				role: evidenceRole, revision: evidenceRevision,
+			})
 		}
-		return factoryEvidenceRun(env, evidenceOpts{
-			kind: evidenceKind, log: evidenceLog, totals: evidenceTotals,
-			pass: evidencePass, fail: evidenceFail, skip: evidenceSkip,
-			role: evidenceRole, revision: evidenceRevision,
-		})
+		if !env.kept() {
+			return err
+		}
+		record, fixed := keptEvidenceFacts(env.keep.requests)
+		return env.keepCollected(err, keptEntry{Record: record, Fixed: fixed})
 	},
 }
 
@@ -199,6 +208,9 @@ func factoryEvidenceFile(env *factoryEnv, path string) error {
 			pass: strings.Join(e.Pass, ","), fail: strings.Join(e.Fail, ","), skip: strings.Join(e.Skip, ","),
 			role: e.Role, revision: e.Revision,
 		}, true)
+		if errors.Is(err, errKept) {
+			continue
+		}
 		if err != nil {
 			failed++
 			// A batch row, like the recorded ones: stdout, so the report reads whole.

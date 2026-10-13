@@ -833,6 +833,59 @@ Common repairs:
 
 Use `modernpath <command> --help` for the current flags and subcommands.
 
+### Outage mode
+
+When the ModernPath server cannot be reached — no connection, no answer in
+time, or a gateway error the server did not write — and a short reachability
+check fails too, the CLI says the server is unavailable and exits 75
+(EX_TEMPFAIL): this is not a refusal. For 15 seconds afterwards no command
+calls the server again; each further failed check doubles that window, up to
+5 minutes, and the first answer from the server ends it. An expired sign-in
+that cannot be refreshed does not end outage mode: you are asked to sign in
+again only once the server answers. A server address that is not an `http://`
+or `https://` URL is a configuration error (exit 1), not an outage, and
+`factory connect --api-url` refuses it.
+
+When the server limits requests (429), the command waits and sends the request
+again: the `Retry-After` time when the server gives one, else 2 seconds,
+doubling; each wait is at most 30 seconds and all of them at most 2 minutes.
+Only then does it say the server is limiting requests and exit 75. Hooks never
+wait.
+
+During an outage these process writes are kept on this machine, exit 0, and
+print `Kept on this machine (N waiting): <verb> <record>. It is recorded when
+the server is back.`:
+
+| Write | Kept with |
+|---|---|
+| `factory evidence` (one run or `--file`) | each run's id, `ran_at` and branch, fixed when kept |
+| `author update` | its `--expected-fingerprint`; a second edit of the same record waits on the first |
+| `author backlog` | its fields |
+| `process findings add --aggregate <fp>` | the aggregate |
+| `process findings disposition --expected-fingerprint <fp>` | the fingerprint |
+| `factory answer` | the gate's two review pins from its newest `.modernpath/working-set/` snapshot (`Content fingerprint`, and `Scope fingerprint` when it has one), and the `USER:` source, `USER:<date kept>` when none is given |
+| `working-set push` | the piece named by `--piece`, else the one in the local `WORK-SELECTION.md`; the edited files stay as they are, one kept push per piece |
+
+Every other write, `feedback` included, and these without what they are kept
+with — an answer to a gate with no snapshot carrying its content pin, a push
+with neither `--piece` nor a `WORK-SELECTION.md`, `findings add` without
+`--aggregate`, `findings disposition` without `--expected-fingerprint` —
+prints `Waits for the ModernPath server (unavailable since <hh:mm>); nothing
+was kept.` and exits 75. `modernpath outage status` lists the kept writes with their verb,
+record, keep time, the person who kept them and what they wait on, and the
+entries a replay could not record with the server's reason. It reads only this
+machine.
+
+When the server answers again, the next write command records the kept writes
+in order before its own request; `modernpath outage replay` does it on demand.
+A command run with `--dry-run` and the hooks never replay. A kept write the
+server refuses, or whose record or gate changed meanwhile, is moved to the
+refused or conflicted list with the server's reason, and the writes that wait
+on it move with it. A write whose request gets no answer stays kept for
+another try while the rest go on; after three failed tries it is moved to the
+refused list. A server error (5xx), an outage or a request limit stops the
+replay and keeps the rest.
+
 ## Technical Description
 
 ### Source authority
@@ -938,6 +991,8 @@ is the active binding:
 | `.modernpath/rdd/` | Versioned requirement-driven process snapshot. | Repository state; intended to be committed. |
 | `.modernpath/cli-reference.md` | This binary's command reference — every verb, flag and default — rendered from its own command tree by `modernpath install`; `install --check` reports a stale copy as drift. | Repository state; intended to be committed. |
 | `.modernpath/sync-hooks.log` | Automatic factory-sync outcomes and skips. | Machine-local log. |
+| `.modernpath/server-availability.json` | Whether the ModernPath server was last found unavailable, since when, and when that was last checked (see Outage mode). | Machine-local, gitignored. |
+| `.modernpath/outage-journal/` | Process writes kept on this machine while the server was unavailable, one `<seq>-<verb>.json` file each, recorded in order when it is back; `conflicted/` and `refused/` hold those a replay could not record. | Machine-local, gitignored; never edited in place. |
 
 Read-modify-write commands update the binding they found, even when invoked
 from a subdirectory. `modernpath init` is the deliberate exception: it binds

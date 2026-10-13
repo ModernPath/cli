@@ -116,7 +116,7 @@ func applyRecordWrites(env *factoryEnv, ctxID string, writes []*recordWrite) (ma
 	post := func(action string, w *recordWrite, record map[string]any) (bool, error) {
 		status, resp, err := postAuthor(env, map[string]any{"action": action, "record": record})
 		if err != nil {
-			return false, fmt.Errorf("%s: %v", w.ext, err)
+			return false, fmt.Errorf("%s: %w", w.ext, err)
 		}
 		res := results[w.ext]
 		switch {
@@ -159,7 +159,7 @@ func applyRecordWrites(env *factoryEnv, ctxID string, writes []*recordWrite) (ma
 		}
 		status, resp, err := postAuthor(env, body)
 		if err != nil {
-			return results, conflicts, fmt.Errorf("%s: %v", w.ext, err)
+			return results, conflicts, fmt.Errorf("%s: %w", w.ext, err)
 		}
 		res := results[w.ext]
 		switch {

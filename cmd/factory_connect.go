@@ -33,6 +33,10 @@ func resolveBinding(cfg *config.Config, systemID int, apiURLFlag string) error {
 		cfg.SystemName, cfg.SystemSlug, cfg.RepositoryID = "", "", 0
 	}
 	if apiURLFlag != "" {
+		// REQ-CROSS-535 AC5: a wrong address is refused here, not stored.
+		if err := validAPIURL(apiURLFlag); err != nil {
+			return err
+		}
 		if cfg.APIURL != "" && apiURLFlag != cfg.APIURL {
 			// a different server: the recorded identity was read from the OLD
 			// one, and the same numeric id on another host is another system

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,13 @@ type factoryEnv struct {
 	contractVersion string
 	contract        *serverContract
 	warned          map[string]bool
+	// probeDone and probeDown hold the one outage-confirming probe this
+	// process runs (REQ-CROSS-535).
+	probeDone bool
+	probeDown bool
+	// keep is armed by a verb that keeps its write on this machine while the
+	// server is unavailable (REQ-CROSS-538).
+	keep *keptWrite
 }
 
 // credentialError marks a failure that re-running the failing command cannot
@@ -48,6 +56,9 @@ type factoryEnv struct {
 type credentialError struct {
 	err    error
 	repair string
+	// expired marks a token past its expiry, which outage mode can still
+	// carry while the server is unreachable (REQ-CROSS-536 AC5).
+	expired bool
 }
 
 func (e credentialError) Error() string { return e.err.Error() }
@@ -117,6 +128,11 @@ func factoryBindingLoad() (*factoryEnv, error) {
 		return nil, bindingError{err: fmt.Errorf("no system_id in %s/config.json — run 'modernpath factory connect --system <id>'", config.ConfigDir)}
 	}
 
+	// REQ-CROSS-535 AC5: an address that is not a URL is a configuration
+	// error, refused before anything is sent and never taken as an outage.
+	if err := validAPIURL(cfg.APIURL); cfg.APIURL != "" && err != nil {
+		return nil, fmt.Errorf("%v in %s/config.json — run 'modernpath factory connect --api-url <url>'", err, config.ConfigDir)
+	}
 	env := &factoryEnv{
 		Root:           filepath.Dir(cfgDir),
 		APIURL:         cfg.APIURL,
@@ -178,6 +194,34 @@ func credentialLoad(refresh bool) (*factoryEnv, error) {
 	return env, nil
 }
 
+// credentialLoadExpired is the binding and the stored token without the
+// expiry check, for outage mode only: nothing is sent with it unless the
+// probe, whose answer then asks for a new sign-in.
+func credentialLoadExpired() (*factoryEnv, error) {
+	env, err := factoryBindingLoad()
+	if err != nil {
+		return nil, err
+	}
+	auth, err := config.ReadAuth()
+	if err != nil || strings.TrimSpace(auth.Token) == "" {
+		return nil, fmt.Errorf("no stored sign-in")
+	}
+	env.token = auth.Token
+	env.tokenExpiry = storedExpiry(auth)
+	env.Auth = auth
+	return env, nil
+}
+
+// validAPIURL refuses a server address that is not an http or https URL
+// with a host, such as 127.0.0.1:9 without a scheme.
+func validAPIURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("the server address %q is not a URL (it needs http:// or https:// and a host)", raw)
+	}
+	return nil
+}
+
 // apiClientCredentialLoad is factoryCredentialLoad for the api-client verbs
 // (`docs sync`, `search`, `ask`, `read-doc`, `read-file`): the same
 // credential statements, but an unbound workspace is told to run `init` —
@@ -201,18 +245,24 @@ func apiClientLoad(refresh bool) (*factoryEnv, error) {
 	return credentialLoad(refresh)
 }
 
+// REQ-CROSS-536: a known or confirmed outage returns the credential-loaded env
+// with serverUnavailableError, so a caller that keeps working offline has it.
 func factoryEnvLoad() (*factoryEnv, error) {
-	env, err := factoryCredentialLoad()
+	env, err := outageCredentialLoad()
 	if err != nil {
-		return nil, err
+		return env, err
 	}
 
 	// REQ-CROSS-282: refuse before any caller's env.call — factoryEnvLoad is
 	// the single chokepoint every credentialed factory subcommand goes
 	// through, so this protects all of them, not just sync. A check that
-	// itself errors fails open: "couldn't check" is never "confirmed
-	// unreachable," and a transient outage must never block every command.
-	if systems, serr := listSystemsFn(env.APIURL, env.token); serr == nil {
+	// errors other than as an outage fails open: "couldn't check" is never
+	// "confirmed unreachable".
+	systems, serr := env.reachabilityProbe()
+	if isUnavailable(serr) {
+		return env, serr
+	}
+	if serr == nil {
 		if !systemReachable(systems, env.SystemID) {
 			// A binding the credential cannot reach is fixed by `factory
 			// connect`, like no binding at all (REQ-CROSS-434).
@@ -220,6 +270,9 @@ func factoryEnvLoad() (*factoryEnv, error) {
 		}
 	}
 
+	// REQ-CROSS-539: a write command records the kept writes before its own
+	// request.
+	replayAfterLoad(env)
 	return env, nil
 }
 

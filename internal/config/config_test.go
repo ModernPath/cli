@@ -397,8 +397,8 @@ func TestWriteAuthKeepsAnExistingIgnoreFile(t *testing.T) {
 	if !strings.HasPrefix(string(data), own) {
 		t.Fatalf("the user's ignore file was rewritten: %q", data)
 	}
-	if string(data) != own+"cli-history.log\ncli-notices.json\n" {
-		t.Fatalf("want the two local entries appended once after the user's lines, got %q", data)
+	if string(data) != own+"cli-history.log\ncli-notices.json\nserver-availability.json\noutage-journal/\n" {
+		t.Fatalf("want the CLI's local entries appended once after the user's lines, got %q", data)
 	}
 }
 

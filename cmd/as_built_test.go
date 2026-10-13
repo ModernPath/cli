@@ -77,6 +77,12 @@ func TestSRRDDASBUILTCLI001DeliveryObservationFetchesActualDefaultBranch(t *test
 			w.WriteHeader(404)
 			return
 		}
+		// REQ-CROSS-535: the bodyless 503 below is a gateway answer, so the
+		// CLI probes; a healthy probe is not an upload and is not counted.
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
 		calls++
 		var payload map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&payload)

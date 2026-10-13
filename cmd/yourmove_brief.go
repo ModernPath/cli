@@ -40,7 +40,7 @@ func yourMoveWithBrief(env *factoryEnv, opts briefOpts, out io.Writer) error {
 	}
 	feed, err := fetchFeed(env, briefRelease(opts))
 	if err != nil {
-		return fmt.Errorf("brief unavailable: %v", err)
+		return fmt.Errorf("brief unavailable: %w", err)
 	}
 	renderBrief(out, feed, env.SystemID, opts)
 	return nil

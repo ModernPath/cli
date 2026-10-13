@@ -72,26 +72,50 @@ func applyGroupUnknownArgGuard(c *cobra.Command) {
 }
 
 func Execute() {
+	code := run(os.Args[1:])
+	if code != 0 {
+		exit(code)
+	}
+}
+
+// run executes one invocation with args and returns its exit code; Execute
+// is run(os.Args[1:]) plus the process exit.
+func run(args []string) int {
 	// The struct literal above captured Version at package init; a stamp set
 	// later (main's embedded VERSION default) must still be what --version
 	// prints.
 	rootCmd.Version = Version
 	applyGroupUnknownArgGuard(rootCmd)
+	rootCmd.SetArgs(args)
+	// REQ-CROSS-539: replay is armed per invocation (armReplay).
+	replayInvocation, replayOnLoad = args, false
+	defer func() { replayInvocation, replayOnLoad = nil, false }()
 	// REQ-CROSS-387: every user-run invocation is recorded (argv, exit, an
 	// output tail) for `feedback --last`; the recorder drains before exit.
-	code := runWithHistory(os.Args[1:], func() int {
-		if err := rootCmd.Execute(); err != nil {
+	return runWithHistory(args, func() int {
+		if executed, err := rootCmd.ExecuteC(); err != nil {
 			var reported reportedError
 			if !errors.As(err, &reported) {
 				fmt.Fprintln(os.Stderr, err)
+			}
+			// REQ-CROSS-535: an outage or a limited request is temporary,
+			// never a refusal (EX_TEMPFAIL).
+			var unavailable serverUnavailableError
+			var limiting serverLimitingError
+			if errors.As(err, &unavailable) {
+				// REQ-CROSS-538: a write that was not kept says it waits.
+				if storeWriteVerb(executed) && executed != outageReplayCmd {
+					fmt.Fprintln(os.Stderr, waitLine(unavailable))
+				}
+				return exitTempFailure
+			}
+			if errors.As(err, &limiting) {
+				return exitTempFailure
 			}
 			return 1
 		}
 		return 0
 	})
-	if code != 0 {
-		exit(code)
-	}
 }
 
 func init() {

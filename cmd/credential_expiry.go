@@ -77,8 +77,9 @@ func ensureFreshCredential(env *factoryEnv, auth *config.Auth, now time.Time) (*
 // any request so the server never answers it with a bare 401.
 func expiredCredential(expiry time.Time, repair string) error {
 	return credentialError{
-		err:    fmt.Errorf("the session token expired at %s and the server will reject it — run '%s'", expiry.Format(time.RFC3339), repair),
-		repair: repair,
+		err:     fmt.Errorf("the session token expired at %s and the server will reject it — run '%s'", expiry.Format(time.RFC3339), repair),
+		repair:  repair,
+		expired: true,
 	}
 }
 
