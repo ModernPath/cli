@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+## v0.19.0 — development continues while the server is down
+
+### Upgrading from v0.18.0
+
+- Run `modernpath install` after upgrading so the embedded process kit and the
+  CLI guide match this release.
+- No server change is needed: outage mode is CLI-only and works against the
+  served contract.
+
+### The CLI tells an outage from a refusal
+
+- A connection failure, a timeout, or a 502/503/504 that core did not write
+  counts as an outage only after a short probe (5 s) fails too. The command
+  then says the ModernPath server is unavailable since a time, that this is
+  not a refusal, and exits 75. The state is kept in
+  `.modernpath/server-availability.json`.
+- After a confirmed outage no command or hook calls the server for 15 s; each
+  further failed check doubles that, up to 5 minutes, and the first answer
+  ends it. An expired sign-in that cannot be refreshed keeps outage mode until
+  the server answers.
+- A rate-limited request (429 without core's error body) is waited out and
+  sent again: Retry-After, else 2 s doubling, each wait at most 30 s and at
+  most 2 minutes per request. Hooks never wait. Then it exits 75.
+- A server address that is not an `http://` or `https://` URL is a
+  configuration error (exit 1), and `factory connect --api-url` refuses it.
+
+### Reads and writes during an outage
+
+- `your-move`, the SessionStart brief, `process next` and by-id
+  `working-set pull` answer from the last local snapshot with its age, and
+  warn past 24 hours.
+- `factory evidence`, `author update`, `author backlog`, `process findings
+  add/disposition`, `factory answer` and `working-set push` are kept on the
+  machine under `.modernpath/outage-journal/` with their ids fixed, and exit
+  0. Every other write says it waits for the server and exits 75.
+  `modernpath outage status` lists what is kept.
+- A `working-set push` or `author apply` that meets an outage partway now
+  exits 75; a push is kept.
+
+### Kept writes are recorded when the server is back
+
+- The next write command from the main session, or `modernpath outage
+  replay`, records the kept writes in order before its own request. Hooks,
+  read commands and `--dry-run` never replay, and only the person who kept
+  the writes can replay them.
+- A write that already landed counts as recorded. A conflict or refusal is
+  moved to the conflicted or refused list with the server's reason and never
+  forced; writes that wait on it move with it. A write whose request gets no
+  answer is kept for another try and set aside as refused after three. An
+  outage, a 429 or a server error (5xx) stops the replay and keeps the rest.
+
 ## v0.18.0 — refusals name what to correct, proofs are visible, imported names hold
 
 ### Upgrading from v0.17.0
