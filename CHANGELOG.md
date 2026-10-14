@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `epics search` prints a link to each epic and includes `url` in JSON items,
+  using the server-advertised app address and workspace scope when available.
+
 ## v0.19.0 — development continues while the server is down
 
 ### Upgrading from v0.18.0

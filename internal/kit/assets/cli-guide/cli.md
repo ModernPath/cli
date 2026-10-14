@@ -543,7 +543,9 @@ cases. It matches external ids and display references (`UR-5`, `SR-12-0`,
 `OBSOLETE` rows are never returned. `DERIVED` requirements and unconfirmed test
 cases are found by exact match only and are marked `candidate`. `epics search`
 shows an epic's code, or `#<id>` when it has none, and says `keyword`,
-`semantic` or both.
+`semantic` or both. Each epic includes its app link; JSON items include a
+`url` field. Links use the server-advertised app address, falling back to the
+API host when none is available.
 
 `--limit` is 10 by default and at most 25. `--json` prints the server's `query`
 and `items`. A 404 names its cause: an unknown system (check the binding with

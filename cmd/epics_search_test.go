@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/modernpath/cli/internal/config"
 )
 
 // REQ-PLN-192 (EPIC-REQ-SEARCH): epics search reads the epic search route for
@@ -15,6 +17,12 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 	var got url.Values
 	mux := http.NewServeMux()
 	addDiscoveryTestSystems(mux)
+	mux.HandleFunc("/api/import/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer t" {
+			t.Error("capabilities read omitted authorization")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"upload_limit_bytes": 90000000, "app_url": "https://app.example.test/"})
+	})
 	mux.HandleFunc("/api/v1/sync/epics/search", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer t" {
 			http.Error(w, "unauthorized search request", http.StatusUnauthorized)
@@ -46,6 +54,7 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 	for _, want := range []string{
 		"EPIC-INT-009", "Teams push", "TODO", "keyword, semantic",
 		"#43", "Chat notifications", "PROPOSED",
+		"https://app.example.test/epics/42", "https://app.example.test/epics/43",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("human output omitted %q:\n%s", want, out)
@@ -62,9 +71,20 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
 		t.Fatalf("--json output is not JSON: %v\n%s", err, out)
 	}
-	if len(decoded.Items) != 2 || decoded.Items[0]["code"] != "EPIC-INT-009" {
+	if len(decoded.Items) != 2 || decoded.Items[0]["code"] != "EPIC-INT-009" || decoded.Items[0]["url"] != "https://app.example.test/epics/42" {
 		t.Fatalf("--json items = %v", decoded.Items)
 	}
+	if err := config.WriteAuth(&config.Auth{Token: "t", WorkspaceID: "org-1"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runRoot(t, "epics", "search", "teams", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "https://app.example.test/workspaces/org-1/systems/1/epics/42") {
+		t.Fatalf("missing scoped epic link: %s", out)
+	}
+
 }
 
 // The 404 body tells an unknown system apart from a server without the route.

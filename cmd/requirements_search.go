@@ -59,6 +59,10 @@ func runRequirementsSearch(cmd *cobra.Command, args []string) error {
 // "system not found" is an unknown system; any other 404 is a server without
 // the route.
 func syncSearch(args []string, limit int, route, what, command string) (map[string]any, error) {
+	return syncSearchWithEnv(nil, args, limit, route, what, command)
+}
+
+func syncSearchWithEnv(env *factoryEnv, args []string, limit int, route, what, command string) (map[string]any, error) {
 	query := strings.TrimSpace(strings.Join(args, " "))
 	if query == "" {
 		return nil, fmt.Errorf("the search text must not be empty")
@@ -67,9 +71,12 @@ func syncSearch(args []string, limit int, route, what, command string) (map[stri
 		return nil, fmt.Errorf("--limit must be between 1 and %d", syncSearchMaxLimit)
 	}
 
-	env, err := factoryEnvLoad()
-	if err != nil {
-		return nil, err
+	if env == nil {
+		var err error
+		env, err = factoryEnvLoad()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	params := url.Values{
