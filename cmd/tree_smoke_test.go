@@ -594,7 +594,7 @@ var leafDispositions = map[string]disposition{
 	"hooks status":    {kind: dispNoCall, reason: "local-only"},
 	"hooks uninstall": {kind: dispNoCall, reason: "local-only"},
 	"init workspace":  {kind: dispNoCall, reason: "local-only"},
-	"install":         {kind: dispNoCall, reason: "local-only"},
+	"install":         {kind: dispExecute}, // default setup activates the connected system store
 	"work review":     {kind: dispNoCall, reason: "local-only"},
 	// EPIC-CLI-OUTAGE: both read the local journal; with nothing kept, replay
 	// sends nothing.

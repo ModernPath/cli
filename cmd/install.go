@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modernpath/cli/internal/kit"
 	"github.com/spf13/cobra"
@@ -46,18 +47,17 @@ Change shared process instructions in the req-driven-dev source repository and
 ship a new CLI. Project instructions live in the rest of AGENTS.md and
 .claude/rules/.
 
---store-backed --source USER:… declares a bound workspace that never had file
-ledgers store-backed in one step: the server records the store-backed
-activation gate, answered by you with the USER: source, and sets the system's
-process-store state active in one action; then process/store-backed.md is
-written in the same shape 'migrate flip' writes — the accepted source with its
-gate, the server and system, and no retired files — and the install that
-follows withholds the ledger skill. The server decides by its own state: a
-system seeded by an import or cleared after a flip is refused by name and goes
-through 'migrate flip'; an already-declared system is reported and left as it
-is; a marker present over an undeclared server, or a declaration recorded from
-another checkout, has its missing half completed. A workspace with ledgers
-under tasks/ is refused here and goes through the flip.`,
+Store-backed setup is the default. Run 'modernpath init' first to connect the
+repository to its system, then run 'modernpath install'. For a new system the
+server records activation under the signed-in user and the CLI writes
+process/store-backed.md before installing the process files. No confirmation,
+decision date or --source argument is needed. Repeat installs reuse the existing
+activation and repair a missing local marker from the server declaration.
+
+--check and --dry-run do not activate the store or write files.
+--source optionally supplies a USER: citation instead of the install invocation.
+--store-backed=false retains local-only process installation. Existing file-ledger
+activation restrictions are unchanged. A server refusal stops installation.`,
 	RunE: runInstall,
 }
 
@@ -65,10 +65,10 @@ func init() {
 	installCmd.Flags().BoolVar(&installDryRun, "dry-run", false, "show what would change without writing")
 	installCmd.Flags().BoolVar(&installCheck, "check", false,
 		"report tool-owned files that were edited or are missing, and exit non-zero (for CI)")
-	installCmd.Flags().BoolVar(&installStoreBacked, "store-backed", false,
-		"declare this bound, ledgerless workspace store-backed (gate answered with --source, server state active, marker written) before installing")
+	installCmd.Flags().BoolVar(&installStoreBacked, "store-backed", true,
+		"activate store-backed setup for the connected repository before installing")
 	installCmd.Flags().StringVar(&installSource, "source", "",
-		"the USER:<date>:<decision> source the store-backed declaration is answered with (with --store-backed)")
+		"optional USER:<date>:<decision> citation for activation (defaults to this install invocation)")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -79,14 +79,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	root, err := os.Getwd()
 	if err != nil {
 		return err
-	}
-
-	if installStoreBacked && (installDryRun || installCheck) {
-		flag := "--dry-run"
-		if installCheck {
-			flag = "--check"
-		}
-		return fmt.Errorf("--store-backed declares the workspace and does not combine with %s — run it on its own", flag)
 	}
 
 	generated := []kit.Generated{{Target: cliReferenceTarget, Body: []byte(renderCLIReference(rootCmd))}}
@@ -104,10 +96,18 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return reportPlan(root, generated...)
 	}
 
+	if err := kit.ValidateInstall(root); err != nil {
+		return fmt.Errorf("install preflight failed: %w", err)
+	}
+
 	// REQ-CROSS-406: the declaration runs before the install so the marker is
 	// on disk when Withheld decides the ledger skill on the same run.
 	if installStoreBacked {
-		if err := declareStoreBacked(root, installSource); err != nil {
+		source := installSource
+		if source == "" {
+			source = "USER:" + time.Now().UTC().Format(time.DateOnly) + ":modernpath-install-default-store-backed"
+		}
+		if err := declareStoreBacked(root, source); err != nil {
 			return err
 		}
 	}
@@ -157,6 +157,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 // repository whose AGENTS.md has been edited, since that is the one file the
 // installer shares with its owner.
 func reportPlan(root string, generated ...kit.Generated) error {
+	if installStoreBacked {
+		fmt.Println("Store-backed setup: activation is the default; this preview does not activate or write the marker.")
+	}
 	var damaged []string
 	aliases, err := kit.MergeAliases(root)
 	if err != nil {
@@ -192,6 +195,9 @@ func reportPlan(root string, generated ...kit.Generated) error {
 			continue
 		}
 		if t, ok := kit.TargetForAsset(asset); ok {
+			if installStoreBacked && t == kit.LedgerSkillTarget {
+				continue
+			}
 			targets = append(targets, t)
 		}
 	}

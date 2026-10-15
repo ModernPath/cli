@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Plain `modernpath install` now activates store-backed setup for a connected
+  repository by default. No source/date prompt is needed; the signed-in user
+  and install invocation are recorded automatically. Repeat installs reuse
+  activation. Local instruction and reference-manifest validation runs before
+  activation, so a validation refusal leaves the server and marker unchanged.
+  `--check` and `--dry-run` remain read-only.
+
 - `epics search` prints a link to each epic and includes `url` in JSON items,
   using the server-advertised app address and workspace scope when available.
 

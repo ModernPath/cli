@@ -9,8 +9,9 @@ import (
 	"github.com/modernpath/cli/internal/storeback"
 )
 
-// REQ-CROSS-406 (EPIC-CLI-020): `install --store-backed --source USER:…`
-// declares a bound workspace with no file ledgers store-backed in one step.
+// REQ-CROSS-406 (EPIC-CLI-020): install declares a bound workspace with no
+// file ledgers store-backed in one step. Store-backed is the default; the
+// caller supplies the install invocation source unless --source was given.
 // The server records the activation gate born answered by the signed-in
 // person and sets the system's process-store state active in one action;
 // the CLI then writes the marker through the writer `migrate flip` uses,

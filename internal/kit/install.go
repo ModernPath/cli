@@ -299,19 +299,29 @@ type Result struct {
 	AgentsMerged  bool              // true when an existing AGENTS.md had its block refreshed
 }
 
-// Install writes the kit into root and merges the managed block into the
-// client's AGENTS.md.
-//
-// The AGENTS.md merge is attempted FIRST and aborts the whole install on
-// failure. A half-installed repository whose AGENTS.md was mangled is far worse
-// than one that was never touched, and damaged markers are exactly the case
-// where the installer cannot tell which bytes belong to the client.
-func Install(root string, generated ...Generated) (Result, error) {
-	var res Result
+type installPlan struct {
+	result             Result
+	previousReferences []string
+	merged             map[string][]byte
+	created            map[string]bool
+}
+
+// ValidateInstall checks the reference manifest and all instruction merges
+// without writing files. Call it before external setup such as store activation.
+// Install repeats these checks before writing in case the local files changed.
+func ValidateInstall(root string) error {
+	_, err := prepareInstall(root)
+	return err
+}
+
+func prepareInstall(root string) (installPlan, error) {
+	var plan installPlan
 	previousReferences, err := readManagedSkillReferences(root)
 	if err != nil {
-		return res, err
+		return plan, err
 	}
+
+	plan.previousReferences = previousReferences
 
 	// Plan every merge BEFORE writing anything. A half-installed repository
 	// whose instructions were mangled is far worse than one never touched, and
@@ -319,11 +329,11 @@ func Install(root string, generated ...Generated) (Result, error) {
 	// which bytes belong to the client.
 	aliases, err := MergeAliases(root)
 	if err != nil {
-		return res, err
+		return plan, err
 	}
-	res.Aliased = aliases
-	planned := map[string][]byte{}
-	createdTargets := map[string]bool{}
+	plan.result.Aliased = aliases
+	plan.merged = map[string][]byte{}
+	plan.created = map[string]bool{}
 	for _, m := range mergeTargets {
 		asset, target := m.asset, m.target
 		if _, aliased := aliases[target]; aliased {
@@ -331,12 +341,12 @@ func Install(root string, generated ...Generated) (Result, error) {
 		}
 		block, err := assets.ReadFile(asset)
 		if err != nil {
-			return res, fmt.Errorf("read embedded %s: %w", asset, err)
+			return plan, fmt.Errorf("read embedded %s: %w", asset, err)
 		}
 		path := filepath.Join(root, target)
 		existing, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
-			return res, fmt.Errorf("read %s: %w", target, err)
+			return plan, fmt.Errorf("read %s: %w", target, err)
 		}
 		created := os.IsNotExist(err)
 		doc := string(existing)
@@ -345,14 +355,28 @@ func Install(root string, generated ...Generated) (Result, error) {
 		}
 		merged, err := MergeManagedBlock(doc, string(block))
 		if err != nil {
-			return res, fmt.Errorf("%s: %w", target, err)
+			return plan, fmt.Errorf("%s: %w", target, err)
 		}
-		planned[target] = []byte(merged)
-		createdTargets[target] = created
+		plan.merged[target] = []byte(merged)
+		plan.created[target] = created
 		if target == "AGENTS.md" {
-			res.AgentsCreated, res.AgentsMerged = created, !created
+			plan.result.AgentsCreated, plan.result.AgentsMerged = created, !created
 		}
 	}
+
+	return plan, nil
+}
+
+// Install writes the kit into root after validating the reference manifest and
+// planning every managed instruction merge. A local validation error leaves
+// the repository untouched.
+func Install(root string, generated ...Generated) (Result, error) {
+	plan, err := prepareInstall(root)
+	if err != nil {
+		return plan.result, err
+	}
+	res := plan.result
+	previousReferences, planned, createdTargets := plan.previousReferences, plan.merged, plan.created
 
 	assetPaths, err := ListAssets()
 	if err != nil {

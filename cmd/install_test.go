@@ -138,26 +138,13 @@ func readMarker(t *testing.T, root string) (string, bool) {
 	return string(b), true
 }
 
-// S1 — refused without a USER: source, nothing sent; with one, the action is
-// posted, the marker is written in the shared shape, and the install that
-// follows withholds the ledger skill.
+// An optional explicit source remains supported for existing callers.
 func TestInstallStoreBackedDeclaresInOneStep(t *testing.T) {
 	srv := newDeclareServer(t)
 	root := declareWorkspace(t, srv)
 
-	out, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
-	if err == nil || !strings.Contains(err.Error(), "--source") {
-		t.Fatalf("the declaration must refuse without a USER: source naming the flag, got: %v\n%s", err, out)
-	}
-	if srv.posts() != 0 {
-		t.Fatalf("a refused declaration must send nothing, got %d authoring call(s)", srv.posts())
-	}
-	if _, ok := readMarker(t, root); ok {
-		t.Fatal("a refused declaration must write no marker")
-	}
-
 	installSource = declareSource
-	out, err = runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
+	out, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
 	if err != nil {
 		t.Fatalf("install --store-backed: %v\n%s", err, out)
 	}
@@ -292,22 +279,119 @@ func TestInstallStoreBackedSurfacesTheServerRefusal(t *testing.T) {
 	}
 }
 
-// Nit 13 — --store-backed is a declaration; combined with --dry-run or
-// --check it is refused rather than silently ignored.
-func TestInstallStoreBackedRefusesDryRunAndCheck(t *testing.T) {
+func TestInstallDefaultsToStoreBacked(t *testing.T) {
+	if flag := installCmd.Flags().Lookup("store-backed"); flag == nil || flag.DefValue != "true" {
+		t.Fatal("plain install must default to store-backed setup")
+	}
 	srv := newDeclareServer(t)
-	declareWorkspace(t, srv)
-	installSource = declareSource
-	for _, flag := range []string{"dry-run", "check"} {
-		t.Run(flag, func(t *testing.T) {
-			installDryRun, installCheck = flag == "dry-run", flag == "check"
-			t.Cleanup(func() { installDryRun, installCheck = false, false })
-			_, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
-			if err == nil || !strings.Contains(err.Error(), "--"+flag) {
-				t.Fatalf("--store-backed with --%s must refuse naming the flag, got: %v", flag, err)
+	root := declareWorkspace(t, srv)
+	out, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
+	if err != nil {
+		t.Fatalf("plain install must activate store-backed setup without source or prompts: %v\n%s", err, out)
+	}
+	if srv.posts() != 1 {
+		t.Fatalf("expected one declaration, got %d", srv.posts())
+	}
+	source, _ := srv.authorPosts[0]["source"].(string)
+	if !strings.HasPrefix(source, "USER:") || !strings.HasSuffix(source, ":modernpath-install-default-store-backed") {
+		t.Fatalf("source must describe this install invocation: %q", source)
+	}
+	date := strings.TrimSuffix(strings.TrimPrefix(source, "USER:"), ":modernpath-install-default-store-backed")
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		t.Fatalf("source must include the invocation date: %q", source)
+	}
+	marker, ok := readMarker(t, root)
+	if !ok || !strings.Contains(marker, source) {
+		t.Fatalf("default install must write the server-backed marker: %q", marker)
+	}
+	if _, err := os.Stat(filepath.Join(root, kit.LedgerSkillTarget)); !os.IsNotExist(err) {
+		t.Fatalf("default install must not install the file-ledger skill: %v", err)
+	}
+	if _, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) }); err != nil {
+		t.Fatalf("repeat install: %v", err)
+	}
+	if srv.posts() != 1 {
+		t.Fatal("repeat install must reuse the existing declaration")
+	}
+}
+
+func TestInstallDefaultReadOnlyModesDoNotActivateStore(t *testing.T) {
+	for _, mode := range []string{"check", "dry-run"} {
+		t.Run(mode, func(t *testing.T) {
+			srv := newDeclareServer(t)
+			root := declareWorkspace(t, srv)
+			installDryRun, installCheck = mode == "dry-run", mode == "check"
+			out, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
+			if mode == "dry-run" && strings.Contains(out, kit.LedgerSkillTarget) {
+				t.Fatal("default preview must not promise file-ledger tooling")
+			}
+			if mode == "dry-run" && err != nil {
+				t.Fatalf("dry-run must show a plan without activating: %v\n%s", err, out)
+			}
+			if mode == "check" && !strings.Contains(out, "tool-owned files differ") {
+				t.Fatalf("check must report missing kit files, not reject the default: %v\n%s", err, out)
 			}
 			if srv.posts() != 0 {
-				t.Fatalf("a refused combination must send nothing")
+				t.Fatal("read-only mode must not declare a store")
+			}
+			if _, ok := readMarker(t, root); ok {
+				t.Fatal("read-only mode must not write a marker")
+			}
+		})
+	}
+}
+
+func TestInstallExplicitLocalOnlyDoesNotActivateStore(t *testing.T) {
+	srv := newDeclareServer(t)
+	root := declareWorkspace(t, srv)
+	installStoreBacked = false
+	if _, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) }); err != nil {
+		t.Fatal(err)
+	}
+	if srv.posts() != 0 {
+		t.Fatal("explicit local-only installation must not activate the store")
+	}
+	if _, ok := readMarker(t, root); ok {
+		t.Fatal("explicit local-only installation must not write a marker")
+	}
+	if _, err := os.Stat(filepath.Join(root, kit.LedgerSkillTarget)); err != nil {
+		t.Fatalf("local-only installation must retain file-backed tooling: %v", err)
+	}
+}
+
+// A local preflight refusal must not activate the server or create its marker.
+func TestInstallValidatesLocalFilesBeforeActivatingStore(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		body string
+		want string
+	}{
+		{"AGENTS.md", kit.BeginMarker + "\nbroken\n", "managed block markers"},
+		{"CLAUDE.md", kit.BeginMarker + "\nbroken\n", "managed block markers"},
+		{".github/copilot-instructions.md", kit.EndMarker + "\nbroken\n", "managed block markers"},
+		{".modernpath/skill-references.json", "{", "skill-references"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			srv := newDeclareServer(t)
+			root := declareWorkspace(t, srv)
+			writeFactoryTestFile(t, root, tc.path, tc.body)
+
+			out, err := runCapturing(t, func() error { return installCmd.RunE(installCmd, nil) })
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected local validation refusal, got %v\n%s", err, out)
+			}
+			if srv.posts() != 0 {
+				t.Errorf("local validation failure activated the store: %d POSTs", srv.posts())
+			}
+			if _, ok := readMarker(t, root); ok {
+				t.Error("local validation failure wrote the store-backed marker")
+			}
+			got, err := os.ReadFile(filepath.Join(root, tc.path))
+			if err != nil || string(got) != tc.body {
+				t.Fatalf("invalid input was modified: %q, %v", got, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".modernpath/rdd/PROCESS.md")); !os.IsNotExist(err) {
+				t.Fatalf("local validation failure installed process files: %v", err)
 			}
 		})
 	}

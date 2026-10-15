@@ -86,16 +86,24 @@ and update using the installation method above.
 
 ### Install the process and agent hooks
 
-From the connected repository root:
+From the connected repository root, with a valid sign-in and a reachable
+ModernPath server:
 
 ```sh
 modernpath install
 modernpath hooks install
 ```
 
-`modernpath install` writes the requirement-driven process and agent instructions
-for this repository. `modernpath hooks install` gives supported coding agents
-ModernPath context. Commit the generated process and instruction files.
+`modernpath install` activates store-backed setup by default and writes the
+requirement-driven process and agent instructions for this connected repository.
+It validates local instruction files and the reference manifest before activating
+the store. The first install records activation under your signed-in account and writes
+`process/store-backed.md`; repeat installs reuse the activation. No confirmation,
+decision date or `--source` is needed. `--check` and `--dry-run` are local,
+read-only checks. `--store-backed=false` installs the local kit without contacting
+the server; it does not undo an existing store-backed declaration.
+`modernpath hooks install` gives supported coding agents ModernPath context.
+Commit the generated process and instruction files.
 
 ### Upgrade
 
