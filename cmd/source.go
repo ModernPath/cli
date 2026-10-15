@@ -58,17 +58,19 @@ is compared with the server's before anything is uploaded:
 
   unchanged, refresh completed   nothing is uploaded or re-analysed (exit 0)
   unchanged, refresh not done    the refresh is queued again, no upload (exit 0)
-  changed                        the archive is uploaded, the previous source
-                                 is superseded and an incremental refresh of
-                                 the knowledge core is queued (exit 0)
+  changed                        the archive is uploaded and an incremental
+                                 run is queued: it makes the tree current,
+                                 superseding the previous source, then
+                                 refreshes the knowledge core (exit 0)
 
 --max-size bounds the compressed zip. Before uploading, the request is
 compared with the server's upload limit; one that does not fit is refused
 without sending, with the zip size, the limit, the largest top-level
 directories and an --exclude example.
 
-A server refusal — the repository is being analysed, or it is linked to a
-git provider the platform refreshes itself — exits non-zero with the
+A server refusal — the system is being analysed or its documentation
+updated, or the repository is linked to a git provider the platform
+refreshes itself — exits non-zero with the
 server's error code and message, so a CI job fails loudly. The command never
 prompts. The API URL and token come from the workspace config and
 environment, as for every other verb.
@@ -339,8 +341,7 @@ func postPush(client *authenticatedClient, url, contentType string, body io.Read
 }
 
 // AC4: the server's error code and message, so a CI job fails loudly; on
-// source_active the time the repository has been busy since, so the customer
-// knows the refusal lifts after the platform's eight-hour bound at the latest.
+// source_active the time the system's active run started.
 func pushRefusal(resp *http.Response, raw []byte) error {
 	var refusal struct {
 		Error     string `json:"error"`

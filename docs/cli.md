@@ -296,20 +296,21 @@ uploading anything.
 Nothing changed and the last refresh completed: nothing is uploaded and the
 system is reported unchanged at that revision. Nothing changed but the last
 refresh failed or was stopped: the refresh is queued again without an upload.
-Changed: the archive is uploaded, the previous source is superseded, and an
-incremental refresh of the knowledge core is queued. The checkout's git head,
+Changed: the archive is uploaded and an incremental run starts: its first
+step makes the tree the current source, superseding the previous one, and its
+next refreshes the knowledge core. The checkout's git head,
 branch and dirty flag travel as metadata and show on the system's Define page
 beside the revision and the time it was received.
 
-The verb never prompts. A server refusal — a repository of the system is
-being analysed or its documentation refreshed, the push was cancelled while
-it was being sealed, or the repository is linked to a git provider the
-platform refreshes itself — exits non-zero with the server's error code and
-message, so a CI job fails loudly. A busy refusal names the repository and
-the time it has been busy since; a mark older than eight hours no longer
-refuses. A changed tree keeps its repository busy from the push until the
-refresh it queued has run, so a second push in that window is refused too.
-Cancelling the analysis or refresh in the UI clears a busy mark at once.
+The verb never prompts. A server refusal — the system is being analysed or
+its documentation updated, or the repository is linked to a git provider
+the platform refreshes itself — exits non-zero with the server's error code
+and message, so a CI job fails loudly. A busy refusal names the run and the
+time it started. A changed tree keeps the system busy from the push until
+the run it started has made the tree current and refreshed it, so a second
+push in that window is refused too. Cancelling the analysis or update in the
+UI ends the run at once; a pushed tree the run had not made current yet is
+dropped, and the previous source stays current.
 `import --local` records the repository the push targets in the working
 directory's `.modernpath/config.json`; a workspace whose config predates that
 resolves the system's single upload repository through the API.
@@ -393,9 +394,12 @@ status then prints `no analysis run recorded` and exits 0.
 (with `--mode`) after showing estimates, and creates no repository.
 `docs generate` and `docs refresh` ask for a confirmation; `--yes` skips it,
 and without a terminal they exit non-zero with `--yes is required for
-unattended runs` instead of printing "cancelled" and exiting 0.
+unattended runs` instead of printing "cancelled" and exiting 0. `docs refresh`
+queues the update and prints its job id; the update runs in the background, so
+follow it with `analysis status` and run `docs sync` once documentation reads
+completed.
 
-`docs refresh`, `docs preview`, `docs repair` and `analysis status` act on the
+`docs refresh`, `docs preview` and `analysis status` act on the
 repository `.modernpath/config.json` records (`repository_id`, written by
 `import --local`), else the system's single upload repository, else the
 repository whose local path is the current directory. When none resolves they
@@ -1384,7 +1388,7 @@ Important registered subcommands:
 
 | Parent | Subcommands |
 |---|---|
-| `docs` | `sync`, `generate`, `refresh`, `preview`, `repair`, `cleanup`, `push` |
+| `docs` | `sync`, `generate`, `refresh`, `preview`, `cleanup`, `push` |
 | `source` | `push` |
 | `analysis` | `start`, `reanalyze`, `reset`, `status` |
 | `factory` | `connect`, `status`, `release`, `sync`, `gates`, `answer`, `pull`, `evidence`, `drift`, `watch`, `reconcile`, `manifest`, `next-id`, `image` |

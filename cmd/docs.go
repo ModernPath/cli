@@ -61,7 +61,11 @@ Use this for daily documentation updates to keep docs in sync with code.
 ` + boundRepositoryHelp + `
 
 The update asks for a confirmation first. --yes skips it; without a terminal
---yes is required, so a script fails instead of updating nothing.`,
+--yes is required, so a script fails instead of updating nothing.
+
+The update is queued and runs in the background; the command prints its job
+id. Follow it with 'modernpath analysis status', then run 'modernpath docs
+sync' once documentation reads completed.`,
 	SilenceErrors: true,
 	RunE:          runDocsRefresh,
 }
@@ -76,37 +80,13 @@ var docsPreviewCmd = &cobra.Command{
 	RunE:          runDocsPreview,
 }
 
-var docsRepairCmd = &cobra.Command{
-	Use:   "repair",
-	Short: "Re-analyze files with incomplete analysis",
-	Long: `Repair files that have incomplete analysis data (missing summary, complexity, or key functions).
-
-This is useful when:
-- Initial analysis was interrupted or incomplete
-- Some files were skipped during analysis
-- You want to improve the quality of existing analysis
-
-The command will:
-1. Find files missing summary, complexity_assessment, or key_functions
-2. Re-analyze them with full deep analysis
-3. Update the database with complete analysis data
-
-Use --dry-run to preview which files would be repaired.
-
-` + boundRepositoryHelp,
-	SilenceErrors: true,
-	RunE:          runDocsRepair,
-}
-
-// boundRepositoryHelp says which repository refresh, preview and repair act
-// on (REQ-CROSS-503 C2).
+// boundRepositoryHelp says which repository refresh and preview act on
+// (REQ-CROSS-503 C2).
 const boundRepositoryHelp = `The repository is the one .modernpath/config.json records (repository_id,
 written by 'modernpath import --local'), else the system's single upload
 repository, else the repository whose local path is this directory. When none
 resolves, the command exits non-zero.`
 
-var docsRepairLimit int
-var docsRepairDryRun bool
 var docsCleanupDryRun bool
 var docsGenerateMode string
 var docsGenerateYes bool
@@ -157,14 +137,11 @@ func init() {
 	docsCmd.AddCommand(docsGenerateCmd)
 	docsCmd.AddCommand(docsRefreshCmd)
 	docsCmd.AddCommand(docsPreviewCmd)
-	docsCmd.AddCommand(docsRepairCmd)
 	docsCmd.AddCommand(docsCleanupCmd)
 	docsCmd.AddCommand(docsPushCmd)
 
 	docsGenerateCmd.Flags().StringVar(&docsGenerateMode, "mode", defaultAnalysisMode, "Analysis mode: independent_repos or unified_workspace")
 	docsGenerateCmd.Flags().BoolVarP(&docsGenerateYes, "yes", "y", false, "Start without asking (required without a terminal)")
 	docsRefreshCmd.Flags().BoolVarP(&docsRefreshYes, "yes", "y", false, "Update without asking (required without a terminal)")
-	docsRepairCmd.Flags().IntVar(&docsRepairLimit, "limit", 50, "Maximum files to analyze at once")
-	docsRepairCmd.Flags().BoolVar(&docsRepairDryRun, "dry-run", false, "Preview which files would be repaired")
 	docsCleanupCmd.Flags().BoolVar(&docsCleanupDryRun, "dry-run", false, "Preview what would be deleted")
 }

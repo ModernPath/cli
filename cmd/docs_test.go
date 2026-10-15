@@ -1,5 +1,5 @@
 // REQ-CROSS-503 (EPIC-CLI-029): the docs verbs reach an import-created
-// system. refresh, preview and repair resolve the repository by the id
+// system. refresh and preview resolve the repository by the id
 // `import --local` recorded (else the system's single upload repository,
 // else a local-path match) and exit non-zero when none resolves; generate
 // starts the lifecycle the UI uses and creates no repository; generate and
@@ -45,7 +45,13 @@ func changesPreview() map[string]any {
 	}}
 }
 
-// AC1: with repository_id in config.json, refresh, preview and repair act on
+// The 202 the incremental-update route answers: the update is a job that
+// runs in the background (REQ-SYS-181), named by its id.
+func updateQueued() map[string]any {
+	return map[string]any{"success": true, "message": "Incremental update queued", "repository_id": "7", "run_id": 41, "job_id": 913}
+}
+
+// AC1: with repository_id in config.json, refresh and preview act on
 // that repository although no repository's local path is the checkout.
 func TestDocsVerbsResolveTheBoundRepositoryByID(t *testing.T) {
 	for _, tc := range []struct {
@@ -55,8 +61,6 @@ func TestDocsVerbsResolveTheBoundRepositoryByID(t *testing.T) {
 	}{
 		{[]string{"docs", "refresh"}, "/api/systems/42/repositories/7/incremental-preview", noChangesPreview()},
 		{[]string{"docs", "preview"}, "/api/systems/42/repositories/7/incremental-preview", noChangesPreview()},
-		{[]string{"docs", "repair", "--dry-run"}, "/api/systems/42/repositories/7/incomplete-files",
-			map[string]any{"success": true, "data": map[string]any{"incomplete_count": 0, "total_files": 10}}},
 	} {
 		t.Run(tc.args[1], func(t *testing.T) {
 			s := newLifecycleStub(t)
@@ -116,9 +120,8 @@ func TestDocsRefreshAndPreviewExitNonZeroWhenNoRepositoryResolves(t *testing.T) 
 }
 
 // AC2: generate starts the lifecycle the UI uses — POST git-sources/analyze
-// with the analysis mode — prints the run, and creates no repository, even
-// though no repository is named after the checkout's directory.
-func TestDocsGenerateStartsTheLifecycleWithoutCreatingARepository(t *testing.T) {
+// with the analysis mode — and prints the run.
+func TestDocsGenerateStartsTheLifecycle(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		mode string
@@ -129,7 +132,6 @@ func TestDocsGenerateStartsTheLifecycleWithoutCreatingARepository(t *testing.T) 
 		t.Run(tc.mode, func(t *testing.T) {
 			s := newLifecycleStub(t)
 			s.answer(http.MethodGet, "/api/systems/42", http.StatusOK, importedSystem(uploadRepo(7, nil)))
-			s.answer(http.MethodPost, "/api/systems/42/repositories", http.StatusCreated, map[string]any{"data": map[string]any{"id": 99, "name": "stray"}})
 			s.answer(http.MethodPost, analyzePath, http.StatusAccepted, lifecycleAccepted("15", "queued", tc.mode))
 			bindLifecycleWorkspace(t, s, 7)
 
@@ -171,8 +173,7 @@ func TestDocsGenerateAndRefreshWithYesSkipThePrompt(t *testing.T) {
 	t.Run("refresh", func(t *testing.T) {
 		s := newLifecycleStub(t)
 		s.answer(http.MethodGet, "/api/systems/42/repositories/7/incremental-preview", http.StatusOK, changesPreview())
-		s.answer(http.MethodPost, "/api/systems/42/repositories/7/incremental-update", http.StatusOK,
-			map[string]any{"success": true, "data": map[string]any{"status": "completed", "summary": map[string]any{"files_modified": 2}}})
+		s.answer(http.MethodPost, "/api/systems/42/repositories/7/incremental-update", http.StatusAccepted, updateQueued())
 		bindLifecycleWorkspace(t, s, 7)
 		withoutTerminal(t)
 
@@ -210,8 +211,7 @@ func TestDocsGenerateAndRefreshRefuseWithoutATerminalOrYes(t *testing.T) {
 			s := newLifecycleStub(t)
 			s.answer(http.MethodPost, analyzePath, http.StatusAccepted, lifecycleAccepted("15", "queued", "independent_repos"))
 			s.answer(http.MethodGet, "/api/systems/42/repositories/7/incremental-preview", http.StatusOK, changesPreview())
-			s.answer(http.MethodPost, "/api/systems/42/repositories/7/incremental-update", http.StatusOK,
-				map[string]any{"success": true, "data": map[string]any{"status": "completed"}})
+			s.answer(http.MethodPost, "/api/systems/42/repositories/7/incremental-update", http.StatusAccepted, updateQueued())
 			cwd := bindLifecycleWorkspace(t, s, 7)
 			s.answer(http.MethodGet, "/api/systems/42", http.StatusOK, importedSystem(uploadRepo(7, cwd)))
 			withoutTerminal(t)
@@ -227,5 +227,48 @@ func TestDocsGenerateAndRefreshRefuseWithoutATerminalOrYes(t *testing.T) {
 				t.Errorf("a refused %s must send nothing, posted %v", verb, posts)
 			}
 		})
+	}
+}
+
+// REQ-SYS-181: the update is queued, not run inside the request. The 202 is
+// success; refresh names the queued job and how to follow it, and claims no
+// completed update.
+func TestDocsRefreshReportsTheQueuedUpdate(t *testing.T) {
+	s := newLifecycleStub(t)
+	s.answer(http.MethodGet, "/api/systems/42/repositories/7/incremental-preview", http.StatusOK, changesPreview())
+	s.answer(http.MethodPost, "/api/systems/42/repositories/7/incremental-update", http.StatusAccepted, updateQueued())
+	bindLifecycleWorkspace(t, s, 7)
+	withoutTerminal(t)
+
+	out, err := runVerb(t, "docs", "refresh", "--yes")
+	if err != nil {
+		t.Fatalf("a queued update is success: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "run 41, job 913") {
+		t.Errorf("refresh must name the run and its job:\n%s", out)
+	}
+	if !strings.Contains(out, "modernpath analysis status") {
+		t.Errorf("refresh must say how to follow the update:\n%s", out)
+	}
+	if strings.Contains(out, "Complete") {
+		t.Errorf("a queued update is not complete:\n%s", out)
+	}
+}
+
+// A refused update is printed once by its code and exits non-zero.
+func TestDocsRefreshPrintsARefusalByName(t *testing.T) {
+	s := newLifecycleStub(t)
+	s.answer(http.MethodGet, "/api/systems/42/repositories/7/incremental-preview", http.StatusOK, changesPreview())
+	s.answer(http.MethodPost, "/api/systems/42/repositories/7/incremental-update", http.StatusServiceUnavailable,
+		refusal("incremental_update_unavailable", "The incremental update could not be queued. Try again."))
+	bindLifecycleWorkspace(t, s, 7)
+	withoutTerminal(t)
+
+	out, err := runVerb(t, "docs", "refresh", "--yes")
+	if err == nil {
+		t.Fatalf("a refused update must exit non-zero:\n%s", out)
+	}
+	if n := strings.Count(out, "incremental_update_unavailable"); n != 1 {
+		t.Errorf("the refusal must be printed once by its code, printed %d times:\n%s", n, out)
 	}
 }

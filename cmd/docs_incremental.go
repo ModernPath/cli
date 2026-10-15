@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"io"
 	"net/http"
-	"time"
 )
 
 // IncrementalPreviewResponse represents the server response for preview
@@ -47,23 +46,14 @@ type IncrementalPreviewResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-// IncrementalUpdateResponse represents the server response for update
+// IncrementalUpdateResponse is the 202 the incremental-update route answers:
+// the update is an incremental run of the system whose one step runs in the
+// background (REQ-SYS-181).
 type IncrementalUpdateResponse struct {
-	Success bool `json:"success"`
-	Data    struct {
-		Status  string `json:"status"`
-		Message string `json:"message,omitempty"`
-		Summary struct {
-			FilesAdded          int  `json:"files_added"`
-			FilesModified       int  `json:"files_modified"`
-			FilesDeleted        int  `json:"files_deleted"`
-			ModulesUpdated      int  `json:"modules_updated"`
-			SubsystemsUpdated   int  `json:"subsystems_updated"`
-			ArchitectureUpdated bool `json:"architecture_updated"`
-		} `json:"summary,omitempty"`
-		CompletedAt string `json:"completed_at,omitempty"`
-	} `json:"data"`
-	Error string `json:"error,omitempty"`
+	Message      string `json:"message"`
+	RepositoryID string `json:"repository_id"`
+	RunID        int    `json:"run_id"`
+	JobID        int    `json:"job_id"`
 }
 
 func runDocsPreview(cmd *cobra.Command, args []string) error {
@@ -146,18 +136,15 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	printInfo("🚀 Step 2: Running incremental documentation update...\n")
+	printInfo("🚀 Step 2: Queueing the incremental documentation update...\n")
 	fmt.Println()
 
-	// Run the update
-	updateResult, err := runIncrementalUpdate(cfg, repoID)
+	queued, err := runIncrementalUpdate(cfg, repoID)
 	if err != nil {
-		printError("Failed to run update: %v\n", err)
-		return reportedError{err}
+		return reportFailure(fmt.Errorf("failed to queue the update: %w", err))
 	}
 
-	// Display results
-	displayUpdateResult(updateResult)
+	displayUpdateResult(queued)
 	return nil
 }
 
@@ -192,15 +179,13 @@ func getIncrementalPreview(cfg *config.Config, repoID int) (*IncrementalPreviewR
 
 func runIncrementalUpdate(cfg *config.Config, repoID int) (*IncrementalUpdateResponse, error) {
 	client := newAuthenticatedClient(cfg)
-	// 60 minute timeout for large updates (first run may need to process all files)
-	client.client.Timeout = 3600 * time.Second
 
 	url := fmt.Sprintf("%s/api/systems/%d/repositories/%d/incremental-update",
 		client.baseURL, cfg.SystemID, repoID)
 
 	resp, err := client.Post(url, "application/json", bytes.NewBuffer([]byte("{}")))
 	if err != nil {
-		return nil, fmt.Errorf("failed to run update: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -209,8 +194,8 @@ func runIncrementalUpdate(cfg *config.Config, repoID int) (*IncrementalUpdateRes
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error: %s - %s", resp.Status, string(body))
+	if resp.StatusCode != http.StatusAccepted {
+		return nil, pushRefusal(resp, body)
 	}
 
 	var result IncrementalUpdateResponse
@@ -290,28 +275,7 @@ func displayPreview(preview *IncrementalPreviewResponse) {
 }
 
 func displayUpdateResult(result *IncrementalUpdateResponse) {
-	d := result.Data
-
-	if d.Status == "no_changes" {
-		printSuccess("✅ %s\n", d.Message)
-		return
-	}
-
-	fmt.Println()
-	fmt.Println("════════════════════════════════════════════════════════════════════")
-	fmt.Println("✅ Incremental Update Complete")
-	fmt.Println("════════════════════════════════════════════════════════════════════")
-	fmt.Println()
-
-	fmt.Printf("📊 Summary:\n")
-	fmt.Printf("   • Files added:         %d\n", d.Summary.FilesAdded)
-	fmt.Printf("   • Files modified:      %d\n", d.Summary.FilesModified)
-	fmt.Printf("   • Files deleted:       %d\n", d.Summary.FilesDeleted)
-	fmt.Printf("   • Modules updated:     %d\n", d.Summary.ModulesUpdated)
-	fmt.Printf("   • Subsystems updated:  %d\n", d.Summary.SubsystemsUpdated)
-	fmt.Printf("   • Architecture updated: %v\n", d.Summary.ArchitectureUpdated)
-	fmt.Println()
-
-	printSuccess("Documentation has been updated!\n")
-	printInfo("Run 'modernpath docs sync' to download the updated documentation.\n")
+	printSuccess("Incremental update queued (run %d, job %d).\n", result.RunID, result.JobID)
+	printInfo("It runs in the background. Follow it with 'modernpath analysis status';\n")
+	printInfo("when documentation reads completed, run 'modernpath docs sync'.\n")
 }

@@ -21,9 +21,10 @@ import (
 // through the lifecycle routes the UI uses — POST
 // /api/systems/:id/git-sources/analyze, …/:repository_id/reanalyze and
 // …/reset — and two reads: the repository (REQ-SYS-210 AC8) and the current
-// analysis run (REQ-OBAN-005). The run read answers 404 after an import,
-// whose worker records no run; status reports that as "no run" (D7). Every
-// refusal prints once by its error code and exits non-zero (D4).
+// analysis run (REQ-OBAN-005). An import starts its analysis through the
+// same Start, so its run is read like any other; a system with no run
+// answers 404, which status reports as "no run" (D7). Every refusal prints
+// once by its error code and exits non-zero (D4).
 
 const defaultAnalysisMode = "independent_repos"
 
@@ -414,7 +415,7 @@ func readRepositoryStatus(client *authenticatedClient, systemID, repositoryID in
 }
 
 // readCurrentRun returns the system's current analysis run, or nil when the
-// read answers 404: an import's worker records no run (D7).
+// read answers 404: the system has no run yet.
 func readCurrentRun(client *authenticatedClient, systemID int) (*runSnapshot, error) {
 	resp, err := client.Get(fmt.Sprintf("%s/api/systems/%d/analysis/runs/current", client.baseURL, systemID))
 	if err != nil {

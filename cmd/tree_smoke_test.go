@@ -28,7 +28,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"datamodel", "export"},
 		{"dev", "list"}, {"dev", "setup"}, {"dev", "run"}, {"dev", "task"}, {"dev", "ralph"},
 		{"docs", "sync"}, {"docs", "generate"}, {"docs", "refresh"}, {"docs", "preview"},
-		{"docs", "repair"}, {"docs", "cleanup"}, {"docs", "push"},
+		{"docs", "cleanup"}, {"docs", "push"},
 		{"env"},
 		{"factory", "connect"}, {"factory", "status"}, {"factory", "sync"},
 		{"factory", "gates"}, {"factory", "answer"}, {"factory", "pull"},
@@ -443,7 +443,6 @@ var leafDispositions = map[string]disposition{
 	"docs preview":         {kind: dispExecute},
 	"docs push":            {kind: dispExecute},
 	"docs refresh":         {kind: dispExecute},
-	"docs repair":          {kind: dispExecute},
 	"docs sync":            {kind: dispExecute},
 	"env test":             {kind: dispExecute}, // the leaf the hard-coded ten missed
 	"auth status":          {kind: dispExecute}, // GETs /api/systems to verify the stored credential
