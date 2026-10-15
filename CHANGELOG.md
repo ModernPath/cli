@@ -1,9 +1,14 @@
 # Changelog
 
-## v0.20.0 — store-backed setup by default and links in epic search
+## v0.20.0 — simpler setup and tracked documentation updates
 
 ### Upgrading from v0.19.0
 
+- Publish this CLI only after supported servers include the analysis-run
+  changes from ModernPath/modernpath-v1#887. `docs refresh` now expects the
+  accepted response to include a run and job id, and directs users to track
+  the update with `analysis status`. Older servers queue the update without
+  those ids or a corresponding analysis run.
 - Run `modernpath install` from each connected repository root after upgrading
   to refresh the process kit, agent instructions and CLI guide. Then run
   `modernpath install --check` to verify the installed files.
@@ -33,6 +38,21 @@
   stop installation without activating the server store or creating the
   local marker.
 - `--check` and `--dry-run` remain local and read-only.
+
+### Track documentation updates as runs
+
+- `modernpath docs refresh` now accepts the server's queued response, prints
+  the run and job ids, and returns while the update runs in the background.
+  Previously it reported the accepted response as an error. Follow the run
+  with `modernpath analysis status`; run `modernpath docs sync` once
+  documentation is completed.
+- `modernpath docs repair` is removed. For incomplete file analyses, use
+  `modernpath analysis reanalyze <repository-id>` or Re-analyze in the UI.
+  `modernpath analysis status` shows the bound repository's id.
+- With the updated server, `modernpath source push` stages a changed tree.
+  Its run makes that tree current before refreshing the Knowledge Core.
+  Cancelling before that step leaves the previous source current. A push is
+  refused while the system has an active run.
 
 ### Open an epic from search results
 
