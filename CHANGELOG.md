@@ -1,16 +1,44 @@
 # Changelog
 
-## Unreleased
+## v0.20.0 — store-backed setup by default and links in epic search
 
-- Plain `modernpath install` now activates store-backed setup for a connected
-  repository by default. No source/date prompt is needed; the signed-in user
-  and install invocation are recorded automatically. Repeat installs reuse
-  activation. Local instruction and reference-manifest validation runs before
-  activation, so a validation refusal leaves the server and marker unchanged.
-  `--check` and `--dry-run` remain read-only.
+### Upgrading from v0.19.0
 
-- `epics search` prints a link to each epic and includes `url` in JSON items,
-  using the server-advertised app address and workspace scope when available.
+- Run `modernpath install` from each connected repository root after upgrading
+  to refresh the process kit, agent instructions and CLI guide. Then run
+  `modernpath install --check` to verify the installed files.
+- Installation now needs a valid sign-in and a reachable ModernPath server.
+  Use `modernpath auth` to sign in and `modernpath init` if the checkout is
+  not yet connected to its system. Check the connection with
+  `modernpath status`.
+- For local-only kit installation, use `modernpath install --store-backed=false`.
+  It does not contact the server or undo an existing store-backed declaration.
+- Activation uses the existing server operation. Existing file-ledger
+  migration rules are unchanged; this release does not migrate a repository's
+  delivery records automatically.
+
+### Store-backed setup is the default
+
+- Plain `modernpath install` activates the connected system's process store
+  and writes `process/store-backed.md` before installing the kit. No
+  confirmation, decision date or `--source` argument is needed: the signed-in
+  user and install invocation are recorded automatically. An explicit
+  `--source USER:...` citation remains available.
+- Repeat installs reuse the activation and restore a missing local marker
+  from the server declaration. Store-backed repositories receive the kit
+  without file-ledger tooling.
+- Local instruction files and the reference manifest are validated before
+  activation. Damaged managed blocks in `AGENTS.md`, `CLAUDE.md` or
+  `.github/copilot-instructions.md`, and a malformed reference manifest,
+  stop installation without activating the server store or creating the
+  local marker.
+- `--check` and `--dry-run` remain local and read-only.
+
+### Open an epic from search results
+
+- `modernpath epics search` prints a link to each epic and includes `url` in
+  JSON items, using the server-advertised app address and workspace scope when
+  available.
 
 ## v0.19.0 — development continues while the server is down
 
