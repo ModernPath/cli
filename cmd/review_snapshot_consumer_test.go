@@ -1,8 +1,6 @@
 package cmd
 
-// Proposed consumer RED cases for SR-CLI-REVIEW-SNAPSHOT-001. Keep each
-// failure a top-level test: scripts/verify-cli-suite.mjs rejects failing child
-// t.Run events.
+// Consumer regression cases for SR-CLI-REVIEW-SNAPSHOT-001.
 
 import (
 	"encoding/json"

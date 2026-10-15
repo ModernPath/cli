@@ -61,8 +61,7 @@ func CheckApprovals(root string) ([]Violation, error) {
 		// reported unverifiable whenever it linked no record. That is the very
 		// shape the row describes as fixed, repaired for the link-present path
 		// only. On the live corpus it produced five false reports, each against a
-		// row carrying `approved USER:…`, found by turning on
-		// TestRealWorkspaceApprovals.
+		// row carrying `approved USER:…`, found by checking the live workspace.
 		//
 		// Both cells count. Most rows record the approval in the Approval cell,
 		// but the Overall cell legitimately carries it inline —

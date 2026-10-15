@@ -202,7 +202,7 @@ func TestAGrantedWorklistCellStillPasses(t *testing.T) {
 // violation and CONTINUED, so the cell was never read — the same shape the row
 // describes as fixed, repaired for the link-present path only. On the live
 // corpus that produced five false reports against rows carrying
-// `approved USER:…`, found by turning on TestRealWorkspaceApprovals.
+// `approved USER:…`, found by checking the live workspace.
 //
 // This test previously pinned the defect and said it would be rewritten when the
 // fix landed. This is that rewrite.
