@@ -1571,7 +1571,9 @@ author/sync operations. These write commands run only from the main session.
 `requirements` is a list of `kind: "user" | "system"`, unique `external_id`,
 `title`, `description`, `source_citations`, and `criteria`. UR criteria contain
 `external_id`, `given`, `when`, `then`; SR criteria contain `external_id` and
-`statement`. Supply the UR actor/outcome and SR boundary/verification method.
+`statement`. Supply the UR `actor` and its outcome as `intended_use` (publish
+stores no `outcome` key and drops it without a refusal), and the SR `boundary`
+and `verification_method`.
 SR `parent_external_ids` names exact UR parents; a parentless SR needs a rationale.
 Do not send authority, approval, release or work-status fields as intent.
 

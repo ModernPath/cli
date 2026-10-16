@@ -70,7 +70,11 @@ after it, and retain the script, its output and the sample read:
 | Fragmentation | One screen, one flow across layers or one guard rule appears as several URs |
 | Actor traced | A UR's actor is not the traced caller of its entry point, or an internal call is a UR |
 | Live code | A requirement cites obsolete, retired or unreachable code as live behavior |
-| Read against code | For a random sample of at least 20 requirements per context, or every one when there are fewer, the code does not do what the requirement states, the requirement states nothing a rebuild could implement or test, or the context is wrong |
+| Side effects | A handler's outbound effect appears in no acceptance criterion |
+| As built | A requirement states intended behavior where the code does something else |
+| Entry points | A controller, function, queue processor, timer or request filter in scope has no requirement and no technical reason |
+| Scope boundary | The end report does not name the layers outside the scope and the rules the scope relies on them for |
+| Read against code | For a random sample of at least 20 requirements per context, or every one when there are fewer, the code does not do what the requirement states, the requirement states nothing a rebuild could implement or test, its side effects are missing, or the context is wrong. The read is made by an independent reviewer that did not write the requirements, such as a delegated cold review with read-only access; the session records its verdicts. The writing session's own read is the minimum before publication; the finish condition needs the independent read, and a harness without a delegated reviewer leaves the run unfinished until one has read the sample. |
 
 The sample read gives each requirement one verdict: good, weak, not a
 requirement, or wrong. Any requirement that is not a requirement or is wrong

@@ -176,7 +176,10 @@ Derive from the surface inventory, not from a target count. Per repository,
 enumerate the units an actor reaches: screens, views, routes and dialogs; the
 actions that change state; user- and operator-facing API operations;
 notifications, receipts and messages the actor receives; scheduled outcomes the
-actor observes; and test cases that describe actor behavior. Account for every
+actor observes; and test cases that describe actor behavior. On a service, the
+entry points are every controller, function, queue or message processor, timer
+and background job, and every request filter that admits or refuses callers.
+Report them per repository as covered out of total. Account for every
 unit as covered by a named UR (the same outcome on two clients is one UR citing
 both), technical with a reason, or unresolved. The UR count follows from this
 inventory. A number the person names is a signal to check the inventory, never
@@ -199,6 +202,27 @@ many rows it makes. In particular:
   validation or security rule is a scenario or criterion of the outcome it
   guards, never a UR of its own. The same mechanism behind several products is
   one SR serving each product's UR.
+- **State the boundary of the scope.** When the authorized scope holds only
+  some of a flow's layers, such as one service, the run describes what that
+  scope does and states its boundary: who calls in through layers outside the
+  scope, and which rules it relies on them for, such as authentication, payment
+  or ownership. The end report lists the outside layers as not covered. A
+  requirement never claims behavior the scope does not hold, and a rule found
+  only outside the scope is an open question for the run that covers it.
+- **Side effects are criteria.** List every outbound effect of a handler:
+  messages and notifications sent, reports and events published, sessions
+  finalized or invalidated, calls to providers, settlement. Each one appears in
+  an acceptance criterion of the requirement it serves, with its trigger. A
+  main path with its refusals but without its effects is incomplete.
+- **As built, not as intended.** State what the code does, including where it
+  differs from evident intent: a delete that keeps the record, a next link that
+  returns the first page, a not-found answered with success. Mark each such
+  difference as as-built behavior in the requirement and add it to the
+  open-questions list. A rebuild must know it, and never discover it.
+- **Numbers and platforms.** State the limits, intervals, timeouts, buffers and
+  thresholds the code applies, with their units and where they are configured.
+  Where Android and iOS, or two clients, behave differently, give each its own
+  scenario, or its own requirement when the outcome differs.
 - **Title and statement in the domain's words.** The title names what the actor
   achieves, as the product or its users would say it, never a split identifier
   ("update continue", "b2 b cards", "view transaction guid"). The statement says
@@ -228,8 +252,10 @@ many rows it makes. In particular:
 - **Cite where the behavior is.** A citation is a file where the stated
   behavior is implemented or tested. Migrations, dependency wiring, telemetry,
   Swagger set-up and every file of a folder are not citations of a behavior the
-  requirement does not state. A cited test exercises this behavior, not a
-  neighbor in the same folder or another product. When one repository holds a copy of another's
+  requirement does not state. A cited test asserts the stated rule, not a
+  neighbor in the same folder, another product or another platform. A smoke
+  test that only reaches a screen verifies no rule. A rule with no asserting
+  test is reported as untested. When one repository holds a copy of another's
   code, cite the original and disclose the copy.
 
 Depth takes time on a large codebase. Neither the person's urgency nor the

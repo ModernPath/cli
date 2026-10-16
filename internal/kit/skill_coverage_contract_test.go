@@ -173,6 +173,11 @@ func TestReverseEngineerSkillRecordsContextAndTests(t *testing.T) {
 		"it never writes a title, statement, actor, outcome or scenario",
 		"Every UR is served by system requirements.",
 		"One outcome across its layers.",
+		// scope boundary, side effects, as-built behavior
+		"State the boundary of the scope.",
+		"Side effects are criteria.",
+		"As built, not as intended.",
+		"A smoke test that only reaches a screen verifies no rule.",
 		// kept: no approval round follows publication
 		"No row/context approval round follows publication",
 	})
