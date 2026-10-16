@@ -95,6 +95,15 @@ Record paths, sizes, digests, revision, dirty state and document identities,
 versions and digests. Report generated/vendor/secret exclusions and unsupported
 classes; exclude credentials and private workspace metadata.
 
+Scope a run by whole repositories, or by whole directories when a repository
+serves several contexts, never by a hand-picked file list. The scope holds every
+repository and directory that the context's flows pass through: entry points,
+their handlers and query handlers, the producers and consumers of their events,
+the clients they call, the shared libraries they use, and the configuration and
+deployment files that set their schedules, limits and routing. A fact whose file
+exists but was left out of the capture is a capture gap, not an unverified fact.
+Widen the scope in the next run and state the fact from the code.
+
 Show the existing corpus counts, source scope, authorization brief and relevant
 inventory files. Obtain an explicit attributable mode choice unless the session
 already contains that exact authorization:

@@ -73,6 +73,7 @@ after it, and retain the script, its output and the sample read:
 | Side effects | A handler's outbound effect appears in no acceptance criterion |
 | As built | A requirement states intended behavior where the code does something else |
 | Entry points | A controller, function, queue processor, timer or request filter in scope has no requirement and no technical reason |
+| Capture completeness | The scope is a hand-picked file list, or a requirement calls a fact unverified, unresolved or outside the boundary while the file that settles it exists in a repository the run reads |
 | Scope boundary | The end report does not name the layers outside the scope and the rules the scope relies on them for |
 | Read against code | For a random sample of at least 20 requirements per context, or every one when there are fewer, the code does not do what the requirement states, the requirement states nothing a rebuild could implement or test, its side effects are missing, or the context is wrong. The read is made by an independent reviewer that did not write the requirements, such as a delegated cold review with read-only access; the session records its verdicts. The writing session's own read is the minimum before publication; the finish condition needs the independent read, and a harness without a delegated reviewer leaves the run unfinished until one has read the sample. |
 

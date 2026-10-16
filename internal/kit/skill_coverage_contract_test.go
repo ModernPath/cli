@@ -175,6 +175,8 @@ func TestReverseEngineerSkillRecordsContextAndTests(t *testing.T) {
 		"One outcome across its layers.",
 		// scope boundary, side effects, as-built behavior
 		"State the boundary of the scope.",
+		"never by a hand-picked file list",
+		"is a capture gap, not an unverified fact",
 		"Side effects are criteria.",
 		"As built, not as intended.",
 		"A smoke test that only reaches a screen verifies no rule.",
