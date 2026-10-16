@@ -44,7 +44,10 @@ symbolic links, private paths and files under `.claude`, which are left out and
 disclosed. Keep every saved file in the sweep's working folder that the
 `mp-process-cli` onboarding names, never in the repository root or a temp
 folder. The repository stays clean and at one commit from the first inventory
-until acceptance, and the kit is not updated during a sweep. If the person
+until acceptance, and the kit is not updated during a sweep. Before the first
+inventory of a run, check that the installed kit matches the CLI, using the
+install check the `mp-process-cli` onboarding names. Install and commit any
+drift then, before the capture, so it never surfaces mid-run. If the person
 decides to update it anyway, it is installed between runs and committed, never
 left uncommitted; a run captured before that commit whose authorized files the
 update changed can then be accepted as built only through a new authorized run
@@ -188,7 +191,8 @@ many rows it makes. In particular:
 
 - **A UI control is a step, not an outcome.** Continue, close a dialog, open a
   menu or a URL, poll a status: these are steps inside the outcome they serve,
-  which is where they belong as scenario steps. A private method, an event
+  which is where they belong as scenario steps, as are gesture mechanics and
+  animation timing unless they serve a goal of their own. A private method, an event
   handler, a view or composable name and a test name are never a title.
 - **One outcome across its layers.** A flow that runs through the client, the
   gateway and the backend is one UR. The layers are its SRs. A guard,
@@ -258,9 +262,14 @@ behavior they state, using the files they cite to find candidates, and reuse
 or merge into an existing requirement instead of publishing the same behavior
 under a new id. A shared file is not shared behavior: an existing broad
 requirement covers only the outcomes it states, so a finer outcome it does not
-state is a new requirement, published next to it. Identify the tests that cover each group's
-code and cite them, naming the executed test; list the requirements published
-without a test in the end report. These reusable inputs are staging
+state is a new requirement, published next to it. Where two staged outcomes
+look alike, record a one-line reason for keeping them apart or merging them.
+Identify the tests that cover each group's code and cite them, naming the test
+case. When the code has tests, a requirement cites the ones that exercise its
+behavior. Before publishing, count the requirements without a cited test per
+context and show them as a gap. A cited test is not an executed one, so never
+report it as verification. List the requirements published without a test in
+the end report. These reusable inputs are staging
 artifacts, not another requirement store.
 
 Before a run's first publication, show the person the bounded contexts the run
@@ -293,7 +302,10 @@ Apply the authorized mode:
 - **Baseline:** new grounded rows become PENDING_VERIFICATION in Base with
   confirmed UR–SR and SR–code/test relationships. Reuse only exact unchanged
   identities. No row/context approval round follows publication; the naming
-  confirmation of new bounded contexts comes before it.
+  confirmation of new bounded contexts comes before it. Every baselined
+  requirement cites the production code that implements its behavior. An
+  outcome found only in a test is traced through the test's calls to that
+  code; when it cannot be, the row stays DERIVED with that reason.
 - **DERIVED:** publish distinct candidate IDs, proposed criteria/links, sources,
   conflicts, consequences and a confirmation brief. Compare exact typed existing
   identities and current/proposed content without overwriting approved content.
@@ -302,7 +314,13 @@ Apply the authorized mode:
   and links count as neither ordinary tests nor execution/release coverage.
 
 In store-backed workspaces, use typed `parent_external_ids` and code/test
-citations; retain returned trace IDs and authority. Never recreate retired
+citations; retain returned trace IDs and authority. Put each relation on the
+field its record kind takes, as the `mp-process-cli` onboarding names it: an SR
+names its UR parents. A field the kind does not take may be dropped without a
+refusal, so check the fields against the kind before publishing. Afterwards,
+compare every intended UR–SR link with the receipt and with the read-back of
+the SR. A missing link fails the group, which is corrected and published
+again. Never recreate retired
 `tasks/*-REQUIREMENTS.md`, `WORKLIST.md` or mirrored file-state ledgers. For an
 existing file-backed workspace only, use [file-backed formats](references/file-backed.md).
 

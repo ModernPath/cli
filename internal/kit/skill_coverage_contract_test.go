@@ -155,8 +155,11 @@ func TestReverseEngineerSkillRecordsContextAndTests(t *testing.T) {
 		"the person confirms or changes them, in either run mode",
 		"This is a naming confirmation of the list, asked once per run, not an approval of content",
 		"Record a confirmed context on every requirement created, never an unconfirmed one; a reuse entry carries none.",
-		"Identify the tests that cover each group's code and cite them, naming the executed test",
-		"list the requirements published without a test in the end report",
+		"Identify the tests that cover each group's code and cite them, naming the test case.",
+		"A cited test is not an executed one, so never report it as verification.",
+		"Every baselined requirement cites the production code that implements its behavior.",
+		"compare every intended UR–SR link with the receipt and with the read-back of the SR",
+		"List the requirements published without a test in the end report.",
 		"Compare the staged requirements with the existing corpus by the outcome and behavior they state",
 		"A shared file is not shared behavior",
 		// one UR per actor outcome, derived from the surface inventory

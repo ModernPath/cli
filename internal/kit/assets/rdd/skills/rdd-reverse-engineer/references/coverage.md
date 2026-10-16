@@ -33,6 +33,9 @@ Record stable unit identities and mappings so the checker can report:
 | User outcome extraction, per context | The surface units of the skill's surface inventory: screens, views and dialogs, state-changing actions, actor-facing operations, notifications, observed scheduled outcomes, actor-behavior test cases | Every unit covered by a named UR stating its outcome, technical with a reason, or unresolved; report units per UR, and list each UR whose units span outcomes a user starts separately |
 | Source disposition, per repository | Eligible inventory files after documented exclusions | Distinct files cited by persisted rows, excluded with a reason, or unresolved |
 | Governed and candidate linkage | The same inventory and mappings | Separate counts for confirmed links, candidate links and their overlap; no invented promotion |
+| Production-code provenance | Every baselined requirement | Cites the production code implementing its behavior; one that does not is DERIVED with a reason |
+| Test citation | Requirements per context whose code has tests | Cite a test of their behavior; report the rest per context and requirement |
+| Executed verification | Requirements in the run | None in this pass; a cited test is never counted here |
 | Reverse mapping | Every persisted requirement/source reference in the batch | Resolve inside authorized inventory or to an explicitly authorized existing identity |
 
 State absent surfaces as inapplicable only after checking; unexplored surfaces
