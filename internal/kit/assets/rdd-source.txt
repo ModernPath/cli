@@ -1,2 +1,2 @@
 repository=https://github.com/ModernPath/req-driven-dev
-revision=f9ac5dee50513c7c2d34299d1163390e0110731c
+revision=b3b1e40ba22c5f22764a6567ea3ea7b475ae6b3b

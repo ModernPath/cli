@@ -50,12 +50,40 @@ uncovered items for each inventory. Unresolved in-scope work remains incomplete.
 Preserve meaningful requirement granularity and finish the requested authorized
 scope; a row count is not permission to truncate a full sweep.
 
+## Content quality
+
+Coverage counts say nothing about whether a requirement says anything. Run
+these checks on every group before publication and on the persisted read-back
+after it, and retain the script, its output and the sample read:
+
+| Check | Fails when |
+|---|---|
+| Distinct statements | Two requirements share a statement, or share it once their title words are removed: the mark of a sentence template |
+| Template scenarios | A scenario reads the same once its noun is replaced, across more than a handful of requirements |
+| Actor and outcome | A UR has no actor or no outcome, or its actor is a catch-all for several roles |
+| Domain titles | A title is a split identifier, a UI control or a test-name fragment, not an outcome the product's users would name |
+| UR–SR join | A UR has no serving SR, or one SR serves URs of unrelated outcomes |
+| Citation precision | A requirement cites files where its stated behavior is not implemented or tested, such as migrations, wiring, telemetry or a whole folder, or a test of another behavior |
+| Fragmentation | One screen, one flow across layers or one guard rule appears as several URs |
+| Actor traced | A UR's actor is not the traced caller of its entry point, or an internal call is a UR |
+| Live code | A requirement cites obsolete, retired or unreachable code as live behavior |
+| Read against code | For a random sample of at least 20 requirements per context, or every one when there are fewer, the code does not do what the requirement states, the requirement states nothing a rebuild could implement or test, or the context is wrong |
+
+The sample read gives each requirement one verdict: good, weak, not a
+requirement, or wrong. Any requirement that is not a requirement or is wrong
+fails the group, and so do weak verdicts on more than one in ten of the
+sample. Report the verdict totals.
+
+Validate each mechanical check against a known-bad input. A requirement that
+fails is rewritten from the code, never patched by changing its template.
+
 ## When a run is finished
 
 A run is finished when no file of its inventory is unresolved and every file
 is linked to a system requirement, or assessed as reviewed or unsupported with
 a reason, and when no surface unit of its user outcome extraction is
-unresolved and no UR spans outcomes a user starts separately. File linkage
+unresolved and no UR spans outcomes a user starts separately, and when every
+content quality check passes on the persisted records. File linkage
 alone is never the finish: a few broad requirements can cite every file. This
 is the completeness of the sweep over the run's files and surfaces, not
 verification of behavior, and it is not execution evidence. An unresolved

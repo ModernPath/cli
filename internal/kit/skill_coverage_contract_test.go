@@ -166,6 +166,10 @@ func TestReverseEngineerSkillRecordsContextAndTests(t *testing.T) {
 		"never a quota to pad and never a cap",
 		// the mode is asked once
 		"Never put the same question a second time.",
+		"Write every requirement from reading the code it cites.",
+		"it never writes a title, statement, actor, outcome or scenario",
+		"Every UR is served by system requirements.",
+		"One outcome across its layers.",
 		// kept: no approval round follows publication
 		"No row/context approval round follows publication",
 	})
@@ -180,7 +184,10 @@ func TestCoverageReferenceStatesTheFinishCondition(t *testing.T) {
 	}
 	reference := installedNormalized(t, root, ".claude", "skills", "rdd-reverse-engineer", "references", "coverage.md")
 	requireInstalledMarkers(t, "the installed coverage reference does not state the finish condition", reference, []string{
-		"A run is finished when no file of its inventory is unresolved and every file is linked to a system requirement, or assessed as reviewed or unsupported with a reason, and when no surface unit of its user outcome extraction is unresolved and no UR spans outcomes a user starts separately.",
+		"A run is finished when no file of its inventory is unresolved and every file is linked to a system requirement, or assessed as reviewed or unsupported with a reason, and when no surface unit of its user outcome extraction is unresolved and no UR spans outcomes a user starts separately, and when every content quality check passes on the persisted records.",
+		// content quality: written from code, checked before publication
+		"Coverage counts say nothing about whether a requirement says anything.",
+		"The sample read gives each requirement one verdict: good, weak, not a requirement, or wrong.",
 		"File linkage alone is never the finish",
 		"That assessment covers the file, not its surface units",
 		"the completeness of the sweep over the run's files and surfaces, not verification of behavior, and it is not execution evidence",

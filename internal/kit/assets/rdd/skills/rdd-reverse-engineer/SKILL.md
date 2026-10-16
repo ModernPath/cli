@@ -179,6 +179,59 @@ both), technical with a reason, or unresolved. The UR count follows from this
 inventory. A number the person names is a signal to check the inventory, never
 a quota to pad and never a cap. A large codebase is worked context by context
 to the end of the inventory, never trimmed to a summary.
+
+Write every requirement from reading the code it cites. A script may enumerate
+the inventory, group units and match citations; it never writes a title,
+statement, actor, outcome or scenario. Text made by filling a sentence template
+with words split from identifiers or test names is not a requirement, however
+many rows it makes. In particular:
+
+- **A UI control is a step, not an outcome.** Continue, close a dialog, open a
+  menu or a URL, poll a status: these are steps inside the outcome they serve,
+  which is where they belong as scenario steps. A private method, an event
+  handler, a view or composable name and a test name are never a title.
+- **One outcome across its layers.** A flow that runs through the client, the
+  gateway and the backend is one UR. The layers are its SRs. A guard,
+  validation or security rule is a scenario or criterion of the outcome it
+  guards, never a UR of its own. The same mechanism behind several products is
+  one SR serving each product's UR.
+- **Title and statement in the domain's words.** The title names what the actor
+  achieves, as the product or its users would say it, never a split identifier
+  ("update continue", "b2 b cards", "view transaction guid"). The statement says
+  what the actor achieves and the rules that govern it. No two requirements
+  share a statement.
+- **Actor and outcome are set on every UR.** The actor is the real role, such
+  as customer, cashier, operator or a named integrating system, never a catch-all
+  such as "service or provider". Trace who calls the entry point: a customer
+  call through a gateway is the customer's, a service-to-service call is that
+  service's, and a call with no outside caller is an SR, not a UR. The verb is
+  what the actor does: showing is not adding, filtering is not paying.
+- **Live code only.** Code marked obsolete, sitting in a retired module, or
+  reached by no entry point is not baselined as live behavior. Record it as an
+  open question. When two source trees hold the same client, find out which one
+  ships, or ask once and record the answer, before citing either.
+- **Scenarios carry the code's rules.** The main path and each refusal or
+  variant the code implements, with the preconditions, data, limits and
+  observable results the code shows: which card types are accepted, what
+  happens when the provider declines, what the actor sees on a timeout. A
+  scenario that would read the same for any other outcome is a template;
+  replace it.
+- **Every UR is served by system requirements.** Each UR has as children the
+  SRs that implement its outcome, published as their parents, and each SR
+  states one boundary's behavior with criteria a test could check. A UR with no
+  serving SR is unfinished. Thirty SRs cannot serve a thousand distinct
+  outcomes.
+- **Cite where the behavior is.** A citation is a file where the stated
+  behavior is implemented or tested. Migrations, dependency wiring, telemetry,
+  Swagger set-up and every file of a folder are not citations of a behavior the
+  requirement does not state. A cited test exercises this behavior, not a
+  neighbor in the same folder or another product. When one repository holds a copy of another's
+  code, cite the original and disclose the copy.
+
+Depth takes time on a large codebase. Neither the person's urgency nor the
+autonomous run mode allows templated text: work context by context, and report
+the contexts not reached as unfinished.
+
 For NFRs, check existing ownership and read complete configuration expressions
 and units; bare thresholds without confirmed intent remain questions or DERIVED
 exceptions, never invented targets or measurements.
@@ -223,6 +276,11 @@ run whose contexts are all confirmed asks nothing. Record a confirmed context
 on every requirement created, never an unconfirmed one; a reuse entry carries
 none.
 
+Before publishing each group, check its content with
+[the content quality checks](references/coverage.md#content-quality), measured
+and read. A group that fails is rewritten before it is published. A failure is
+not a note for the end report.
+
 Publish coherent atomic groups of related requirements. Split only for supported
 limits or dependencies, sending referenced parents before dependent groups.
 Read and retain each returned group receipt; perform a consolidated record
@@ -263,6 +321,10 @@ For ModernPath, check Ledger and System → Requirements against the receipts.
 For DERIVED, verify candidate records contain the proposals while confirmed
 records and governed counts remain unchanged. Report
 created, reused, baselined, derived, rejected and unresolved counts separately.
+Report the content quality checks next to the counts, measured on the persisted
+records. A count, file linkage or reached target never makes a run complete on
+its own, and reporting a run as complete while those checks fail is a false
+report.
 
 ### 5. Confirm candidates only when requested
 
