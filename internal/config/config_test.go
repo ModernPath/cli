@@ -249,7 +249,7 @@ func TestCanonicalEpicKeysTakePrecedenceOverLegacyInitiativeKeys(t *testing.T) {
 // release.
 func TestWriteConfigUpdatesTheBindingItRead(t *testing.T) {
 	root := chdirTemp(t)
-	if err := WriteConfig(&Config{SystemID: 243, APIURL: "https://beta.modernpath.ai"}); err != nil {
+	if err := WriteConfig(&Config{SystemID: 243, APIURL: "https://api.modernpath.ai"}); err != nil {
 		t.Fatal(err)
 	}
 

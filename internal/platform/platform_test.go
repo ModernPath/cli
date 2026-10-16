@@ -64,12 +64,11 @@ func TestPlatformHostRequestsCarryTheStaticTokenHandlerHeader(t *testing.T) {
 	}
 }
 
-// Every deployment that exists today — beta, localhost, an operator's
+// Every non-platform host — localhost, an operator's
 // --api-url — must produce byte-identical requests. Nothing about the
 // platform host may leak onto them.
 func TestNonPlatformHostsAreUntouched(t *testing.T) {
 	for _, base := range []string{
-		config.BetaAPIURL,
 		config.LocalAPIURL,
 		"https://legacy.example.test",
 		"https://cloud.modernpath.ai", // the SPA host is not the API host
@@ -122,7 +121,7 @@ func TestHealthPathIsChosenPerHost(t *testing.T) {
 		}
 	}
 
-	for _, base := range []string{config.BetaAPIURL, config.LocalAPIURL, "https://legacy.example.test"} {
+	for _, base := range []string{config.LocalAPIURL, "https://legacy.example.test"} {
 		if got, want := HealthPath(base), "/_health"; got != want {
 			t.Errorf("HealthPath(%q) = %q, want %q", base, got, want)
 		}
@@ -135,7 +134,7 @@ func TestHealthPathIsChosenPerHost(t *testing.T) {
 
 func TestIsPlatformHost(t *testing.T) {
 	yes := []string{zitadel.ProdProfile.APIURL, zitadel.TestProfile.APIURL, zitadel.ProdProfile.APIURL + "/api/systems"}
-	no := []string{config.BetaAPIURL, config.LocalAPIURL, "https://cloud.modernpath.ai", "", "::not a url"}
+	no := []string{"https://legacy.example.test", config.LocalAPIURL, "https://cloud.modernpath.ai", "", "::not a url"}
 	for _, u := range yes {
 		if !IsPlatformHost(u) {
 			t.Errorf("IsPlatformHost(%q) = false, want true", u)

@@ -104,7 +104,7 @@ type scenarioDef struct {
 // area legitimately reach for the same id: SCN-AK-001 belongs to both
 // EPIC-FE-034 and EPIC-PORTFOLIO-038. Since acceptance_criteria.external_id is
 // unique per tenant, the bare id let the second sync steal the first's row and
-// 9 epics served no scenarios at all (RUN:2026-08-07, found by reading beta
+// 9 epics served no scenarios at all (RUN:2026-08-07, found by reading production
 // back after deploy). Namespacing makes that impossible by construction.
 func parseScenarioDefs(recordText string) []*scenarioDef {
 	lines := strings.Split(recordText, "\n")

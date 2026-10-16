@@ -28,8 +28,7 @@ type knownEnvironment struct {
 // knownEnvironments is the embedded set the CLI offers by name. The cloud URLs
 // are the same baked-in Zitadel profile hosts auth (`--sso` / `--sso --test`)
 // and the platform layer use, so there is one source of truth for them and the
-// env names line up with the auth flags. Any other URL, the retired beta
-// server included, shows as "custom".
+// env names line up with the auth flags. Any other URL shows as "custom".
 func knownEnvironments() []knownEnvironment {
 	return []knownEnvironment{
 		{"production", zitadel.ProdProfile.APIURL, "ModernPath production (cloud)"},

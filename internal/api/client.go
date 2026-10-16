@@ -330,7 +330,7 @@ type ExportProgressFunc func(status, progress string)
 
 // DownloadExport downloads the system export as a zip file.
 // Uses async export (POST + poll + link + file GET) so each HTTP call returns quickly — required when
-// a front load balancer has a low idle timeout (e.g. Hetzner Cloud ~60s).
+// a front load balancer has a fixed, low idle timeout.
 func (c *Client) DownloadExport(systemID int) ([]byte, error) {
 	return c.DownloadExportWithProgress(systemID, nil)
 }

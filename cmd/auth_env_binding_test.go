@@ -107,7 +107,7 @@ func TestTokenFlagBindsToTheConfiguredEnvironment(t *testing.T) {
 	}
 }
 
-// A host with no baked-in issuer — the legacy beta server, a custom URL — has
+// A host with no baked-in issuer, such as a custom URL, has
 // no device flow the CLI can run, so a bare login falls to the pasted-token
 // prompt instead of logging in to a different plane.
 func TestBareAuthOnAHostWithoutAProfileDoesNotRunTheDeviceFlow(t *testing.T) {
@@ -118,7 +118,7 @@ func TestBareAuthOnAHostWithoutAProfileDoesNotRunTheDeviceFlow(t *testing.T) {
 	defer restore()
 	withAuthFlags(t, false, false, "", "", false)
 
-	bindWorkspaceTo(t, config.BetaAPIURL)
+	bindWorkspaceTo(t, "https://legacy.example.test")
 	withEmptyStdin(t)
 	if err := runAuth(authCmd, nil); err != nil {
 		t.Fatalf("runAuth: %v", err)
@@ -128,8 +128,8 @@ func TestBareAuthOnAHostWithoutAProfileDoesNotRunTheDeviceFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadConfig: %v", err)
 	}
-	if cfg.APIURL != config.BetaAPIURL {
-		t.Fatalf("API URL = %q, want the configured %q", cfg.APIURL, config.BetaAPIURL)
+	if cfg.APIURL != "https://legacy.example.test" {
+		t.Fatalf("API URL = %q, want the configured %q", cfg.APIURL, "https://legacy.example.test")
 	}
 }
 

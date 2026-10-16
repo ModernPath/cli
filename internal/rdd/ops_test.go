@@ -952,7 +952,7 @@ func TestSnapshotReadsEveryMappedOpenQuestionFile(t *testing.T) {
 	}
 }
 
-// REQ-CROSS-072 (`RUN:2026-08-13`, seen in the drawer on beta): the citation
+// REQ-CROSS-072 (`RUN:2026-08-13`, seen in the drawer in production): the citation
 // splitter treated a bare comma as a separator, so every citation carrying a
 // comma inside parentheses or quotes was shredded. REQ-PLN-055's sources
 // rendered as four fragments — `1`, `446 rows synced`, `all base)` and

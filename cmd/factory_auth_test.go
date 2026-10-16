@@ -44,7 +44,6 @@ func TestAuthRepairCommandSelectsTheExactConfiguredTarget(t *testing.T) {
 		"https://api.modernpath.ai":                    "modernpath auth --sso",
 		"https://api.workload.test-plat.modernpath.ai": "modernpath auth --sso --test",
 		"http://localhost:4000":                        "modernpath auth --local",
-		"https://beta.modernpath.ai":                   "modernpath auth --api-url=https://beta.modernpath.ai",
 		"https://legacy.example.test/api":              "modernpath auth --api-url=https://legacy.example.test/api",
 	}
 

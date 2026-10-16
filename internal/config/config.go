@@ -15,14 +15,9 @@ const (
 	// DefaultAPIURL is the server a workspace talks to before it is bound, and
 	// the "production" environment. It is the cloud production API host — the
 	// same value as zitadel.ProdProfile.APIURL (locked by a test), not the SPA
-	// host cloud.modernpath.ai, which answers every path with index.html. Beta
-	// moved to BetaAPIURL when it began being decommissioned.
+	// host cloud.modernpath.ai, which answers every path with index.html.
 	DefaultAPIURL = "https://api.modernpath.ai"
 	LocalAPIURL   = "http://localhost:4000"
-	// BetaAPIURL is the retired beta server. It is no longer an environment
-	// `modernpath env` offers or names; it remains as the canonical example of
-	// a host that is neither a platform plane nor local.
-	BetaAPIURL = "https://beta.modernpath.ai"
 )
 
 // Config holds the project-level configuration

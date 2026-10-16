@@ -18,7 +18,7 @@ import (
 
 func TestConnectRecordsTheSystemsNameAndSlug(t *testing.T) {
 	cfg := &config.Config{}
-	if err := resolveBinding(cfg, 243, "https://beta.modernpath.ai"); err != nil {
+	if err := resolveBinding(cfg, 243, "https://api.modernpath.ai"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,7 +43,7 @@ func TestConnectRecordsTheSystemsNameAndSlug(t *testing.T) {
 // The repair path: an existing config predating this change is fixed by
 // re-running connect, which must not demand the id the config already holds.
 func TestConnectRepairsAnExistingBindingWithoutASystemFlag(t *testing.T) {
-	cfg := &config.Config{SystemID: 243, APIURL: "https://beta.modernpath.ai"}
+	cfg := &config.Config{SystemID: 243, APIURL: "https://api.modernpath.ai"}
 
 	if err := resolveBinding(cfg, 0, ""); err != nil {
 		t.Fatalf("re-running connect on a bound workspace must repair it, not require a re-init: %v", err)
@@ -51,7 +51,7 @@ func TestConnectRepairsAnExistingBindingWithoutASystemFlag(t *testing.T) {
 	if cfg.SystemID != 243 {
 		t.Errorf("system id = %d, want the bound 243 kept", cfg.SystemID)
 	}
-	if cfg.APIURL != "https://beta.modernpath.ai" {
+	if cfg.APIURL != "https://api.modernpath.ai" {
 		t.Errorf("api url = %q, want the bound one kept", cfg.APIURL)
 	}
 }
@@ -101,7 +101,7 @@ func TestConnectDoesNotCarryTheOldServersIdentityToANewOne(t *testing.T) {
 	cfg := &config.Config{SystemID: 243, SystemName: "Modernpath", SystemSlug: "modernpath",
 		APIURL: "http://localhost:4000"}
 
-	if err := resolveBinding(cfg, 243, "https://beta.modernpath.ai"); err != nil {
+	if err := resolveBinding(cfg, 243, "https://api.modernpath.ai"); err != nil {
 		t.Fatal(err)
 	}
 	_ = recordSystemIdentity(cfg, func(int) (string, string, error) {
@@ -117,9 +117,9 @@ func TestConnectDoesNotCarryTheOldServersIdentityToANewOne(t *testing.T) {
 // when the lookup fails — that is what the advisory error exists to allow.
 func TestConnectKeepsIdentityWhenRebindingTheSameServerOffline(t *testing.T) {
 	cfg := &config.Config{SystemID: 243, SystemName: "Modernpath", SystemSlug: "modernpath",
-		APIURL: "https://beta.modernpath.ai"}
+		APIURL: "https://api.modernpath.ai"}
 
-	if err := resolveBinding(cfg, 243, "https://beta.modernpath.ai"); err != nil {
+	if err := resolveBinding(cfg, 243, "https://api.modernpath.ai"); err != nil {
 		t.Fatal(err)
 	}
 	_ = recordSystemIdentity(cfg, func(int) (string, string, error) {
@@ -148,12 +148,12 @@ func TestConnectHintMatchesTheFailureItExplains(t *testing.T) {
 // A 401 does not say why the bearer was rejected, so the message names the
 // possible causes and the exact target-aware repair.
 func TestCredentialRejectedReportsWhatIsEstablished(t *testing.T) {
-	bearer := (&factoryEnv{APIURL: "https://beta.modernpath.ai"}).credentialRejected().Error()
+	bearer := (&factoryEnv{APIURL: "https://legacy.example.test"}).credentialRejected().Error()
 	if !strings.Contains(bearer, "expired, revoked, or issued for a different server") {
 		t.Errorf("the bearer message asserts one cause: %q", bearer)
 	}
-	if !strings.Contains(bearer, "modernpath auth --api-url=https://beta.modernpath.ai") {
-		t.Errorf("the beta repair must preserve beta exactly: %q", bearer)
+	if !strings.Contains(bearer, "modernpath auth --api-url=https://legacy.example.test") {
+		t.Errorf("the repair must preserve the bound API URL exactly: %q", bearer)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestConnectPersistsTheBindingBeforeLookingUpIdentity(t *testing.T) {
 	}
 
 	cfg := &config.Config{}
-	res, err := connectWorkspace(cfg, 243, "https://beta.modernpath.ai", save, lookup)
+	res, err := connectWorkspace(cfg, 243, "https://api.modernpath.ai", save, lookup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestConnectStillNeedsASystemWhenNothingIsBound(t *testing.T) {
 // The guard: binding a workspace must not become network-dependent.
 func TestConnectWritesTheBindingEvenWhenTheLookupFails(t *testing.T) {
 	cfg := &config.Config{}
-	if err := resolveBinding(cfg, 243, "https://beta.modernpath.ai"); err != nil {
+	if err := resolveBinding(cfg, 243, "https://api.modernpath.ai"); err != nil {
 		t.Fatal(err)
 	}
 

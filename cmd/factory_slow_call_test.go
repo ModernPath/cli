@@ -32,7 +32,7 @@ func (b *noticeBuffer) String() string {
 //
 // `factory sync` makes up to ~8 sequential server calls, each allowed 120
 // seconds. One stalled connection — a VPN flap, a mid-request network change, a
-// slow beta deploy — turns "a few seconds" into two silent minutes before the
+// slow deploy — turns "a few seconds" into two silent minutes before the
 // timeout error appears. Nothing between step messages distinguishes a slow
 // server from a hung CLI, and the user restarts a sync that was working.
 func TestSlowFactoryCallPrintsANotice(t *testing.T) {

@@ -1419,7 +1419,7 @@ Contributor commands:
 | Task | Command | Source |
 |---|---|---|
 | Build local binary | `cd tools/modernpath && go build -o modernpath .` | `CODE:tools/modernpath/go.mod` |
-| Run the CLI suite | `cd tools/modernpath && go test ./...` | `CODE:.github/workflows/deploy.yml` |
+| Run the CLI suite | `cd tools/modernpath && go test ./...` | `CODE:Dockerfile` (`go-builder`) |
 | Build release archives | `cd tools/modernpath && bash scripts/build-all.sh [version]` | `CODE:tools/modernpath/scripts/build-all.sh` |
 | Install the working tree for local testing | `cd tools/modernpath && bash scripts/install-local.sh` | `CODE:tools/modernpath/scripts/install-local.sh` |
 | Refresh embedded process assets | `tools/modernpath/scripts/sync-rdd-assets.sh /path/to/req-driven-dev` | `CODE:tools/modernpath/scripts/sync-rdd-assets.sh` |

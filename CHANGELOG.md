@@ -1613,8 +1613,7 @@ something you can act on.
 
 ### Changed defaults
 
-- `modernpath env` defaults to **cloud production**. `beta` still exists as a
-  named environment, now marked deprecated.
+- `modernpath env` defaults to **cloud production**.
 - The `--legacy-extractor` flag is removed. It shelled out to a node op-builder
   that only ever existed in one repository; the bundled Go parsers have been the
   default for some time and are now the only implementation.

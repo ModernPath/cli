@@ -17,9 +17,6 @@ func TestDefaultAPIURLIsCloudProd(t *testing.T) {
 		t.Fatalf("config.DefaultAPIURL (%q) must equal zitadel.ProdProfile.APIURL (%q)",
 			config.DefaultAPIURL, zitadel.ProdProfile.APIURL)
 	}
-	if config.DefaultAPIURL == config.BetaAPIURL {
-		t.Fatal("the default must no longer be beta — beta is being decommissioned")
-	}
 }
 
 func TestEnvironmentNameMapsKnownHosts(t *testing.T) {
@@ -30,7 +27,6 @@ func TestEnvironmentNameMapsKnownHosts(t *testing.T) {
 		{zitadel.ProdProfile.APIURL, "production"},
 		{zitadel.TestProfile.APIURL, "test"},
 		{config.LocalAPIURL, "local"},
-		{config.BetaAPIURL, "custom"},
 		{"https://some-operator-host.example", "custom"},
 		{"", "custom"},
 	}

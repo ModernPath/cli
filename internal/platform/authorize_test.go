@@ -134,7 +134,7 @@ func TestAuthorize_PlatformHost_NonJWTAttachedUnchanged(t *testing.T) {
 	}
 }
 
-// Everything that is not a platform host is untouched: beta, localhost, any
+// Everything that is not a platform host is untouched: cloud, localhost, any
 // --api-url. This is the no-regression clause.
 func TestAuthorize_NonPlatformHost_AlwaysAttached(t *testing.T) {
 	withTestPlatformHost(t, "https://api.example.test", zitadel.Profile{
@@ -144,7 +144,7 @@ func TestAuthorize_NonPlatformHost_AlwaysAttached(t *testing.T) {
 
 	token := fakeJWT(t, []string{"some-cli-client-id"})
 	for _, target := range []string{
-		"https://beta.modernpath.ai/api/systems",
+		"https://cloud.modernpath.ai/api/systems",
 		"http://localhost:4000/api/systems",
 		"http://127.0.0.1:4000/api/systems",
 	} {

@@ -11,7 +11,7 @@
 // This mirrors `modernpath-frontend/src/config.ts` `coreApiUrl`/`boundaryInit`
 // exactly, minus the parts that only exist in a browser: the CLI carries a
 // bearer token rather than the cookie the SPA sends with `credentials:
-// "include"`. Hosts that are not the platform host — `beta.modernpath.ai`,
+// "include"`. Hosts that are not the platform host — `cloud.modernpath.ai`,
 // `localhost:4000`, any `--api-url` — are left byte-identical, so nothing
 // changes for an existing deployment.
 package platform
@@ -46,7 +46,7 @@ const (
 // HealthPath returns the health-check path to use against baseURL.
 //
 // Core answers the same check at two paths: `/_health` at the root, which
-// Kamal and the local harness use, and `/api/_health`. Only the second is
+// the local harness uses, and `/api/_health`. Only the second is
 // reachable on the shared platform host, where core is routed solely through
 // its `/api/ex` sub-prefix — Prepare turns it into `/api/ex/_health` there.
 // Everywhere else the root path is what deployed servers already answer, so
