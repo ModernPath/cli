@@ -30,6 +30,7 @@ Record stable unit identities and mappings so the checker can report:
 | Measurement | Denominator | Numerator / required result |
 |---|---|---|
 | Requirement extraction | Enumerated in-scope items, such as routes or jobs | Account for every item as extracted, already covered, excluded with a reason, or unresolved; cite the supporting records |
+| User outcome extraction, per context | The surface units of the skill's surface inventory: screens, views and dialogs, state-changing actions, actor-facing operations, notifications, observed scheduled outcomes, actor-behavior test cases | Every unit covered by a named UR stating its outcome, technical with a reason, or unresolved; report units per UR, and list each UR whose units span outcomes a user starts separately |
 | Source disposition, per repository | Eligible inventory files after documented exclusions | Distinct files cited by persisted rows, excluded with a reason, or unresolved |
 | Governed and candidate linkage | The same inventory and mappings | Separate counts for confirmed links, candidate links and their overlap; no invented promotion |
 | Reverse mapping | Every persisted requirement/source reference in the batch | Resolve inside authorized inventory or to an explicitly authorized existing identity |
@@ -53,7 +54,10 @@ scope; a row count is not permission to truncate a full sweep.
 
 A run is finished when no file of its inventory is unresolved and every file
 is linked to a system requirement, or assessed as reviewed or unsupported with
-a reason. This is the completeness of the sweep over the run's files, not
+a reason, and when no surface unit of its user outcome extraction is
+unresolved and no UR spans outcomes a user starts separately. File linkage
+alone is never the finish: a few broad requirements can cite every file. This
+is the completeness of the sweep over the run's files and surfaces, not
 verification of behavior, and it is not execution evidence. An unresolved
 assessment states that work remains; it is never used to complete a count.
 
@@ -63,4 +67,6 @@ run made it, and a file cited only by a user requirement does not count as
 linked. A
 file the run's coverage shows with neither a governed nor a candidate link,
 although a requirement from an earlier run covers it, is assessed as reviewed
-with that requirement named in the reason.
+with that requirement named in the reason. That assessment covers the file, not
+its surface units: a unit whose outcome the earlier requirement does not state
+is still extracted.

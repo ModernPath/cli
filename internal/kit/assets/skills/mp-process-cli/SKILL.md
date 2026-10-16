@@ -1042,7 +1042,10 @@ them again. New runs follow the sequence below.
    question of step 4. Preflight recommends derived whenever the system has a
    requirement, so in a planned area-by-area baseline it recommends derived
    for every run after the first. Show the recommendation with that
-   explanation; the person still chooses baseline or derived.
+   explanation; the person still chooses baseline or derived. Recommend
+   baseline instead when the existing requirements are this sweep's own
+   earlier baseline, or when the person has said the requirements are to be
+   an as-built base to work from.
 4. Authorize from the two saved files. Do not write a JSON file, and
    do not run `inventory` or `preflight` again, except after a refusal as
    described below: the saved files are what the person approves. After the
@@ -1091,6 +1094,15 @@ them again. New runs follow the sequence below.
    - the run name. You propose the run name; the person can change it.
    Ask once: one question that covers the mode, the documents, the run name
    and the run mode. Then run the command with what the person said.
+   The person's words answer it when they settle a choice: a stated purpose
+   of an as-built base to work from, such as a modernization baseline,
+   selects baseline, and a reply that asks to proceed without naming a
+   choice ("run it", "go", "do it now") accepts the recommendations the
+   question showed. Write their words into `--source` and say in one line
+   which choices they settled. Never put the same question a second time.
+   A request to redo or deepen an earlier run over an unchanged inventory
+   carries over that run's mode, documents and run mode unless the person
+   names others.
 
    **If the authorization is refused**, nothing was recorded, and the same run
    name can be used again. A refusal never lets you change the mode, the

@@ -157,7 +157,15 @@ func TestReverseEngineerSkillRecordsContextAndTests(t *testing.T) {
 		"Record a confirmed context on every requirement created, never an unconfirmed one; a reuse entry carries none.",
 		"Identify the tests that cover each group's code and cite them, naming the executed test",
 		"list the requirements published without a test in the end report",
-		"Compare the staged requirements with the existing corpus by the files they cite",
+		"Compare the staged requirements with the existing corpus by the outcome and behavior they state",
+		"A shared file is not shared behavior",
+		// one UR per actor outcome, derived from the surface inventory
+		"A UR is one actor reaching one outcome they would start on its own and notice if it broke",
+		"One UR per context or subsystem is under-derivation",
+		"Derive from the surface inventory, not from a target count.",
+		"never a quota to pad and never a cap",
+		// the mode is asked once
+		"Never put the same question a second time.",
 		// kept: no approval round follows publication
 		"No row/context approval round follows publication",
 	})
@@ -172,8 +180,10 @@ func TestCoverageReferenceStatesTheFinishCondition(t *testing.T) {
 	}
 	reference := installedNormalized(t, root, ".claude", "skills", "rdd-reverse-engineer", "references", "coverage.md")
 	requireInstalledMarkers(t, "the installed coverage reference does not state the finish condition", reference, []string{
-		"A run is finished when no file of its inventory is unresolved and every file is linked to a system requirement, or assessed as reviewed or unsupported with a reason.",
-		"the completeness of the sweep over the run's files, not verification of behavior, and it is not execution evidence",
+		"A run is finished when no file of its inventory is unresolved and every file is linked to a system requirement, or assessed as reviewed or unsupported with a reason, and when no surface unit of its user outcome extraction is unresolved and no UR spans outcomes a user starts separately.",
+		"File linkage alone is never the finish",
+		"That assessment covers the file, not its surface units",
+		"the completeness of the sweep over the run's files and surfaces, not verification of behavior, and it is not execution evidence",
 		"An unresolved assessment states that work remains; it is never used to complete a count.",
 		"The finish condition is measured for one run. A link counts for it only when it was made through a capture of the same repository key and file list, whichever run made it, and a file cited only by a user requirement does not count as linked.",
 		"although a requirement from an earlier run covers it, is assessed as reviewed with that requirement named in the reason",

@@ -298,6 +298,9 @@ func TestProcessCliSkillAsksTheRunMode(t *testing.T) {
 		// the run mode joins the one authorization question and the source
 		"the run mode and what each choice means",
 		"Ask once: one question that covers the mode, the documents, the run name and the run mode",
+		// a proceed reply or a stated purpose answers it; never asked twice
+		"accepts the recommendations the question showed",
+		"Never put the same question a second time.",
 		"approved <mode>, documents <all|none>, run mode <autonomous|confirm>",
 		"`run mode autonomous` or `run mode confirm`",
 		// the stop list, its six conditions and the one planned question

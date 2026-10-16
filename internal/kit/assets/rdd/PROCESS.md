@@ -247,8 +247,12 @@ or marks anything DONE. Candidate confirmation is not delivery release selection
 
 Reverse-engineering can establish a usable requirement base or propose additions
 to an existing corpus. Before publication, present both modes and require an
-explicit choice. Recommend baseline when the corpus is empty, DERIVED additions
-when it is populated. Existing content and approvals are preserved in both modes.
+explicit choice. Recommend baseline when the corpus is empty, is the sweep's
+own earlier baseline, or the person has stated an as-built base as the purpose;
+recommend DERIVED additions otherwise when it is populated. The choice is asked
+once: the person's words settle it when they state the purpose or ask to
+proceed on the recommendation shown, and the same question is not put again.
+Existing content and approvals are preserved in both modes.
 
 A baseline authorization names the authenticated actor, system/store, immutable
 repository/file and document revision inventory, current corpus fingerprint,
@@ -257,6 +261,9 @@ It authorizes derivation and publication of grounded as-built URs/SRs with
 inline scenarios and canonical source/UR–SR/code/test relationships. It does
 **not** assert the human reviewed statements that had not yet been generated.
 No per-row or per-context confirmation is required within this approved scope.
+URs are derived one per distinct actor outcome over an enumerated inventory of
+the surfaces actors reach, never one per context or subsystem; file linkage
+alone never shows that a sweep is complete.
 
 Publish coherent groups atomically with durable input fingerprints and receipts.
 Identical retries return the same receipt; changed input, out-of-scope sources

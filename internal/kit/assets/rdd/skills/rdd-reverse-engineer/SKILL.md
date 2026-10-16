@@ -107,7 +107,19 @@ already contains that exact authorization:
 Preflight recommends derived whenever the system has a requirement, which in a
 planned area-by-area baseline is every run after the first. Show the
 recommendation with that explanation; the person still chooses baseline or
-derived.
+derived. Recommend baseline instead when the existing corpus is this sweep's
+own earlier baseline, or when the person has said the requirements are to be
+an as-built base to work from, such as a modernization baseline.
+
+Ask once. The person's own words answer the question when they settle it: a
+stated purpose of an as-built base to work from selects baseline, and a reply
+that asks to proceed without naming a choice — "run it", "go", "do it now" —
+accepts the recommendation that the one question showed. Record their words
+as the authorization source and say in one line which choices they settled.
+Never put the same question a second time. A request to redo or deepen an
+earlier run over an unchanged inventory carries over that run's mode,
+documents and run mode unless the person names others. Ask again only when a
+refusal's rule requires it.
 
 In the same question as the mode, the person chooses the run mode, written into
 the run's authorization source: autonomous, where the agent continues through
@@ -148,6 +160,25 @@ State behavior a change could breach, including refusal cases and implementation
 behind entry points. Do not write one requirement per function or invent intent
 from a constant. URs need actor, outcome, inline scenarios and sources; SRs need
 a boundary, behavior, meaningful criteria and sources. Criteria claim no test ran.
+
+A UR is one actor reaching one outcome they would start on its own and notice
+if it broke: add a payment card, remove a card, see why a payment failed,
+start a charging session. A bounded context normally holds many. A UR whose
+scenarios cover outcomes a user would start separately is several URs; split
+it before publishing. One UR per context or subsystem is under-derivation, the
+recorded failure of this pass, not a summary level to stop at. An SR states one
+boundary's behavior serving a UR; a UR is served by every SR its outcome needs.
+
+Derive from the surface inventory, not from a target count. Per repository,
+enumerate the units an actor reaches: screens, views, routes and dialogs; the
+actions that change state; user- and operator-facing API operations;
+notifications, receipts and messages the actor receives; scheduled outcomes the
+actor observes; and test cases that describe actor behavior. Account for every
+unit as covered by a named UR (the same outcome on two clients is one UR citing
+both), technical with a reason, or unresolved. The UR count follows from this
+inventory. A number the person names is a signal to check the inventory, never
+a quota to pad and never a cap. A large codebase is worked context by context
+to the end of the inventory, never trimmed to a summary.
 For NFRs, check existing ownership and read complete configuration expressions
 and units; bare thresholds without confirmed intent remain questions or DERIVED
 exceptions, never invented targets or measurements.
@@ -169,9 +200,12 @@ Prepare the full requested scope locally before the first requirement
 publication: URs, SRs, scenarios, criteria, citations and relationships, with
 stable run/group keys and input fingerprints. Check duplicates, exact existing
 identity reuse, unresolved citations and cross-context joins across the batch.
-Compare the staged requirements with the existing corpus by the files they
-cite, and reuse or merge into an existing requirement instead of publishing
-the same behavior under a new id. Identify the tests that cover each group's
+Compare the staged requirements with the existing corpus by the outcome and
+behavior they state, using the files they cite to find candidates, and reuse
+or merge into an existing requirement instead of publishing the same behavior
+under a new id. A shared file is not shared behavior: an existing broad
+requirement covers only the outcomes it states, so a finer outcome it does not
+state is a new requirement, published next to it. Identify the tests that cover each group's
 code and cite them, naming the executed test; list the requirements published
 without a test in the end report. These reusable inputs are staging
 artifacts, not another requirement store.
