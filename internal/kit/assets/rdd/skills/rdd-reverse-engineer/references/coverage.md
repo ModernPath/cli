@@ -38,6 +38,14 @@ Record stable unit identities and mappings so the checker can report:
 | Executed verification | Requirements in the run | None in this pass; a cited test is never counted here |
 | Reverse mapping | Every persisted requirement/source reference in the batch | Resolve inside authorized inventory or to an explicitly authorized existing identity |
 
+A file is assessed by reading it. A script may group files by path and propose
+a reason, but each reason is checked against the file before it is recorded,
+and a file no rule matched stays unresolved: a default reason such as "outside
+the described behavior" is never assigned to a file nobody read. A file that
+sets behavior a requirement states — options validation, serialization,
+deployment settings such as schedules, retries and message lifetimes — is
+linked to that requirement, not assessed as unsupported.
+
 State absent surfaces as inapplicable only after checking; unexplored surfaces
 remain unresolved. A file disposition does not establish behavioral coverage,
 and candidate links do not establish governed or verified behavior. Counts and
@@ -106,3 +114,11 @@ although a requirement from an earlier run covers it, is assessed as reviewed
 with that requirement named in the reason. That assessment covers the file, not
 its surface units: a unit whose outcome the earlier requirement does not state
 is still extracted.
+
+A context is finished when its latest run meets the finish condition. A later
+run of the same context whose capture holds the whole repositories or
+directories an earlier run left out supersedes that earlier run's capture
+completeness check: the report names the earlier run as superseded by the
+later one, not as failed, and the earlier run's other measurements stand.
+Links are never moved from one run's capture to another to repair an
+inventory that was fixed at its capture.

@@ -73,16 +73,83 @@ replace unavailable historical evidence with latest code or ask again for an
 unchanged authorized run.
 
 Of the corpus, a publication group is refused only for a collision with a
-record it names, never because the rest of the corpus changed. Runs publish
-one after another: authorize the next run only after the previous one has
-published every group, its source assessments included, and meets the finish
-condition, or after the person decided to leave it unfinished. Fold a
+record it names, never because the rest of the corpus changed. In a sweep
+worked one context at a time, runs publish one after another: authorize the
+next run only after the previous one has published every group, its source
+assessments included, and meets the finish condition, or after the person
+decided to leave it unfinished. A batch sweep authorizes its runs together and
+publishes them in parallel ([Batch sweep](#batch-sweep)). Fold a
 correction into a group before publishing it. A later run cites the source
 file ids of its own capture; a file covered by a requirement from an earlier
 run is assessed as reviewed, naming that requirement. Contexts on published
 requirements are set before verification records execution proof; citation
 changes and trace refreshes belong to verification. The `mp-process-cli`
 onboarding gives the checks and the refusals.
+
+## Batch sweep
+
+A full sweep of a system with several bounded contexts runs as a batch: the
+contexts are derived at the same time, by one session each, instead of one
+after another. A batch has a setup, the context sessions, the independent
+reads and a merge.
+
+**Setup, by one coordinating session.**
+
+1. Inventory every repository, read preflight and ask the one question of
+   step 1 once for the whole batch: the mode, the run mode, the documents and
+   the bounded contexts, each context with a code, a name and its scope — the
+   whole repositories and directories its flows pass through. The person's
+   answer is the batch authorization, recorded as the authorization source of
+   every run, and it is the decision to leave a context unfinished for the
+   reasons below. Confirmed contexts go to the sweep's confirmed-contexts file,
+   so no context session asks about them again.
+2. Name the owner of every shared mechanism: a mechanism several contexts use,
+   such as sign-in, payment authorization, notifications or a shared client
+   library, has its SRs in one owning context. The other contexts do not write
+   their own SRs for it; they record in their report which of their URs the
+   owner's SRs serve. Give each context its own id prefix.
+3. Authorize and capture one run per context. An authorization records a run
+   and changes no requirement, so the runs are authorized back to back; when
+   one is refused as stale, read preflight again.
+4. Write the batch plan to `batch-plan.md` in the sweep's working folder: each
+   context's run id, scope, id prefix and the shared mechanisms it owns and
+   uses. A context session reads it first.
+
+**Context sessions, in parallel.** Each context runs in its own fresh session,
+started with its run id and the batch plan, following steps 2 to 4 for that
+context alone. A context session writes only in its own run folder — its
+drafts, its open questions and its report — and publishes only its own groups,
+checking each group's drafts with the offline content check before publishing
+them, as the `mp-process-cli` onboarding names it. Start as many sessions at
+once as the machine and the agent quota carry, and the rest as earlier ones
+end.
+
+A context never waits for another and never stops the batch. It ends finished,
+or unfinished with its remaining gaps in its report: an edit the installed
+tooling cannot make, a question only a person can answer, a fact in a
+repository outside its scope, or the independent read still to come. The
+batch authorization covers leaving a context unfinished for these reasons, so
+the session does not ask; it states the gaps and ends. Work the session can do
+itself is never a reason to end unfinished. The stop list of the
+`mp-process-cli` onboarding still stops a context session, and only that
+session.
+
+**Independent reads, in parallel.** When a context has published, an
+independent reviewer reads its sample ([coverage](references/coverage.md#content-quality)).
+The reads of different contexts run at the same time. The context's session,
+or a new session for that context, applies the review's corrections through
+the sanctioned edits and records the verdicts in the context's report.
+
+**Merge, by the coordinating session,** after every context has reported:
+
+- link each shared SR to the URs of other contexts that it serves, as the
+  context reports record them, now that both records exist;
+- compare the new requirements across contexts by outcome and behavior, and
+  list the duplicates with a proposed disposition for the person;
+- combine the contexts' open questions into the sweep's open-questions file;
+- write the batch summary: for every context its status, its counts, its
+  content check results, its entry points covered out of total, its
+  independent-read verdicts, and the open questions that need the person.
 
 ## Steps
 
@@ -322,7 +389,10 @@ none.
 
 Before publishing each group, check its content with
 [the content quality checks](references/coverage.md#content-quality), measured
-and read. A group that fails is rewritten before it is published. A failure is
+and read. Measure the mechanical checks with the offline content check the
+`mp-process-cli` onboarding names, which proves itself on a known-bad set, and
+write a script of your own only for a check it does not make. A group that
+fails is rewritten before it is published. A failure is
 not a note for the end report.
 
 Publish coherent atomic groups of related requirements. Split only for supported
