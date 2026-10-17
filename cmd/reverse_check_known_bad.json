@@ -1,0 +1,48 @@
+{
+  "seeded": {
+    "unique-ids": ["SR-BAD-TWICE"],
+    "distinct-statements": ["SR-BAD-DUP1", "SR-BAD-DUP2", "SR-BAD-TPL1", "SR-BAD-TPL2"],
+    "template-scenarios": ["SR-BAD-SC1", "SR-BAD-SC2", "SR-BAD-SC3", "SR-BAD-SC4"],
+    "actor-outcome": ["UR-BAD-ACTOR", "UR-BAD-ROLES", "UR-BAD-OUTCOME"],
+    "domain-titles": ["SR-BAD-TITLE", "SR-BAD-SPLIT"],
+    "ur-sr-join": ["UR-BAD-ORPHAN", "SR-BAD-NOPARENT"],
+    "citation-precision": ["SR-BAD-CITE", "SR-BAD-DIR"]
+  },
+  "good": ["UR-GOOD-1", "SR-GOOD-1"],
+  "requirements": [
+    {
+      "external_id": "UR-GOOD-1", "kind": "user", "title": "Start charging at a chosen connector",
+      "actor": "MobilePay customer with a saved payment card",
+      "intended_use": "Start a charging session at the connector they chose.",
+      "description": "A customer at a station picks a free connector and starts charging; the app refuses when no valid card is saved.",
+      "criteria": [{"external_id": "UR-GOOD-1-SC1", "given": "a free connector and a saved card", "when": "the customer taps start", "then": "the session starts and the app polls its state every 5 seconds"}],
+      "source_citations": [{"kind": "code", "path": "app/src/main/java/com/example/charging/ChargingViewModel.kt"}]
+    },
+    {
+      "external_id": "SR-GOOD-1", "kind": "system", "title": "Authorize the card before a session starts",
+      "parent_external_ids": ["UR-GOOD-1"],
+      "description": "The start handler refuses a request whose card authorization is not approved and sends nothing to the charge point.",
+      "criteria": [{"external_id": "SR-GOOD-1-AC1", "statement": "A declined authorization returns 402 and no start command is sent."}],
+      "source_citations": [{"kind": "code", "path": "src/Application/Sessions/StartSessionCommand.cs"}]
+    },
+    {"external_id": "UR-BAD-ACTOR", "kind": "user", "title": "See receipts", "actor": "user", "intended_use": "See past receipts.", "description": "The receipt list shows every paid purchase."},
+    {"external_id": "UR-BAD-ROLES", "kind": "user", "title": "Manage stations", "actor": "customer or operator", "intended_use": "Keep station data current.", "description": "Stations are listed and edited."},
+    {"external_id": "UR-BAD-OUTCOME", "kind": "user", "title": "Register a card", "actor": "MobilePay customer", "outcome": "Save a card for payment.", "description": "A customer saves a card to pay with it later."},
+    {"external_id": "UR-BAD-ORPHAN", "kind": "user", "title": "Rate a wash", "actor": "MobilePay customer after a wash", "intended_use": "Give the wash a rating.", "description": "After a wash the customer gives one to five stars."},
+    {"external_id": "SR-BAD-NOPARENT", "kind": "system", "title": "Store the rating", "parent_external_ids": ["UR-MISSING"], "description": "The rating is stored against the wash session."},
+    {"external_id": "SR-BAD-DUP1", "kind": "system", "title": "Load the station list", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "The service returns the requested data to the app."},
+    {"external_id": "SR-BAD-DUP2", "kind": "system", "title": "Load the receipt list", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "The service returns the requested data to the app."},
+    {"external_id": "SR-BAD-TPL1", "kind": "system", "title": "Start charging", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "The system handles start charging requests and returns the result."},
+    {"external_id": "SR-BAD-TPL2", "kind": "system", "title": "Stop charging", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "The system handles stop charging requests and returns the result."},
+    {"external_id": "SR-BAD-SC1", "kind": "system", "title": "Fetch vouchers", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "Vouchers are read from the voucher table.", "criteria": [{"external_id": "SR-BAD-SC1-AC1", "statement": "Given a valid fetch vouchers request, when fetch vouchers runs, then fetch vouchers succeeds."}]},
+    {"external_id": "SR-BAD-SC2", "kind": "system", "title": "Fetch cards", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "Cards come from the payment provider.", "criteria": [{"external_id": "SR-BAD-SC2-AC1", "statement": "Given a valid fetch cards request, when fetch cards runs, then fetch cards succeeds."}]},
+    {"external_id": "SR-BAD-SC3", "kind": "system", "title": "Fetch stations", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "Stations come from the station cache.", "criteria": [{"external_id": "SR-BAD-SC3-AC1", "statement": "Given a valid fetch stations request, when fetch stations runs, then fetch stations succeeds."}]},
+    {"external_id": "SR-BAD-SC4", "kind": "system", "title": "Fetch prices", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "Prices are read per product and station.", "criteria": [{"external_id": "SR-BAD-SC4-AC1", "statement": "Given a valid fetch prices request, when fetch prices runs, then fetch prices succeeds."}]},
+    {"external_id": "SR-BAD-TITLE", "kind": "system", "title": "StartSessionCommand", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "The command creates a pending session row."},
+    {"external_id": "SR-BAD-SPLIT", "kind": "system", "title": "Get Stations Query", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "The query filters stations by country."},
+    {"external_id": "SR-BAD-CITE", "kind": "system", "title": "Keep the session table", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "Sessions persist across restarts.", "source_citations": [{"kind": "code", "path": "src/Infrastructure/Migrations/20230101_Init.cs"}]},
+    {"external_id": "SR-BAD-TWICE", "kind": "system", "title": "Close a finished session", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "A session with a final meter value is closed."},
+    {"external_id": "SR-BAD-TWICE", "kind": "system", "title": "Close an idle session", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "A session idle for an hour is closed."},
+    {"external_id": "SR-BAD-DIR", "kind": "system", "title": "Price a session", "parent_external_ids": ["UR-BAD-ACTOR"], "description": "A session's price is its energy times the tariff.", "source_citations": [{"kind": "code", "path": "src/Application/Pricing"}]}
+  ]
+}

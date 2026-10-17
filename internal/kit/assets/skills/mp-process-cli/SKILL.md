@@ -1166,6 +1166,17 @@ them again. New runs follow the sequence below.
    then perform one consolidated read-back/audit. `status --run ID` recovers
    durable group receipts after interruption; retry identical inputs/keys only
    when needed. Do not derive/publish/read back each row separately.
+   Before publishing, `modernpath reverse-engineer check --dir
+   .modernpath/reverse-engineering.runs/<folder>/groups` measures the
+   mechanical content checks on the staged group files offline (distinct
+   statements, template scenarios, actor and outcome, domain titles, the UR–SR
+   join, citation precision as a warning) and exits 1 on a failure;
+   `--existing-parents` names published URs the groups' SRs may serve, and
+   `--self-test` proves the checks on the built-in known-bad set. `publish
+   --run ID --dir <folder>/groups` then publishes every group file in name
+   order, each under its file name as the group key, after the same check; it
+   stops at the first refusal and lists what was and was not published, and
+   sending it again is safe.
    A publish prints one warning line naming the requirements it created
    without a context and without a test citation; the receipt lists them under
    `data.result` as `requirements_without_context` and
@@ -1331,10 +1342,19 @@ refused as `stale_corpus` by `authorize` (step 4) and by `refresh-traces`
 
 #### Working rules
 
-- Runs publish one after another. Authorize the next run only after the
+- In a sweep worked one context at a time, runs publish one after another.
+  Authorize the next run only after the
   previous one has published every group, its source assessments included,
   so that it meets the finish condition of step 7, or after the person
-  decided to leave it unfinished. The next run reuses the earlier run's
+  decided to leave it unfinished. A batch sweep (the "Batch sweep" of
+  `rdd-reverse-engineer`) authorizes one run per context back to back from
+  one preflight, since an authorization changes no requirement, and its
+  context sessions publish in parallel: a publish compares only the records
+  its group names. A `refresh-traces` refused as `stale_corpus` while other
+  contexts publish takes a fresh preflight and is sent again. The batch
+  authorization covers ending a context unfinished for the gaps that skill
+  names, so a context session states them in its report and ends without
+  asking. The next run reuses the earlier run's
   confirmed contexts and assesses the files its requirements cover, and every
   group that creates a requirement, a link or an epic changes the corpus
   fingerprint that the next authorization is checked against.

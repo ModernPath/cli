@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -30,9 +31,27 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 		command := &cobra.Command{Use: name, Short: description, Args: cobra.NoArgs}
 		if payload && name != "authorize" {
 			command.Flags().String("file", "", "exact JSON intent file; - reads stdin (required)")
-			_ = command.MarkFlagRequired("file")
+			if name == "publish" {
+				// publish takes a folder of groups instead with --dir.
+				command.Flags().Lookup("file").Usage = "exact JSON intent file; - reads stdin (this or --dir)"
+			} else {
+				_ = command.MarkFlagRequired("file")
+			}
 		}
 		command.RunE = func(cmd *cobra.Command, _ []string) error {
+			if name == "publish" {
+				dir, _ := cmd.Flags().GetString("dir")
+				file, _ := cmd.Flags().GetString("file")
+				group, _ := cmd.Flags().GetString("group")
+				switch {
+				case dir != "" && (file != "" || group != ""):
+					return fmt.Errorf("--dir publishes every group file in the folder, each under its file name; give --file and --group for one group instead")
+				case dir != "":
+					return reversePublishDir(cmd, load, dir)
+				case file == "":
+					return fmt.Errorf("give --file and --group for one group, or --dir for a folder of groups")
+				}
+			}
 			var input map[string]any
 			// assembled: the authorization was built from the CLI's own outputs,
 			// so a server refusal can say what the operator does next.
@@ -52,10 +71,8 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 				if input == nil {
 					return fmt.Errorf("intent must be a JSON object")
 				}
-				for _, key := range []string{"system_id", "tenant_id", "actor_id", "created_by_id", "run_id", "group_key", "release_id", "base_release_id", "process_revision"} {
-					if _, exists := input[key]; exists {
-						return fmt.Errorf("%s is owned by the workspace binding, command or server", key)
-					}
+				if err := refuseBindingOwnedKeys(input); err != nil {
+					return err
 				}
 				if name == "authorize" && input["mode"] != "baseline" && input["mode"] != "derived" {
 					return fmt.Errorf("explicit mode baseline or derived is required after the user's choice")
@@ -184,7 +201,14 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			command.Flags().String("source", "", "immutable source_file id (required)")
 			_ = command.MarkFlagRequired("source")
 		}
-		if command.Name() == "publish" || command.Name() == "refresh-traces" {
+		switch command.Name() {
+		case "publish":
+			command.Long = reversePublishHelp
+			command.Flags().String("group", "", "stable coherent-group retry key (required with --file)")
+			command.Flags().String("dir", "", "folder of group files: publish every *.json in lexical order, each under its file name as the group key")
+			command.Flags().Bool("skip-check", false, "with --dir, publish without running reverse-engineer check on the folder first")
+			command.Flags().String("existing-parents", "", "with --dir, the already-published parent ids the check accepts: a comma-separated list or a file of ids")
+		case "refresh-traces":
 			command.Flags().String("group", "", "stable coherent-group retry key (required)")
 			_ = command.MarkFlagRequired("group")
 		}
@@ -193,9 +217,104 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			_ = command.MarkFlagRequired("document")
 		}
 	}
-	root.AddCommand(reverseInventoryCommand(load), reverseCaptureCommand(load), reverseRunsCommand(load), asBuiltExecutionCommand(load), asBuiltDeliveryCommand(load))
+	root.AddCommand(reverseCheckCommand(), reverseInventoryCommand(load), reverseCaptureCommand(load), reverseRunsCommand(load), asBuiltExecutionCommand(load), asBuiltDeliveryCommand(load))
 	applyGroupUnknownArgGuard(root)
 	return root
+}
+
+// refuseBindingOwnedKeys refuses an intent that names a key the workspace
+// binding, the command or the server owns.
+func refuseBindingOwnedKeys(input map[string]any) error {
+	for _, key := range []string{"system_id", "tenant_id", "actor_id", "created_by_id", "run_id", "group_key", "release_id", "base_release_id", "process_revision"} {
+		if _, exists := input[key]; exists {
+			return fmt.Errorf("%s is owned by the workspace binding, command or server", key)
+		}
+	}
+	return nil
+}
+
+const reversePublishHelp = `Publish one coherent requirement group under an authorized run, atomically.
+
+  --file <group.json> --group <key>  one group
+  --dir <folder>                      every *.json in the folder, in lexical
+                                      order, each under its file name (without
+                                      .json) as the group key
+
+With --dir the folder is first checked as one set with reverse-engineer check;
+a failed check publishes nothing (--skip-check skips it). Publishing stops at
+the first refusal and names the files published and the files left. A re-run
+is safe: the same run, group key and content return the first receipt.`
+
+// reversePublishDir publishes a folder of groups through the same request a
+// single publish sends, stopping at the first refusal.
+func reversePublishDir(cmd *cobra.Command, load func() (*factoryEnv, error), dir string) error {
+	files, err := reverseGroupFiles(dir)
+	if err != nil {
+		return err
+	}
+	if skip, _ := cmd.Flags().GetBool("skip-check"); !skip {
+		existing, _ := cmd.Flags().GetString("existing-parents")
+		parents, err := reverseExistingParents(existing)
+		if err != nil {
+			return err
+		}
+		report, err := reverseCheckFiles(files, parents)
+		if err != nil {
+			return err
+		}
+		if !report.Passed {
+			if err := reverseCheckOutput(cmd.ErrOrStderr(), report, false); err != nil {
+				return fmt.Errorf("%w; nothing was published (run reverse-engineer check --dir %s for the findings)", err, dir)
+			}
+		}
+	}
+	path, err := reverseRunPath(cmd)
+	if err != nil {
+		return err
+	}
+	env, err := load()
+	if err != nil {
+		return err
+	}
+	var published []string
+	for i, file := range files {
+		group := strings.TrimSuffix(filepath.Base(file), ".json")
+		var input map[string]any
+		err := readReverseJSON(cmd, file, &input)
+		if err == nil && input == nil {
+			err = fmt.Errorf("intent must be a JSON object")
+		}
+		if err == nil {
+			err = refuseBindingOwnedKeys(input)
+		}
+		var body map[string]any
+		if err == nil {
+			body, err = reverseCall(env, "PUT", path+"/groups/"+url.PathEscape(group), input)
+		}
+		if err != nil {
+			remaining := make([]string, 0, len(files)-i)
+			for _, rest := range files[i:] {
+				remaining = append(remaining, filepath.Base(rest))
+			}
+			return fmt.Errorf("%s: %w\npublished: %s\nnot published: %s", filepath.Base(file), err, reverseFileList(published), strings.Join(remaining, ", "))
+		}
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(body); err != nil {
+			return err
+		}
+		if warning := reverseReceiptWarning(body); warning != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s\n", group, warning)
+		}
+		published = append(published, filepath.Base(file))
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "published %d groups from %s\n", len(published), dir)
+	return nil
+}
+
+func reverseFileList(files []string) string {
+	if len(files) == 0 {
+		return "none"
+	}
+	return strings.Join(files, ", ")
 }
 
 func reverseRunPath(cmd *cobra.Command) (string, error) {

@@ -385,7 +385,11 @@ func TestProcessCliSkillStatesRunCurrency(t *testing.T) {
 		"every group that creates a requirement, a link or an epic changes the corpus fingerprint that the next authorization is checked against",
 		"a refresh needs the corpus fingerprint of a current preflight, and every group that creates a requirement, a link or an epic changes it.",
 		// the working rules
-		"Runs publish one after another. Authorize the next run only after the previous one has published every group, its source assessments included, so that it meets the finish condition of step 7, or after the person decided to leave it unfinished.",
+		"In a sweep worked one context at a time, runs publish one after another. Authorize the next run only after the previous one has published every group, its source assessments included, so that it meets the finish condition of step 7, or after the person decided to leave it unfinished.",
+		// a batch sweep authorizes its runs together and publishes in parallel
+		"authorizes one run per context back to back from one preflight, since an authorization changes no requirement, and its context sessions publish in parallel",
+		"so a context session states them in its report and ends without asking",
+		"measures the mechanical content checks on the staged group files offline",
 		"Fold a correction to a requirement into its group before the group is published.",
 		"Changes to published citations and `refresh-traces` belong to verification, after the run has published its last group",
 		"Set contexts on requirements already published, with `author context --file`, after the run's last group and before verification records execution proof",

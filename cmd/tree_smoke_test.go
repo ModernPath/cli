@@ -537,6 +537,7 @@ var leafDispositions = map[string]disposition{
 	"reverse-engineer execution-proof":  {kind: dispNoCall, reason: "needs-precondition"},
 	"reverse-engineer delivery-proof":   {kind: dispNoCall, reason: "needs-precondition"},
 	"reverse-engineer inventory":        {kind: dispNoCall, reason: "local-only"},
+	"reverse-engineer check":            {kind: dispNoCall, reason: "local-only", args: []string{"reverse-engineer", "check", "--self-test"}},
 	// Exact JSON intent is required before any write; nested payloads are
 	// exercised by reverse_engineer_test.go against its own HTTP fixture.
 	"reverse-engineer authorize":      {kind: dispNoCall, reason: "needs-precondition"},
