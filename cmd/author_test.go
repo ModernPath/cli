@@ -622,6 +622,41 @@ func TestAuthorUpdateCarriesBoundaryRationaleAndVerificationMethod(t *testing.T)
 	}
 }
 
+// A user requirement's actor and outcome are editable through the sanctioned
+// path: --actor rides as the record's actor, --outcome as intended_use, and
+// an omitted flag sends no key.
+func TestAuthorUpdateCarriesActorAndOutcome(t *testing.T) {
+	t.Cleanup(func() {
+		authorURActor, authorUROutcome = "", ""
+		for _, flag := range []string{"actor", "outcome"} {
+			authorUpdateCmd.Flags().Lookup(flag).Changed = false
+		}
+	})
+
+	base, err := authorUpdateRecord(authorUpdateCmd)
+	if err != nil {
+		t.Fatalf("authorUpdateRecord (omitted): %v", err)
+	}
+	for _, k := range []string{"actor", "intended_use"} {
+		if _, present := base[k]; present {
+			t.Fatalf("an omitted flag must send no %q key, got %v", k, base[k])
+		}
+	}
+
+	for flag, val := range map[string]string{"actor": "Driver with the app", "outcome": "Start a charging session"} {
+		if err := authorUpdateCmd.Flags().Set(flag, val); err != nil {
+			t.Fatalf("--%s must be a registered author-update flag: %v", flag, err)
+		}
+	}
+	rec, err := authorUpdateRecord(authorUpdateCmd)
+	if err != nil {
+		t.Fatalf("authorUpdateRecord (set): %v", err)
+	}
+	if rec["actor"] != "Driver with the app" || rec["intended_use"] != "Start a charging session" {
+		t.Fatalf("--actor/--outcome must ride as actor/intended_use, got %v / %v", rec["actor"], rec["intended_use"])
+	}
+}
+
 // REQ-CROSS-306 (EPIC-CLI-007) — `author relate --mode` reaches the server's
 // declare/withdraw/confirm modes (declare was the only one wired). RED first:
 // authorRelateFields and authorRelateMode do not exist yet.

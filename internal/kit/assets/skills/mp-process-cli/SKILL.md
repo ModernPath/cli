@@ -1475,9 +1475,14 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    each requirement's current content fingerprint. The capture run must belong
    to the signed-in actor, be baseline-authorized and contain every persisted
    code/test citation selected. DERIVED grants refuse confirmed refresh links.
-   This atomically creates/reuses confirmed immutable source/TestCase links;
-   requirement content, criteria, lifecycle and baseline provenance stay intact.
-   Existing historical links remain. Rejected, stale, deleted or differently
+   This atomically creates/reuses confirmed immutable source/TestCase links
+   and withdraws the requirement's reverse-engineering code and test links
+   whose file — repository key and path — none of its current citations
+   names, such as a test that asserts none of its rules; the receipt counts
+   them as `withdrawn_links`. A test citation is not required: a requirement
+   without one is a test gap. Requirement content, criteria, lifecycle and
+   baseline provenance stay intact. Historical links to an earlier capture of
+   a still-cited file remain. Rejected, stale, deleted or differently
    governed pairs refuse rather than being revived. UR upper proof uses captured
    citations directly and needs no invented SR links. Retain the returned receipt;
    `status --run CAPTURE-RUN` includes `trace_refreshes` for recovery. Identical
@@ -1594,6 +1599,9 @@ author/sync operations. These write commands run only from the main session.
 `statement`. Supply the UR `actor` and its outcome as `intended_use` (publish
 stores no `outcome` key and drops it without a refusal), and the SR `boundary`
 and `verification_method`.
+A published UR's actor and outcome are corrected with `modernpath author
+update <id> --actor "<role>" --outcome "<outcome>" --expected-fingerprint
+<fp>`; either one moves the fingerprint.
 SR `parent_external_ids` names exact UR parents; a parentless SR needs a rationale.
 Do not send authority, approval, release or work-status fields as intent.
 

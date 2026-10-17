@@ -137,7 +137,7 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 		}
 		return path + "/groups/" + url.PathEscape(group), nil
 	}, true)
-	add("refresh-traces", "Refresh confirmed captured code/test links on existing pending baselines; preserve requirement content", "PUT", func(cmd *cobra.Command) (string, error) {
+	add("refresh-traces", "Make pending baselines' confirmed code/test links match their citations: add missing links, withdraw uncited ones; preserve requirement content", "PUT", func(cmd *cobra.Command) (string, error) {
 		path, err := reverseRunPath(cmd)
 		if err != nil {
 			return "", err

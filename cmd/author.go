@@ -64,6 +64,8 @@ var (
 	authorBoundary           string
 	authorRationale          string
 	authorVerificationMethod string
+	authorURActor            string
+	authorUROutcome          string
 	// REQ-CROSS-458: the small-change lane class, set before the narrow review.
 	authorLaneClass string
 	// EPIC-CLI-007: `author relate --mode` reaches the server's
@@ -1043,10 +1045,13 @@ var authorUpdateCmd = &cobra.Command{
 overwriting; --criteria replaces the scenarios/criteria whole.
 
 Keep the scalar flags — --title, --stage, --priority, --owner, --context,
---context-name and each --source tag — under 255 characters. A value over the bound is refused
+--context-name, --actor and each --source tag — under 255 characters. A value over the bound is refused
 as a 422 naming the field and the limit, and nothing is written. Prose
 belongs in --detail, which is unbounded; --description, --boundary,
 --rationale and --verification-method take a paragraph.
+
+--actor and --outcome edit a user requirement's actor and its intended
+outcome (stored as intended_use); either one moves the fingerprint.
 
 --citations-file replaces the source citation set with typed JSON objects.
 It preserves captured-source identities and code/test kinds. It is mutually
@@ -1131,6 +1136,10 @@ func authorUpdateRecord(cmd *cobra.Command) (map[string]any, error) {
 	setStr("boundary", "boundary", authorBoundary)
 	setStr("rationale", "rationale", authorRationale)
 	setStr("verification-method", "verification_method", authorVerificationMethod)
+	// A user requirement's actor and outcome. The record's "actor" key is the
+	// UR field; the write's attribution rides the request body, not the record.
+	setStr("actor", "actor", authorURActor)
+	setStr("outcome", "intended_use", authorUROutcome)
 	setStr("lane-class", "lane_class", authorLaneClass)
 	// REQ-CROSS-310 (SR-CLI-0081): --context and repeatable --source ride the
 	// edit — the server accepts both, and a working-set pull renders them.
@@ -1198,7 +1207,7 @@ func readTypedCitations(path string) ([]map[string]any, error) {
 
 // requirementOnlyFlags are the author update flags a backlog record has no
 // field for.
-var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "lane-class", "context", "context-name", "criteria", "citations-file"}
+var requirementOnlyFlags = []string{"description", "stage", "priority", "owner", "boundary", "rationale", "verification-method", "lane-class", "context", "context-name", "criteria", "citations-file", "actor", "outcome"}
 
 // refuseRequirementFieldsOnBacklog refuses, before any request, a requirement
 // or epic field on a backlog record. The server reads only the backlog content
@@ -1430,6 +1439,8 @@ func init() {
 	authorUpdateCmd.Flags().StringVar(&authorBoundary, "boundary", "", "new change boundary (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorRationale, "rationale", "", "new rationale (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorVerificationMethod, "verification-method", "", "new verification method (system requirement)")
+	authorUpdateCmd.Flags().StringVar(&authorURActor, "actor", "", "new actor: the traced caller whose outcome this is (user requirement)")
+	authorUpdateCmd.Flags().StringVar(&authorUROutcome, "outcome", "", "new intended outcome, stored as intended_use (user requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorLaneClass, "lane-class", "", "the small-change lane class, set before the narrow review: defect_with_failing_test, wording, presentation or dependency_patch (system requirement)")
 	authorUpdateCmd.Flags().StringVar(&authorCriteria, "criteria", "",
 		"JSON array of criterion/scenario objects — inline when it starts with '[', otherwise a file path. "+

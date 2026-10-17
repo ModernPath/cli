@@ -63,7 +63,7 @@ type Record struct {
 // small-change lane class (REQ-CROSS-454).
 var mutableFields = map[string][]string{
 	"system": {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "boundary", "rationale", "verification_method", "lane_class", "source_citations", "parent_external_ids"},
-	"user":   {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "source_citations"},
+	"user":   {"title", "description", "context", "context_name", "stage", "priority", "owner", "detail_md", "release_note", "source_citations", "actor", "intended_use"},
 	"epic":   {"title", "description", "outcome_source", "scope", "impact_assessment", "shared_context", "generated_from", "owner", "source_citations"},
 }
 
