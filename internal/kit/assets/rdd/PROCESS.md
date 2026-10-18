@@ -387,11 +387,14 @@ applying a stance the human has stated, or bookkeeping that follows from a
 decision already given is done and reported, never asked. Each question
 stands alone in one plain sentence about what changes for the product, and
 bookkeeping is never bundled with a decision. A human's answer — to a gate
-or to a question — is a decision about that gate or question, never an
-instruction to enter the next phase: the agent applies it, reports what
-moved, and waits for the human's word before any further phase, in the
-complete loop as in a focused pass. Under an autopilot grant the agent
-continues instead (§Autopilot). An authorized source-scoped
+or to a question — is a decision about that gate or question: the agent
+applies it, reports in one line what moved, and carries on through the
+phases of the work it was asked to do. It stops only at a human decision: an
+open human gate, a question only the human can answer, or a stop the human
+asked for. An answered entry gate lets the build start. Merging, deploying
+and releasing wait for the human's word. A focused pass ends with its report.
+Under an autopilot grant the agent also answers the entry gate itself
+(§Autopilot). An authorized source-scoped
 reverse-engineering run, baseline or derived, continues within that
 authorization (§Source-scoped baseline onboarding).
 
@@ -600,7 +603,7 @@ human withdraws it, or when its scope is done.
 | Preflight facts (suspended selections, stale snapshots, drift, open holds) | Stop selection | Clear each with its documented verb, or log it and continue |
 | A refusal at a phase boundary | Stop and report | Try the documented clearing verb once. If it still refuses, log it, move to the next item, and let the record catch up at sprint end. |
 | A product question | Asked; the loop waits | Asked, but the loop does not wait: see below |
-| After a gate answer or a pass | Wait for the human's word | Continue |
+| After a gate answer or a pass | Continue the requested work to the next human decision | Continue |
 | Work selection | An Epic or a single SR | A connected journey with the requirements it needs, existing or newly written with sources; more than one SR from an Epic is held as that Epic's selection |
 | Planning and cold review | Per selected scope | Once per journey. An unchanged reviewed packet goes straight to entry, or to RED when its entry is already applied and current; any change in a blocking cold-review category — correctness, security, data integrity or data loss, contract, traceability, testability — and any changed scope or acceptance is reviewed again, and only that change |
 | Readiness to build | The complete packet and an applied entry | Code starts once the source, outcome, owning requirements, state and safety boundaries, and representative RED assertions are clear; remaining inventory and record updates run alongside the build. Code written before the entry is applied is reversible local build-ahead (below); the entry is applied before any RED evidence is recorded or any requirement advances |

@@ -92,7 +92,7 @@ func TestReverseEngineerSkillStatesTheRunMode(t *testing.T) {
 		"full sweep across remaining authorized contexts without per-context reapproval",
 	})
 	requireInstalledMarkers(t, "the installed PROCESS.md does not name the authorized run as continuing", installedNormalized(t, root, ".modernpath", "rdd", "PROCESS.md"), []string{
-		"Under an autopilot grant the agent continues instead (§Autopilot). An authorized source-scoped reverse-engineering run, baseline or derived, continues within that authorization (§Source-scoped baseline onboarding).",
+		"Under an autopilot grant the agent also answers the entry gate itself (§Autopilot). An authorized source-scoped reverse-engineering run, baseline or derived, continues within that authorization (§Source-scoped baseline onboarding).",
 		// kept: the rule it points to
 		"No per-row or per-context confirmation is required within this approved scope.",
 	})

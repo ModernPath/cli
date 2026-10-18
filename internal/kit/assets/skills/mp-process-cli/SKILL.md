@@ -459,9 +459,9 @@ ENTRY-<scope> --json`; `author advance <id> --gate <GATE>` also reads it, and
 the FROM, TO and kind, when they are omitted. `--gate-answer` accepts the
 option key, its label, or the stored answer text.
 
-The entry pass ends here: report the applied transitions and stop. The answer
-was a decision about the gate, not an instruction to build (`PROCESS.md`
-§Gates); §2 begins in a session the human opens for the build.
+A focused entry pass ends here with the applied transitions. In the complete
+loop §2 follows without a new request: an answered entry gate lets the build
+start (`PROCESS.md` §Gates).
 
 ## 2. Build → evidence → completion → apply (store-backed)
 

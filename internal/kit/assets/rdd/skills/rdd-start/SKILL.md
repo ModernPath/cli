@@ -128,9 +128,9 @@ retain precedence. Mixed scopes remain explicit; do not silently change the
 selection or apply normal RED requirements to this dedicated path. Provenance
 alone never reroutes an entered or defect-reopened item.
 
-A pass ends with its report. Enter the next phase only when the human asks
-for it, or when the request at session entry was the complete loop and the
-boundary carried no human answer.
+A focused pass ends with its report. When the request at session entry was
+the complete loop, continue through its phases and stop only at a human
+decision (`PROCESS.md` §Gates).
 
 ## Report
 
