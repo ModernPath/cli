@@ -387,8 +387,10 @@ func TestProcessCliSkillStatesRunCurrency(t *testing.T) {
 		// the working rules
 		"In a sweep worked one context at a time, runs publish one after another. Authorize the next run only after the previous one has published every group, its source assessments included, so that it meets the finish condition of step 7, or after the person decided to leave it unfinished.",
 		// a batch sweep authorizes its runs together and publishes in parallel
-		"authorizes one run per context back to back from one preflight, since an authorization changes no requirement, and its context sessions publish in parallel",
-		"so a context session states them in its report and ends without asking",
+		"authorizes one run per context back to back from one preflight, since an authorization changes no requirement.",
+		"A worker stages and checks groups in its run folder and hands back `handoff.md`; it writes nothing to the store.",
+		"starts a new worker for the remainder a partial handoff lists",
+		"so the orchestrating session states them in the context's report and moves on without asking",
 		"measures the mechanical content checks on the staged group files offline",
 		"Fold a correction to a requirement into its group before the group is published.",
 		"Changes to published citations and `refresh-traces` belong to verification, after the run has published its last group",

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -164,5 +165,39 @@ func TestReversePublishDirChecksFirstAndRefusesMixedFlags(t *testing.T) {
 	}
 	if len(paths) != 0 {
 		t.Fatalf("a refused invocation reached the server: %v", paths)
+	}
+}
+
+// A group of assessments whose reasons are one generated sentence, and an
+// owned repository's file left unresolved, fail the check that publish runs.
+func TestReverseCheckRefusesGeneratedAssessments(t *testing.T) {
+	dir := t.TempDir()
+	var items []string
+	for i := 0; i < 5; i++ {
+		items = append(items, fmt.Sprintf(`{"repository_key":"Libraries","path":"src/F%d.cs","sha256":"%064x","snapshot_digest":"x","outcome":"reviewed","reason":"Read the exact captured bytes and verified SHA-256 %064x. No requirement cites this path."}`, i, i, i))
+	}
+	items = append(items, `{"repository_key":"CarWash","path":"infrastructure/main.bicep","sha256":"x","snapshot_digest":"x","outcome":"unresolved","reason":"Sets the location sync schedule; not yet linked."}`)
+	file := filepath.Join(dir, "assessments.json")
+	if err := os.WriteFile(file, []byte(`{"requirements":[],"source_assessments":[`+strings.Join(items, ",")+`]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := reverseCheckFiles([]string{file}, map[string]bool{}, map[string]bool{"CarWash": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := map[string]bool{}
+	for _, check := range report.Checks {
+		if !check.Passed && check.Level == "fail" {
+			failed[check.Name] = true
+		}
+	}
+	if report.Passed || !failed["assessment-reasons"] || !failed["unresolved-owned"] {
+		t.Fatalf("generated reasons and an owned unresolved file must fail, got %+v", failed)
+	}
+	if report.Assessments != 6 {
+		t.Fatalf("the report counts the assessments, got %d", report.Assessments)
+	}
+	if without := reverseCheckWithout(report, "ur-sr-join"); without.Passed {
+		t.Fatal("dropping the join must not hide the assessment failures")
 	}
 }

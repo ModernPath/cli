@@ -108,8 +108,8 @@ func TestReverseEngineerSkillStatesRunCurrency(t *testing.T) {
 	requireInstalledMarkers(t, "the installed rdd-reverse-engineer does not state what keeps a run publishing", installedReverseEngineeringInstructions(t, root), []string{
 		"Of the corpus, a publication group is refused only for a collision with a record it names, never because the rest of the corpus changed.",
 		"In a sweep worked one context at a time, runs publish one after another",
-		// a batch sweep authorizes its runs together and publishes in parallel
-		"A batch sweep authorizes its runs together and publishes them in parallel",
+		// a batch sweep authorizes its runs together and derives them in parallel
+		"A batch sweep authorizes its runs together and derives them in parallel",
 		"A context never waits for another and never stops the batch.",
 		"its source assessments included, and meets the finish condition, or after the person decided to leave it unfinished",
 		"Fold a correction into a group before publishing it.",

@@ -38,18 +38,32 @@ Record stable unit identities and mappings so the checker can report:
 | Executed verification | Requirements in the run | None in this pass; a cited test is never counted here |
 | Reverse mapping | Every persisted requirement/source reference in the batch | Resolve inside authorized inventory or to an explicitly authorized existing identity |
 
-A file is assessed by reading it. A script may group files by path and propose
+A file is assessed by reading it. Fetching its bytes with a script is not
+reading it. A script may group files by path and propose
 a reason, but each reason is checked against the file before it is recorded,
 and a file no rule matched stays unresolved: a default reason such as "outside
 the described behavior" is never assigned to a file nobody read. A file that
 sets behavior a requirement states — options validation, serialization,
 deployment settings such as schedules, retries and message lifetimes — is
-linked to that requirement, not assessed as unsupported.
+linked to that requirement, not assessed as unsupported. A reason is written
+for its file and says what the file is; one sentence filled in with each
+file's path or digest is a generated reason, however many files it covers.
+A file assessed unresolved has not been assessed: report it with the
+unassessed files as remaining work, and never assess a file of the context's
+own repositories as unresolved to bring the unassessed count to zero. A link
+made later does not clear an unresolved assessment: assess the linked file
+again as reviewed, naming the requirement that cites it.
 
 State absent surfaces as inapplicable only after checking; unexplored surfaces
 remain unresolved. A file disposition does not establish behavioral coverage,
 and candidate links do not establish governed or verified behavior. Counts and
 percentages describe the inventory; they do not define a passing gate.
+
+An excluded subtree is not enumerated, so the count of excluded files is
+unknown whenever a subtree is excluded. That is not remaining work and not
+part of the finish condition: report each excluded subtree with a reason that
+says what it holds, such as build output or editor settings. A subtree is
+excluded for what it is, never because the run did not read it.
 
 Missing denominators, unresolved mappings, and inputs that do not match the
 authorized inventory/read-back are incomplete measurements. Validate any checker
@@ -91,7 +105,11 @@ fails the group, and so do weak verdicts on more than one in ten of the
 sample. Report the verdict totals.
 
 Validate each mechanical check against a known-bad input. A requirement that
-fails is rewritten from the code, never patched by changing its template.
+fails is rewritten from the code, never patched by changing its template. It
+is rewritten in place, under its own identifier. A new requirement that
+restates an existing one while the existing one stays is a duplicate, and
+fails the distinct statements check. Rewrite the existing one, or ask for its
+retirement before adding a replacement.
 
 ## When a run is finished
 
@@ -115,7 +133,21 @@ with that requirement named in the reason. That assessment covers the file, not
 its surface units: a unit whose outcome the earlier requirement does not state
 is still extracted.
 
-A context is finished when its latest run meets the finish condition. A later
+A captured file outside the repositories and directories its context owns,
+which none of the context's requirements cites, is assessed as reviewed with
+a reason in the ownership form, `Owned by <context code>, run <run key>: <why
+this context does not cite it>`; the owning context's run reads it and gives
+it its own disposition. The ownership form is the one reason that repeats
+across files. A file no context owns, such as a shared library outside every
+scope, is read by the context that captured it. A file a requirement of the
+context cites is linked whoever owns it.
+
+A context is finished when its latest run meets the finish condition. A
+publication cites only its own run's captures, so a few files the context's
+runs left out, such as a gateway definition, are captured by an extra run
+scoped to them, and their behavior is a requirement of that run, citing only
+them, which the earlier requirements name. The context is then finished when
+each of those runs meets the finish condition. A later
 run of the same context whose capture holds the whole repositories or
 directories an earlier run left out supersedes that earlier run's capture
 completeness check: the report names the earlier run as superseded by the

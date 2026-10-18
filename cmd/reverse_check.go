@@ -23,7 +23,8 @@ import (
 
 const reverseCheckHelp = `Check draft group files before publishing them. The files have the shape
 reverse-engineer publish --file takes: a JSON object whose requirements list
-holds the user (kind user) and system (kind system) requirements of a group.
+holds the user (kind user) and system (kind system) requirements of a group,
+and its source_assessments list, when it has one.
 Every file given is checked as one set, so a statement repeated across two
 groups is found too. No network call is made and nothing is written.
 
@@ -43,8 +44,21 @@ The checks are the mechanical rows of the skill's content quality table:
   ur-sr-join           a user requirement no system requirement serves, or a
                        system requirement whose parents name no user
                        requirement in the set or in --existing-parents
+  technical-srs        system requirements with no parent at all: technical
+                       behavior no user outcome starts, listed so each one's
+                       reason can be read (a warning)
   citation-precision   a citation names a migration, wiring, build, telemetry
                        file or a directory (a warning; it does not fail)
+  assessment-reasons   a file assessment has no reason, or its reason is
+                       shared by more than three files once hashes, paths
+                       and numbers are removed (a generated sentence, not a
+                       reading of the file). A reason in the ownership form
+                       "Owned by <context>, run <run key>: ..." is exempt.
+  unresolved-owned     a file of a repository the context owns
+                       (--owned-repositories) is assessed unresolved: it is
+                       the context's own work, not a disposition
+  unresolved-remaining files assessed unresolved, per repository: remaining
+                       work, never a completed assessment (a warning)
 
 The checks do not replace reading the requirements against the code: the
 skill's sample read and the independent read remain. --self-test runs the
@@ -83,6 +97,16 @@ type reCheckRecord struct {
 	Candidate   bool               `json:"candidate"`
 }
 
+type reCheckAssessment struct {
+	File          string `json:"-"`
+	RepositoryKey string `json:"repository_key"`
+	Path          string `json:"path"`
+	Outcome       string `json:"outcome"`
+	Reason        string `json:"reason"`
+}
+
+func (a reCheckAssessment) id() string { return a.RepositoryKey + ":" + a.Path }
+
 type reCheckFinding struct {
 	IDs    []string `json:"ids"`
 	Detail string   `json:"detail"`
@@ -98,6 +122,7 @@ type reCheckResult struct {
 type reCheckReport struct {
 	Files        []string        `json:"files"`
 	Requirements int             `json:"requirements"`
+	Assessments  int             `json:"assessments"`
 	Checks       []reCheckResult `json:"checks"`
 	Passed       bool            `json:"passed"`
 }
@@ -110,6 +135,7 @@ func reverseCheckCommand() *cobra.Command {
 			asJSON, _ := cmd.Flags().GetBool("json")
 			selfTest, _ := cmd.Flags().GetBool("self-test")
 			existing, _ := cmd.Flags().GetString("existing-parents")
+			owned, _ := cmd.Flags().GetString("owned-repositories")
 			if selfTest {
 				if len(files) > 0 || dir != "" {
 					return fmt.Errorf("--self-test checks the built-in known-bad set; give no --file or --dir")
@@ -129,7 +155,7 @@ func reverseCheckCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := reverseCheckFiles(files, parents)
+			report, err := reverseCheckFiles(files, parents, reverseOwnedRepositories(owned))
 			if err != nil {
 				return err
 			}
@@ -138,6 +164,7 @@ func reverseCheckCommand() *cobra.Command {
 	command.Flags().StringArray("file", nil, "draft group JSON file; repeat for several")
 	command.Flags().String("dir", "", "folder of draft group JSON files (*.json, checked together)")
 	command.Flags().String("existing-parents", "", "ids of already-published requirements this set may name as parents: a comma-separated list, or a file of ids")
+	command.Flags().String("owned-repositories", "", "repository keys the context owns, comma-separated: an unresolved assessment of their files fails")
 	command.Flags().Bool("json", false, "print the report as JSON")
 	command.Flags().Bool("self-test", false, "run the checks against the built-in known-bad set and confirm each seeded failure is found")
 	return command
@@ -177,48 +204,68 @@ func reverseExistingParents(value string) (map[string]bool, error) {
 	return ids, nil
 }
 
-func reverseCheckFiles(files []string, existing map[string]bool) (reCheckReport, error) {
+// reverseOwnedRepositories reads --owned-repositories, a comma-separated list.
+func reverseOwnedRepositories(value string) map[string]bool {
+	owned := map[string]bool{}
+	for _, key := range strings.Split(value, ",") {
+		if key = strings.TrimSpace(key); key != "" {
+			owned[key] = true
+		}
+	}
+	return owned
+}
+
+func reverseCheckFiles(files []string, existing, owned map[string]bool) (reCheckReport, error) {
 	var records []reCheckRecord
+	var assessments []reCheckAssessment
 	for _, file := range files {
 		body, err := os.ReadFile(file)
 		if err != nil {
 			return reCheckReport{}, err
 		}
-		group, err := reverseCheckParse(body)
+		group, assessed, err := reverseCheckParse(body)
 		if err != nil {
 			return reCheckReport{}, fmt.Errorf("%s: %w", file, err)
 		}
 		for i := range group {
 			group[i].File = file
 		}
+		for i := range assessed {
+			assessed[i].File = file
+		}
 		records = append(records, group...)
+		assessments = append(assessments, assessed...)
 	}
-	report := reverseCheckRecords(records, existing)
+	report := reverseCheckSet(records, assessments, existing, owned)
 	report.Files = files
 	return report, nil
 }
 
-func reverseCheckParse(body []byte) ([]reCheckRecord, error) {
+func reverseCheckParse(body []byte) ([]reCheckRecord, []reCheckAssessment, error) {
 	var group struct {
-		Requirements []reCheckRecord `json:"requirements"`
+		Requirements []reCheckRecord     `json:"requirements"`
+		Assessments  []reCheckAssessment `json:"source_assessments"`
 	}
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(body, &probe); err != nil {
-		return nil, fmt.Errorf("not a group intent object: %w", err)
+		return nil, nil, fmt.Errorf("not a group intent object: %w", err)
 	}
-	if _, ok := probe["requirements"]; !ok {
-		if _, assessments := probe["source_assessments"]; !assessments {
-			return nil, fmt.Errorf("not a group intent: it has no requirements list")
-		}
-		return nil, nil
+	_, hasRequirements := probe["requirements"]
+	_, hasAssessments := probe["source_assessments"]
+	if !hasRequirements && !hasAssessments {
+		return nil, nil, fmt.Errorf("not a group intent: it has no requirements list")
 	}
 	if err := json.Unmarshal(body, &group); err != nil {
-		return nil, fmt.Errorf("requirements: %w", err)
+		return nil, nil, fmt.Errorf("group: %w", err)
 	}
-	return group.Requirements, nil
+	return group.Requirements, group.Assessments, nil
 }
 
 func reverseCheckRecords(records []reCheckRecord, existing map[string]bool) reCheckReport {
+	return reverseCheckSet(records, nil, existing, map[string]bool{})
+}
+
+func reverseCheckSet(records []reCheckRecord, assessments []reCheckAssessment, existing, owned map[string]bool) reCheckReport {
 	checks := []reCheckResult{
 		checkUniqueIDs(records),
 		checkDistinctStatements(records),
@@ -226,7 +273,11 @@ func reverseCheckRecords(records []reCheckRecord, existing map[string]bool) reCh
 		checkActorOutcome(records),
 		checkDomainTitles(records),
 		checkURSRJoin(records, existing),
+		checkTechnicalSRs(records),
 		checkCitationPrecision(records),
+		checkAssessmentReasons(assessments),
+		checkUnresolvedOwned(assessments, owned),
+		checkUnresolvedRemaining(assessments),
 	}
 	passed := true
 	for i := range checks {
@@ -235,7 +286,7 @@ func reverseCheckRecords(records []reCheckRecord, existing map[string]bool) reCh
 			passed = false
 		}
 	}
-	return reCheckReport{Requirements: len(records), Checks: checks, Passed: passed}
+	return reCheckReport{Requirements: len(records), Assessments: len(assessments), Checks: checks, Passed: passed}
 }
 
 var reCheckNonWord = regexp.MustCompile(`[^a-z0-9]+`)
@@ -463,7 +514,8 @@ func checkURSRJoin(records []reCheckRecord, existing map[string]bool) reCheckRes
 		}
 	}
 	for _, r := range records {
-		if r.Kind != "system" {
+		// A system requirement with no parent is technical; checkTechnicalSRs lists it.
+		if r.Kind != "system" || len(r.Parents) == 0 {
 			continue
 		}
 		named := false
@@ -474,10 +526,7 @@ func checkURSRJoin(records []reCheckRecord, existing map[string]bool) reCheckRes
 			}
 		}
 		if !named {
-			detail := "serves no user requirement"
-			if len(r.Parents) > 0 {
-				detail = fmt.Sprintf("its parents %s are neither in this set nor in --existing-parents", strings.Join(r.Parents, ", "))
-			}
+			detail := fmt.Sprintf("its parents %s are neither in this set nor in --existing-parents", strings.Join(r.Parents, ", "))
 			result.Findings = append(result.Findings, reCheckFinding{IDs: []string{r.ExternalID}, Detail: detail})
 		}
 	}
@@ -490,6 +539,16 @@ func checkURSRJoin(records []reCheckRecord, existing map[string]bool) reCheckRes
 	sort.Strings(unserved)
 	for _, id := range unserved {
 		result.Findings = append(result.Findings, reCheckFinding{IDs: []string{id}, Detail: "no system requirement serves it"})
+	}
+	return result
+}
+
+func checkTechnicalSRs(records []reCheckRecord) reCheckResult {
+	result := reCheckResult{Name: "technical-srs", Level: "warn"}
+	for _, r := range records {
+		if r.Kind == "system" && len(r.Parents) == 0 {
+			result.Findings = append(result.Findings, reCheckFinding{IDs: []string{r.ExternalID}, Detail: "has no parent user requirement: its description says why no user outcome starts it"})
+		}
 	}
 	return result
 }
@@ -515,6 +574,99 @@ func checkCitationPrecision(records []reCheckRecord) reCheckResult {
 				result.Findings = append(result.Findings, reCheckFinding{IDs: []string{r.ExternalID}, Detail: fmt.Sprintf("cites %s, a migration, wiring, build or telemetry file: confirm it implements the stated behavior", path)})
 			}
 		}
+	}
+	return result
+}
+
+// reCheckOwnership is the ownership form of a reason the skill names:
+// "Owned by <context code>, run <run key>: ..." for a file another context
+// owns and none of this context's requirements cites.
+var reCheckOwnership = regexp.MustCompile(`^Owned by [A-Za-z0-9_-]+, run [A-Za-z0-9._-]+:`)
+
+var (
+	reCheckHex  = regexp.MustCompile(`(?i)\b[0-9a-f]{7,}\b`)
+	reCheckPath = regexp.MustCompile(`\S*[/\\]\S*|\S+\.[A-Za-z0-9]{1,6}\b`)
+	reCheckNum  = regexp.MustCompile(`\b\d+\b`)
+)
+
+// reCheckReasonShape is a reason with what differs from file to file removed:
+// digests, paths, file names, numbers and the words of the file's own path.
+// Two files whose reasons share a shape got one generated sentence.
+func reCheckReasonShape(a reCheckAssessment) string {
+	text := reCheckHex.ReplaceAllString(a.Reason, " ")
+	text = reCheckPath.ReplaceAllString(text, " ")
+	text = reCheckNum.ReplaceAllString(text, " ")
+	own := map[string]bool{}
+	for _, word := range reCheckWords(a.Path) {
+		own[word] = true
+	}
+	var kept []string
+	for _, word := range reCheckWords(text) {
+		if !own[word] {
+			kept = append(kept, word)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
+func checkAssessmentReasons(assessments []reCheckAssessment) reCheckResult {
+	result := reCheckResult{Name: "assessment-reasons", Level: "fail"}
+	byShape := map[string][]string{}
+	for _, a := range assessments {
+		if strings.TrimSpace(a.Reason) == "" {
+			result.Findings = append(result.Findings, reCheckFinding{IDs: []string{a.id()}, Detail: "the assessment has no reason"})
+			continue
+		}
+		if reCheckOwnership.MatchString(a.Reason) {
+			// An ownership assessment repeats by design: the owning context's
+			// run reads the file and gives it its own disposition.
+			continue
+		}
+		shape := reCheckReasonShape(a)
+		if shape == "" {
+			result.Findings = append(result.Findings, reCheckFinding{IDs: []string{a.id()}, Detail: "the reason says nothing beyond the file's path, digest or numbers"})
+			continue
+		}
+		byShape[shape] = append(byShape[shape], a.id())
+	}
+	for _, ids := range reCheckGroups(byShape, 3) {
+		result.Findings = append(result.Findings, reCheckFinding{IDs: ids,
+			Detail: fmt.Sprintf("%d files share one reason once hashes, paths and numbers are removed; read each file and say what it is", len(ids))})
+	}
+	return result
+}
+
+func checkUnresolvedOwned(assessments []reCheckAssessment, owned map[string]bool) reCheckResult {
+	result := reCheckResult{Name: "unresolved-owned", Level: "fail"}
+	var ids []string
+	for _, a := range assessments {
+		if a.Outcome == "unresolved" && owned[a.RepositoryKey] {
+			ids = append(ids, a.id())
+		}
+	}
+	if len(ids) > 0 {
+		result.Findings = append(result.Findings, reCheckFinding{IDs: ids,
+			Detail: fmt.Sprintf("%d files of repositories this context owns are assessed unresolved: read each and link it, or assess it reviewed or unsupported", len(ids))})
+	}
+	return result
+}
+
+func checkUnresolvedRemaining(assessments []reCheckAssessment) reCheckResult {
+	result := reCheckResult{Name: "unresolved-remaining", Level: "warn"}
+	byRepository := map[string][]string{}
+	for _, a := range assessments {
+		if a.Outcome == "unresolved" {
+			byRepository[a.RepositoryKey] = append(byRepository[a.RepositoryKey], a.id())
+		}
+	}
+	keys := make([]string, 0, len(byRepository))
+	for key := range byRepository {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result.Findings = append(result.Findings, reCheckFinding{IDs: byRepository[key],
+			Detail: fmt.Sprintf("%s: %d files assessed unresolved are remaining work; report them with the unassessed files, never as assessed", key, len(byRepository[key]))})
 	}
 	return result
 }
@@ -568,13 +720,19 @@ func reCheckVerdict(check reCheckResult) string {
 func reverseCheckSelfTest(w io.Writer) error {
 	var fixture struct {
 		Requirements []reCheckRecord     `json:"requirements"`
+		Assessments  []reCheckAssessment `json:"source_assessments"`
+		Owned        []string            `json:"owned_repositories"`
 		Seeded       map[string][]string `json:"seeded"`
 		Good         []string            `json:"good"`
 	}
 	if err := json.Unmarshal(reverseCheckKnownBad, &fixture); err != nil {
 		return fmt.Errorf("built-in known-bad set: %w", err)
 	}
-	report := reverseCheckRecords(fixture.Requirements, map[string]bool{})
+	owned := map[string]bool{}
+	for _, key := range fixture.Owned {
+		owned[key] = true
+	}
+	report := reverseCheckSet(fixture.Requirements, fixture.Assessments, map[string]bool{}, owned)
 	found := map[string]map[string]bool{}
 	clean := true
 	good := map[string]bool{}

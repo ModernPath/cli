@@ -57,7 +57,12 @@ is file-backed; under `process/store-backed.md` its subject is retired, so
 `modernpath install` withholds it and `install --check` reports a copy found
 there as drift. The delegated cold review runs in the agent definition the
 CLI installs at `.claude/agents/rdd-cold-reviewer.md` (Read, Grep, Glob; no
-shell); it returns findings and a verdict, and the session records them. The former workspace `rdd-audit` and `rdd-reverse-engineer` are
+shell); it returns findings and a verdict, and the session records them. A
+reverse-engineering batch delegates each context to the context worker
+(rdd-context-deriver); it stages and checks requirement groups and hands them
+back, and the session publishes them. Both agents are installed for Claude
+Code (`.claude/agents/*.md`) and Codex (`.codex/agents/*.toml`), which Cursor
+also reads; their roles are written for any harness. The former workspace `rdd-audit` and `rdd-reverse-engineer` are
 now package skills — the citation auditor installs at
 `.modernpath/rdd/skills/rdd-audit/audit-citations.mjs`.
 

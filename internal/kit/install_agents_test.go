@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +79,36 @@ func TestCheckReportsAnEditedOrMissingReviewerAgent(t *testing.T) {
 	drift, _ = Check(root)
 	if len(drift) != 1 || drift[0] != reviewerAgentTarget {
 		t.Fatalf("a missing reviewer must be reported as drift, got %v", drift)
+	}
+}
+
+// The batch sweep's context worker is installed with the kit. It stages and
+// checks; it names every store write as the orchestrating session's.
+func TestInstallWritesTheContextDeriverAgent(t *testing.T) {
+	want, err := assets.ReadFile("assets/agents/rdd-context-deriver.md")
+	if err != nil {
+		t.Fatalf("the kit must embed the context deriver: %v", err)
+	}
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, ".claude/agents/rdd-context-deriver.md"))
+	if err != nil {
+		t.Fatalf("install must write the context deriver: %v", err)
+	}
+	if !bytes.Equal(want, got) {
+		t.Fatal("the installed context deriver must equal the asset")
+	}
+	text := strings.Join(strings.Fields(string(got)), " ")
+	for _, marker := range []string{
+		"never writes to the process store",
+		"`.modernpath/rdd/skills/rdd-reverse-engineer/references/context-worker.md`",
+		"You never run a `modernpath` verb that writes to the process store",
+		"`<run folder>/handoff.md`",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Errorf("the context deriver must state %q", marker)
+		}
 	}
 }

@@ -51,6 +51,9 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 				case file == "":
 					return fmt.Errorf("give --file and --group for one group, or --dir for a folder of groups")
 				}
+				if err := reversePublishCheck(cmd, []string{file}, file); err != nil {
+					return err
+				}
 			}
 			var input map[string]any
 			// assembled: the authorization was built from the CLI's own outputs,
@@ -95,6 +98,11 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 					return reverseAuthorizeGuidance(err)
 				}
 				return err
+			}
+			if summary, _ := cmd.Flags().GetBool("summary"); summary {
+				limit, _ := cmd.Flags().GetInt("limit")
+				writeReverseSummary(cmd.OutOrStdout(), body["data"].(map[string]any), limit)
+				return nil
 			}
 			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(body); err != nil {
 				return err
@@ -155,10 +163,10 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 		}
 		return "/reverse-engineering/sources/" + url.PathEscape(id), nil
 	}, false)
-	add("read-source", "Read the exact captured source, base64 encoded; never falls back to latest", "GET", func(cmd *cobra.Command) (string, error) {
+	add("read-source", "Read the exact captured source: one file as base64 JSON, or a capture's files into a folder; never falls back to latest", "GET", func(cmd *cobra.Command) (string, error) {
 		id, _ := cmd.Flags().GetString("source")
 		if id == "" {
-			return "", fmt.Errorf("--source is required")
+			return "", fmt.Errorf("give --source <source_file id>, or --capture <capture id> with --out <folder>")
 		}
 		return "/reverse-engineering/source-files/" + url.PathEscape(id), nil
 	}, false)
@@ -198,16 +206,38 @@ fresh read and decision, not an automatic retry. No task-ledger import is used.`
 			command.Flags().String("capture", "", "source capture id (required)")
 			_ = command.MarkFlagRequired("capture")
 		case "read-source":
-			command.Flags().String("source", "", "immutable source_file id (required)")
-			_ = command.MarkFlagRequired("source")
+			command.Long = reverseReadSourceHelp
+			command.Flags().String("source", "", "immutable source_file id: print that one file")
+			command.Flags().String("capture", "", "source capture id: write its files to --out")
+			command.Flags().String("out", "", "with --capture, the folder the files are written to")
+			command.Flags().StringArray("prefix", nil, "with --capture, keep files under this path prefix (repeatable)")
+			command.Flags().String("paths-from", "", "with --capture, keep the repository paths this file lists, one per line")
+			single := command.RunE
+			command.RunE = func(cmd *cobra.Command, args []string) error {
+				source, _ := cmd.Flags().GetString("source")
+				capture, _ := cmd.Flags().GetString("capture")
+				switch {
+				case source != "" && capture != "":
+					return fmt.Errorf("give --source for one file or --capture for a capture's files, not both")
+				case capture != "":
+					return reverseReadCapture(cmd, load, capture)
+				}
+				return single(cmd, args)
+			}
+		}
+		switch command.Name() {
+		case "status", "coverage":
+			command.Flags().Bool("summary", false, reverseSummaryUsage)
+			command.Flags().Int("limit", 50, reverseLimitUsage)
 		}
 		switch command.Name() {
 		case "publish":
 			command.Long = reversePublishHelp
 			command.Flags().String("group", "", "stable coherent-group retry key (required with --file)")
 			command.Flags().String("dir", "", "folder of group files: publish every *.json in lexical order, each under its file name as the group key")
-			command.Flags().Bool("skip-check", false, "with --dir, publish without running reverse-engineer check on the folder first")
-			command.Flags().String("existing-parents", "", "with --dir, the already-published parent ids the check accepts: a comma-separated list or a file of ids")
+			command.Flags().Bool("skip-check", false, "publish without running reverse-engineer check on the group files first")
+			command.Flags().String("existing-parents", "", "the already-published parent ids the check accepts: a comma-separated list or a file of ids")
+			command.Flags().String("owned-repositories", "", "repository keys the context owns, comma-separated, for the check's unresolved-owned rule")
 		case "refresh-traces":
 			command.Flags().String("group", "", "stable coherent-group retry key (required)")
 			_ = command.MarkFlagRequired("group")
@@ -240,10 +270,58 @@ const reversePublishHelp = `Publish one coherent requirement group under an auth
                                       order, each under its file name (without
                                       .json) as the group key
 
-With --dir the folder is first checked as one set with reverse-engineer check;
-a failed check publishes nothing (--skip-check skips it). Publishing stops at
+The group files are first checked with reverse-engineer check, a folder as one
+set; a failed check publishes nothing (--skip-check skips it). Publishing stops at
 the first refusal and names the files published and the files left. A re-run
 is safe: the same run, group key and content return the first receipt.`
+
+// reversePublishCheck runs reverse-engineer check over the group files a
+// publish sends, unless --skip-check is given; a failed check publishes
+// nothing. The standard input form (--file -) is not checked here.
+func reversePublishCheck(cmd *cobra.Command, files []string, what string) error {
+	if skip, _ := cmd.Flags().GetBool("skip-check"); skip || (len(files) == 1 && files[0] == "-") {
+		return nil
+	}
+	existing, _ := cmd.Flags().GetString("existing-parents")
+	parents, err := reverseExistingParents(existing)
+	if err != nil {
+		return err
+	}
+	owned, _ := cmd.Flags().GetString("owned-repositories")
+	report, err := reverseCheckFiles(files, parents, reverseOwnedRepositories(owned))
+	if err != nil {
+		return err
+	}
+	if len(files) == 1 {
+		// One group alone may hold only parents, published before the group
+		// that serves them; the join is checked over a folder, and the server
+		// refuses a parent that does not exist.
+		report = reverseCheckWithout(report, "ur-sr-join")
+	}
+	if !report.Passed {
+		if err := reverseCheckOutput(cmd.ErrOrStderr(), report, false); err != nil {
+			return fmt.Errorf("%w; nothing was published (run reverse-engineer check on %s for the findings, or --skip-check)", err, what)
+		}
+	}
+	return nil
+}
+
+// reverseCheckWithout drops one check from a report and recomputes its verdict.
+func reverseCheckWithout(report reCheckReport, name string) reCheckReport {
+	var kept []reCheckResult
+	report.Passed = true
+	for _, check := range report.Checks {
+		if check.Name == name {
+			continue
+		}
+		kept = append(kept, check)
+		if check.Level == "fail" && !check.Passed {
+			report.Passed = false
+		}
+	}
+	report.Checks = kept
+	return report
+}
 
 // reversePublishDir publishes a folder of groups through the same request a
 // single publish sends, stopping at the first refusal.
@@ -252,21 +330,8 @@ func reversePublishDir(cmd *cobra.Command, load func() (*factoryEnv, error), dir
 	if err != nil {
 		return err
 	}
-	if skip, _ := cmd.Flags().GetBool("skip-check"); !skip {
-		existing, _ := cmd.Flags().GetString("existing-parents")
-		parents, err := reverseExistingParents(existing)
-		if err != nil {
-			return err
-		}
-		report, err := reverseCheckFiles(files, parents)
-		if err != nil {
-			return err
-		}
-		if !report.Passed {
-			if err := reverseCheckOutput(cmd.ErrOrStderr(), report, false); err != nil {
-				return fmt.Errorf("%w; nothing was published (run reverse-engineer check --dir %s for the findings)", err, dir)
-			}
-		}
+	if err := reversePublishCheck(cmd, files, dir); err != nil {
+		return err
 	}
 	path, err := reverseRunPath(cmd)
 	if err != nil {

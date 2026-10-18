@@ -78,7 +78,7 @@ worked one context at a time, runs publish one after another: authorize the
 next run only after the previous one has published every group, its source
 assessments included, and meets the finish condition, or after the person
 decided to leave it unfinished. A batch sweep authorizes its runs together and
-publishes them in parallel ([Batch sweep](#batch-sweep)). Fold a
+derives them in parallel ([Batch sweep](#batch-sweep)). Fold a
 correction into a group before publishing it. A later run cites the source
 file ids of its own capture; a file covered by a requirement from an earlier
 run is assessed as reviewed, naming that requirement. Contexts on published
@@ -89,11 +89,12 @@ onboarding gives the checks and the refusals.
 ## Batch sweep
 
 A full sweep of a system with several bounded contexts runs as a batch: the
-contexts are derived at the same time, by one session each, instead of one
-after another. A batch has a setup, the context sessions, the independent
-reads and a merge.
+contexts are derived at the same time by delegated context workers, while one
+orchestrating session runs the whole sweep, follows every worker and makes
+every write. A worker derives and stages; it never writes to the process
+store. A batch has a setup, the workers, the independent reads and a merge.
 
-**Setup, by one coordinating session.**
+**Setup, by the orchestrating session.**
 
 1. Inventory every repository, read preflight and ask the one question of
    step 1 once for the whole batch: the mode, the run mode, the documents and
@@ -102,48 +103,98 @@ reads and a merge.
    answer is the batch authorization, recorded as the authorization source of
    every run, and it is the decision to leave a context unfinished for the
    reasons below. Confirmed contexts go to the sweep's confirmed-contexts file,
-   so no context session asks about them again.
+   so the question is not asked again.
 2. Name the owner of every shared mechanism: a mechanism several contexts use,
    such as sign-in, payment authorization, notifications or a shared client
    library, has its SRs in one owning context. The other contexts do not write
-   their own SRs for it; they record in their report which of their URs the
-   owner's SRs serve. Give each context its own id prefix.
+   their own SRs for it; they record which of their URs the owner's SRs serve.
+   Name the owner of every repository and directory too: a context's scope
+   takes whole repositories, so several runs capture the same files, and each
+   file is read and assessed by the context that owns it. A repository laid
+   out by layer, such as models, services and controllers, has no directory
+   a feature context owns: assign its files to owners by what they implement,
+   and give its shared plumbing one owner. Every file that more than one run
+   captures has an owner in the batch plan before a worker starts, so the
+   other runs assess it in the ownership form instead of reading it again.
+   Give each context its own id prefix.
 3. Authorize and capture one run per context. An authorization records a run
    and changes no requirement, so the runs are authorized back to back; when
    one is refused as stale, read preflight again.
 4. Write the batch plan to `batch-plan.md` in the sweep's working folder: each
-   context's run id, scope, id prefix and the shared mechanisms it owns and
-   uses. A context session reads it first.
+   context's run id, scope, id prefix, the repositories and directories it
+   owns, and the shared mechanisms it owns and uses. Every worker reads it
+   first.
+5. Write each context's brief to `<run folder>/brief.md`: the rules a worker
+   applies on every file and requirement, in the context's own terms, and the
+   exact commands it runs with this run's values filled in — reading the
+   captured source, the content check with its existing parents and owned
+   repositories, and the staging shape. A worker reads the brief instead of
+   this skill, so it carries the reason forms, the finish condition and the
+   content checks, and names the step of this skill for anything else.
 
-**Context sessions, in parallel.** Each context runs in its own fresh session,
-started with its run id and the batch plan, following steps 2 to 4 for that
-context alone. A context session writes only in its own run folder — its
-drafts, its open questions and its report — and publishes only its own groups,
-checking each group's drafts with the offline content check before publishing
-them, as the `mp-process-cli` onboarding names it. Start as many sessions at
-once as the machine and the agent quota carry, and the rest as earlier ones
-end.
+**Context workers, in parallel.** The orchestrating session delegates each
+context to context workers, as many at once as the model's rate limit
+allows, and the next as one returns. A context is split into slices, each one
+worker's assignment: a group of files the context owns that implement related
+behavior, such as a controller with its service, models and tests, small
+enough that the worker reads all of it with room left for writing. A worker
+ends with its slice; the next slice, or the remainder of a partial one, goes
+to a new worker that starts from the run folder. A long-running worker
+carries every file it has read into each later step, so it costs more with
+every step and is the first to hit a rate limit. A worker
+takes the [context worker role](references/context-worker.md), which the
+orchestrating session hands it with the assignment, through the harness's
+installed agent definition where there is one. A worker
+follows step 2 and the staging part of step 3 for its slice: it reads the
+code, writes the requirements, stages them as group files in its run folder,
+runs the offline content check, reads a sample against the code, and hands
+back a handoff naming what is ready, what remains, the accounting of its
+surface units, entry points and files out of their totals, and the writes it
+needs. It writes only in its run folder and never runs a store write, even
+where a step names one.
+
+The orchestrating session follows the workers by their handoffs, not by
+polling run status, and reads each handoff when it arrives and acts on it:
+
+- **Partial:** the worker returned before its slice was accounted for.
+  Start a new worker with the remainder the handoff lists.
+  A returned worker is not a finished context. Name the remainder by owner:
+  the files of the context's own repositories and directories are read and
+  linked or given a reason of their own; files another context owns are
+  assessed by ownership. A continuation never tells a worker to leave files
+  unresolved, and never supplies the wording of a reason.
+- **Ready:** publish the staged groups, read them back, compare them with the
+  staged files, and make the writes the handoff names, such as a correction to
+  an earlier published record or a trace refresh. A refused publish goes back
+  to the worker with the refusal.
 
 A context never waits for another and never stops the batch. It ends finished,
 or unfinished with its remaining gaps in its report: an edit the installed
 tooling cannot make, a question only a person can answer, a fact in a
 repository outside its scope, or the independent read still to come. The
 batch authorization covers leaving a context unfinished for these reasons, so
-the session does not ask; it states the gaps and ends. Work the session can do
-itself is never a reason to end unfinished. The stop list of the
-`mp-process-cli` onboarding still stops a context session, and only that
-session.
+the orchestrating session states the gaps and moves on without asking. Work a
+worker can still do is never such a gap. The stop list of the `mp-process-cli`
+onboarding stops the context it concerns; it stops the batch only when it
+concerns the whole system, such as the service or the sign-in.
+
+Without delegated agents, each worker runs as its own session that stages but
+does not publish, and the orchestrating session publishes its handoff.
 
 **Independent reads, in parallel.** When a context has published, an
-independent reviewer reads its sample ([coverage](references/coverage.md#content-quality)).
-The reads of different contexts run at the same time. The context's session,
-or a new session for that context, applies the review's corrections through
-the sanctioned edits and records the verdicts in the context's report.
+independent reviewer that wrote none of it reads its sample
+([coverage](references/coverage.md#content-quality)). The reads of different
+contexts run at the same time. The orchestrating session records the
+verdicts and sends the findings to a worker for the context, whose corrected
+drafts and named writes it then applies. A finding marked fixed by the session
+or worker that made the correction is not a verdict: the corrected context
+gets a new independent read, of a new sample that includes the corrected
+records, before it can be reported finished.
 
-**Merge, by the coordinating session,** after every context has reported:
+**Merge, by the orchestrating session,** after every context has reported:
 
 - link each shared SR to the URs of other contexts that it serves, as the
-  context reports record them, now that both records exist;
+  handoffs record them, now that both records exist;
 - compare the new requirements across contexts by outcome and behavior, and
   list the duplicates with a proposed disposition for the person;
 - combine the contexts' open questions into the sweep's open-questions file;

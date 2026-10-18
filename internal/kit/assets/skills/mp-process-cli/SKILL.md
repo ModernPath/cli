@@ -921,11 +921,11 @@ arrive as `server <code>: <message>` or verbatim from a 422.
 | `was rejected in` | server | advancing a member the lane-batch answer rejected | fix it and include it in a new batch |
 | `entered through the small-change lane — it completes through a lane-batch gate` | server | `process complete` on a lane SR | `process lane complete` |
 | `source_not_authorized` (from `reverse-engineer publish`) | server | a source citation was refused; the refusal names its `cause`, the `requirement` and the `citation_index` (its zero-based position in that requirement's `source_citations`), or the `source_file_id` for a deleted test record. The first failing citation refuses the whole group and nothing of the group is recorded | the check for that cause under "Refusals in a sweep" in the onboarding section; fix the citation and publish the same group key again. The same refusal a second time is a stop |
-| `source_not_authorized` (from `reverse-engineer refresh-traces`) | server | the word comes bare: a stored code or test citation of a named requirement has no valid source file id, cites a document, or fails the publish checks against the capture of the run given to `--run`; nothing was recorded | "Refusals in a sweep" in the onboarding section; correct the citation, then refresh again |
+| `source_not_authorized` (from `reverse-engineer refresh-traces`) | server | a stored code or test citation of a named requirement cannot be linked through the run given to `--run`; the refusal names the `cause`, the `requirement`, the `citation_index` and the `path`. Causes: `not_a_captured_file` (no source file id, or a document), `capture_of_another_run` (the cited file is from a later run's capture than `--run`), `not_in_run_capture` (`--run` did not capture that repository path), `changed_since_capture` (`--run` captured that path with other bytes). A citation of an earlier run's capture of the same bytes is linked through this run's capture without a refusal, and the stored citation is left as it is; nothing was recorded | refresh with the run whose capture holds the cited files; for `changed_since_capture`, read the file in this run's capture and correct the requirement's citation, or its statement, from it; then refresh again |
 | `stale_corpus` (from `reverse-engineer refresh-traces`) | server | the input's `corpus_fingerprint` is not the current one: requirements, links or lifecycles changed after the preflight it came from; nothing was recorded | `reverse-engineer preflight` again and its `data.corpus_fingerprint` in the input, with the same run and the same group key |
 | `stale_corpus` (from `reverse-engineer authorize`) | server | the requirements changed after the saved preflight; nothing was recorded. `reverse-engineer publish` never answers `stale_corpus` | onboarding step 4 |
 | `existing_requirement_conflict` / `parent_not_found` / `parent_not_governed` (from `reverse-engineer publish`) | server | a record the group names collides: an `external_id` the group creates already exists in the system; a reuse entry names a requirement whose fingerprint moved from its `reuse_fingerprint`, or one that is missing, deleted, DERIVED or OBSOLETE; a parent is missing or deleted, or is not governed (DERIVED or OBSOLETE under a confirmed system requirement). Publish checks nothing of the corpus outside the records the group names, and nothing of the group is recorded | the refusal's `details` name the `requirement`, the `rule` it broke and, for a parent rule, the `parent`; correct that entry and publish the same group in the same run. When the record is the run's own — a parent in a group not yet published, a reuse entry of a requirement you corrected — publish the parent first or rebuild the entry from the current fingerprint. Otherwise the record was created or changed outside the run and the run is no longer current (stop list item 5): stop and show the person the refusal. Sending the same group again does not help, and another run does not clear it; do not authorize one without the person |
-| `invalid_trace_refresh` | server | the `reverse-engineer refresh-traces` input was refused before anything was read; the refusal names the `rule` that failed and, for an entry, its `entry_index` (zero-based). Rules in order: `group_key`, `top_level_keys`, `corpus_fingerprint`, `requirement_count`, `entry_keys`, `kind`, `external_id`, `expected_fingerprint`, `duplicate_external_id` | send the accepted input: a group key of 1 to 255 bytes; top-level keys exactly `corpus_fingerprint` and `requirements`; 1 to 500 entries, each exactly `kind: "system"`, `external_id` and a nonempty `expected_fingerprint`; no `external_id` twice |
+| `invalid_trace_refresh` | server | the `reverse-engineer refresh-traces` input was refused and nothing was recorded; the refusal names the `rule` that failed and, for an entry, its `entry_index` (zero-based) and `external_id`. Input rules, checked before anything is read: `group_key`, `top_level_keys`, `corpus_fingerprint`, `requirement_count`, `entry_keys`, `kind`, `external_id`, `expected_fingerprint`, `duplicate_external_id`. Entry rules, checked against the store: `user_requirement` (the entry names a user requirement, which takes no refresh), `requirement_not_found`, `requirement_deleted` | send the accepted input: a group key of 1 to 255 bytes; top-level keys exactly `corpus_fingerprint` and `requirements`; 1 to 500 entries, each exactly `kind: "system"`, `external_id` and a nonempty `expected_fingerprint`; no `external_id` twice. List system requirements only: drop a user requirement's entry, since its proof reads its citations directly, and drop or correct an id that is missing or deleted |
 
 ## Reverse-engineering onboarding (store-backed)
 
@@ -933,7 +933,10 @@ Use this sequence with `rdd-reverse-engineer`; these operations are separate
 from delivery entry/completion gates. Run them only in the main session.
 
 Before resuming, use `modernpath reverse-engineer status --run ID` to recover
-stored authorization, source identities and group receipts. Reuse unchanged
+stored authorization, source identities and group receipts. A run's full
+status and coverage are hundreds of kilobytes; to follow a run, read them with
+`--summary`, which prints the counts, the latest groups and only the files
+still to act on. Reuse unchanged
 inputs/keys and reconcile acknowledged groups with the unpublished remainder;
 do not repeat mode approval or recapture completed sources. Resume incomplete
 captures as needed. A conflict requires reconciliation, not another key.
@@ -1144,8 +1147,12 @@ them again. New runs follow the sequence below.
    source file ids of the capture of the run it is published to, never those
    of an earlier run's capture of the same files. Interrupted captures
    resume without provider OAuth or FileAnalysis. `read-source --source ID`
-   returns exact captured bytes; `read-document --run ID --document ID` returns
-   the authorized immutable document snapshot.
+   returns one file's exact captured bytes, base64 encoded; `read-source
+   --capture ID --out <run folder>/captured/<key>` writes the capture's files
+   as plain files, each checked against its captured sha256, so a worker reads
+   a group of related files with one command. Narrow it with `--prefix` or
+   `--paths-from`. `read-document --run ID --document ID` returns the
+   authorized immutable document snapshot.
 6. Prepare the complete requested requirement batch locally: exact UR/SR IDs,
    criteria/scenarios, citations, relationships, stable keys and fingerprints.
    Check duplicates and cross-context joins before the first publication.
@@ -1170,13 +1177,16 @@ them again. New runs follow the sequence below.
    .modernpath/reverse-engineering.runs/<folder>/groups` measures the
    mechanical content checks on the staged group files offline (distinct
    statements, template scenarios, actor and outcome, domain titles, the UR–SR
-   join, citation precision as a warning) and exits 1 on a failure;
+   join, citation precision as a warning, and on `source_assessments` a
+   reason shared by more than three files or a file of a repository named in
+   `--owned-repositories` left unresolved) and exits 1 on a failure;
    `--existing-parents` names published URs the groups' SRs may serve, and
    `--self-test` proves the checks on the built-in known-bad set. `publish
    --run ID --dir <folder>/groups` then publishes every group file in name
    order, each under its file name as the group key, after the same check; it
    stops at the first refusal and lists what was and was not published, and
-   sending it again is safe.
+   sending it again is safe. `publish --file` runs the same check on its one
+   group, without the join, which a later group may complete.
    A publish prints one warning line naming the requirements it created
    without a context and without a test citation; the receipt lists them under
    `data.result` as `requirements_without_context` and
@@ -1187,7 +1197,11 @@ them again. New runs follow the sequence below.
 7. `modernpath reverse-engineer coverage --run ID >
    .modernpath/reverse-engineering.runs/<folder>/coverage.json` measures the
    frozen inventory against stored traces. It separates governed/candidate
-   linkage, captures, assessments and exclusions. It is not execution
+   linkage, captures, assessments and exclusions.
+   `data.inventory.excluded_file_count_complete` is false whenever a subtree
+   is excluded, because an excluded subtree's files are not listed; it is not
+   part of the finish condition. Report each excluded subtree with its reason
+   instead. It is not execution
    evidence or behavior-class enumeration. Follow the publication skill's
    linked coverage reference for a separate behavior-denominator checker;
    `audit-citations.mjs --min=N` checks citation counts/validity, not
@@ -1202,7 +1216,9 @@ them again. New runs follow the sequence below.
    `data.coverage.unlinked_files` counts reviewed files too. Read the totals
    and the files that fail the condition from the saved file, not the whole
    list. An `unresolved` assessment says that work remains; it is never used
-   to complete a count. Linked means a governed or candidate link from a
+   to complete a count. A link does not clear it: a linked file whose latest
+   assessment is `unresolved` still counts in `unresolved_files`, so assess
+   it again as `reviewed`, naming the requirement that cites it. Linked means a governed or candidate link from a
    system requirement: a file cited only by a user requirement is not linked.
    The report is for one run: a link counts for it only when it was made
    through a capture of the same repository key and file list, whichever run
@@ -1348,12 +1364,22 @@ refused as `stale_corpus` by `authorize` (step 4) and by `refresh-traces`
   so that it meets the finish condition of step 7, or after the person
   decided to leave it unfinished. A batch sweep (the "Batch sweep" of
   `rdd-reverse-engineer`) authorizes one run per context back to back from
-  one preflight, since an authorization changes no requirement, and its
-  context sessions publish in parallel: a publish compares only the records
-  its group names. A `refresh-traces` refused as `stale_corpus` while other
-  contexts publish takes a fresh preflight and is sent again. The batch
-  authorization covers ending a context unfinished for the gaps that skill
-  names, so a context session states them in its report and ends without
+  one preflight, since an authorization changes no requirement. The
+  orchestrating session delegates each context, or a named part of one, to
+  the installed context worker, several at once, the rdd-context-deriver agent,
+  installed for Claude Code at `.claude/agents/rdd-context-deriver.md` and
+  for Codex at `.codex/agents/rdd-context-deriver.toml` (Cursor reads both).
+  Its role is the package's `references/context-worker.md`; a harness with no
+  delegated agents gives that file to a separate session that stages only. A worker stages and checks groups in its run folder and
+  hands back `handoff.md`; it writes nothing to the store. The orchestrating
+  session publishes each handed-back folder with `publish --run ID --dir`,
+  reads it back, makes the writes the handoff names, and starts a new worker
+  for the remainder a partial handoff lists. The runs of a batch
+  publish in any order: a publish compares only the records its group names.
+  A `refresh-traces` refused as `stale_corpus` after another publish takes a
+  fresh preflight and is sent again. The batch authorization covers ending a
+  context unfinished for the gaps that skill names, so the orchestrating
+  session states them in the context's report and moves on without
   asking. The next run reuses the earlier run's
   confirmed contexts and assesses the files its requirements cover, and every
   group that creates a requirement, a link or an epic changes the corpus
@@ -1472,7 +1498,11 @@ scope as fresh pending work. New verification/acceptance follows these steps.
    `stale_corpus`, `invalid_trace_refresh` and `source_not_authorized` from
    `refresh-traces`. Input is exactly `corpus_fingerprint` from preflight and
    `requirements: [{kind: "system", external_id, expected_fingerprint}]`, using
-   each requirement's current content fingerprint. The capture run must belong
+   each requirement's current content fingerprint. List system requirements
+   only; a user requirement takes no refresh. A requirement published by an
+   earlier run is refreshed through the later run that recaptured its files:
+   its citations of the earlier capture are linked through the later
+   capture of the same bytes, so do not rewrite them by hand first. The capture run must belong
    to the signed-in actor, be baseline-authorized and contain every persisted
    code/test citation selected. DERIVED grants refuse confirmed refresh links.
    This atomically creates/reuses confirmed immutable source/TestCase links
@@ -1643,7 +1673,14 @@ must be governed. Do not create Epics to hold DERIVED discovery groups.
 `source_assessments` may accompany a group or an empty `requirements` list:
 each names `repository_key`, `snapshot_digest`, `path`, `sha256`, `outcome`
 (`reviewed`, `unresolved`, `unsupported`) and a nonempty `reason`. Latest durable
-assessment wins; an assessment is not a code trace or verified coverage.
+assessment wins; an assessment is not a code trace or verified coverage. The
+reason is written from reading that file and says what it is; one sentence
+filled with each file's path or digest is not a reason, and `check` refuses
+it. The one shared form is ownership, for a file another context owns that
+none of this context's requirements cites: `Owned by <context code>, run
+<run key>: <why this context does not cite it>`; the owner's run reads the
+file and gives it its own disposition. `unresolved` records work that remains: report those files with the
+unassessed ones, never as assessed.
 
 One group holds at most 500 requirements, 100 criteria per requirement and
 5000 source assessments.

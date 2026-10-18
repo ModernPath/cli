@@ -71,6 +71,13 @@ var installTargets = map[string]string{
 	// definition — Read, Grep, Glob, no shell, the review rules. Installed in
 	// both modes; an edited or missing copy is drift like a skill's.
 	"assets/agents/rdd-cold-reviewer.md": ".claude/agents/rdd-cold-reviewer.md",
+	// The context worker of a reverse-engineering batch sweep: it derives and
+	// stages one slice and hands it back; the orchestrating session publishes.
+	"assets/agents/rdd-context-deriver.md": ".claude/agents/rdd-context-deriver.md",
+	// The Codex renderings of the same agents (codexAgentTOML; Cursor reads
+	// both .claude/agents and .codex/agents).
+	"assets/agents-codex/rdd-cold-reviewer.toml":   ".codex/agents/rdd-cold-reviewer.toml",
+	"assets/agents-codex/rdd-context-deriver.toml": ".codex/agents/rdd-context-deriver.toml",
 }
 
 // legacyInstallTargets records the old Claude-specific location of assets
