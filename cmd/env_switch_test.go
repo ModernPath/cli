@@ -2,21 +2,18 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/zitadel"
 )
 
 // REQ-CROSS-391 — `env --set` switches the URL, the system binding and the
 // credential together, restoring what was stashed for the target or refusing
-// with the remedy verb, and `status` and `factory status` print the same
-// server and system lines in every state.
+// with the remedy verb.
 
 func readConfigFile(t *testing.T, dir string) map[string]any {
 	t.Helper()
@@ -34,7 +31,7 @@ func readConfigFile(t *testing.T, dir string) map[string]any {
 func writeJSON(t *testing.T, root, rel string, v any) {
 	t.Helper()
 	blob, _ := json.Marshal(v)
-	writeFactoryTestFile(t, root, rel, string(blob))
+	writeTestFile(t, root, rel, string(blob))
 }
 
 func testPlaneToken(t *testing.T) string {
@@ -48,7 +45,7 @@ func prodPlaneToken(t *testing.T) string {
 // (a) Bound to test with a production stash: the switch restores the
 // production system and credential and stashes the test ones.
 func TestEnvSetRestoresTheStashedBindingAndCredential(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
+	root := enterTestWorkspace(t)
 	writeJSON(t, root, ".modernpath/config.json", map[string]any{
 		"api_url": zitadel.TestProfile.APIURL, "system_id": 49, "system_name": "sandbox", "system_slug": "sandbox",
 		"environments": map[string]any{"production": map[string]any{"system_id": 3, "system_name": "ModernPath", "system_slug": "modernpath"}},
@@ -91,7 +88,7 @@ func TestEnvSetRestoresTheStashedBindingAndCredential(t *testing.T) {
 // (b) No stash for the target: the binding is cleared with the init remedy,
 // the credential is stashed and not left active, and the auth remedy is named.
 func TestEnvSetWithoutAStashClearsAndNamesTheRemedies(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
+	root := enterTestWorkspace(t)
 	writeJSON(t, root, ".modernpath/config.json", map[string]any{"api_url": zitadel.TestProfile.APIURL, "system_id": 49, "system_name": "sandbox"})
 	test := testPlaneToken(t)
 	writeJSON(t, root, ".modernpath/auth.json", map[string]any{"token": test, "issuer": zitadel.TestProfile.Issuer})
@@ -130,7 +127,7 @@ func TestEnvSetWithoutAStashClearsAndNamesTheRemedies(t *testing.T) {
 // gets none, so `docs refresh` and `source push` never aim at another
 // environment's repository.
 func TestEnvSetKeepsEachEnvironmentsRepositoryID(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
+	root := enterTestWorkspace(t)
 	writeJSON(t, root, ".modernpath/config.json", map[string]any{
 		"api_url": zitadel.TestProfile.APIURL, "system_id": 49, "system_name": "sandbox", "repository_id": 7,
 		"environments": map[string]any{"production": map[string]any{"system_id": 3, "system_name": "ModernPath", "repository_id": 9}},
@@ -174,7 +171,7 @@ func TestEnvSetKeepsEachEnvironmentsRepositoryID(t *testing.T) {
 // (d) A restored credential this server does not accept is reported at
 // switch time, not at the next write.
 func TestEnvSetReportsACredentialTheServerWillNotAccept(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
+	root := enterTestWorkspace(t)
 	writeJSON(t, root, ".modernpath/config.json", map[string]any{"api_url": zitadel.TestProfile.APIURL, "system_id": 49})
 	wrongAudience := jwtWithClaims(t, map[string]any{"iss": zitadel.ProdProfile.Issuer, "sub": "u1", "aud": []string{zitadel.TestProfile.ProjectID}})
 	writeJSON(t, root, ".modernpath/auth.json", map[string]any{
@@ -193,64 +190,5 @@ func TestEnvSetReportsACredentialTheServerWillNotAccept(t *testing.T) {
 	}
 	if !strings.Contains(string(out)+string(errOut), "not one this server accepts") {
 		t.Errorf("the switch must report the unacceptable credential:\n%s%s", out, errOut)
-	}
-}
-
-// bindingLinesOf keeps only the Server: and System: lines, trimmed, so the two
-// status commands can be compared on exactly the binding they print.
-func bindingLinesOf(out []byte) []string {
-	var lines []string
-	for _, l := range strings.Split(string(out), "\n") {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "Server:") || strings.HasPrefix(l, "System:") {
-			lines = append(lines, l)
-		}
-	}
-	return lines
-}
-
-// (c) status and factory status print byte-identical Server: and System:
-// lines in the bound, unbound and unsigned states; factory status exits
-// non-zero after them when unbound.
-func TestStatusAndFactoryStatusPrintTheSameBinding(t *testing.T) {
-	saved := listSystemsFn
-	listSystemsFn = func(apiURL, token string) ([]api.System, error) { return []api.System{{ID: 7}}, nil }
-	t.Cleanup(func() { listSystemsFn = saved })
-	const apiURL = "http://127.0.0.1:1"
-
-	cases := map[string]struct {
-		cfg, auth map[string]any
-		unbound   bool
-	}{
-		"bound and signed in":  {cfg: map[string]any{"api_url": apiURL, "system_id": 7, "system_name": "Seven", "system_slug": "seven"}, auth: map[string]any{"token": "t", "actor": "jane@example.com"}},
-		"unbound":              {cfg: map[string]any{"api_url": apiURL}, auth: map[string]any{"token": "t"}, unbound: true},
-		"bound, not signed in": {cfg: map[string]any{"api_url": apiURL, "system_id": 7, "system_name": "Seven"}, auth: map[string]any{}},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			root := enterFactoryTestWorkspace(t)
-			writeJSON(t, root, ".modernpath/config.json", tc.cfg)
-			writeJSON(t, root, ".modernpath/auth.json", tc.auth)
-
-			var statusOut, factoryOut []byte
-			if err := captureStdout(t, func() error { return runStatus(statusCmd, nil) }, &statusOut); err != nil {
-				t.Fatalf("status: %v", err)
-			}
-			ferr := captureStdout(t, func() error { return factoryStatusCmd.RunE(factoryStatusCmd, nil) }, &factoryOut)
-			if tc.unbound && ferr == nil {
-				t.Error("factory status must still refuse when unbound, after printing the binding")
-			}
-			if !tc.unbound && ferr != nil {
-				t.Fatalf("factory status: %v", ferr)
-			}
-
-			got, want := bindingLinesOf(factoryOut), bindingLinesOf(statusOut)
-			if len(want) != 2 {
-				t.Fatalf("status must print a Server: and a System: line, got %v", want)
-			}
-			if fmt.Sprint(got) != fmt.Sprint(want) {
-				t.Errorf("binding lines differ:\n status:         %v\n factory status: %v", want, got)
-			}
-		})
 	}
 }

@@ -10,7 +10,7 @@ import (
 // Each Claude Code agent definition ships a Codex rendering, kept equal to
 // what codexAgentTOML makes of it; install writes both.
 func TestCodexAgentsMatchTheirClaudeSource(t *testing.T) {
-	for _, name := range []string{"rdd-cold-reviewer", "rdd-context-deriver"} {
+	for _, name := range []string{"rdd-cold-reviewer"} {
 		md, err := assets.ReadFile("assets/agents/" + name + ".md")
 		if err != nil {
 			t.Fatal(err)
@@ -36,7 +36,7 @@ func TestCodexAgentsMatchTheirClaudeSource(t *testing.T) {
 	if _, err := Install(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"rdd-cold-reviewer", "rdd-context-deriver"} {
+	for _, name := range []string{"rdd-cold-reviewer"} {
 		if _, err := os.Stat(filepath.Join(root, ".codex/agents", name+".toml")); err != nil {
 			t.Errorf("install must write .codex/agents/%s.toml: %v", name, err)
 		}

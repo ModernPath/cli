@@ -1,65 +1,96 @@
 # Requirement-driven delivery — agent instructions
 
-This repository defines a reusable requirement-driven delivery process. It
-contains canonical process instructions, procedural skills, and flat-file
-serialization shapes; it does not contain a project's live delivery state.
+This repository defines a reusable product-delivery process and its focused
+agent procedures. The server-backed process interface in a consuming project
+is the sole authority for Epics, requirements, saved plans and exact proposed content and
+human approvals. This repository defines no local delivery ledger.
 
 ## Instruction ownership
 
-- [`PROCESS.md`](PROCESS.md) defines the canonical process, including authority,
-  items, traces, lifecycles, gates, planning, development, evidence,
-  completion, records, and reconciliation.
-- [`skills/`](skills/) contains focused procedures that apply the process.
-- [`file-state/`](file-state/) contains the canonical serialization shapes for
-  Epic, requirement, gate, work-selection, and backlog/gap records.
-- Project instructions own only project-specific rules such as architecture,
-  repository topology, commands, environments, and test gates. They reference
-  rather than redefine the process. They name the project's sanctioned tool
-  for the process store and its channel for surfacing tooling gaps; the rule
-  that binds both is `PROCESS.md` "State records and reconciliation".
+- [`PROCESS.md`](PROCESS.md) defines product authority, native item identity,
+  traces, Epic scope, implementation approval, engineering, evidence, human
+  completion and existing-behavior acceptance.
+- [`skills/`](skills/) contains focused procedures that apply that process.
+  They use the consuming project's sanctioned process interface and do not
+  prescribe or invent its CLI verbs.
+- Project instructions own project-specific architecture, repository layout,
+  commands, environments and test gates. They name the sanctioned process
+  interface and the channel for reporting a tooling gap.
+- `skills/rdd-reverse-engineer-verify/SKILL.md` verifies PROPOSED requirements
+  against existing behavior and actual test evidence; it does not change their
+  lifecycle.
+- `skills/rdd-reverse-engineer-accept/SKILL.md` obtains explicit human
+  acceptance and uses the supported atomic PROPOSED-to-DONE operation for
+  verified existing behavior.
 
-If project instructions conflict with a process rule, stop the affected
-transition and report the conflict rather than creating a silent local variant.
+If the process interface lacks a required read or write, report that gap. Do
+not create a local ledger, direct transport, or another authority as a
+workaround.
 
 ## Required reading
 
-Before planning, changing, reviewing, or delivering product work — and
-before answering what to work on next, where the loop stands, what is waiting
-on a decision, or what is blocked:
+Before planning, changing, reviewing or delivering product work — and before
+answering what to work on next — read the project's root `AGENTS.md`, this
+file and `PROCESS.md`. Enter with `skills/rdd-start/SKILL.md`; use
+`skills/rdd-deliver/SKILL.md` for end-to-end work or the focused skill when the
+request ends at one pass. Use `skills/rdd-autopilot/SKILL.md` only under an
+explicit human grant. Use `skills/rdd-reverse-engineer/SKILL.md` for
+recording requirements and their traces to source files.
+Use `skills/rdd-reverse-engineer-verify/SKILL.md` and
+`skills/rdd-reverse-engineer-accept/SKILL.md` to verify and explicitly accept
+existing behavior without an implementation Epic when no behavior or test
+change is requested. Route any required code or test change through the normal
+Epic delivery path.
+`skills/rdd-audit/SKILL.md` is a shared utility invoked by other passes, not a phase.
 
-1. read the project's root `AGENTS.md` for project-specific rules;
-2. read this file and `PROCESS.md`;
-3. enter the session with `skills/rdd-start/SKILL.md` — it verifies the store
-   binding before selection and the active release for normal delivery; then use
-   `skills/rdd-deliver/SKILL.md` for end-to-end delivery,
-   `skills/rdd-autopilot/SKILL.md` for a sprint under a human's autopilot
-   grant, or the applicable
-   focused `skills/rdd-*/SKILL.md` when the request explicitly ends at one
-   process pass; use `skills/rdd-verify/SKILL.md` for entered verification work
-   requiring new tests, and `skills/rdd-reverse-engineer/SKILL.md` to
-   establish an authorized as-built baseline or propose DERIVED additions to
-   an existing requirement corpus;
-   use `skills/rdd-reverse-engineer-verify/SKILL.md` and
-   `skills/rdd-reverse-engineer-accept/SKILL.md` for source-scoped baselines
-   with existing proof (one human acceptance directly to DONE);
-   `skills/rdd-audit/SKILL.md` is a shared utility other passes invoke, not a
-   phase;
-4. read the relevant product sources, requirement records, optional epic, and
-   active work-selection record.
+Read relevant product documents and inspect their cited code and tests. A
+citation or file audit establishes that a source can be opened; it does not
+show that the source supports the claim. Keep source text, code/test links and
+process identity distinct.
 
-Find and read relevant documents available locally. Checking when documents
-were last updated does not refresh the local copies. When a refresh is needed,
-follow the project's documented procedure. Consult the authoritative source
-when local documents lack the information or you need an up-to-date answer.
+## Product work and meta-work
 
-Being asked what to do next is session entry, not a shortcut past it. The
-answer is the store's pending human decisions and routed work, read through
-`skills/rdd-start/SKILL.md`. Version control, change lists, and the working
-tree describe the repository rather than the loop, and never answer that
-question. A project's root `AGENTS.md` names the concrete read for its own
-store; if it names none, that omission is the report.
+The loop covers changes to what a customer can do or observe. Repository
+layout, build and review tooling, CI, deployment identity and agent
+instructions are meta-work unless their purpose changes customer-visible
+behavior. Do that work as a regular repository change and explain why the
+product loop does not apply. Do not create process records for meta-work.
 
-## Binding process
+## Authority and tooling gaps
 
-Follow `PROCESS.md`. Skills apply it and `file-state/` serializes its records;
-neither redefines its rules.
+For changed behavior or tests, the human selects an Epic and approves its exact
+saved plan and proposed content for implementation, atomically locking its
+requirements to one user and that Epic, and separately approves completion.
+For an explicit existing-behavior acceptance pass, the human accepts the exact
+PROPOSED requirements and complete passing evidence through the supported
+atomic operation; active Epic-owned requirements stay on the Epic path. Agents
+establish facts, plan, review, implement approved work and report results. A human retains
+merge, deployment and release authority. Never infer approval from silence,
+code, test results, commits, a passing review or a repository status.
+
+Use only the project's sanctioned process interface for process reads and
+writes. If it lacks a needed read or transition, report the gap through the
+project's named channel. Never read credentials or private configuration,
+call its transport directly, or write process state by hand. Ordinary product
+documents remain in their project repository and use its documented
+documentation workflow.
+
+## Communication and code style
+
+Be terse and factual. Ground technical claims in sources, code, tests or
+observed runs. Prefer simple, robust changes. Preserve red-first test evidence,
+run the focused and proportional regression checks, and report commands and
+results. Read back accepted requirement versions after completion approval or
+existing-behavior acceptance;
+verify Git, PR and deployment state separately before making those claims.
+
+## Repository checks
+
+This source repository's pre-commit configuration runs the existing shared
+audit test suite with `node --test skills/rdd-audit/audit-citations.test.mjs`.
+Install it with `prek install --prepare-hooks`. The hook clears Git
+repository/index variables before tests create their own temporary repositories;
+otherwise an outer commit can redirect fixture Git operations. It supplies the missing
+configuration needed by the required hook installation, without changing the
+consuming project's checks or adding a delivery protocol. Process edits also
+require review of internal links and competing instruction statements.

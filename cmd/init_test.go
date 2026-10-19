@@ -19,7 +19,6 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/modernpath/cli/internal/api"
-	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/platform"
 	"github.com/modernpath/cli/internal/zitadel"
 )
@@ -55,8 +54,7 @@ func TestSystemPickerLabelsCarryTheSystemId(t *testing.T) {
 }
 
 // REQ-CROSS-405 — `init` reaches a signed-in, bound workspace or names the
-// step; the api-client verbs carry the credential statements the factory
-// verbs already have. A fresh checkout used to reach the listing with no
+// step; the API client carries explicit credential statements. A fresh checkout used to reach the listing with no
 // credential and print the server's 401.
 
 const initGoodToken = "good-token"
@@ -260,8 +258,8 @@ func writeInitAuth(t *testing.T, root, token string, expiry time.Time) {
 		auth["expires_at"] = expiry.UTC().Format(time.RFC3339)
 	}
 	data, _ := json.Marshal(auth)
-	writeFactoryTestFile(t, root, ".modernpath/.gitignore", "auth.json\nconfig.json\n")
-	writeFactoryTestFile(t, root, ".modernpath/auth.json", string(data))
+	writeTestFile(t, root, ".modernpath/.gitignore", "auth.json\nconfig.json\n")
+	writeTestFile(t, root, ".modernpath/auth.json", string(data))
 }
 
 // runCapturing runs fn with stdout and stderr (and the color writers the
@@ -345,7 +343,7 @@ func TestInitWithExpiredCredentialNamesExpiryAndListsNothing(t *testing.T) {
 	}
 }
 
-// S2 — signed in with one system: bound, and factory status prints it.
+// S2 — signed in with one system: init binds it and status reads the binding.
 func TestInitSignedInWithOneSystemBindsIt(t *testing.T) {
 	srv := newInitFakeServer(t)
 	root := initTestSetup(t, srv)
@@ -358,47 +356,12 @@ func TestInitSignedInWithOneSystemBindsIt(t *testing.T) {
 	if got := boundSystemID(t, root); got != 1 {
 		t.Fatalf("bound system = %d, want 1\n%s", got, out)
 	}
-	status, err := runCapturing(t, func() error { return factoryStatusCmd.RunE(factoryStatusCmd, nil) })
+	status, err := runCapturing(t, func() error { return statusCmd.RunE(statusCmd, nil) })
 	if err != nil {
-		t.Fatalf("factory status after init: %v\n%s", err, status)
+		t.Fatalf("status after init: %v\n%s", err, status)
 	}
 	if !strings.Contains(status, "System:  Demo System (ID: 1)") {
-		t.Fatalf("factory status must print the bound system, got:\n%s", status)
-	}
-}
-
-func TestInitExportTimestampFeedsPrepareInputsWithoutRedownload(t *testing.T) {
-	srv := newInitFakeServer(t)
-	root := initTestSetup(t, srv)
-	writeInitAuth(t, root, initGoodToken, time.Now().Add(time.Hour))
-	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
-	}
-	cfg, err := config.ReadConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	const serverGeneratedAt = "2026-09-20T12:00:00.123456Z"
-	if cfg.LastSyncAt != serverGeneratedAt {
-		t.Fatalf("init config timestamp = %q, want server timestamp %q", cfg.LastSyncAt, serverGeneratedAt)
-	}
-	if got := srv.matchingRequests("POST /api/systems/1/export/jobs"); got != 1 {
-		t.Fatalf("init export downloads = %d, want one", got)
-	}
-	out, err = runPrepareInputs(t)
-	if err != nil {
-		t.Fatalf("prepare-inputs after init: %v\n%s", err, out)
-	}
-	var report prepareInputsReport
-	if err := json.Unmarshal([]byte(out), &report); err != nil {
-		t.Fatal(err)
-	}
-	if report.LocalDocumentsLastSyncedAt == nil || *report.LocalDocumentsLastSyncedAt != serverGeneratedAt {
-		t.Fatalf("prepare-inputs timestamp = %v, want server timestamp %q", report.LocalDocumentsLastSyncedAt, serverGeneratedAt)
-	}
-	if got := srv.matchingRequests("POST /api/systems/1/export/jobs"); got != 1 {
-		t.Fatalf("prepare-inputs caused another export download; count = %d", got)
+		t.Fatalf("status must print the bound system, got:\n%s", status)
 	}
 }
 
@@ -544,13 +507,13 @@ func TestInitListingRefusedNamesStepAndLeavesNoBinding(t *testing.T) {
 func TestInitOnABoundCheckoutReturnsEarly(t *testing.T) {
 	srv := newInitFakeServer(t)
 	root := initTestSetup(t, srv)
-	writeFactoryTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1,"system_name":"Demo System"}`, srv.URL))
+	writeTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1,"system_name":"Demo System"}`, srv.URL))
 
 	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
 	if err != nil {
 		t.Fatalf("init on a bound checkout: %v", err)
 	}
-	if !strings.Contains(out, "Already initialized") {
+	if !strings.Contains(out, "unchanged") || !strings.Contains(out, "system_id: 1") {
 		t.Fatalf("the early return must stand, got:\n%s", out)
 	}
 	if n := srv.requestCount(); n != 0 {
@@ -574,7 +537,7 @@ func TestAPIClientVerbsCarryTheCredentialStatements(t *testing.T) {
 		t.Run(v.name+" without a credential", func(t *testing.T) {
 			srv := newInitFakeServer(t)
 			root := initTestSetup(t, srv)
-			writeFactoryTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1,"system_name":"Demo System"}`, srv.URL))
+			writeTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1,"system_name":"Demo System"}`, srv.URL))
 
 			out, err := runCapturing(t, v.run)
 			if err == nil {
@@ -590,7 +553,7 @@ func TestAPIClientVerbsCarryTheCredentialStatements(t *testing.T) {
 		t.Run(v.name+" with a rejected token", func(t *testing.T) {
 			srv := newInitFakeServer(t)
 			root := initTestSetup(t, srv)
-			writeFactoryTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1,"system_name":"Demo System"}`, srv.URL))
+			writeTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1,"system_name":"Demo System"}`, srv.URL))
 			writeInitAuth(t, root, "revoked-token", time.Now().Add(time.Hour))
 
 			out, err := runCapturing(t, v.run)
@@ -608,20 +571,19 @@ func TestAPIClientVerbsCarryTheCredentialStatements(t *testing.T) {
 	}
 }
 
-// The factory verbs already refuse before any request; this stays as the
-// regression guard the enrichment names.
-func TestFactoryVerbsStillRefuseBeforeAnyRequestWithoutACredential(t *testing.T) {
+// Credential loading must refuse before any request.
+func TestCLIRefusesBeforeAnyRequestWithoutACredential(t *testing.T) {
 	srv := newInitFakeServer(t)
 	root := initTestSetup(t, srv)
-	writeFactoryTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1}`, srv.URL))
+	writeTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q,"system_id":1}`, srv.URL))
 
-	_, err := factoryEnvLoad()
+	_, err := cliEnvLoad()
 	var cred credentialError
 	if !errors.As(err, &cred) {
-		t.Fatalf("factoryEnvLoad without a credential must return a credentialError, got: %v", err)
+		t.Fatalf("cliEnvLoad without a credential must return a credentialError, got: %v", err)
 	}
 	if n := srv.requestCount(); n != 0 {
-		t.Fatalf("factory pre-check sent %d request(s) with no credential", n)
+		t.Fatalf("credential pre-check sent %d request(s) with no credential", n)
 	}
 }
 
@@ -688,7 +650,7 @@ func TestAPIClientVerbsNameInitWhenUnbound(t *testing.T) {
 // host, a signed-in `init` reaches the bound workspace: its reachability
 // preflight carries the stored bearer instead of dying with a bare HTTP 401.
 // The edge authenticates core's health route, so a tokenless probe is answered
-// 401 no matter how healthy the server is. `factory connect`, whose probe sends
+// 401 no matter how healthy the server is. `init`, whose probe sends
 // the bearer, bound fine — `init` did not, because Client.HealthCheck omits it.
 func TestInitOnFailClosedPlatformHostBindsWithStoredCredential(t *testing.T) {
 	srv := newInitPlatformFakeServer(t)

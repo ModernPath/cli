@@ -24,6 +24,7 @@ var (
 	scanSeverity   string
 	scanAgents     []string
 	scanListAgents bool
+	scanJSON       bool
 )
 
 var scanCmd = &cobra.Command{
@@ -64,6 +65,8 @@ func init() {
 	scanCmd.Flags().StringVar(&scanBase, "base", "", "Base branch/commit to compare against (implies --mode=changes)")
 	scanCmd.Flags().BoolVarP(&scanVerbose, "verbose", "v", false, "Show detailed findings")
 	scanCmd.Flags().StringVar(&scanSeverity, "severity", "", "Filter by minimum severity: critical, high, medium, low")
+	scanCmd.Flags().BoolVar(&scanJSON, "json", false, "Emit scan results as JSON")
+	addRecordReadFlags(scanCmd)
 
 	rootCmd.AddCommand(scanCmd)
 }
@@ -119,27 +122,31 @@ type AgentInfo struct {
 
 func runScan(cmd *cobra.Command, args []string) error {
 	bold := color.New(color.Bold)
+	allowed := []string{"success", "system_id", "system_name", "mode", "agents_used", "vibe_debt", "summary", "findings", "error"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
 
 	// Handle --list-agents
 	if scanListAgents {
+		if scanJSON {
+			return writeCommandJSON(cmd, scanAgentList())
+		}
 		return listAvailableAgents(bold)
 	}
 
 	if !config.IsInitialized() {
-		printError("Not initialized. Run 'modernpath init' first.\n")
-		return nil
+		return fmt.Errorf("not initialized. Run 'modernpath init' first")
 	}
 
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured.\n")
-		printInfo("Run 'modernpath init' in a project with an analyzed system.\n")
-		return nil
+		return fmt.Errorf("no system configured. Run 'modernpath init' in a project with an analyzed system")
 	}
 
 	// Determine mode
@@ -169,12 +176,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print header
-	fmt.Println()
-	bold.Printf("%s %s\n", headerIcon, headerText)
-	fmt.Println("═══════════════════════════════════════════════════════════")
-	fmt.Printf("System: %s (ID: %d)\n", cfg.SystemName, cfg.SystemID)
-	fmt.Printf("Mode: %s\n", mode)
-	fmt.Printf("Agents: %s\n", strings.Join(scanAgents, ", "))
+	if !scanJSON {
+		fmt.Println()
+		bold.Printf("%s %s\n", headerIcon, headerText)
+		fmt.Println("═══════════════════════════════════════════════════════════")
+		fmt.Printf("System: %s (ID: %d)\n", cfg.SystemName, cfg.SystemID)
+		fmt.Printf("Mode: %s\n", mode)
+		fmt.Printf("Agents: %s\n", strings.Join(scanAgents, ", "))
+	}
 
 	// Prepare request
 	requestBody := map[string]interface{}{
@@ -185,8 +194,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// For changes/staged mode, get git diff
 	if mode == "changes" || mode == "staged" {
 		if !isGitRepo() {
-			printError("Not a git repository. Use --mode=full for architecture scan.\n")
-			return nil
+			return fmt.Errorf("not a git repository. Use --mode=full for architecture scan")
 		}
 
 		diff, err := getScanDiff(mode)
@@ -196,25 +204,31 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 
 		if diff == "" {
+			if scanJSON {
+				return writeCommandJSON(cmd, map[string]any{"scanned": false, "reason": "no changes", "mode": mode})
+			}
 			printInfo("No changes to scan.\n")
 			return nil
 		}
 
 		files, _ := getScanChangedFiles(mode)
 
-		fmt.Println()
-		bold.Printf("Changed Files (%d)\n", len(files))
-		fmt.Println("───────────────────────────────────────────────────────────")
-		for _, file := range files {
-			fmt.Printf("  %s\n", file)
+		if !scanJSON {
+			fmt.Println()
+			bold.Printf("Changed Files (%d)\n", len(files))
+			fmt.Println("───────────────────────────────────────────────────────────")
+			for _, file := range files {
+				fmt.Printf("  %s\n", file)
+			}
 		}
 
 		requestBody["changes"] = diff
 		requestBody["changed_files"] = files
 	}
 
-	fmt.Println()
-	printInfo("Scanning for vibe coding issues...\n")
+	if !scanJSON {
+		printInfo("Scanning for architecture issues...\n")
+	}
 
 	// Send request
 	jsonBody, err := json.Marshal(requestBody)
@@ -249,6 +263,30 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if scanJSON {
+		result := map[string]any{
+			"success": scanResp.Success, "system_id": scanResp.Data.SystemID,
+			"system_name": scanResp.Data.SystemName, "mode": scanResp.Data.Mode,
+			"agents_used": scanResp.Data.AgentsUsed, "vibe_debt": scanResp.Data.VibeDept,
+			"summary": scanResp.Data.Summary, "findings": scanResp.Data.Findings,
+		}
+		if scanResp.Error != "" {
+			result["error"] = scanResp.Error
+		}
+		selected, err := selectRecordFields(cmd, result, allowed, allowed, []string{"success"})
+		if err != nil {
+			return err
+		}
+		return writeCommandJSON(cmd, selected)
+	}
+	if cmd.Flags().Changed("fields") || flagIsTrue(cmd, "full") {
+		result := map[string]any{"success": scanResp.Success, "system_id": scanResp.Data.SystemID, "system_name": scanResp.Data.SystemName, "mode": scanResp.Data.Mode, "agents_used": scanResp.Data.AgentsUsed, "vibe_debt": scanResp.Data.VibeDept, "summary": scanResp.Data.Summary, "findings": scanResp.Data.Findings}
+		selected, err := selectRecordFields(cmd, result, []string{"success", "system_id", "system_name", "mode", "agents_used", "vibe_debt", "summary"}, allowed, nil)
+		if err != nil {
+			return err
+		}
+		return writeRecord(cmd, selected)
+	}
 	// Display results
 	displayScanResults(scanResp, bold)
 
@@ -583,13 +621,25 @@ func listAvailableAgents(bold *color.Color) error {
 	fmt.Println("═══════════════════════════════════════════════════════════")
 	fmt.Println()
 
-	agents := []struct {
-		Type        string
-		Icon        string
-		Name        string
-		Description string
-		Expertise   []string
-	}{
+	agents := scanAgentList()
+	for _, agent := range agents {
+		bold.Printf("%s %s\n", agent.Icon, agent.Name)
+		fmt.Printf("   Type: %s\n", color.CyanString(agent.Type))
+		fmt.Printf("   %s\n", agent.Description)
+		fmt.Printf("   Expertise: %s\n", strings.Join(agent.Expertise, ", "))
+		fmt.Println()
+	}
+
+	fmt.Println("Usage:")
+	fmt.Printf("  modernpath scan --agents=%s           # Run single agent\n", color.CyanString("antivibe"))
+	fmt.Printf("  modernpath scan --agents=%s  # Run multiple agents\n", color.CyanString("antivibe,clean_arch"))
+	fmt.Println()
+
+	return nil
+}
+
+func scanAgentList() []AgentInfo {
+	return []AgentInfo{
 		{
 			Type:        "antivibe",
 			Icon:        "🔮",
@@ -612,21 +662,6 @@ func listAvailableAgents(bold *color.Color) error {
 			Expertise:   []string{"Bounded contexts", "Aggregates", "Domain events", "Ubiquitous language"},
 		},
 	}
-
-	for _, agent := range agents {
-		bold.Printf("%s %s\n", agent.Icon, agent.Name)
-		fmt.Printf("   Type: %s\n", color.CyanString(agent.Type))
-		fmt.Printf("   %s\n", agent.Description)
-		fmt.Printf("   Expertise: %s\n", strings.Join(agent.Expertise, ", "))
-		fmt.Println()
-	}
-
-	fmt.Println("Usage:")
-	fmt.Printf("  modernpath scan --agents=%s           # Run single agent\n", color.CyanString("antivibe"))
-	fmt.Printf("  modernpath scan --agents=%s  # Run multiple agents\n", color.CyanString("antivibe,clean_arch"))
-	fmt.Println()
-
-	return nil
 }
 
 // scanFailureReason names a non-200 scan answer for the user. The server's

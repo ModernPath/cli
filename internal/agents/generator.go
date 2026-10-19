@@ -146,7 +146,7 @@ Transformation specifications organized by category:
 - ` + "`" + `{{ . }}/` + "`" + ` - {{ . | title }} specifications
 {{- end }}
 {{- else }}
-No specifications synced yet. Select an epic with ` + "`" + `modernpath work select` + "`" + ` to sync specs.
+No specifications downloaded yet. Use ` + "`" + `modernpath epics specs pull {{ .EpicID }} --file specs.json` + "`" + ` to download the stored bundle.
 {{- end }}
 
 ## CLI Tools for Additional Context
@@ -326,15 +326,10 @@ func GenerateFromManifest(manifestPath, outputPath string) error {
 		})
 	}
 
-	// Scan for specs in the active epic folder when available.
+	// Legacy Markdown exports belong to the Epic named by this manifest.
 	modernpathRoot := filepath.Join(filepath.Dir(manifestPath), "..")
-	specsDir := filepath.Join(modernpathRoot, "specs")
-	if cfg, cfgErr := config.ReadConfig(); cfgErr == nil && cfg.EpicID > 0 {
-		if resolved, resolveErr := config.ResolveEpicSpecsDir(cfg); resolveErr == nil {
-			specsDir = resolved
-			ctx.SpecsRelPath = config.ResolveEpicSpecsRelPath(cfg)
-		}
-	}
+	ctx.SpecsRelPath = config.EpicSpecsRelPath(manifest.EpicID, manifest.EpicName)
+	specsDir := filepath.Join(modernpathRoot, filepath.FromSlash(ctx.SpecsRelPath))
 	if ctx.SpecsRelPath == "" {
 		ctx.SpecsRelPath = "specs"
 	}

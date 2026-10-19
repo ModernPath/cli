@@ -12,7 +12,7 @@ import (
 )
 
 // REQ-PLN-192 (EPIC-REQ-SEARCH): epics search reads the epic search route for
-// the bound system and prints each hit's code, name, status and how it matched.
+// the bound system and prints each hit's native ID, name, status and match.
 func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 	var got url.Values
 	mux := http.NewServeMux()
@@ -33,9 +33,9 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"query": got.Get("q"),
 			"items": []map[string]any{
-				{"id": 42, "code": "EPIC-INT-009", "name": "Teams push", "description": "Work moments",
+				{"id": 42, "name": "Teams push", "description": "Work moments",
 					"process_status": "TODO", "matched": []string{"keyword", "semantic"}, "similarity": 0.8},
-				{"id": 43, "code": nil, "name": "Chat notifications", "description": nil,
+				{"id": 43, "name": "Chat notifications", "description": nil,
 					"process_status": "PROPOSED", "matched": []string{"semantic"}, "similarity": 0.7},
 			},
 		}})
@@ -52,7 +52,7 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 		t.Fatalf("query = %v, want system_id=1 q=teams limit=3", got)
 	}
 	for _, want := range []string{
-		"EPIC-INT-009", "Teams push", "TODO", "keyword, semantic",
+		"#42 [TODO] Teams push", "TODO",
 		"#43", "Chat notifications", "PROPOSED",
 		"https://app.example.test/epics/42", "https://app.example.test/epics/43",
 	} {
@@ -60,7 +60,18 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 			t.Errorf("human output omitted %q:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "keyword") || strings.Contains(out, "Work moments") {
+		t.Fatalf("default output should omit match detail and description: %s", out)
+	}
+	out, err = runRoot(t, "epics", "search", "teams", "--fields", "description,matched")
+	if err != nil || !strings.Contains(out, "keyword, semantic") || !strings.Contains(out, "Work moments") {
+		t.Fatalf("explicit detail projection: %v %s", err, out)
+	}
 
+	out, err = runRoot(t, "epics", "search", "teams", "--fields", "title,url", "--json")
+	if err != nil || !strings.Contains(out, `"title":`) {
+		t.Fatalf("search must accept the title field used by get/list: %v %s", err, out)
+	}
 	out, err = runRoot(t, "epics", "search", "teams", "--json")
 	if err != nil {
 		t.Fatalf("epics search --json: %v", err)
@@ -71,7 +82,7 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
 		t.Fatalf("--json output is not JSON: %v\n%s", err, out)
 	}
-	if len(decoded.Items) != 2 || decoded.Items[0]["code"] != "EPIC-INT-009" || decoded.Items[0]["url"] != "https://app.example.test/epics/42" {
+	if len(decoded.Items) != 2 || decoded.Items[0]["id"] != float64(42) || decoded.Items[0]["url"] != "https://app.example.test/epics/42" {
 		t.Fatalf("--json items = %v", decoded.Items)
 	}
 	if err := config.WriteAuth(&config.Auth{Token: "t", WorkspaceID: "org-1"}); err != nil {

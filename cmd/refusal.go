@@ -119,7 +119,6 @@ func openReleaseRefusal(errBody map[string]any) string {
 	if len(parts) == 0 {
 		parts = append(parts, "no readable incumbent release details were supplied")
 	}
-	parts = append(parts, "Retry `modernpath factory release activate <slug> --close-current` only if you intend to close these releases")
 	return strings.Join(parts, "; ")
 }
 

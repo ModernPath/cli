@@ -15,36 +15,33 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current ModernPath status",
-	Long: `Display the current ModernPath project status: the binding, what the bound
-server is serving (store revision and sync contract version, one read bounded
-at 2 s, no write), the process state, sync status, and documentation.`,
+	Long: `Display the current ModernPath project status: the binding, local
+documentation exports, and documentation sync time.`,
 	RunE: runStatus,
 }
 
 // exportRoot is one system export tree found under .modernpath/.
 type exportRoot struct {
-	Rel   string // workspace-relative, e.g. ".modernpath/my-app"
-	Files int
+	Rel   string `json:"path"` // workspace-relative, e.g. ".modernpath/my-app"
+	Files int    `json:"files"`
 }
 
 // statusReport is everything `modernpath status` states about a workspace,
 // built from the config and the disk so it can be asserted without a terminal.
 type statusReport struct {
-	DocsSyncAt  string // config last_sync_at — written by `sync` / `docs sync`
-	StateSyncAt string // .modernpath/last-sync-ok — written by every `factory sync` that lands
-	Exports     []exportRoot
+	DocsSyncAt string // config last_sync_at — written by `sync` / `docs sync`
+	Exports    []exportRoot
 }
 
 // buildStatusReport derives the report from the .modernpath directory and config.
 //
 // The export is discovered on disk rather than derived from cfg.SystemSlug: a
-// workspace bound by `factory connect` has no slug, and the export root is the
+// workspace bound by `init` has no slug, and the export root is the
 // zip's own top-level folder under .modernpath/, not docs/<slug>.
 func buildStatusReport(configDir string, cfg *config.Config) statusReport {
 	root := filepath.Dir(configDir)
 	rep := statusReport{
-		DocsSyncAt:  cfg.LastSyncAt,
-		StateSyncAt: readStateSyncStamp(lastSyncOkPath(root)),
+		DocsSyncAt: cfg.LastSyncAt,
 	}
 
 	found := map[string]bool{}
@@ -85,27 +82,8 @@ func buildStatusReport(configDir string, cfg *config.Config) statusReport {
 	return rep
 }
 
-// readStateSyncStamp reads the timestamp `factory sync` writes on success.
-// An unparseable stamp still evidences a sync, so fall back to the file time.
-func readStateSyncStamp(path string) string {
-	info, err := os.Stat(path)
-	if err != nil {
-		return ""
-	}
-	if data, rerr := os.ReadFile(path); rerr == nil {
-		stamp := strings.TrimSpace(string(data))
-		if _, perr := time.Parse(time.RFC3339, stamp); perr == nil {
-			return stamp
-		}
-	}
-	return info.ModTime().UTC().Format(time.RFC3339)
-}
-
-// renderSyncTime presents a recorded stamp in one zone. The two lanes'
-// writers disagree — `docs sync` records a local offset, `factory sync`
-// records Z — so comparing them as stored means doing arithmetic to read
-// the command. Normalizing is a display concern: what the files hold is
-// left alone, since other readers depend on it.
+// renderSyncTime presents a documentation-sync stamp in the local time zone
+// while preserving the value written to the config.
 func renderSyncTime(raw string, loc *time.Location) string {
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
@@ -125,49 +103,47 @@ func countFiles(dir string) int {
 	return n
 }
 
-// storeBackedReadWrite names the read and write paths that replace factory sync
-// after the flip: the bulk channel refuses process-record batches
-// (REQ-CROSS-227), so state is read with working-set pull and written with author.
-func storeBackedReadWrite() string {
-	return "read: modernpath working-set pull · write: modernpath author"
-}
-
-// storeBackedNote is the one-line store-backed disclosure the loop-navigation
-// commands (process next, the SessionStart brief) show so a session knows which
-// half of the process model it is in — AGENTS.md now routes orientation through
-// exactly those reads. "" on a file-backed workspace.
-func storeBackedNote(root string) string {
-	if storeBackedWorkspace(root) {
-		return "store-backed workspace · " + storeBackedReadWrite()
-	}
-	return ""
-}
-
-// renderStateSyncLine is the "State Sync" status line. On a store-backed
-// workspace with nothing synced it must not tell the reader to run factory
-// sync (the refused channel); it names the store instead.
-func renderStateSyncLine(stateSyncAt string, storeBacked bool) string {
-	switch {
-	case stateSyncAt != "":
-		return fmt.Sprintf("State Sync:    %s  (factory sync)", renderSyncTime(stateSyncAt, time.Local))
-	case storeBacked:
-		return "State Sync:    n/a — store-backed (process state lives in the server store)"
-	default:
-		return "State Sync:    Never  (run 'modernpath factory sync')"
-	}
+func init() {
+	statusCmd.Flags().Bool("json", false, "Emit the binding and local documentation status as JSON")
+	addRecordReadFlags(statusCmd)
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	if err := validateRecordSelection(cmd, []string{"api_url", "system_id", "system_slug", "docs_sync_at", "exports"}); err != nil {
+		return err
+	}
+	machine, _ := cmd.Flags().GetBool("json")
 	configDir, err := config.FindConfigDir()
 	if err != nil || configDir == "" {
+		if machine {
+			return fmt.Errorf("not a ModernPath project. Run 'modernpath init' to initialize")
+		}
 		printWarning("Not a ModernPath project. Run 'modernpath init' to initialize.\n")
 		return nil
 	}
 
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
+	}
+
+	apiURL := cfg.APIURL
+	if apiURL == "" {
+		apiURL = config.DefaultAPIURL
+	}
+	rep := buildStatusReport(configDir, cfg)
+	result := map[string]any{"api_url": apiURL, "system_id": cfg.SystemID, "system_slug": cfg.SystemSlug, "docs_sync_at": rep.DocsSyncAt, "exports": rep.Exports}
+	full, _ := cmd.Flags().GetBool("full")
+	if machine || cmd.Flags().Changed("fields") || full {
+		selected, err := selectRecordFields(cmd, result, []string{"api_url", "system_id", "system_slug", "docs_sync_at", "exports"}, []string{"api_url", "system_id", "system_slug", "docs_sync_at", "exports"}, nil)
+		if err != nil {
+			return err
+		}
+		if machine {
+			return writeCommandJSON(cmd, selected)
+		}
+		return writeRecord(cmd, selected)
 	}
 
 	bold := color.New(color.Bold)
@@ -176,12 +152,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	bold.Println("ModernPath Project Status")
 	fmt.Println("─────────────────────────────────────────")
 
-	// REQ-CROSS-391: the binding lines are the same renderer `factory status`
-	// prints, so the two commands never disagree about the server or system.
-	apiURL := cfg.APIURL
-	if apiURL == "" {
-		apiURL = config.DefaultAPIURL
-	}
+	// REQ-CROSS-391: the binding lines are the renderer for the binding lines shown below.
 	auth, _ := config.ReadAuth()
 	for _, line := range bindingLines(cfg, auth) {
 		fmt.Println(line)
@@ -191,37 +162,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		if warning := statusReachabilityWarning(apiURL, cfg.SystemID); warning != "" {
 			printWarning("%s\n", warning)
 		}
-		// REQ-CROSS-417: the served store revision and contract, from the same
-		// helper `factory status` prints, so the two never disagree.
-		if env, err := factoryBindingLoad(); err == nil {
-			fmt.Printf("Serving:       %s\n", serverLine(env))
-		}
+
 	}
 
-	if cfg.EpicID > 0 {
-		fmt.Printf("Epic:          %s (ID: %d)\n", cfg.EpicName, cfg.EpicID)
-	} else {
-		fmt.Println("Epic:          Not configured")
-	}
-
-	rep := buildStatusReport(configDir, cfg)
-
-	storeBacked := storeBackedWorkspace(filepath.Dir(configDir))
-	if storeBacked {
-		fmt.Printf("Process state: store-backed  (%s)\n", storeBackedReadWrite())
-	}
-
-	// Two lanes, two writers: `docs sync` downloads the export, `factory sync`
-	// pushes workspace state. Reporting one as "Last Sync" hides the other.
-	// (docs sync stays valid after the flip — only the process-record channel is
-	// refused, so only the State Sync line changes below.)
 	if rep.DocsSyncAt != "" {
 		fmt.Printf("Docs Sync:     %s  (modernpath docs sync)\n", renderSyncTime(rep.DocsSyncAt, time.Local))
 	} else {
 		fmt.Println("Docs Sync:     Never  (run 'modernpath docs sync')")
 	}
-	fmt.Println(renderStateSyncLine(rep.StateSyncAt, storeBacked))
-
 	if len(rep.Exports) == 0 {
 		fmt.Println("Local Docs:    Not synced (run 'modernpath docs sync')")
 	}

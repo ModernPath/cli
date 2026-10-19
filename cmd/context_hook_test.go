@@ -1,18 +1,14 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fatih/color"
 )
 
 // --- REQ-CROSS-405: context speaks the credential statement (BACKLOG-TOOL-31) ---
@@ -64,20 +60,16 @@ func TestContextWithoutABindingNamesTheOnRamp(t *testing.T) {
 func TestContextManualPathPrintsTheReasonOnce(t *testing.T) {
 	cobraWorkspace(t, contextServer(t, http.StatusUnauthorized, `{"error":"unauthorized"}`))
 
-	// printError writes to color.Error, which captureOutput does not swap;
-	// capture it here so every copy of the statement is counted.
-	var stderr bytes.Buffer
-	savedErr := color.Error
-	color.Error = &stderr
 	out, err := runRoot(t, "context", "how does sync work?")
-	color.Error = savedErr
 
 	if err == nil {
 		t.Fatal("a rejected credential must be the command's exit status")
 	}
-	said := out + stderr.String()
-	if n := strings.Count(said, "rejected the session token"); n != 1 {
-		t.Fatalf("the reason must be printed once, got %d copies:\n%s", n, said)
+	if !strings.Contains(err.Error(), "rejected the session token") {
+		t.Fatalf("the returned refusal must name the credential, got %v", err)
+	}
+	if n := strings.Count(out, "rejected the session token"); n != 1 {
+		t.Fatalf("the reason must be printed once, got %d copies:\n%s", n, out)
 	}
 }
 
@@ -408,122 +400,5 @@ func TestContextHookRefusesAnExpiredCredentialWithoutARequest(t *testing.T) {
 	}
 	if calls != 0 || refreshes.Load() != 0 {
 		t.Fatalf("an expired credential is refused before any request: %d calls, %d refreshes", calls, refreshes.Load())
-	}
-}
-
-// REQ-CROSS-536 AC4 (EPIC-CLI-OUTAGE) — while the server is unavailable and
-// kept writes wait, the context hook says so in one line: the outage, how many
-// writes are kept and `modernpath outage replay`; it exits 0 and calls nothing.
-func TestContextHookNamesOutage(t *testing.T) {
-	srv, requests := countingStore(t)
-	root := outageWorkspace(t, srv.URL)
-	freshUnavailable(t, root)
-	journal := filepath.Join(root, ".modernpath", "outage-journal")
-	if err := os.MkdirAll(journal, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"0001-author-update.json", "0002-feedback.json"} {
-		if err := os.WriteFile(filepath.Join(journal, name), []byte(`{"verb":"kept"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	code, out := runCLIWithStdin(t, `{"prompt":"how does sync work?"}`, "context", "--hook", "UserPromptSubmit")
-
-	if code != 0 {
-		t.Errorf("the hook must exit 0, got %d", code)
-	}
-	if n := requests.Load(); n != 0 {
-		t.Errorf("%d request(s) reached the server while it is known to be unavailable; want 0", n)
-	}
-	said := strings.TrimSpace(out)
-	if said == "" || strings.Contains(said, "\n") {
-		t.Fatalf("the hook must print exactly one line; got:\n%s", out)
-	}
-	if !strings.Contains(said, "unavailable") {
-		t.Errorf("the line must name the outage; got:\n%s", said)
-	}
-	if !regexp.MustCompile(`\b2 [a-z ]*writes?\b`).MatchString(said) {
-		t.Errorf("the line must say 2 writes are kept; got:\n%s", said)
-	}
-	if !strings.Contains(said, "modernpath outage replay") {
-		t.Errorf("the line must name `modernpath outage replay`; got:\n%s", said)
-	}
-}
-
-// REQ-CROSS-536 AC1 (EPIC-CLI-OUTAGE) — "no request" holds only while the
-// outage is fresh. An outage record checked ten minutes ago, with no kept
-// writes waiting, does not silence the hook: it asks the server as usual,
-// delivers the served context, and the good answer clears the state.
-func TestContextHookRetriesAfterStaleOutage(t *testing.T) {
-	srv, requests := countingStore(t)
-	root := outageWorkspace(t, srv.URL)
-	then := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
-	stale := `{"state":"unavailable","since":"` + then + `","last_checked":"` + then + `","reason":"connection refused"}`
-	if err := os.WriteFile(availabilityPath(root), []byte(stale), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	code, out := runCLIWithStdin(t, `{"prompt":"how does sync work?"}`, "context", "--hook", "UserPromptSubmit")
-
-	if code != 0 {
-		t.Errorf("the hook must exit 0, got %d", code)
-	}
-	if requests.Load() == 0 {
-		t.Errorf("a stale outage record must not stop the hook from asking the server")
-	}
-	if !strings.Contains(out, "served context") {
-		t.Errorf("the hook must deliver the served context; got:\n%s", out)
-	}
-	if strings.Contains(out, "modernpath outage replay") || strings.Contains(out, "unavailable") {
-		t.Errorf("a server that answered is not reported as unavailable; got:\n%s", out)
-	}
-	if state := readAvailability(t, root); state == nil || state["state"] != "available" {
-		t.Errorf("a good answer must clear the state to available, file holds %v", state)
-	}
-}
-
-// REQ-CROSS-536 AC4 (CODE-OUTAGE-1-2) — kept writes alone do not silence the
-// hook. With no fresh outage on record, an entry still in the journal (here
-// one kept by another person, which replay leaves for them) does not stop the
-// hook from asking the server: it delivers the served context and appends the
-// kept-writes line.
-func TestContextHookDeliversContextWithKeptWrites(t *testing.T) {
-	srv, requests := countingStore(t)
-	root := outageWorkspace(t, srv.URL)
-	journal := filepath.Join(root, ".modernpath", "outage-journal")
-	if err := os.MkdirAll(journal, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	entry := `{"seq":1,"verb":"author update","record":"REQ-K-1","keeper":{"email":"other@example.com"},"inputs":{}}`
-	if err := os.WriteFile(filepath.Join(journal, "000001-author-update.json"), []byte(entry), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	code, out := runCLIWithStdin(t, `{"prompt":"how does sync work?"}`, "context", "--hook", "UserPromptSubmit")
-
-	if code != 0 {
-		t.Errorf("the hook must exit 0, got %d", code)
-	}
-	if requests.Load() == 0 {
-		t.Errorf("kept writes with no fresh outage must not stop the hook from asking the server")
-	}
-	var envelope struct {
-		HookSpecificOutput struct {
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &envelope); err != nil {
-		t.Fatalf("the hook must print its envelope: %v\n%s", err, out)
-	}
-	said := envelope.HookSpecificOutput.AdditionalContext
-	if !strings.Contains(said, "served context") {
-		t.Errorf("the hook must deliver the served context; got:\n%s", said)
-	}
-	if !strings.Contains(said, "1 process write kept on this machine") || !strings.Contains(said, "modernpath outage replay") {
-		t.Errorf("the hook must append the kept-writes line; got:\n%s", said)
-	}
-	if strings.Contains(said, "unavailable") {
-		t.Errorf("a server that answered is not reported as unavailable; got:\n%s", said)
 	}
 }

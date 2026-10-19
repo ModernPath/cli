@@ -6,17 +6,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/modernpath/cli/internal/kit"
 	"github.com/spf13/cobra"
 )
 
 var (
-	installDryRun      bool
-	installCheck       bool
-	installStoreBacked bool
-	installSource      string
+	installDryRun bool
+	installCheck  bool
+	installJSON   bool
 )
 
 var installCmd = &cobra.Command{
@@ -30,7 +28,6 @@ writes the process package and the adapter files each agent channel loads:
 
   .modernpath/rdd/PROCESS.md       the canonical process
   .modernpath/rdd/skills/          the procedures that apply it
-  .modernpath/rdd/file-state/      the record serialization shapes
   CLAUDE.md                        imports the installed process
                                    (Claude Code and Cursor read this)
   .claude/skills/rdd-*             skill-discovery pointers
@@ -47,28 +44,16 @@ Change shared process instructions in the req-driven-dev source repository and
 ship a new CLI. Project instructions live in the rest of AGENTS.md and
 .claude/rules/.
 
-Store-backed setup is the default. Run 'modernpath init' first to connect the
-repository to its system, then run 'modernpath install'. For a new system the
-server records activation under the signed-in user and the CLI writes
-process/store-backed.md before installing the process files. No confirmation,
-decision date or --source argument is needed. Repeat installs reuse the existing
-activation and repair a missing local marker from the server declaration.
-
---check and --dry-run do not activate the store or write files.
---source optionally supplies a USER: citation instead of the install invocation.
---store-backed=false retains local-only process installation. Existing file-ledger
-activation restrictions are unchanged. A server refusal stops installation.`,
+The process store is server-only. Connect the repository with 'modernpath init',
+then install the process files. --check and --dry-run do not write files.`,
 	RunE: runInstall,
 }
 
 func init() {
+	installCmd.Flags().BoolVar(&installJSON, "json", false, "Emit the install result as JSON")
 	installCmd.Flags().BoolVar(&installDryRun, "dry-run", false, "show what would change without writing")
 	installCmd.Flags().BoolVar(&installCheck, "check", false,
 		"report tool-owned files that were edited or are missing, and exit non-zero (for CI)")
-	installCmd.Flags().BoolVar(&installStoreBacked, "store-backed", true,
-		"activate store-backed setup for the connected repository before installing")
-	installCmd.Flags().StringVar(&installSource, "source", "",
-		"optional USER:<date>:<decision> citation for activation (defaults to this install invocation)")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -83,6 +68,20 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	generated := []kit.Generated{{Target: cliReferenceTarget, Body: []byte(renderCLIReference(rootCmd))}}
 	if installCheck {
+		if installJSON {
+			drift, err := kit.Check(root, generated...)
+			if err != nil {
+				return err
+			}
+			sort.Strings(drift)
+			if err := writeCommandJSON(cmd, map[string]any{"matches": len(drift) == 0, "differences": drift}); err != nil {
+				return err
+			}
+			if len(drift) > 0 {
+				return fmt.Errorf("%d tool-owned file(s) drifted", len(drift))
+			}
+			return nil
+		}
 		return reportDrift(root, generated...)
 	}
 	// REQ-CROSS-146: in the workspace that owns the kit, warn when the binary
@@ -93,23 +92,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	if installDryRun {
+		if installJSON {
+			return writeCommandJSON(cmd, installPreview(generated...))
+		}
+		if !verbose {
+			preview := installPreview(generated...)
+			fmt.Printf("Install preview: %d managed files, %d kit files, %d retired files\n", len(preview["managed_targets"].([]string)), len(preview["kit_targets"].([]string)), len(preview["retired_targets"].([]string)))
+			return nil
+		}
 		return reportPlan(root, generated...)
 	}
 
 	if err := kit.ValidateInstall(root); err != nil {
 		return fmt.Errorf("install preflight failed: %w", err)
-	}
-
-	// REQ-CROSS-406: the declaration runs before the install so the marker is
-	// on disk when Withheld decides the ledger skill on the same run.
-	if installStoreBacked {
-		source := installSource
-		if source == "" {
-			source = "USER:" + time.Now().UTC().Format(time.DateOnly) + ":modernpath-install-default-store-backed"
-		}
-		if err := declareStoreBacked(root, source); err != nil {
-			return err
-		}
 	}
 
 	res, err := kit.Install(root, generated...)
@@ -121,45 +116,63 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	sort.Strings(res.Written)
-	fmt.Println("✓ Process snapshot and agent adapters installed")
-	for _, f := range res.Written {
-		fmt.Printf("    %s\n", f)
+	if installJSON {
+		return writeCommandJSON(cmd, map[string]any{
+			"installed": true, "written": res.Written, "created": sortInstallStrings(res.Created),
+			"merged": sortInstallStrings(res.Merged), "aliased": res.Aliased, "removed": sortInstallStrings(res.Removed),
+		})
 	}
-	sort.Strings(res.Created)
-	for _, f := range res.Created {
-		fmt.Printf("    %-32s created with the managed block\n", f)
+	printSuccess("Installed %d process and adapter files\n", len(res.Written))
+	if verbose {
+		for _, f := range res.Written {
+			fmt.Printf("  %s\n", f)
+		}
+		for _, f := range sortInstallStrings(res.Created) {
+			fmt.Printf("  %s: managed block created\n", f)
+		}
+		for _, f := range sortInstallStrings(res.Merged) {
+			fmt.Printf("  %s: managed block merged\n", f)
+		}
+		for f, owner := range res.Aliased {
+			fmt.Printf("  %s: shared with %s\n", f, owner)
+		}
+		for _, f := range sortInstallStrings(res.Removed) {
+			fmt.Printf("  %s: retired file removed\n", f)
+		}
 	}
-	sort.Strings(res.Merged)
-	for _, f := range res.Merged {
-		fmt.Printf("    %-32s managed block merged; your content untouched\n", f)
-	}
-	aliased := make([]string, 0, len(res.Aliased))
-	for f := range res.Aliased {
-		aliased = append(aliased, f)
-	}
-	sort.Strings(aliased)
-	for _, f := range aliased {
-		fmt.Printf("    %-32s is %s's file; carries that managed block\n", f, res.Aliased[f])
-	}
-	sort.Strings(res.Removed)
-	for _, f := range res.Removed {
-		fmt.Printf("    %-32s retired process file removed\n", f)
-	}
-
-	fmt.Println("\nNext:")
-	fmt.Println("  • read .modernpath/rdd/AGENTS.md")
-	fmt.Println("  • put your stack, commands and boundaries in AGENTS.md")
-	fmt.Println("  • commit the installed process and adapter files")
 	return nil
+}
+
+func sortInstallStrings(values []string) []string {
+	out := append([]string(nil), values...)
+	sort.Strings(out)
+	return out
+}
+
+func installPreview(generated ...kit.Generated) map[string]any {
+	assets := make([]string, 0, len(installTargetsForReport()))
+	for target := range installTargetsForReport() {
+		if name, ok := kit.TargetForAsset(target); ok {
+			assets = append(assets, name)
+		}
+	}
+	sort.Strings(assets)
+	generatedTargets := make([]string, 0, len(generated))
+	for _, item := range generated {
+		generatedTargets = append(generatedTargets, item.Target)
+	}
+	retired, err := kit.RetiredTargets()
+	if err != nil {
+		retired = nil
+	}
+	sort.Strings(retired)
+	return map[string]any{"dry_run": true, "managed_targets": sortInstallStrings(kit.MergeTargets()), "kit_targets": assets, "generated_targets": generatedTargets, "retired_targets": retired}
 }
 
 // reportPlan lists what an install would touch. Useful before upgrading a
 // repository whose AGENTS.md has been edited, since that is the one file the
 // installer shares with its owner.
 func reportPlan(root string, generated ...kit.Generated) error {
-	if installStoreBacked {
-		fmt.Println("Store-backed setup: activation is the default; this preview does not activate or write the marker.")
-	}
 	var damaged []string
 	aliases, err := kit.MergeAliases(root)
 	if err != nil {
@@ -191,13 +204,7 @@ func reportPlan(root string, generated ...kit.Generated) error {
 	fmt.Println("\nKit-owned — replaced wholesale:")
 	targets := []string{}
 	for asset := range installTargetsForReport() {
-		if kit.Withheld(root, asset) {
-			continue
-		}
 		if t, ok := kit.TargetForAsset(asset); ok {
-			if installStoreBacked && t == kit.LedgerSkillTarget {
-				continue
-			}
 			targets = append(targets, t)
 		}
 	}
@@ -267,15 +274,14 @@ func reportDrift(root string, generated ...kit.Generated) error {
 		return err
 	}
 	if len(drift) == 0 {
-		fmt.Println("✓ installed process matches this CLI")
+		printSuccess("Installed process matches this CLI\n")
 		return nil
 	}
-	fmt.Println("✗ tool-owned files differ from this CLI's process:")
-	for _, f := range drift {
-		fmt.Printf("    %s\n", f)
+	if verbose {
+		fmt.Println("Tool-owned files differ from this CLI's process:")
+		for _, f := range drift {
+			fmt.Printf("  %s\n", f)
+		}
 	}
-	fmt.Println("\nThese are generated. `modernpath install` will overwrite them.")
-	fmt.Println("To change the process, update req-driven-dev, refresh the embedded snapshot, and ship a new CLI;")
-	fmt.Println("to keep a project-local rule, put it in AGENTS.md or .claude/rules/.")
 	return fmt.Errorf("%d tool-owned file(s) drifted", len(drift))
 }

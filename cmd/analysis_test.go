@@ -143,7 +143,7 @@ func bindLifecycleWorkspace(t *testing.T, s *lifecycleStub, repositoryID int) st
 		cfg["repository_id"] = repositoryID
 	}
 	writeJSON(t, dir, ".modernpath/config.json", cfg)
-	writeFactoryTestFile(t, dir, ".modernpath/auth.json", `{"token":"t"}`)
+	writeTestFile(t, dir, ".modernpath/auth.json", `{"token":"t"}`)
 	t.Chdir(dir)
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -223,6 +223,31 @@ func TestAnalysisStartPostsTheModeAndPrintsTheRun(t *testing.T) {
 				if !strings.Contains(out, want) {
 					t.Errorf("output must name %q:\n%s", want, out)
 				}
+			}
+		})
+	}
+}
+
+func TestAnalysisStartRejectsIncompleteSuccessfulLifecycleResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data map[string]any
+	}{
+		{name: "missing run id", data: map[string]any{"analysis_mode": "independent_repos", "run": map[string]any{"status": "queued"}}},
+		{name: "missing run status", data: map[string]any{"analysis_mode": "independent_repos", "run": map[string]any{"id": "15"}}},
+		{name: "invalid run id", data: map[string]any{"analysis_mode": "independent_repos", "run": map[string]any{"id": "run-15", "status": "queued"}}},
+		{name: "missing analysis mode", data: map[string]any{"run": map[string]any{"id": "15", "status": "queued"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newLifecycleStub(t)
+			s.answer(http.MethodPost, analyzePath, http.StatusAccepted, map[string]any{"data": tc.data})
+			bindLifecycleWorkspace(t, s, 7)
+			stdout, stderr, err := runAskStreams(t, "analysis", "start", "--json")
+			if err == nil {
+				t.Fatalf("incomplete accepted response must fail\nstdout=%s\nstderr=%s", stdout, stderr)
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Fatalf("invalid response must not be reported as a successful result: %s", stdout)
 			}
 		})
 	}
@@ -409,5 +434,133 @@ func TestAnalysisStatusReportsAMissingRunAsNoRun(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("status must print %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestAnalysisJSONOwnsStdoutAndPreservesTheStartedRun(t *testing.T) {
+	s := newLifecycleStub(t)
+	s.answer(http.MethodPost, analyzePath, http.StatusAccepted, lifecycleAccepted("105", "queued", "independent_repos"))
+	bindLifecycleWorkspace(t, s, 7)
+
+	stdout, stderr, err := runAskStreams(t, "analysis", "start", "--json")
+	if err != nil {
+		t.Fatalf("analysis start --json: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(stdout), &data); err != nil {
+		t.Fatalf("stdout must be one JSON response: %v\n%s", err, stdout)
+	}
+	if data["analysis_mode"] != "independent_repos" || data["run"].(map[string]any)["id"] != "105" {
+		t.Fatalf("JSON must retain native fields and run ID: %v", data)
+	}
+	if strings.Contains(stdout, "Analysis run") || strings.TrimSpace(stderr) != "" {
+		t.Fatalf("JSON mode leaked human output: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestAnalysisJSONWaitsForOnlyTheRunItStarted(t *testing.T) {
+	s := newLifecycleStub(t)
+	s.answer(http.MethodPost, analyzePath, http.StatusAccepted, lifecycleAccepted("105", "queued", "independent_repos"))
+	s.answer(http.MethodGet, runReadPath, http.StatusOK, map[string]any{"data": map[string]any{
+		"run":   map[string]any{"id": 105, "status": "completed", "analysis_mode": "independent_repos"},
+		"steps": []any{},
+	}})
+	bindLifecycleWorkspace(t, s, 7)
+
+	stdout, stderr, err := runAskStreams(t, "analysis", "start", "--json", "--wait", "--timeout", "1s")
+	if err != nil {
+		t.Fatalf("analysis start --wait: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout must be one JSON result: %v\n%s", err, stdout)
+	}
+	if s.requested(http.MethodGet, runReadPath) == nil {
+		t.Fatal("--wait must poll the current run")
+	}
+	if strings.Contains(stdout, "Analysis run") || strings.TrimSpace(stderr) != "" {
+		t.Fatalf("JSON mode leaked human output: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestAnalysisWaitRefusesToFollowAReplacementRun(t *testing.T) {
+	s := newLifecycleStub(t)
+	s.answer(http.MethodPost, analyzePath, http.StatusAccepted, lifecycleAccepted("105", "queued", "independent_repos"))
+	s.answer(http.MethodGet, runReadPath, http.StatusOK, map[string]any{"data": map[string]any{
+		"run": map[string]any{"id": 106, "status": "completed"}, "steps": []any{},
+	}})
+	bindLifecycleWorkspace(t, s, 7)
+
+	stdout, stderr, err := runAskStreams(t, "analysis", "start", "--wait", "--timeout", "1s")
+	if err == nil || !strings.Contains(stderr, "refusing to wait on another run") {
+		t.Fatalf("wait must reject a different current run, err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+}
+
+func TestAnalysisWaitRejectsUnboundedTimeoutBeforeStartingRun(t *testing.T) {
+	s := newLifecycleStub(t)
+	bindLifecycleWorkspace(t, s, 7)
+	stdout, stderr, err := runAskStreams(t, "analysis", "start", "--wait", "--timeout", "31m")
+	if err == nil || !strings.Contains(stderr, "at most 30m") {
+		t.Fatalf("timeout beyond the bound must fail, err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	if posts := s.posts(); len(posts) != 0 {
+		t.Fatalf("invalid timeout must be rejected before the mutation: %v", posts)
+	}
+}
+
+func TestAnalysisStatusJSONContainsNativeRepositoryAndRun(t *testing.T) {
+	s := newLifecycleStub(t)
+	s.answer(http.MethodGet, repoReadPath, http.StatusOK, map[string]any{"data": map[string]any{
+		"id": 7, "name": "Legacy Estate", "analysis_status": "completed", "documentation_status": "ready",
+		"embedding_status": "ready", "source_revision": "revision-full", "extra_server_field": "retained",
+	}})
+	s.answer(http.MethodGet, runReadPath, http.StatusOK, map[string]any{"data": map[string]any{
+		"run":   map[string]any{"id": "105", "status": "completed", "analysis_mode": "unified_workspace"},
+		"steps": []any{}, "server_only": true,
+	}})
+	bindLifecycleWorkspace(t, s, 7)
+
+	stdout, stderr, err := runAskStreams(t, "analysis", "status", "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout must contain one JSON value: %v\n%s", err, stdout)
+	}
+	if result["repository"].(map[string]any)["extra_server_field"] != "retained" || result["run"].(map[string]any)["server_only"] != true {
+		t.Fatalf("JSON should preserve full native fields: %v", result)
+	}
+	if strings.TrimSpace(stderr) != "" {
+		t.Fatalf("JSON mode must not write human progress: %q", stderr)
+	}
+}
+
+func TestAnalysisReanalyzeAndResetAcceptJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+	}{
+		{name: "reanalyze", args: []string{"analysis", "reanalyze", "7", "--json"}, path: reanalyzePath},
+		{name: "reset", args: []string{"analysis", "reset", "--yes", "--json"}, path: resetPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newLifecycleStub(t)
+			s.answer(http.MethodPost, tc.path, http.StatusAccepted, lifecycleAccepted("105", "queued", "independent_repos"))
+			bindLifecycleWorkspace(t, s, 7)
+			stdout, stderr, err := runAskStreams(t, tc.args...)
+			if err != nil {
+				t.Fatalf("%v: %v\nstdout=%s\nstderr=%s", tc.args, err, stdout, stderr)
+			}
+			var result map[string]any
+			if err := json.Unmarshal([]byte(stdout), &result); err != nil || result["run"].(map[string]any)["id"] != "105" {
+				t.Fatalf("%s must return the native lifecycle response as JSON: %v\n%s", tc.name, err, stdout)
+			}
+			if strings.TrimSpace(stderr) != "" {
+				t.Fatalf("JSON mode must not print progress to stderr: %q", stderr)
+			}
+		})
 	}
 }

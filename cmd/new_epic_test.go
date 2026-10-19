@@ -133,7 +133,7 @@ func TestNewFailsWhenTheEpicIsRejected(t *testing.T) {
 	}
 }
 
-func TestNewRecordsTheEpicItCreated(t *testing.T) {
+func TestNewCreatesEpicWithoutSelectingSharedActiveState(t *testing.T) {
 	server, _ := newTestServer(t, http.StatusCreated, `{"data":{"id":7}}`)
 
 	if err := newRun(t, server); err != nil {
@@ -141,10 +141,13 @@ func TestNewRecordsTheEpicItCreated(t *testing.T) {
 	}
 
 	cfg := readNewConfig(t)
-	if got, _ := cfg["epic_id"].(float64); got != 7 {
-		t.Fatalf("expected epic_id 7, got %#v", cfg["epic_id"])
+	if _, present := cfg["epic_id"]; present {
+		t.Fatal("new selected an implicit active Epic")
 	}
-	if got, _ := cfg["epic_name"].(string); got != epicTitle("Ledger") {
-		t.Fatalf("unexpected epic_name %#v", cfg["epic_name"])
+	if _, present := cfg["epic_name"]; present {
+		t.Fatal("new wrote implicit active Epic name")
+	}
+	if cfg["system_id"] != float64(4242) {
+		t.Fatalf("missing system binding: %#v", cfg)
 	}
 }

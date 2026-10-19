@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +32,48 @@ exists to make visible.`,
 }
 
 func init() {
+	hooksDoctorCmd.Flags().Bool("json", false, "Emit hook diagnostics as JSON")
+	addRecordReadFlags(hooksDoctorCmd)
 	hooksCmd.AddCommand(hooksDoctorCmd)
+}
+
+func hooksDoctorReport() map[string]any {
+	root, _ := os.Getwd()
+	linkedTarget, linked := hooksBinaryTarget(root)
+	copies := pathCopies("modernpath", os.Getenv("PATH"), executableExists)
+	if copies == nil {
+		copies = []string{}
+	}
+	winner := ""
+	if len(copies) > 0 {
+		winner = copies[0]
+	}
+	runningIsWinner := winner != "" && runningIsPathWinner(winner)
+	rows := make([]map[string]any, 0, len(hookAgents))
+	for _, key := range []string{"claude", "cursor", "codex", "pi"} {
+		agent := hookAgents[key]
+		retiredHooks := false
+		if agent.name == "Pi" {
+			retiredHooks = hasRetiredPiHook(agent)
+		} else {
+			if raw, err := os.ReadFile(agent.configPath); err == nil {
+				retiredHooks = hasRetiredHook(string(raw))
+			}
+		}
+		rows = append(rows, map[string]any{
+			"agent": agent.name, "config_path": agent.configPath,
+			"context_hook": string(contextFamilyState(agent)), "retired_hooks": retiredHooks,
+		})
+	}
+	var executable string
+	if path, err := os.Executable(); err == nil {
+		executable = path
+	}
+	return map[string]any{
+		"workspace_linked": linked, "workspace_target": linkedTarget, "path_copies": copies,
+		"path_winner": winner, "running_executable": executable, "running_is_path_winner": runningIsWinner,
+		"initialized": config.IsInitialized(), "agents": rows,
+	}
 }
 
 // pathCopies returns every executable named `name` on the given PATH, in the
@@ -90,20 +132,6 @@ func execGit(args ...string) (string, error) {
 	return string(out), err
 }
 
-func reportExtractorFreshness() {
-	result := extractorFreshness(Version, execGit)
-
-	switch result.state {
-	case freshnessCurrent:
-		printSuccess("Extractor: this build carries the repository's current extractor\n")
-	case freshnessStale:
-		printWarning("Extractor: %s\n", result.detail)
-	case freshnessUnverifiable:
-		printWarning("Extractor: %s\n", result.detail)
-	}
-	// freshnessNotApplicable prints nothing: there is no fact here to report.
-}
-
 // A repository that carries the CLI's own source can tell whether the build
 // running the extractor actually contains that source. One that does not carries
 // no such fact, and this check stays silent there rather than inventing a verdict.
@@ -125,34 +153,13 @@ type freshnessResult struct {
 // reasoning is verified without staging commits.
 type gitRunner func(args ...string) (string, error)
 
-// freshnessMode selects who is asking. The doctor reads working-tree dirt
-// under the source directory as stale (no installed build contains it) and a
-// commit this clone lacks as unverifiable. The SessionStart brief
-// (REQ-CROSS-416) reads dirt, a `.dirty` stamp, a missing stamp or an unknown
-// commit all as unverifiable and stays silent: a session start never accuses
-// the developer's own uncommitted build (F-CLI021-R1-05).
 type freshnessMode int
 
-const (
-	freshnessModeDoctor freshnessMode = iota
-	freshnessModeBrief
-)
-
-// extractorFreshness compares the running build against the extractor sources
-// this repository would have it run — the doctor's check, unchanged in shape.
-func extractorFreshness(version string, git gitRunner) freshnessResult {
-	return sourceFreshness("*internal/rdd/ops.go", version, git, freshnessModeDoctor)
-}
+const freshnessModeDoctor freshnessMode = iota
 
 // sourceFreshness compares the running build against the last change to the
 // directory holding the file `pattern` names in the checked-out repository.
 func sourceFreshness(pattern, version string, git gitRunner, mode freshnessMode) freshnessResult {
-	unverifiable := func(detail string) freshnessResult {
-		return freshnessResult{state: freshnessUnverifiable, detail: detail}
-	}
-	if mode == freshnessModeBrief && strings.Contains(version, ".dirty") {
-		return unverifiable("this build was made from an uncommitted tree")
-	}
 	// Resolve the repository root and scope every call to it. `git ls-files
 	// <pattern>` matches only at or below the working directory, so without
 	// this the whole check went silent from any subdirectory — and silence is
@@ -185,8 +192,6 @@ func sourceFreshness(pattern, version string, git gitRunner, mode freshnessMode)
 	if status, err := git("-C", at, "status", "--porcelain", "--", dir); err == nil {
 		tracked, untrackedGo := porcelainDirt(status)
 		switch {
-		case mode == freshnessModeBrief && (tracked || untrackedGo != ""):
-			return unverifiable("the CLI source has uncommitted changes")
 		case tracked:
 			return freshnessResult{
 				state:  freshnessStale,
@@ -229,13 +234,6 @@ func sourceFreshness(pattern, version string, git gitRunner, mode freshnessMode)
 	// With the build's commit known to exist, a non-zero exit here means what
 	// it says: the extractor's last change is not contained in this build.
 	if _, err := git("-C", at, "merge-base", "--is-ancestor", strings.TrimSpace(extractor), build); err != nil {
-		if mode == freshnessModeBrief {
-			return freshnessResult{
-				state: freshnessStale,
-				detail: fmt.Sprintf("this build (%s) is behind the checked-out CLI source, last changed at %s",
-					shortSHA(build), shortSHA(strings.TrimSpace(extractor))),
-			}
-		}
 		return freshnessResult{
 			state:  freshnessStale,
 			detail: fmt.Sprintf("this build predates the extractor's last change (%s) — reinstall with scripts/install-local.sh, or a sync will report success while omitting what the newer code writes", shortSHA(extractor)),
@@ -377,6 +375,25 @@ func versionSuffix(path string) string {
 }
 
 func runHooksDoctor(cmd *cobra.Command, args []string) error {
+	allowed := []string{"workspace_linked", "workspace_target", "path_copies", "path_winner", "running_executable", "running_is_path_winner", "initialized", "agents"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
+	if machine, _ := cmd.Flags().GetBool("json"); machine {
+		selected, err := selectRecordFields(cmd, hooksDoctorReport(), allowed, allowed, []string{"initialized"})
+		if err != nil {
+			return err
+		}
+		return writeCommandJSON(cmd, selected)
+	}
+	full, _ := cmd.Flags().GetBool("full")
+	if cmd.Flags().Changed("fields") || full {
+		selected, err := selectRecordFields(cmd, hooksDoctorReport(), nil, allowed, nil)
+		if err != nil {
+			return err
+		}
+		return writeRecord(cmd, selected)
+	}
 	// The workspace link, when `hooks install` wrote one, is what the hooks in
 	// this workspace run; PATH is the fallback for a workspace without it.
 	linked := false
@@ -440,38 +457,33 @@ func runHooksDoctor(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	reportExtractorFreshness()
-
 	agents := detectInstalledAgents()
 	if len(agents) == 0 {
 		printWarning("No agent config directories found (.claude/.cursor/.codex/.pi).\n")
 		return nil
 	}
 
-	_, storeBacked := storeBackedFromCwd()
 	for _, key := range agents {
 		agent := hookAgents[key]
+		if agent.name == "Pi" && hasRetiredPiHook(agent) {
+			printWarning("Pi: retired managed check/your-move hooks remain in %s — re-run 'modernpath hooks install'.\n", piExtensionPath(agent))
+		}
 		raw, err := os.ReadFile(agent.configPath)
 		// Pi loads project extensions even without its optional settings file.
-		if err != nil && !(key == "pi" && storeBacked && os.IsNotExist(err)) {
+		if err != nil {
 			printWarning("%s: no hooks configured (%s)\n", agent.name, agent.configPath)
 			continue
 		}
 
 		text := string(raw)
+		if agent.name != "Pi" && hasRetiredHook(text) {
+			printWarning("%s: retired ModernPath check/your-move or rdd-gate hooks remain configured — re-run 'modernpath hooks install' to remove them.\n", agent.name)
+		}
 		if agent.name == "Codex" {
 			reportCodexDoctorFamily("context", contextFamilyState(agent))
-			state := syncFamilyState(agent)
-			if !reportRetiredSyncFamily(key, agent.name+": sync", state) {
-				reportCodexDoctorFamily("sync", state)
-			}
-			reportCodexDoctorFamily("process gate", gateFamilyState(agent))
 			printInfo("Codex: review trusted/enabled state in /hooks; configuration alone does not prove execution.\n")
 		} else {
 			for _, f := range hookFamiliesFor(agent) {
-				if f.name == "sync" && f.applies && reportRetiredSyncFamily(key, agent.name+": sync", f.state) {
-					continue
-				}
 				reportHookFamily(agent.name, f)
 			}
 		}
@@ -497,31 +509,9 @@ type familyState struct {
 	state   hookFamilyState
 }
 
-// hookFamiliesFor lists the families the doctor reports for an agent, in report
-// order. A family the agent cannot run is listed as not applicable rather than
-// omitted: the doctor answers "what will actually run", and an omitted family
-// is indistinguishable from an absent one. That is how the process gate stayed
-// invisible — an unarmed gate never fires, so nothing else ever reports it.
-//
-// Each family's state comes from the same functions `hooks status` reads, so
-// the two commands cannot disagree about one file: a raw substring probe here
-// called a single surviving trigger "wired" while status called the family
-// PARTIALLY installed, and called a legacy gate script "wired" while status
-// called the gate not armed.
+// hookFamiliesFor lists retained hook families for the doctor.
 func hookFamiliesFor(agent agentConfig) []familyState {
-	full := agent.name == "Claude Code" || agent.name == "Pi"
-	families := []familyState{
-		{name: "context", applies: true, state: contextFamilyState(agent)},
-		{name: "sync", applies: full},
-		{name: "process gate", applies: full},
-		{name: "brief", applies: full},
-	}
-	if full {
-		families[1].state = syncFamilyState(agent)
-		families[2].state = gateFamilyState(agent)
-		families[3].state = briefFamilyState(agent)
-	}
-	return families
+	return []familyState{{name: "context", applies: true, state: contextFamilyState(agent)}}
 }
 
 // Codex reports a tri-state: configuration alone does not prove execution.

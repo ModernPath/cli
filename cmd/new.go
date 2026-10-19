@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
@@ -29,6 +28,7 @@ var (
 	skipInit    bool
 	inPlace     bool
 	yesFlag     bool
+	newJSON     bool
 )
 
 // TechProfile represents a technology standards profile
@@ -77,6 +77,7 @@ func init() {
 	newCmd.Flags().BoolVar(&skipInit, "skip-init", false, "Don't initialize .modernpath after creation")
 	newCmd.Flags().BoolVar(&inPlace, "in-place", false, "Initialize in current directory (don't create project folder)")
 	newCmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Skip confirmation prompt")
+	newCmd.Flags().BoolVar(&newJSON, "json", false, "Emit the created project receipt as JSON")
 
 	rootCmd.AddCommand(newCmd)
 }
@@ -95,12 +96,17 @@ func runNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	bold := color.New(color.Bold)
-
-	fmt.Println()
-	bold.Println("🏗️  ModernPath Builder")
-	fmt.Println("═══════════════════════════════════════════════════════════")
-	fmt.Println()
+	if newJSON || !stdinIsTerminal() {
+		if projectName == "" && len(args) == 0 {
+			return fmt.Errorf("provide --name or a project name for unattended creation")
+		}
+		if techProfile == "" {
+			return fmt.Errorf("provide --profile (or --profile auto) for unattended creation")
+		}
+		if !yesFlag {
+			return fmt.Errorf("--yes is required for unattended creation")
+		}
+	}
 
 	// Check API connection
 	client := api.NewClient(baseURL, "")
@@ -109,7 +115,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		// fail-closed platform host; render the credential statement, not a
 		// misleading "server is down" hint (REQ-CROSS-405).
 		if errors.Is(err, api.ErrUnauthorized) {
-			err = (&factoryEnv{APIURL: baseURL}).credentialRejected()
+			err = (&cliEnv{APIURL: baseURL}).credentialRejected()
 			printError("%v\n", err)
 			return err
 		}
@@ -156,12 +162,15 @@ func runNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if description == "" {
+		if newJSON || !stdinIsTerminal() {
+			return fmt.Errorf("provide --desc or --desc-file for unattended creation")
+		}
 		// Interactive prompt with validation
-		fmt.Println()
-		bold.Println("📝 Project Description (required)")
-		fmt.Println("Describe the product, its purpose, target users, and key features.")
-		fmt.Println("The more detail you provide, the better the generated system.")
-		fmt.Println()
+		fmt.Fprintln(cmd.ErrOrStderr())
+		fmt.Fprintln(cmd.ErrOrStderr(), "Project description (required)")
+		fmt.Fprintln(cmd.ErrOrStderr(), "Describe the product, its purpose, target users, and key features.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "The more detail you provide, the better the generated system.")
+		fmt.Fprintln(cmd.ErrOrStderr())
 
 		prompt := promptui.Prompt{
 			Label: "What are you building?",
@@ -199,6 +208,9 @@ func runNew(cmd *cobra.Command, args []string) error {
 		// AI determined the project type
 		pType = selection.ProjectType
 	} else if pType == "" {
+		if newJSON || !stdinIsTerminal() {
+			return fmt.Errorf("provide --type for unattended creation")
+		}
 		// Manual selection needed
 		selectPrompt := promptui.Select{
 			Label:    "Project Type",
@@ -211,26 +223,10 @@ func runNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Confirm
-	fmt.Println()
-	bold.Println("📋 Project Summary")
-	fmt.Println("───────────────────────────────────────────────────────────")
-	fmt.Printf("Name:     %s\n", name)
-	fmt.Printf("Profile:  %s\n", profile.Name)
-	fmt.Printf("Type:     %s\n", pType)
-	if selection.AISelected {
-		gray := color.New(color.FgHiBlack)
-		gray.Printf("          (AI recommended)\n")
+	printInfo("Create %s using %s (%s)", name, profile.Name, pType)
+	if verbose {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", description)
 	}
-	fmt.Printf("Description:\n")
-	descPreview := description
-	if len(descPreview) > 200 {
-		descPreview = descPreview[:200] + "..."
-	}
-	gray := color.New(color.FgHiBlack)
-	gray.Printf("  %s\n", strings.ReplaceAll(descPreview, "\n", "\n  "))
-
-	fmt.Println()
 	if !yesFlag {
 		confirmPrompt := promptui.Prompt{
 			Label:     "Create this project",
@@ -244,7 +240,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create project via API (includes AI generation of product definition)
-	fmt.Println()
+	fmt.Fprintln(cmd.ErrOrStderr())
 	printInfo("Creating system and generating product definition...\n")
 
 	archResult, err := createSystem(baseURL, name, description, profile, pType)
@@ -255,17 +251,9 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	printSuccess("System created (ID: %d)\n", archResult.ID)
 
-	// Show generated product definition
-	if archResult.ProductDefinition != nil {
-		if vision, ok := archResult.ProductDefinition["vision"].(string); ok && vision != "" {
-			cyan := color.New(color.FgCyan)
-			fmt.Println()
-			cyan.Println("📋 Generated Product Definition:")
-			fmt.Printf("   Vision: %s\n", vision)
-			if mission, ok := archResult.ProductDefinition["mission"].(string); ok {
-				fmt.Printf("   Mission: %s\n", mission)
-			}
-		}
+	if verbose && archResult.ProductDefinition != nil {
+		definition, _ := json.MarshalIndent(archResult.ProductDefinition, "", "  ")
+		fmt.Fprintln(cmd.ErrOrStderr(), string(definition))
 	}
 
 	// Create the initial Epic with the product definition as project overview.
@@ -298,7 +286,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("directory exists")
 		}
 
-		fmt.Println()
+		fmt.Fprintln(cmd.ErrOrStderr())
 		printInfo("Creating project folder: %s/\n", projectDir)
 
 		if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -320,18 +308,12 @@ func runNew(cmd *cobra.Command, args []string) error {
 			printWarning("Failed to create .modernpath: %v\n", err)
 			setupErr = err
 		} else {
-			// Save config (including Epic ID). The name is written only
-			// when there is an id behind it — a config naming an Epic
-			// that does not exist reads as success.
+			// Save the System binding. Epic commands take an explicit native ID.
 			cfg := &config.Config{
 				APIURL:     baseURL,
 				SystemID:   archResult.ID,
 				SystemName: name,
 				SystemSlug: slug,
-			}
-			if epicID != 0 {
-				cfg.EpicID = epicID
-				cfg.EpicName = epicTitle(name)
 			}
 
 			configPath := filepath.Join(modernpathDir, "config.json")
@@ -364,7 +346,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	if setupErr != nil {
-		fmt.Println()
+		fmt.Fprintln(cmd.ErrOrStderr())
 		printError("Setup did not finish: %v\n", setupErr)
 		if epicID != 0 {
 			printInfo("Already on the server (nothing was rolled back): System %d, Epic %d\n", archResult.ID, epicID)
@@ -375,25 +357,8 @@ func runNew(cmd *cobra.Command, args []string) error {
 		return setupErr
 	}
 
-	// Print next steps
-	fmt.Println()
-	bold.Println("✨ Project Created!")
-	fmt.Println()
-	fmt.Println("Next steps:")
-	// REQ-CROSS-502 C3: the link opens the app host, not the API host.
 	link := systemAppLink(readAppURL(newAuthenticatedClient(&config.Config{APIURL: baseURL})), baseURL, archResult.ID, "overview")
-	if !inPlace {
-		fmt.Printf("  1. cd %s\n", projectDir)
-		fmt.Printf("  2. View in UI:    %s\n", link)
-	} else {
-		fmt.Printf("  1. View in UI:    %s\n", link)
-	}
-	fmt.Printf("  %d. Sync docs:     modernpath docs sync\n", ifThen(!inPlace, 3, 2))
-	fmt.Printf("  %d. Search:        modernpath search \"...\"\n", ifThen(!inPlace, 4, 3))
-	fmt.Printf("  %d. Ask questions: modernpath ask \"...\"\n", ifThen(!inPlace, 5, 4))
-	fmt.Println()
-
-	return nil
+	return writeRecord(cmd, map[string]any{"operation": "created", "system_id": archResult.ID, "epic_id": epicID, "name": name, "path": projectDir, "url": link})
 }
 
 func ifThen(cond bool, a, b int) int {
@@ -440,6 +405,9 @@ func selectTechProfile(baseURL string, projectDescription string) (*SelectionRes
 				profiles[i].ID == techProfile {
 				return &SelectionResult{Profile: &profiles[i]}, nil
 			}
+		}
+		if newJSON || !stdinIsTerminal() {
+			return nil, fmt.Errorf("profile %q not found", techProfile)
 		}
 		printWarning("Profile '%s' not found, showing selection...\n", techProfile)
 	}
@@ -536,20 +504,9 @@ func generateTechProfileWithAI(baseURL, projectDescription string) (*AIRecommend
 		return nil, err
 	}
 
-	// Show AI's reasoning
-	fmt.Println()
-	bold := color.New(color.Bold)
-	cyan := color.New(color.FgCyan)
-	bold.Printf("🤖 AI Recommendation:\n")
-	fmt.Printf("   Tech Stack: ")
-	cyan.Printf("%s\n", result.Profile.Name)
-	fmt.Printf("   Project Type: ")
-	cyan.Printf("%s\n", result.ProjectType)
-	if result.Reasoning != "" {
-		gray := color.New(color.FgHiBlack)
-		gray.Printf("   %s\n", result.Reasoning)
+	if verbose {
+		printInfo("Recommended %s (%s): %s", result.Profile.Name, result.ProjectType, result.Reasoning)
 	}
-	fmt.Println()
 
 	return &AIRecommendation{
 		Profile:     &result.Profile,
@@ -667,7 +624,6 @@ func createEpic(baseURL string, arch *SystemResult) (int, error) {
 		"project_type":     "greenfield",
 		"project_overview": projectOverview,
 		"auto_generated":   true,
-		"workflow_phase":   "discovery",
 		"metadata": map[string]interface{}{
 			"source":     "cli",
 			"created_by": "modernpath new",

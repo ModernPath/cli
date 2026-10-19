@@ -15,7 +15,10 @@ import (
 )
 
 var (
-	envSet string
+	envSet      string
+	envJSON     bool
+	envListJSON bool
+	envTestJSON bool
 )
 
 // knownEnvironment is a named ModernPath server `modernpath env` can switch to.
@@ -104,12 +107,21 @@ var envTestCmd = &cobra.Command{
 
 func init() {
 	envCmd.Flags().StringVar(&envSet, "set", "", "Set environment: production, test, local, custom, or a URL")
+	envCmd.Flags().BoolVar(&envJSON, "json", false, "Emit the environment result as JSON")
+	envListCmd.Flags().BoolVar(&envListJSON, "json", false, "Emit available environments as JSON")
+	envTestCmd.Flags().BoolVar(&envTestJSON, "json", false, "Emit the connection check as JSON")
+	addRecordReadFlags(envCmd)
+	addRecordReadFlags(envTestCmd)
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envTestCmd)
 	rootCmd.AddCommand(envCmd)
 }
 
 func runEnv(cmd *cobra.Command, args []string) error {
+	allowed := []string{"environment", "api_url", "workspace", "status", "http_status", "error"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		cfg = &config.Config{APIURL: config.DefaultAPIURL}
@@ -117,9 +129,39 @@ func runEnv(cmd *cobra.Command, args []string) error {
 
 	// If --set flag provided, update the environment
 	if envSet != "" {
-		return setEnvironment(cfg, envSet)
+		if envJSON && envSet == "custom" {
+			return fmt.Errorf("--set=custom requires a URL with --json; provide --set=https://your-server.example")
+		}
+		if err := setEnvironment(cfg, envSet); err != nil {
+			return err
+		}
+		if envJSON {
+			auth, _ := config.ReadAuth()
+			return writeCommandJSON(cmd, map[string]any{
+				"api_url": cfg.APIURL, "environment": environmentName(cfg.APIURL), "system_id": cfg.SystemID,
+				"system_name": cfg.SystemName, "system_slug": cfg.SystemSlug,
+				"repository_id": cfg.RepositoryID, "authenticated": auth != nil && auth.Token != "",
+			})
+		}
+		return nil
 	}
 
+	if envJSON {
+		result := environmentStatus(cfg)
+		selected, err := selectRecordFields(cmd, result, []string{"environment", "api_url", "status"}, allowed, []string{"api_url"})
+		if err != nil {
+			return err
+		}
+		return writeCommandJSON(cmd, selected)
+	}
+	full, _ := cmd.Flags().GetBool("full")
+	if cmd.Flags().Changed("fields") || full {
+		selected, err := selectRecordFields(cmd, environmentStatus(cfg), nil, allowed, nil)
+		if err != nil {
+			return err
+		}
+		return writeRecord(cmd, selected)
+	}
 	// Show current environment status
 	displayEnvironmentStatus(cfg)
 	return nil
@@ -129,6 +171,17 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	cfg, _ := config.ReadConfig()
 	if cfg == nil {
 		cfg = &config.Config{APIURL: config.DefaultAPIURL}
+	}
+	if envListJSON {
+		rows := make([]map[string]any, 0, len(knownEnvironments())+1)
+		for _, env := range knownEnvironments() {
+			current := cfg.APIURL == env.URL || (env.URL == config.DefaultAPIURL && cfg.APIURL == "")
+			rows = append(rows, map[string]any{"name": env.Name, "api_url": env.URL, "description": env.Desc, "current": current})
+		}
+		if cfg.APIURL != "" && environmentName(cfg.APIURL) == "custom" {
+			rows = append(rows, map[string]any{"name": "custom", "api_url": cfg.APIURL, "description": "Custom environment", "current": true})
+		}
+		return writeCommandJSON(cmd, rows)
 	}
 
 	bold := color.New(color.Bold)
@@ -170,96 +223,134 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvTest(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadConfig()
+	allowed := []string{"environment", "api_url", "connected", "http_status", "response_time_ms", "error", "authentication_checked", "authentication_status", "authentication_error", "authentication_http_status"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
+	cfg, err := commandConfig()
 	if err != nil {
 		cfg = &config.Config{APIURL: config.DefaultAPIURL}
+		if apiURL != "" {
+			cfg.APIURL = apiURL
+		}
 	}
 
 	apiURL := cfg.APIURL
 	if apiURL == "" {
 		apiURL = config.DefaultAPIURL
 	}
-
-	envName := environmentName(apiURL)
-
-	fmt.Println()
-	printInfo("Testing connection to %s (%s)...\n", envName, apiURL)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	healthReq, authorized, err := healthProbe(apiURL)
+	result := testEnvironment(apiURL)
+	selected, err := selectRecordFields(cmd, result, []string{"environment", "api_url", "connected", "http_status", "response_time_ms", "authentication_checked", "authentication_status"}, allowed, []string{"connected"})
 	if err != nil {
 		return err
 	}
+	if err := writeRecord(cmd, selected); err != nil {
+		return err
+	}
+	if result["connected"] != true {
+		if reason, ok := result["error"].(string); ok {
+			return fmt.Errorf("connection to %s failed: %s", apiURL, reason)
+		}
+		return fmt.Errorf("health check at %s failed: %v", apiURL, result["http_status"])
+	}
+	if result["authentication_checked"] == true && result["authentication_status"] != "valid" {
+		return fmt.Errorf("authentication check failed (%v); run 'modernpath auth': %v", result["authentication_status"], result["authentication_error"])
+	}
+	return nil
+}
 
+func testEnvironment(apiURL string) map[string]any {
+	result := map[string]any{"environment": environmentName(apiURL), "api_url": apiURL, "connected": false, "authentication_checked": false}
+	client := &http.Client{Timeout: 10 * time.Second}
+	healthReq, authorized, err := healthProbe(apiURL)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
 	start := time.Now()
 	resp, err := client.Do(healthReq)
-	elapsed := time.Since(start)
-
+	result["response_time_ms"] = time.Since(start).Milliseconds()
 	if err != nil {
-		fmt.Println()
-		printError("Connection failed: %v\n", err)
-		fmt.Println()
-		printInfo("Troubleshooting tips:\n")
-		if apiURL == config.LocalAPIURL {
-			fmt.Println("  • Make sure the local Phoenix server is running (mix phx.server)")
-			fmt.Println("  • Check if port 4000 is available")
-		} else {
-			fmt.Println("  • Check your internet connection")
-			fmt.Println("  • The production server might be temporarily unavailable")
+		result["error"] = err.Error()
+		return result
+	}
+	resp.Body.Close()
+	result["http_status"] = resp.Status
+	result["connected"] = resp.StatusCode == http.StatusOK
+
+	auth, _ := config.ReadAuth()
+	if auth == nil || auth.Token == "" {
+		result["authentication_status"] = "not_configured"
+		return result
+	}
+	result["authentication_checked"] = true
+	req, err := http.NewRequest("GET", apiURL+"/api/systems", nil)
+	if err != nil {
+		result["authentication_status"] = "invalid_url"
+		result["authentication_error"] = err.Error()
+		return result
+	}
+	platform.Prepare(req)
+	if err := platform.Authorize(req, auth.Token); err != nil {
+		result["authentication_status"] = "refused_locally"
+		result["authentication_error"] = err.Error()
+		return result
+	}
+	req.Header.Set("Accept", "application/json")
+	authResp, err := client.Do(req)
+	if err != nil {
+		result["authentication_status"] = "unreachable"
+		result["authentication_error"] = err.Error()
+		return result
+	}
+	defer authResp.Body.Close()
+	switch authResp.StatusCode {
+	case http.StatusOK:
+		result["authentication_status"] = "valid"
+	case http.StatusUnauthorized:
+		result["authentication_status"] = "invalid"
+	default:
+		result["authentication_status"] = "degraded"
+		result["authentication_http_status"] = authResp.Status
+	}
+	_ = authorized
+	return result
+}
+
+func environmentStatus(cfg *config.Config) map[string]any {
+	apiURL := cfg.APIURL
+	if apiURL == "" {
+		apiURL = config.DefaultAPIURL
+	}
+	result := map[string]any{"environment": environmentName(apiURL), "api_url": apiURL}
+	if auth, err := config.ReadAuth(); err == nil {
+		if line := workspaceStatusLine(auth); line != "" {
+			result["workspace"] = line
 		}
-		return nil
+	}
+	req, authorized, err := healthProbe(apiURL)
+	if err != nil {
+		result["status"] = "unreachable"
+		result["error"] = err.Error()
+		return result
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		result["status"] = "unreachable"
+		result["error"] = err.Error()
+		return result
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		fmt.Println()
-		printSuccess("Connected successfully!\n")
-		fmt.Printf("  Response time: %dms\n", elapsed.Milliseconds())
-		fmt.Printf("  Status: %s\n", resp.Status)
-	} else {
-		fmt.Println()
-		printWarning("Server responded but health check failed\n")
-		fmt.Printf("  Status: %s\n", resp.Status)
-		fmt.Print(unauthenticatedProbeHint(resp.StatusCode, authorized))
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		result["status"] = "connected"
+	case resp.StatusCode == http.StatusUnauthorized && !authorized:
+		result["status"] = "unauthenticated"
+	default:
+		result["status"] = "degraded"
+		result["http_status"] = resp.Status
 	}
-
-	// Test authentication if we have a token
-	auth, _ := config.ReadAuth()
-	if auth != nil && auth.Token != "" {
-		fmt.Println()
-		printInfo("Testing authentication...\n")
-
-		req, _ := http.NewRequest("GET", apiURL+"/api/systems", nil)
-		platform.Prepare(req)
-		if err := platform.Authorize(req, auth.Token); err != nil {
-			// A local refusal is the answer to "is my authentication working" —
-			// report it and stop, rather than reporting a connection error for a
-			// request that was never sent.
-			printWarning("%v\n", err)
-			return nil
-		}
-		req.Header.Set("Accept", "application/json")
-
-		authResp, err := client.Do(req)
-		if err != nil {
-			printWarning("Auth test failed: %v\n", err)
-		} else {
-			defer authResp.Body.Close()
-			if authResp.StatusCode == http.StatusOK {
-				printSuccess("Authentication valid!\n")
-			} else if authResp.StatusCode == http.StatusUnauthorized {
-				printWarning("Token expired or invalid. Run 'modernpath auth' to re-authenticate.\n")
-			} else {
-				printWarning("Auth check returned: %s\n", authResp.Status)
-			}
-		}
-	} else {
-		fmt.Println()
-		printInfo("No authentication token found. Run 'modernpath auth' to login.\n")
-	}
-
-	fmt.Println()
-	return nil
+	return result
 }
 
 // healthProbe builds the request that answers "is this server reachable and
@@ -323,10 +414,7 @@ func setEnvironment(cfg *config.Config, env string) error {
 			// A full URL is accepted directly.
 			newURL = env
 		} else {
-			printError("Unknown environment: %s\n", env)
-			printInfo("Available environments: production, test, local, custom\n")
-			printInfo("Or provide a full URL: --set=https://your-server.com\n")
-			return nil
+			return fmt.Errorf("unknown environment %q; use production, test, local, custom, or a full URL", env)
 		}
 	}
 
@@ -407,6 +495,9 @@ func switchEnvironment(cfg *config.Config, newURL string) error {
 	if err := config.WriteAuth(auth); err != nil {
 		printError("Failed to save credentials: %v\n", err)
 		return err
+	}
+	if envJSON {
+		return nil
 	}
 
 	printSuccess("Environment set to %s\n", envName)

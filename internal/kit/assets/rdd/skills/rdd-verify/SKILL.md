@@ -1,189 +1,29 @@
 ---
 name: rdd-verify
-description: Establish regression-sensitive UR upper or SR lower evidence for existing behavior after normal development entry, adding or strengthening tests as needed. Use for approved TODO or IN_PROGRESS verification work. Eligible source-scoped baselines with existing proof use rdd-reverse-engineer-verify; DERIVED candidates require confirmation and changed behavior uses rdd-build.
+description: Verify implementation under an approved Epic plan, including current lower-level and user-flow evidence and proportional regression checks.
 ---
 
-# Verify entered existing-behavior work
+# Verify approved work
 
-Turn behavior described from shipped code into current direct UR upper or SR
-lower evidence.
+Read `PROCESS.md`, the approved plan and proposed content and its native requirement,
+code and test links. Confirm the tested content is the current candidate
+revision and the work remains within approved scope.
 
-Read the repository `AGENTS.md` and canonical `PROCESS.md`
-(`.modernpath/rdd/PROCESS.md` in a consuming repository) before changing a
-project repository. `PROCESS.md` owns trace, status, gate, evidence, and
-completion meanings.
+1. Confirm each changed behavior has a recorded expected RED and passing
+   result. A build error or unrelated failure does not count as RED.
+2. Run focused tests after cleanup and proportional boundary/regression gates.
+   Choose checks appropriate to the boundary: unit/property, component and
+   browser, endpoint/contract, persistence/integration, schema conformance, or
+   operations harness/smoke.
+3. Rerun affected user acceptance scenarios and report runtime/browser
+   observations. UI evidence requires the live stack, loaded assets and
+   inspected output.
+4. Link each result to its native requirement, test identity and exact code
+   revision. Broad suite output proves only exercised assertions. Do not
+   reconstruct evidence or mark a skipped test as passing.
+5. Report failures as implementation work within approved behavior, or route
+   material scope/acceptance changes back to `rdd-plan` for renewed approval.
 
-## Keep the transition honest
-
-This skill verifies existing behavior after normal entry. Eligible source-scoped
-baselines with existing proof use `rdd-reverse-engineer-verify` instead. Test
-additions or behavior changes on that path require an explicit normal-development
-handoff. This skill does not grant human approval or prove delivery.
-
-- Never run this skill for a `DERIVED` requirement. `DERIVED` means no human has
-  confirmed that the requirement exists; its proposed links are candidate
-  context and all downstream work is held. Apply its confirmation gate first.
-- Before tests change, current applied entry approval must cover the whole
-  selected delivery scope under `PROCESS.md`, including the Epic when selected.
-  The requirement being verified must be `TODO` or `IN_PROGRESS`.
-- For an SR, record `LOWER_VERIFIED` and move it to `IN_REVIEW` only when its
-  lower trace is current. For a UR, record `UPPER_VALIDATED` and move it to
-  `IN_REVIEW` only when its upper trace and required-SR conditions are current.
-- Never move a requirement to `DONE` from test evidence alone.
-  `DONE` also requires the applicable approval, authoritative-source
-  delivery, and reconciliation conditions.
-- If the implementation contradicts approved behavior, retain the failing
-  evidence and hand the same entered SR to `rdd-build`. Route through planning
-  only when satisfying it requires changed scope or a material decision. Do
-  not silently change behavior during a verification pass.
-
-## Enter through the same gate as any other change
-
-An authoritative as-built requirement is not itself permission to change tests.
-For this normal-development path, apply the entry gate before adding tests.
-
-If the row is `DERIVED`, if a requirement it actually depends on is `DERIVED`,
-or if an applicable relation is candidate-only, stop. Do not inspect tests as
-though that trace were authoritative, and do not use existing SR evidence to
-imply that an inferred user outcome is valid.
-
-Before changing any test, require an authoritative requirement source and its
-applicable trace:
-
-```text
-UR -> acceptance scenario -> TEST_CASE -> TEST_RESULT
-SR -> CODE -> TEST_CASE -> TEST_RESULT
-```
-
-Epic membership and UR links are optional. A standalone SR is valid and must
-not be sent back to planning merely because it has neither relation. When the
-SR is linked to UR acceptance content, record the declared relation; the UR's
-upper evidence remains part of the UR trace, not the SR lower trace. When an
-epic groups the SR or linked UR, verify that membership only if the selected
-scope depends on it.
-
-Use single-SR scope for one independently verifiable SR, whether standalone or
-linked to UR acceptance content. Use Epic scope when a UR or multiple
-requirements are selected. If establishing the evidence changes a user outcome
-or acceptance content, requires another independently implementable SR, or
-introduces a cross-cutting decision, return it to Epic-scoped planning. In
-either scope, fulfill the current planning, reconnaissance, cold-review,
-test-strategy, work-selection, and entry-brief facts.
-
-Check the existing entry approval for the exact selected scope. Reuse current
-applied approval and preserve `TODO` or `IN_PROGRESS`; resuming verification
-does not reopen entry or move work backwards. If entry is missing or stale,
-route to planning and entry before changing tests. Missing entry does not
-authorize an additional demotion or a hand-edited status.
-Verification stays within the authoritative work selection. The diagnosed-defect
-exception in `PROCESS.md` permits a failing test before entry; it does not
-authorize this verification pass or implementation.
-
-## Establish the evidence bar
-
-For each row, require all of the following:
-
-1. Resolve its source, code, and test citations.
-2. Split the statement and acceptance criteria into behavioral clauses.
-3. Name an assertion that would fail if each clause regressed.
-4. Confirm the test exercises the real subject rather than a mock that returns
-   the expected answer.
-5. Confirm the material inputs can **reach** that subject in production — that
-   the caller, parser, contract or serializer actually produces the shape the
-   test passes in. A real subject invoked with a shape no production path can
-   construct verifies a function, not a behavior.
-6. Open and read the exact test and its assertions.
-7. Run the exact test and confirm from verbose output or runner enumeration
-   that it executed.
-8. Observe the expected failure before the passing result. For already-shipped
-   behavior, use a safe local mutation or equivalent targeted failure, restore
-   it immediately, and inspect the diff before continuing.
-9. Run proportional regression gates and record evidence against the current
-   revision.
-10. Cite evidence by stable test path and name, for example
-    `TEST:path/to/file:TestName/Subtest`, plus the observed `RUN:` command and
-    result. Treat line numbers as optional, unstable navigation hints.
-
-A green suite is not evidence for every clause in a sentence. Underline every
-verb and every "and"; a clause without a corresponding failure-producing
-assertion remains unverified.
-
-## Work one row at a time
-
-1. Read the row, its acceptance criteria, and every cited source.
-2. Search for an existing test by behavior and assertion, not just filename.
-3. Use an acceptance/E2E test for a UR scenario and the appropriate focused
-   boundary test for an SR clause. If a sufficient test exists, run it and
-   demonstrate its relevant failure mode. Otherwise, add the smallest test.
-4. Restore any temporary mutation, run the focused test green, then run the
-   required regression gates.
-5. Update the authoritative requirement, optional related epic, evidence, and
-   work-selection records atomically; in a store-backed repository, refresh
-   the materialized snapshots afterwards.
-6. Advance only the evidence conclusion justified by the run. Move the selected
-   requirement to `IN_REVIEW` only if its applicable trace gates pass; otherwise
-   leave it at the strongest supported non-final state.
-7. Repeat for every approved scenario or clause lacking current evidence. Do
-   not request human input for an evidence failure within the approved
-   scope. Route changed intent or scope through `rdd-triage`; record an
-   external impediment as a blocker.
-8. Run the project's deterministic process checks. Deliver and reconcile before
-   soliciting completion acceptance; only the subsequent human gate may move a
-   requirement to `DONE`.
-
-## Detect verification traps
-
-- **A filter matched nothing.** A runner can print success after executing zero
-  tests. Use verbose output or list/count the selected test cases.
-- **The source window hid the answer.** Before reporting a contradiction,
-  inspect the complete function and its callers rather than a short excerpt.
-- **The new test request is invalid.** Prove the production path was entered
-  and inspect what collaborators received before blaming the implementation.
-- **The test mocks the subject.** A stubbed service can verify the fixture while
-  bypassing the behavior named by the row. Leave the row unverified.
-- **The subject is real and the input is not.** A hand-built struct, a
-  pre-decoded payload, or a field combination the parser cannot emit tests a
-  function the production path never calls that way. Trace one material input
-  back to its real producer; if nothing constructs it, the clause is unverified.
-- **An assertion is satisfied by surrounding UI or fixture data.** Ask what
-  production regression would make the assertion fail. If none would, replace
-  it.
-- **A citation moved.** Prefer stable test names over `path:line`; re-check any
-  retained line number after editing.
-- **The endpoint was contacted with the wrong payload.** Assert the material
-  values and protocol fields named by the requirement, not only a path, status,
-  or non-empty response.
-
-## Leave honest gaps
-
-Do not weaken a test to promote a row.
-
-- If the row lacks authoritative requirement support, stop verification and
-  route the inconsistent authority through `rdd-triage`. Do not silently rewrite
-  its lifecycle, approvals, or relationships.
-- If the implementation contradicts approved behavior, retain the failing
-  evidence and hand the same entered SR to `rdd-build`. Route through planning
-  only when satisfying it requires changed scope or a material decision.
-- If verification needs unavailable infrastructure, keep the row
-  `PENDING_VERIFICATION` before entry; after entry, use `BLOCKED` and record the
-  suspended `TODO` or `IN_PROGRESS` state.
-- If only a mocked path is available, record `test run, subject mocked` and
-  leave the row unverified.
-
-## Report the pass
-
-Report:
-
-- rows that gained direct evidence and their new evidence/work state;
-- rows left unchanged, grouped by reason;
-- tests added or reused and confirmation that each relevant failure mode was
-  observed before green;
-- focused and regression commands run;
-- contradictions, discoveries, pending approvals, delivery work, and record
-  reconciliation gaps; and
-- the exact next handoff: `rdd-completion-review`, `rdd-triage`, or the unmet
-  prerequisite.
-
-Exit only when every touched row has current direct evidence or an explicit
-reason it remains unverified, all temporary mutations are gone, and repository
-state passes its deterministic checks.
+Do not claim completion here. Hand the passing candidate and evidence to
+`rdd-completion-review`; if the process interface cannot store or read back
+required evidence, report the tooling gap and its effect.

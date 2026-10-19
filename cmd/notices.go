@@ -9,11 +9,9 @@ import (
 	"github.com/modernpath/cli/internal/config"
 )
 
-// cli-notices.json records which once-per-session notices — an expiry
-// warning for a given credential, a contract warning for a given version —
-// have already been printed, so a long run is told once, not on every call
-// (REQ-CROSS-389 D9). It is local state, never a store write; an unreadable
-// file reads as empty.
+// cli-notices.json records which credential expiry warnings have already
+// been printed. It is local state, never a store write; an unreadable file
+// reads as empty.
 func noticesPath(root string) string {
 	return filepath.Join(root, config.ConfigDir, "cli-notices.json")
 }

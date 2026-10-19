@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 
@@ -80,10 +82,10 @@ func platformEdge(t *testing.T, projectID string) (*httptest.Server, func() []he
 // rather than refusing locally.
 func bindWorkspace(t *testing.T, apiURL, projectID string) {
 	t.Helper()
-	root := enterFactoryTestWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/config.json",
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json",
 		fmt.Sprintf(`{"api_url":%q,"system_id":7}`, apiURL))
-	writeFactoryTestFile(t, root, ".modernpath/auth.json",
+	writeTestFile(t, root, ".modernpath/auth.json",
 		fmt.Sprintf(`{"token":%q}`, jwtWithAudience(t, projectID)))
 }
 
@@ -122,6 +124,52 @@ func TestEnvTestHealthProbeCarriesTheStoredBearer(t *testing.T) {
 	if !probes[0].authorized {
 		t.Error("health probe carried no Authorization header, so the edge answers 401 " +
 			"and a healthy server is reported as failing")
+	}
+}
+
+func TestEnvTestHonorsRootAPIURLOverride(t *testing.T) {
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "_health") {
+			seen = r.URL.Path
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	// The workspace points elsewhere; env test must use the same root override
+	// precedence as commands that load their target through commandConfig.
+	bindWorkspace(t, "http://configured.invalid", "")
+	previous := apiURL
+	apiURL = server.URL
+	t.Cleanup(func() { apiURL = previous })
+
+	if err := runEnvTest(envTestCmd, nil); err != nil {
+		t.Fatalf("env test with --api-url override: %v", err)
+	}
+	if seen != "/_health" {
+		t.Fatalf("health check path = %q, want request against override host", seen)
+	}
+}
+
+func TestEnvTestJSONIsOnlyTheResult(t *testing.T) {
+	const projectID = "999888777666555444"
+	server, _ := platformEdge(t, projectID)
+	bindWorkspace(t, server.URL, projectID)
+	stdout, stderr, err := runAskStreams(t, "env", "test", "--json")
+	if err != nil {
+		t.Fatalf("env test --json: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout must contain only the JSON result, got %q: %v", stdout, err)
+	}
+	if result["connected"] != true || result["authentication_status"] != "valid" {
+		t.Fatalf("unexpected environment test result: %#v", result)
+	}
+	if strings.TrimSpace(stderr) != "" {
+		t.Fatalf("successful JSON test should not emit diagnostics: %s", stderr)
 	}
 }
 
@@ -169,8 +217,8 @@ func TestHealthProbeOnANonPlatformHostIsUnchanged(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	root := enterFactoryTestWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/config.json",
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json",
 		fmt.Sprintf(`{"api_url":%q}`, server.URL))
 
 	if err := runEnv(envCmd, nil); err != nil {
@@ -191,6 +239,21 @@ func TestHealthProbeOnANonPlatformHostIsUnchanged(t *testing.T) {
 		}
 		if r.authorized {
 			t.Errorf("probe to %q carried an Authorization header; there is no stored token to send", r.path)
+		}
+	}
+}
+
+func TestEnvTestConnectionFailureReturnsErrorInEveryFormat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(`{"api_url":%q}`, server.URL))
+	for _, flags := range [][]string{nil, {"--json"}, {"--fields", "connected"}, {"--full"}} {
+		_, _, err := runAskStreams(t, append([]string{"env", "test"}, flags...)...)
+		if err == nil || !strings.Contains(err.Error(), "503") {
+			t.Fatalf("env test %v must fail with the HTTP reason, got %v", flags, err)
 		}
 	}
 }

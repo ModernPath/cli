@@ -13,12 +13,12 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/modernpath/cli/internal/api"
-	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
 var (
 	askFormat     string
+	askJSON       bool
 	askBrief      bool
 	askIterations int
 )
@@ -50,6 +50,7 @@ Examples:
 }
 
 func init() {
+	askCmd.Flags().BoolVar(&askJSON, "json", false, "Emit the answer and complete source references as JSON")
 	askCmd.Flags().StringVar(&askFormat, "format", "pretty", "Output format: pretty, markdown, json")
 	askCmd.Flags().BoolVar(&askBrief, "brief", false, "Brief output (answer only, no sources)")
 	askCmd.Flags().IntVar(&askIterations, "iterations", 5, "Max search iterations (1-10)")
@@ -141,25 +142,21 @@ func uniqueAskSources(wire []askWireSource) []askSource {
 
 func runAsk(cmd *cobra.Command, args []string) error {
 	question := strings.Join(args, " ")
+	if askJSON {
+		askFormat = "json"
+	}
+	if askFormat != "json" && askFormat != "pretty" && askFormat != "markdown" {
+		return fmt.Errorf("--format must be pretty, markdown or json")
+	}
 
 	// REQ-CROSS-405: binding and credential statements before any request.
 	env, err := apiClientCredentialLoad()
 	if err != nil {
-		if askFormat == "json" {
-			fmt.Printf(`{"error": %q}`+"\n", err.Error())
-		} else {
-			printError("%v\n", err)
-		}
 		return err
 	}
 
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
-		if askFormat == "json" {
-			fmt.Printf(`{"error": "Failed to read config: %v"}`, err)
-		} else {
-			printError("Failed to read config: %v\n", err)
-		}
 		return err
 	}
 
@@ -189,11 +186,6 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		result, err = pollAsk(env, cfg.APIURL, result.Result.AskID, started)
 	}
 	if err != nil {
-		if askFormat == "json" {
-			fmt.Printf(`{"error": %q}`+"\n", err.Error())
-		} else {
-			printError("%v\n", err)
-		}
 		return err
 	}
 
@@ -214,7 +206,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 
 // postAskTool calls one of the ask tools and returns its decoded reply. A
 // refused credential, an HTTP error and a failed tool call are errors.
-func postAskTool(env *factoryEnv, url string, arguments map[string]interface{}) (askResult, error) {
+func postAskTool(env *cliEnv, url string, arguments map[string]interface{}) (askResult, error) {
 	var result askResult
 	jsonPayload, _ := json.Marshal(map[string]interface{}{"arguments": arguments})
 
@@ -249,7 +241,7 @@ func postAskTool(env *factoryEnv, url string, arguments map[string]interface{}) 
 
 // pollAsk waits for a running ask through agentic_search_result until it is
 // done, has failed, or the wait limit counted from started has passed.
-func pollAsk(env *factoryEnv, apiURL, askID string, started time.Time) (askResult, error) {
+func pollAsk(env *cliEnv, apiURL, askID string, started time.Time) (askResult, error) {
 	limit := askWaitLimit()
 	url := fmt.Sprintf("%s/api/mcp/tools/agentic_search_result", apiURL)
 	progress := askFormat == "pretty"

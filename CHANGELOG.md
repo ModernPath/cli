@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+### Upgrade and command changes
+
+- Requires the matching server changes from ModernPath/modernpath-v1#936.
+  Publish this CLI only after supported servers include those changes.
+- After upgrading, run `modernpath install` and `modernpath install --check`
+  from each connected repository root. Run `modernpath hooks install` to refresh
+  hooks and `modernpath hooks doctor` to check for retired hook entries.
+- The legacy `factory`, `process`, `working-set`, `author`, `work`, `tasks`
+  and `your-move` command groups are retired. Update automation to use the
+  native requirement, Epic, trace and evidence workflows in the
+  [CLI guide](../../docs/cli.md).
+- Epics use integer IDs; requirements and test cases use native UUIDs.
+  Requirement and test-case reads also accept current display references such
+  as `UR-6-0` and `TC-6-0`. Display references include a revision; use UUIDs for
+  stable identity. Legacy requirement external IDs and Epic codes are retired.
+
+### Epic plans and requirement publication
+
+- `epics plan show` and `epics plan save` read and save the live Epic plan.
+  `approve-implementation`, `submit-review` and `approve-completion` provide
+  the implementation and completion review workflow.
+- Implementation approval records the exact reviewed plan and locks requirement
+  ownership. Completion approval publishes the approved requirement content,
+  advances its revision and records immutable accepted versions.
+- `requirements create --file` creates native requirements in the connected
+  System with server-assigned identity and an initial `PROPOSED` state.
+- `reverse-engineer record --file` records requirements and typed traces
+  atomically. `reverse-engineer review --file` returns the complete review
+  bundle; `reverse-engineer accept --file` accepts that exact bundle with an
+  explicit human source and reason. The server rechecks the reviewed content
+  before publishing verified existing behavior.
+
+### Reads, test cases and evidence
+
+- Native record reads provide compact output by default, `--fields` for
+  selected fields and `--full` for complete public records. List reads use
+  bounded pages with `--limit` and `--after`; `--json` supports automation.
+- `traces list` reads typed native associations. `test-cases` manages test
+  procedures, while `evidence record`, `evidence latest` and `evidence runs`
+  record and inspect execution results against native targets.
+- `read-doc` applies cursor, order and limit validation to every paginated read,
+  including calls without a filter or `--list`.
+
+### Migration continuity
+
+- The server migration repopulates live Epic plans from legacy authored plan
+  sections. Original section content, authors, timestamps and fingerprints
+  remain available in the audit archive. Existing saved plans are preserved;
+  migration does not grant implementation or completion approval.
+- Backlog items retain their disposition and source attribution. Resolvable
+  affected-item and disposition associations become native links; unresolved
+  references remain visible in metadata instead of being discarded.
+
 ## v0.21.0 — batch reverse engineering
 
 ### Upgrading from v0.20.0

@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/modernpath/cli/internal/storeback"
 )
 
 const managedSkillReferencesFile = ".modernpath/skill-references.json"
@@ -22,27 +20,6 @@ const managedSkillReferencesFile = ".modernpath/skill-references.json"
 //
 //go:embed assets
 var assets embed.FS
-
-// ledgerSkillAsset is the one tool-owned file whose subject the flip retires:
-// the ledger skill documents tasks/*-REQUIREMENTS.md, and its trigger is
-// "changing a requirement's status". On a store-backed workspace those files
-// are retired by declaration (process/store-backed.md), so installing the skill
-// there hands every later session a procedure whose first step recreates a
-// retired file — which the dual-authority guard then flags.
-const ledgerSkillAsset = "assets/skills/rdd-ledger/SKILL.md"
-
-// LedgerSkillTarget is where the ledger skill installs while the workspace is
-// file-backed. It is a tracked file in no retired family, so the flip commit
-// names it beside the families (cmd/migrate.go prints it) — otherwise every
-// clone after the flip carries it and Check reports it as drift.
-const LedgerSkillTarget = ".claude/skills/rdd-ledger/SKILL.md"
-
-// Withheld reports whether an embedded asset is deliberately not installed at
-// root. Only the ledger skill qualifies, and only under the store-backed
-// marker: there its absence is the configuration and its presence is drift.
-func Withheld(root, asset string) bool {
-	return strings.TrimPrefix(asset, "./") == ledgerSkillAsset && storeback.Active(root)
-}
 
 // installTargets maps non-process assets onto their paths in the client's
 // repository. The process snapshot under assets/rdd is mapped recursively by
@@ -57,27 +34,14 @@ var installTargets = map[string]string{
 	// audit-citations.mjs at the canonical .modernpath/rdd path), so the
 	// package claims their .claude/skills paths too. The two ModernPath
 	// tooling skills below are not process and remain current.
-	// rdd-ledger is the project-local compatibility adapter for the tasks/
-	// ledger format; 13 ledger headers root themselves in it. It is installed
-	// only while the workspace is file-backed — see Withheld.
-	ledgerSkillAsset: LedgerSkillTarget,
 	"assets/skills/mp-knowledge-search/SKILL.md": ".claude/skills/mp-knowledge-search/SKILL.md",
-	// mp-process-cli carries the store-backed verb sequences, the selection
-	// and fingerprint models and the refusal glossary. It installs in both
-	// modes — its store-backed sections are marked — so it is never withheld.
-	"assets/skills/mp-process-cli/SKILL.md": ".claude/skills/mp-process-cli/SKILL.md",
-	"assets/hooks/rdd-gate.sh":              ".claude/hooks/rdd-gate.sh",
 	// REQ-CROSS-409 (EPIC-CLI-020): the delegated cold review's agent
 	// definition — Read, Grep, Glob, no shell, the review rules. Installed in
-	// both modes; an edited or missing copy is drift like a skill's.
+	// an edited or missing copy is drift like a skill's.
 	"assets/agents/rdd-cold-reviewer.md": ".claude/agents/rdd-cold-reviewer.md",
-	// The context worker of a reverse-engineering batch sweep: it derives and
-	// stages one slice and hands it back; the orchestrating session publishes.
-	"assets/agents/rdd-context-deriver.md": ".claude/agents/rdd-context-deriver.md",
-	// The Codex renderings of the same agents (codexAgentTOML; Cursor reads
+	// The Codex rendering of the same reviewer (codexAgentTOML; Cursor reads
 	// both .claude/agents and .codex/agents).
-	"assets/agents-codex/rdd-cold-reviewer.toml":   ".codex/agents/rdd-cold-reviewer.toml",
-	"assets/agents-codex/rdd-context-deriver.toml": ".codex/agents/rdd-context-deriver.toml",
+	"assets/agents-codex/rdd-cold-reviewer.toml": ".codex/agents/rdd-cold-reviewer.toml",
 }
 
 // legacyInstallTargets records the old Claude-specific location of assets
@@ -92,6 +56,21 @@ var legacyInstallTargets = map[string]string{
 // explicit so an upgrade removes stale manuals without deleting unknown client
 // files from either namespace.
 var retiredInstallTargets = []string{
+	".claude/agents/rdd-context-deriver.md",
+	".codex/agents/rdd-context-deriver.toml",
+	".modernpath/rdd/file-state/BACKLOG.md",
+	".modernpath/rdd/file-state/EPICS.md",
+	".modernpath/rdd/file-state/GATES.md",
+	".modernpath/rdd/file-state/REQUIREMENTS.md",
+	".modernpath/rdd/file-state/WORK-SELECTION.md",
+	".claude/rdd/file-state/BACKLOG.md",
+	".claude/rdd/file-state/EPICS.md",
+	".claude/rdd/file-state/GATES.md",
+	".claude/rdd/file-state/REQUIREMENTS.md",
+	".claude/rdd/file-state/WORK-SELECTION.md",
+	".claude/skills/mp-process-cli/SKILL.md",
+	".claude/hooks/rdd-gate.sh",
+	".claude/skills/rdd-ledger/SKILL.md",
 	// req-driven-dev PR #30 retired its provider adapter and agent metadata.
 	".modernpath/rdd/CLAUDE.md",
 	".modernpath/rdd/skills/rdd-audit/agents/openai.yaml",
@@ -120,7 +99,7 @@ var retiredInstallTargets = []string{
 	".claude/rdd/skills/rdd-triage/agents/openai.yaml",
 	".claude/rdd/skills/rdd-verify/agents/openai.yaml",
 	// The consolidated package replaced the process/ manuals and the work
-	// templates with PROCESS.md, file-state/ and skills/. These paths are no
+	// templates with PROCESS.md and skills/. These paths are no
 	// longer derivable from the embedded tree, so without listing them an
 	// upgrade leaves the superseded manuals installed beside the new ones and
 	// every agent reads two contradictory process definitions.
@@ -399,24 +378,6 @@ func Install(root string, generated ...Generated) (Result, error) {
 			targets = append(targets, target)
 		}
 		if len(targets) == 0 {
-			continue
-		}
-		if Withheld(root, asset) {
-			// A copy left by an install made before the flip is retired the
-			// same way a superseded manual is: removed, reported, never rewritten.
-			for _, target := range targets {
-				err := os.Remove(filepath.Join(root, target))
-				switch {
-				case err == nil:
-					res.Removed = append(res.Removed, target)
-				case os.IsNotExist(err):
-				default:
-					return res, fmt.Errorf("remove withheld %s: %w", target, err)
-				}
-				if err := pruneEmptyParents(root, target); err != nil {
-					return res, fmt.Errorf("remove empty directories for withheld %s: %w", target, err)
-				}
-			}
 			continue
 		}
 		body, err := assets.ReadFile(asset)
@@ -802,14 +763,6 @@ func Check(root string, generated ...Generated) ([]string, error) {
 			targets = append(targets, target)
 		}
 		if len(targets) == 0 {
-			continue
-		}
-		if Withheld(root, asset) {
-			for _, target := range targets {
-				if _, err := os.Stat(filepath.Join(root, target)); err == nil {
-					drift = append(drift, target+" (withheld: this workspace is store-backed and its subject is retired)")
-				}
-			}
 			continue
 		}
 		want, err := assets.ReadFile(asset)

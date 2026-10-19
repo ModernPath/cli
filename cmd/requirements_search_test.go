@@ -11,8 +11,8 @@ import (
 
 // REQ-PLN-192 (EPIC-REQ-SEARCH): requirements search reads the requirement
 // search route for the bound system and prints each hit's id, name, status
-// and how it matched. A row with no external id is shown by its display
-// reference.
+// and how it matched. Human output uses the server's display reference while
+// JSON retains the immutable UUID.
 func TestRequirementsSearchCallsTheRouteAndRenders(t *testing.T) {
 	var got url.Values
 	mux := http.NewServeMux()
@@ -27,12 +27,12 @@ func TestRequirementsSearchCallsTheRouteAndRenders(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"query": got.Get("q"),
 			"items": []map[string]any{
-				{"kind": "requirement", "requirement_kind": "system", "id": "a1", "external_id": "REQ-CROSS-970",
-					"display_id": "SR-12", "name": "Signing keys rotate", "description": "Keys rotate.",
+				{"kind": "requirement", "requirement_kind": "system_requirement", "id": "8f5ec2c0-57c1-4a9f-aeb0-a8dfc4d12a9c",
+					"display_ref": "SR-12-1", "name": "Signing keys rotate", "description": "Keys rotate.",
 					"work_status": "TODO", "candidate": false, "matched": []string{"exact", "semantic"}, "similarity": 0.91},
-				{"kind": "requirement", "requirement_kind": "user", "id": "b2", "external_id": nil,
-					"display_id": "UR-5", "name": "Credentials are replaced", "description": nil,
-					"work_status": "DERIVED", "candidate": true, "matched": []string{"exact"}, "similarity": nil},
+				{"kind": "requirement", "requirement_kind": "test_case", "id": "a132ce3d-8b3b-4bd2-b80f-983d42b25da4",
+					"display_ref": "TC-3-1", "name": "Replacement is covered", "description": nil,
+					"candidate": true, "matched": []string{"exact"}},
 			},
 		}})
 	})
@@ -48,12 +48,23 @@ func TestRequirementsSearchCallsTheRouteAndRenders(t *testing.T) {
 		t.Fatalf("query = %v, want system_id=1 q=\"signing keys\" limit=5", got)
 	}
 	for _, want := range []string{
-		"REQ-CROSS-970", "Signing keys rotate", "TODO", "exact, semantic",
-		"UR-5", "Credentials are replaced", "DERIVED", "candidate",
+		"SR-12-1", "Signing keys rotate", "TODO",
+		"TC-3-1", "Replacement is covered", "test_case", "candidate",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("human output omitted %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "exact") || strings.Contains(out, "Keys rotate.") {
+		t.Fatalf("default output should omit match detail and description: %s", out)
+	}
+	out, err = runRoot(t, "requirements", "search", "signing keys", "--fields", "description,matched", "--full")
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatal("--fields and --full must be mutually exclusive")
+	}
+	out, err = runRoot(t, "requirements", "search", "signing keys", "--fields", "description,matched")
+	if err != nil || !strings.Contains(out, "exact, semantic") || !strings.Contains(out, "Keys rotate.") {
+		t.Fatalf("explicit detail projection: %v %s", err, out)
 	}
 
 	out, err = runRoot(t, "requirements", "search", "signing keys", "--json")
@@ -66,7 +77,7 @@ func TestRequirementsSearchCallsTheRouteAndRenders(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
 		t.Fatalf("--json output is not JSON: %v\n%s", err, out)
 	}
-	if len(decoded.Items) != 2 || decoded.Items[0]["external_id"] != "REQ-CROSS-970" || decoded.Items[1]["display_id"] != "UR-5" {
+	if len(decoded.Items) != 2 || decoded.Items[0]["id"] != "8f5ec2c0-57c1-4a9f-aeb0-a8dfc4d12a9c" || decoded.Items[1]["display_ref"] != "TC-3-1" || decoded.Items[1]["candidate"] != true {
 		t.Fatalf("--json items = %v", decoded.Items)
 	}
 }

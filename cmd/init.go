@@ -18,6 +18,7 @@ import (
 )
 
 type initFinalizeOptions struct {
+	command         *cobra.Command
 	force           bool
 	initMode        string
 	localRepos      []localGitRepo
@@ -29,6 +30,7 @@ var (
 	systemNameFlag string
 	force          bool
 	initLocal      bool
+	initJSON       bool
 )
 
 var initCmd = &cobra.Command{
@@ -53,20 +55,25 @@ Example:
 }
 
 func init() {
-	initCmd.Flags().IntVar(&systemIDFlag, "system-id", 0, "System ID to initialize")
-	initCmd.Flags().StringVar(&systemNameFlag, "system", "", "System name to initialize")
-	initCmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing .modernpath directory")
-	initCmd.Flags().BoolVar(&initLocal, "local", false, "Use local server (localhost:4000) instead of cloud production")
+	initCmd.PersistentFlags().IntVar(&systemIDFlag, "system-id", 0, "System ID to initialize")
+	initCmd.PersistentFlags().StringVar(&systemNameFlag, "system", "", "System name to initialize")
+	initCmd.PersistentFlags().BoolVarP(&force, "force", "f", false, "Overwrite existing .modernpath directory")
+	initCmd.PersistentFlags().BoolVar(&initLocal, "local", false, "Use local server (localhost:4000) instead of cloud production")
+	initCmd.PersistentFlags().BoolVar(&initJSON, "json", false, "Emit the binding receipt as JSON")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
 	if config.IsInitialized() && !force {
-		cfg, _ := config.ReadConfig()
-		printWarning("Already initialized with system: %s\n", cfg.SystemName)
-		printInfo("Use --force to reinitialize or 'modernpath docs sync' to update\n")
-		return nil
+		cfg, err := config.ReadConfig()
+		if err != nil {
+			return err
+		}
+		return writeRecord(cmd, map[string]any{"operation": "unchanged", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL})
 	}
 
+	if initJSON && systemIDFlag <= 0 && systemNameFlag == "" {
+		return fmt.Errorf("--system-id or --system is required with --json")
+	}
 	client, baseURL, err := connectInitClient()
 	if err != nil {
 		return err
@@ -84,7 +91,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{force: force, initMode: "repo"})
+	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{command: cmd, force: force, initMode: "repo"})
 }
 
 func connectInitClient() (*api.Client, string, error) {
@@ -126,7 +133,7 @@ func connectInitClient() (*api.Client, string, error) {
 		// statement (REQ-CROSS-405: never `HTTP 401` alone), not a bare status
 		// line and a misleading "server is down" hint.
 		if errors.Is(err, api.ErrUnauthorized) {
-			err = (&factoryEnv{APIURL: baseURL}).credentialRejected()
+			err = (&cliEnv{APIURL: baseURL}).credentialRejected()
 			printError("%v\n", err)
 			return nil, "", err
 		}
@@ -135,7 +142,7 @@ func connectInitClient() (*api.Client, string, error) {
 		return nil, "", err
 	}
 
-	printSuccess("Connected to ModernPath\n")
+	printInfo("Connected to ModernPath\n")
 
 	return client, baseURL, nil
 }
@@ -170,12 +177,10 @@ func resolveSingleRepoSystemSelection(client *api.Client, systems []api.System) 
 }
 
 func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.System, opts initFinalizeOptions) error {
-	fmt.Printf("\n")
-	printInfo("Selected: %s\n", selectedSystem.Name)
-	if selectedSystem.Description != "" {
-		fmt.Printf("  %s\n", selectedSystem.Description)
+	printInfo("Selected: %s", selectedSystem.Name)
+	if verbose && selectedSystem.Description != "" {
+		fmt.Fprintln(os.Stderr, selectedSystem.Description)
 	}
-	fmt.Printf("\n")
 
 	printInfo("Downloading documentation and analysis data...\n")
 
@@ -185,7 +190,7 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 		return err
 	}
 
-	printSuccess("Downloaded %d bytes\n", len(zipData))
+	printInfo("Downloaded %d bytes\n", len(zipData))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -267,22 +272,15 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 		printInfo("Ignored local .modernpath state; kept .modernpath/rdd versioned\n")
 	}
 
-	fmt.Printf("\n")
-	if opts.initMode == "workspace" {
-		printSuccess("ModernPath workspace initialized!\n")
-	} else {
-		printSuccess("ModernPath initialized!\n")
+	receipt := map[string]any{"operation": "initialized", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL, "path": cwd, "mode": opts.initMode}
+	output := opts.command
+	if output == nil {
+		output = &cobra.Command{}
 	}
-	fmt.Printf("\n")
-	fmt.Println("Available commands:")
-	fmt.Println("  modernpath search <query>   Search documentation")
-	fmt.Println("  modernpath ask <query> --format=json  Build context for AI")
-	fmt.Println("  modernpath work review      Review git changes")
-	fmt.Println("  modernpath docs sync        Update from platform")
-	fmt.Println("  modernpath status           Show current status")
-	fmt.Printf("\n")
-
-	return nil
+	if initJSON {
+		return writeCommandJSON(output, receipt)
+	}
+	return writeRecord(output, receipt)
 }
 
 func downloadExportWithStatus(client *api.Client, systemID int) ([]byte, error) {

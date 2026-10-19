@@ -2,7 +2,7 @@ package cmd
 
 // REQ-CROSS-282 — one shared implementation of "is the configured system_id
 // reachable by the authenticated credential", used identically by every
-// surface that needs it (auth's three variants, factoryEnvLoad, status).
+// surface that needs it (auth's three variants, cliEnvLoad, status).
 // A single copy, not one per surface: four near-identical implementations
 // are four independent chances for one of them to drift from the others —
 // a shared function can't.
@@ -61,7 +61,7 @@ func systemMismatchMessage(systemID int, systems []api.System) string {
 		available = strings.Join(items, ", ")
 	}
 	return fmt.Sprintf(
-		"configured system %d is not reachable by the authenticated credential (reachable: %s) — run 'modernpath factory connect --system <id>' with a reachable id",
+		"configured system %d is not reachable by the authenticated credential (reachable: %s) — run 'modernpath init --system <id>' with a reachable id",
 		systemID, available)
 }
 

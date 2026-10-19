@@ -21,7 +21,7 @@ func TestSystemMismatchMessageShowsNamesWhenPresent(t *testing.T) {
 		"configured system 243",
 		"49 (modernpath-v1-jussi)",
 		"52 (modernpath-v1-pasi)",
-		"factory connect --system",
+		"init --system",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message must contain %q, got %q", want, msg)

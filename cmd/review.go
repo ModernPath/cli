@@ -17,23 +17,24 @@ var (
 	showFiles bool
 )
 
-var workReviewCmd = &cobra.Command{
+var devReviewCmd = &cobra.Command{
 	Use:   "review",
 	Short: "Inspect the current git diff",
 	Long: `Inspect the current git diff and summarize its changed files and line counts.
 
 Examples:
-  modernpath work review                  # Inspect uncommitted changes
-  modernpath work review --staged         # Inspect staged changes only
-  modernpath work review --base=main      # Inspect changes vs main branch
-  modernpath work review --files          # Just show affected files`,
+  modernpath dev review                  # Inspect uncommitted changes
+  modernpath dev review --staged         # Inspect staged changes only
+  modernpath dev review --base=main      # Inspect changes vs main branch
+  modernpath dev review --files          # Just show affected files`,
 	RunE: runReview,
 }
 
 func init() {
-	workReviewCmd.Flags().BoolVar(&staged, "staged", false, "Only review staged changes")
-	workReviewCmd.Flags().StringVar(&diffBase, "base", "", "Base branch/commit to compare against")
-	workReviewCmd.Flags().BoolVar(&showFiles, "files", false, "Only show affected files")
+	devCmd.AddCommand(devReviewCmd)
+	devReviewCmd.Flags().BoolVar(&staged, "staged", false, "Only review staged changes")
+	devReviewCmd.Flags().StringVar(&diffBase, "base", "", "Base branch/commit to compare against")
+	devReviewCmd.Flags().BoolVar(&showFiles, "files", false, "Only show affected files")
 }
 
 func runReview(cmd *cobra.Command, args []string) error {

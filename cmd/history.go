@@ -15,11 +15,11 @@ import (
 )
 
 // REQ-CROSS-387 (EPIC-CLI-019): a local, redacted history of user-run
-// invocations so `modernpath feedback --last` can attach the previous
+// invocations for local troubleshooting of the previous
 // command and its output. Hook-mode invocations are never recorded (they
 // precede every user command in an agent session and would drain the log);
 // `auth` is never recorded (its --token argument is a bearer); commands that
-// hand the terminal to an interactive child (dev, ralph) record argv and exit
+// hand the terminal to an interactive child (dev) record argv and exit
 // only, so the child keeps the real fds. Nothing from the log reaches the
 // store without --last.
 
@@ -99,14 +99,11 @@ func (h *historyRun) finish(code int) {
 	appendHistory(h.root, h.entry)
 }
 
-// hookMode reports an invocation the installed hooks or the CLI itself
-// spawns: --hook <event>, factory sync --if-quiescent, focus --infer.
+// hookMode reports an invocation made by an installed hook.
 func hookMode(argv []string) bool {
 	for _, a := range argv {
 		switch {
-		case a == "--hook" || strings.HasPrefix(a, "--hook="),
-			a == "--if-quiescent",
-			a == "--infer" || strings.HasPrefix(a, "--infer="):
+		case a == "--hook" || strings.HasPrefix(a, "--hook="):
 			return true
 		}
 	}
@@ -126,7 +123,7 @@ func leafWord(argv []string) string {
 // interactiveLeaf names the commands that hand the terminal to a child.
 func interactiveLeaf(argv []string) bool {
 	switch leafWord(argv) {
-	case "dev", "ralph":
+	case "dev":
 		return true
 	}
 	return false

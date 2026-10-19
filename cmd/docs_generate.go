@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
@@ -13,10 +12,14 @@ import (
 // created here — a created one would be a stray second upload repository on
 // an import-created system.
 func runDocsGenerate(cmd *cobra.Command, args []string) error {
+	machine, _ := cmd.Flags().GetBool("json")
+	if machine && !docsGenerateYes {
+		return fmt.Errorf("docs generate --json requires --yes because it starts an analysis run")
+	}
 	if err := validateAnalysisMode(docsGenerateMode); err != nil {
 		return reportFailure(err)
 	}
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return reportedError{err}
@@ -35,9 +38,9 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 	folderName := filepath.Base(cwd)
 	folderPath := cwd
 
-	fmt.Println()
-	printInfo("📊 Step 1: Scanning codebase for initial statistics...\n")
-	fmt.Println()
+	if !machine {
+		printInfo("Scanning codebase for initial statistics...\n")
+	}
 
 	// Scan folder to get initial stats
 	scanResult, err := scanFolder(folderPath)
@@ -54,49 +57,33 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 	estimatedMinutes := max(1, scanResult.TotalLines/10000) // ~1 min per 10k lines
 
 	// Display analysis overview
-	fmt.Println("════════════════════════════════════════════════════════════════════")
-	fmt.Println("📋 Analysis Overview")
-	fmt.Println("════════════════════════════════════════════════════════════════════")
-	fmt.Println()
-	fmt.Printf("  🔗 System:        %s\n", boundSystemLabel(cfg))
-	fmt.Printf("  🧭 Mode:          %s\n", docsGenerateMode)
-	fmt.Printf("  📁 Folder:        %s\n", folderName)
-	fmt.Printf("  📂 Path:          %s\n", folderPath)
-	fmt.Println()
-	fmt.Printf("  📊 Statistics:\n")
-	fmt.Printf("     • Codebases:   %d\n", 1)
-	fmt.Printf("     • Files:       %d\n", scanResult.TotalFiles)
-	fmt.Printf("     • Lines:       %s\n", formatNumber(scanResult.TotalLines))
-	if scanResult.PrimaryLanguage != "" {
-		fmt.Printf("     • Language:    %s\n", scanResult.PrimaryLanguage)
+	if !machine {
+		fmt.Println("════════════════════════════════════════════════════════════════════")
+		fmt.Println("Analysis Overview")
+		fmt.Println("════════════════════════════════════════════════════════════════════")
+		fmt.Printf("System: %s\nMode: %s\nFolder: %s\nPath: %s\nFiles: %d\nLines: %s\nEstimated tokens: %s\nEstimated cost: ~$%.2f\nEstimated time: ~%d min\n",
+			boundSystemLabel(cfg), docsGenerateMode, folderName, folderPath, scanResult.TotalFiles,
+			formatNumber(scanResult.TotalLines), formatTokenCount(int(estimatedTokens)), estimatedCost, estimatedMinutes)
+		if scanResult.PrimaryLanguage != "" {
+			fmt.Printf("Language: %s\n", scanResult.PrimaryLanguage)
+		}
 	}
-	fmt.Println()
-	fmt.Printf("  💰 Estimates:\n")
-	fmt.Printf("     • Est. Tokens: %s\n", formatTokenCount(int(estimatedTokens)))
-	fmt.Printf("     • Est. Cost:   ~$%.2f\n", estimatedCost)
-	fmt.Printf("     • Est. Time:   ~%d min\n", estimatedMinutes)
-	fmt.Println()
-	fmt.Println("  ℹ️  AI will extract architecture patterns, identify technologies,")
-	fmt.Println("     map dependencies, and generate comprehensive documentation.")
-	fmt.Println()
 
 	ok, err := confirmAction("Start AI Analysis", docsGenerateYes, true)
 	if err != nil {
 		return reportFailure(err)
 	}
 	if !ok {
+		if machine {
+			return writeCommandJSON(cmd, map[string]any{"started": false, "cancelled": true})
+		}
 		fmt.Println("Analysis cancelled.")
 		return nil
 	}
 
-	fmt.Println()
-	printInfo("🚀 Step 2: Starting AI analysis pipeline...\n")
-	fmt.Println("   This may take a while. The analysis will:")
-	fmt.Println("   • Extract architecture patterns")
-	fmt.Println("   • Identify technologies and frameworks")
-	fmt.Println("   • Map dependencies")
-	fmt.Println("   • Generate comprehensive documentation")
-	fmt.Println()
+	if !machine {
+		printInfo("Starting AI analysis pipeline...\n")
+	}
 
 	answer, err := startAnalysis(cfg, docsGenerateMode)
 	if err != nil {
@@ -104,12 +91,11 @@ func runDocsGenerate(cmd *cobra.Command, args []string) error {
 		return reportedError{err}
 	}
 
+	if machine {
+		return writeCommandJSON(cmd, map[string]any{"started": true, "system_id": cfg.SystemID, "mode": docsGenerateMode, "run": answer})
+	}
 	printLifecycleRun(answer)
-	fmt.Println()
-	printInfo("The analysis is running in the background.\n")
-	fmt.Println("  • Follow progress: modernpath analysis status")
-	fmt.Println("  • Sync documentation when complete: modernpath docs sync")
-	fmt.Println()
+	printInfo("The analysis is running in the background; follow it with 'modernpath analysis status'.\n")
 
 	return nil
 }

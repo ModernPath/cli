@@ -1,7 +1,7 @@
 package cmd
 
 // REQ-CROSS-447 (EPIC-CLI-TURNS): the lists that can return a whole system's
-// records — process backlog list, factory gates, process findings list — print
+// records — process backlog and findings lists — print
 // a bounded page in text. The server returns the whole array; the page is cut
 // here. Under --json every record is printed unless --limit is given, so the
 // documented script use keeps its shape.

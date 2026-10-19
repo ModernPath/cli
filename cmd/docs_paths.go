@@ -17,7 +17,7 @@ import (
 // .modernpath/docs/<slug> so sync cannot replace the protected directory.
 var protectedModernPathRoots = map[string]bool{
 	"artifacts": true, "bin": true, "datamodel": true, "dev-core-token": true,
-	"docs": true, "evidence": true, "focus-signals": true, "hooks": true,
+	"docs": true, "evidence": true, "hooks": true,
 	"last-sync-ok": true, "local-sources": true, "memories": true,
 	"mp_api_key": true, "organization": true, "patterns": true, "rdd": true,
 	"runtime": true, "scripts": true, "skills": true, "source": true,

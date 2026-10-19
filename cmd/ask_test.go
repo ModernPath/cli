@@ -175,7 +175,9 @@ func runAskStreams(t *testing.T, args ...string) (string, string, error) {
 	go func() { defer wg.Done(); stdout, _ = io.ReadAll(outR) }()
 	go func() { defer wg.Done(); stderr, _ = io.ReadAll(errR) }()
 
+	beginCommandRun(args)
 	err := rootCmd.Execute()
+	finishCommandRun(err)
 
 	_ = outW.Close()
 	_ = errW.Close()

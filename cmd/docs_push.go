@@ -2,20 +2,19 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func runDocsPush(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadConfig()
+	machine, _ := cmd.Flags().GetBool("json")
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
+		return fmt.Errorf("no system configured. Run 'modernpath init' first")
 	}
 
 	archName := cfg.SystemName
@@ -23,12 +22,9 @@ func runDocsPush(cmd *cobra.Command, args []string) error {
 		archName = fmt.Sprintf("system %d", cfg.SystemID)
 	}
 
-	fmt.Println()
-	fmt.Println("📤 Push Documentation")
-	fmt.Println("═══════════════════════════════════════════════════════════")
-	fmt.Printf("System: %s (ID: %d)\n", archName, cfg.SystemID)
-	fmt.Printf("API URL: %s\n", cfg.APIURL)
-	fmt.Println()
+	if !machine {
+		printInfo("Pushing documentation for %s (system %d)...\n", archName, cfg.SystemID)
+	}
 
 	printInfo("Scanning .modernpath/ for documentation to push...\n")
 
@@ -40,15 +36,21 @@ func runDocsPush(cmd *cobra.Command, args []string) error {
 	}
 
 	if count == 0 {
+		if machine {
+			return writeCommandJSON(cmd, map[string]any{"pushed": false, "system_id": cfg.SystemID, "documents": 0})
+		}
 		printInfo("No documentation files found to push.\n")
 		printInfo("Make sure markdown exists under .modernpath/<slug>/ or run `modernpath docs sync`.\n")
 		return nil
 	}
 
-	fmt.Println()
-	printSuccess("✅ Successfully pushed %d documents to ModernPath!\n", count)
+	appURL := systemAppLink(readAppURL(newAuthenticatedClient(cfg)), cfg.APIURL, cfg.SystemID, "documents")
+	if machine {
+		return writeCommandJSON(cmd, map[string]any{"pushed": true, "system_id": cfg.SystemID, "documents": count, "url": appURL})
+	}
+	printSuccess("Pushed %d documents to ModernPath\n", count)
 	// REQ-CROSS-502 C3: the link opens the app host, not the API host.
-	printInfo("View updated docs at: %s\n", systemAppLink(readAppURL(newAuthenticatedClient(cfg)), cfg.APIURL, cfg.SystemID, "documents"))
+	printInfo("View updated docs at: %s\n", appURL)
 
 	return nil
 }

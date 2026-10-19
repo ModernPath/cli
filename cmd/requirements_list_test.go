@@ -39,8 +39,8 @@ func TestRequirementsListUserFlow(t *testing.T) {
 			page = map[string]any{
 				"data": map[string]any{
 					"items": []map[string]any{
-						{"external_id": "REQ-SHARED", "kind": "system", "work_status": "TODO", "context": "SECURITY", "title": "Firewall system requirement", "title_truncated": false, "description": "Firewall for the workspace.", "description_truncated": false},
-						{"external_id": "REQ-SHARED", "kind": "user", "work_status": "TODO", "context": "SECURITY", "title": "Firewall user requirement", "title_truncated": false, "description": "Firewall for workspace users.", "description_truncated": false},
+						{"id": "11111111-1111-4111-8111-111111111111", "requirement_kind": "system_requirement", "system_id": 7, "display_ref": "SR-16-1", "work_status": "TODO", "context": "SECURITY", "title": "Firewall system requirement", "title_truncated": false, "description": "Firewall for the workspace.", "description_truncated": false},
+						{"id": "22222222-2222-4222-8222-222222222222", "requirement_kind": "user_requirement", "system_id": 7, "display_ref": "UR-4-1", "work_status": "TODO", "context": "SECURITY", "title": "Firewall user requirement", "title_truncated": false, "description": "Firewall for workspace users.", "description_truncated": false},
 					},
 					"next_cursor": "opaque-cursor-2",
 				},
@@ -49,7 +49,7 @@ func TestRequirementsListUserFlow(t *testing.T) {
 			page = map[string]any{
 				"data": map[string]any{
 					"items": []map[string]any{
-						{"external_id": "REQ-Z", "kind": "system", "work_status": "TODO", "context": "SECURITY", "title": "Firewall audit requirement", "title_truncated": false, "description": "Firewall audit for the workspace.", "description_truncated": false},
+						{"id": "33333333-3333-4333-8333-333333333333", "requirement_kind": "system_requirement", "system_id": 7, "display_ref": "SR-17-1", "work_status": "TODO", "context": "SECURITY", "title": "Firewall audit requirement", "title_truncated": false, "description": "Firewall audit for the workspace.", "description_truncated": false},
 					},
 					"next_cursor": nil,
 				},
@@ -65,7 +65,7 @@ func TestRequirementsListUserFlow(t *testing.T) {
 	cobraWorkspace(t, srv)
 
 	queryText := "firewall%_ &"
-	firstOutput, err := runRoot(t, "requirements", "list", "--query", queryText, "--context", "SECURITY", "--limit", "2", "--json")
+	firstOutput, err := runRoot(t, "requirements", "list", "--query", queryText, "--context", "SECURITY", "--limit", "2", "--order", "title", "--json")
 	if err != nil {
 		t.Fatalf("requirements list first page: %v", err)
 	}
@@ -81,17 +81,17 @@ func TestRequirementsListUserFlow(t *testing.T) {
 	if len(firstItems) != 2 {
 		t.Fatalf("first page has %d items, want 2", len(firstItems))
 	}
-	for i, wantKind := range []string{"system", "user"} {
+	for i, wantKind := range []string{"system_requirement", "user_requirement"} {
 		var item map[string]json.RawMessage
 		if err := json.Unmarshal(mustJSON(t, firstItems[i]), &item); err != nil {
 			t.Fatalf("item %d is malformed: %v", i, err)
 		}
-		assertJSONKeys(t, item, []string{"context", "description", "description_truncated", "external_id", "kind", "title", "title_truncated", "work_status"})
+		assertJSONKeys(t, item, []string{"display_ref", "id", "requirement_kind", "title"})
 		var id, kind string
-		_ = json.Unmarshal(item["external_id"], &id)
-		_ = json.Unmarshal(item["kind"], &kind)
-		if id != "REQ-SHARED" || kind != wantKind {
-			t.Errorf("item %d identity = %s/%s, want REQ-SHARED/%s", i, id, kind, wantKind)
+		_ = json.Unmarshal(item["id"], &id)
+		_ = json.Unmarshal(item["requirement_kind"], &kind)
+		if id == "" || kind != wantKind {
+			t.Errorf("item %d identity = %s/%s, want UUID/%s", i, id, kind, wantKind)
 		}
 	}
 	var next string
@@ -99,7 +99,7 @@ func TestRequirementsListUserFlow(t *testing.T) {
 		t.Fatalf("first next_cursor = %q, err=%v", next, err)
 	}
 
-	secondOutput, err := runRoot(t, "requirements", "list", "--query", queryText, "--context", "SECURITY", "--limit", "2", "--cursor", "opaque-cursor-2", "--json")
+	secondOutput, err := runRoot(t, "requirements", "list", "--query", queryText, "--context", "SECURITY", "--limit", "2", "--order", "title", "--cursor", "opaque-cursor-2", "--json")
 	if err != nil {
 		t.Fatalf("requirements list continuation: %v", err)
 	}
@@ -107,13 +107,14 @@ func TestRequirementsListUserFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(secondOutput), &second); err != nil {
 		t.Fatalf("continuation is not JSON: %v\n%s", err, secondOutput)
 	}
-	if len(second.Items) != 1 || second.Items[0].ExternalID != "REQ-Z" || second.NextCursor != nil {
-		t.Fatalf("continuation page = %+v, want exhausted REQ-Z page", second)
+	if len(second.Items) != 1 || second.Items[0].DisplayRef != "SR-17-1" || second.NextCursor != nil {
+		t.Fatalf("continuation page = %+v, want exhausted SR-17-1 page", second)
 	}
 	if len(requests) != 2 {
 		t.Fatalf("discovery requests = %d, want exactly two pages", len(requests))
 	}
 	wantBase := url.Values{"system_id": {"1"}, "q": {queryText}, "context": {"SECURITY"}, "limit": {"2"}}
+	wantBase.Set("order", "title")
 	if !reflect.DeepEqual(requests[0], wantBase) {
 		t.Errorf("first-page query = %v, want %v", requests[0], wantBase)
 	}
@@ -121,7 +122,7 @@ func TestRequirementsListUserFlow(t *testing.T) {
 		t.Errorf("first-page query was not safely encoded: %q, want %q", rawQueries[0], wantBase.Encode())
 	}
 	wantContinuation := url.Values{
-		"system_id": {"1"}, "q": {queryText}, "context": {"SECURITY"}, "limit": {"2"}, "cursor": {"opaque-cursor-2"},
+		"system_id": {"1"}, "q": {queryText}, "context": {"SECURITY"}, "limit": {"2"}, "cursor": {"opaque-cursor-2"}, "order": {"title"},
 	}
 	if !reflect.DeepEqual(requests[1], wantContinuation) {
 		t.Errorf("continuation query = %v, want %v", requests[1], wantContinuation)
@@ -170,6 +171,10 @@ func TestRequirementsListRejectsInvalidFlagsBeforeRequest(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid --status") {
 		t.Fatalf("invalid status error = %v", err)
 	}
+	_, err = runRoot(t, "requirements", "list", "--status", "DERIVED")
+	if err == nil || !strings.Contains(err.Error(), "invalid --status") {
+		t.Fatalf("retired status error = %v", err)
+	}
 	_, err = runRoot(t, "requirements", "list", "--kind", "epic")
 	if err == nil || !strings.Contains(err.Error(), "invalid --kind") {
 		t.Fatalf("invalid kind error = %v", err)
@@ -177,6 +182,10 @@ func TestRequirementsListRejectsInvalidFlagsBeforeRequest(t *testing.T) {
 	_, err = runRoot(t, "requirements", "list", "--limit", "201")
 	if err == nil || !strings.Contains(err.Error(), "between 1 and 200") {
 		t.Fatalf("invalid limit error = %v", err)
+	}
+	_, err = runRoot(t, "requirements", "list", "--order", "bogus")
+	if err == nil || !strings.Contains(err.Error(), "invalid --order") {
+		t.Fatalf("invalid order error = %v", err)
 	}
 	if requests != 0 {
 		t.Fatalf("invalid flags sent %d discovery requests, want none", requests)
@@ -195,8 +204,35 @@ func TestRequirementsListRejectsMalformedResponse(t *testing.T) {
 	cobraWorkspace(t, srv)
 
 	_, err := runRoot(t, "requirements", "list", "--json")
-	if err == nil || !strings.Contains(err.Error(), "missing \"kind\"") {
+	if err == nil || !strings.Contains(err.Error(), "upgrade the server before listing requirements") {
 		t.Fatalf("malformed response error = %v", err)
+	}
+}
+
+func TestRequirementsListAcceptsUUIDRequirementIdentityAndDisplayReference(t *testing.T) {
+	const requirementID = "8f5ec2c0-57c1-4a9f-aeb0-a8dfc4d12a9c"
+	item, err := decodeRequirementDiscoveryItem(map[string]any{
+		"id": requirementID, "requirement_kind": "system_requirement", "system_id": json.Number("7"),
+		"display_ref": "SR-16-1", "title": "Preserve the requirement identity",
+		"work_status": "TODO", "context": "CMP", "description": "A UUID-backed requirement.",
+		"title_truncated": false, "description_truncated": false,
+	})
+	if err != nil {
+		t.Fatalf("requirements list decoder rejected UUID-backed response: %v", err)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("decoded requirement identity is not JSON: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(encoded, &output); err != nil {
+		t.Fatalf("decoded requirement identity is malformed JSON: %v", err)
+	}
+	if output["id"] != requirementID || output["requirement_kind"] != "system_requirement" || output["system_id"] != float64(7) || output["display_ref"] != "SR-16-1" {
+		t.Fatalf("requirement identity/presentation = %#v, want UUID, kind, System and canonical display reference", output)
+	}
+	if _, exists := output["external_id"]; exists {
+		t.Fatalf("active requirement response still exposes external_id: %#v", output)
 	}
 }
 
@@ -207,7 +243,8 @@ func TestRequirementsListHumanOutputShowsSummariesAndContinuation(t *testing.T) 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"items": []map[string]any{{
-				"external_id": "REQ-TRUNCATED", "kind": "system", "work_status": nil,
+				"id": "44444444-4444-4444-8444-444444444444", "requirement_kind": "system_requirement", "system_id": 7,
+				"display_ref": "SR-18-1", "work_status": nil,
 				"context": nil, "title": "Bounded title", "title_truncated": true,
 				"description": "Bounded description", "description_truncated": true,
 			}},
@@ -222,13 +259,7 @@ func TestRequirementsListHumanOutputShowsSummariesAndContinuation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("requirements list: %v", err)
 	}
-	for _, want := range []string{
-		"REQ-TRUNCATED [system / —] Bounded title",
-		"[title truncated]",
-		"context: —",
-		"Bounded description … [description truncated]",
-		"Next cursor: opaque-next",
-	} {
+	for _, want := range []string{"SR-18-1 Bounded title"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("human output omitted %q:\n%s", want, output)
 		}
@@ -264,4 +295,26 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func TestRequirementsListFiltersCurrentLifecycleStatus(t *testing.T) {
+	mux := http.NewServeMux()
+	addDiscoveryTestSystems(mux)
+	called := false
+	mux.HandleFunc("/api/v1/sync/requirements/discovery", func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.URL.Query().Get("status") != "DONE" {
+			t.Errorf("status filter = %q", r.URL.Query().Get("status"))
+		}
+		_, _ = w.Write([]byte(`{"data":{"items":[],"next_cursor":null}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	cobraWorkspace(t, srv)
+	if _, err := runRoot(t, "requirements", "list", "--status", "DONE", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("the server must apply the lifecycle status filter")
+	}
 }

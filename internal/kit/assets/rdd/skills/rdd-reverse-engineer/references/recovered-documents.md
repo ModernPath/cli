@@ -26,8 +26,7 @@ the sanctioned document collector recognizes them.
 | `docs/23-data-flow.md` | Origins, transformations, destinations and trust boundaries |
 
 Use the project's document publication route and verify the published revision
-and content. For a file-backed project, read the versioned published documents;
-for a store-backed project, use the sanctioned read-back operation. A local
+and content through the sanctioned read-back operation. A local
 draft does not prove publication. Recovered documents are derived design
 sources, not a second requirement store.
 
@@ -41,8 +40,8 @@ choice, not human acceptance.
 Derive in-scope NFRs through the same authorized requirement route. Consider
 performance, scalability, availability, security, privacy, operability,
 maintainability and compatibility without duplicating existing ownership. Bare
-configuration values with unknown intent remain questions or DERIVED exceptions.
+configuration values with unknown intent remain explicit unresolved questions.
 Check the full expression and units before interpreting a numeric value.
 
 Before reporting, account for the requested document roles, relevant integration
-failure behavior, observed ADR provenance, NFR questions and publication receipts.
+failure behavior, observed ADR provenance and NFR questions.

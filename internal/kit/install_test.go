@@ -30,7 +30,6 @@ func TestInstallWritesTheKitAndLeavesClientContentAlone(t *testing.T) {
 		".modernpath/rdd/.source",
 		".modernpath/rdd/AGENTS.md",
 		".modernpath/rdd/PROCESS.md",
-		".modernpath/rdd/file-state/GATES.md",
 		".modernpath/rdd/skills/rdd-start/SKILL.md",
 		".claude/skills/rdd-start/SKILL.md",
 		".claude/skills/rdd-verify/SKILL.md",
@@ -425,6 +424,18 @@ func TestInstallMigratesKnownLegacyProcessFilesOnly(t *testing.T) {
 func TestInstallRetiresRemovedPackageAdapters(t *testing.T) {
 	root := t.TempDir()
 	retired := []string{
+		".claude/agents/rdd-context-deriver.md",
+		".codex/agents/rdd-context-deriver.toml",
+		".modernpath/rdd/file-state/BACKLOG.md",
+		".modernpath/rdd/file-state/EPICS.md",
+		".modernpath/rdd/file-state/GATES.md",
+		".modernpath/rdd/file-state/REQUIREMENTS.md",
+		".modernpath/rdd/file-state/WORK-SELECTION.md",
+		".claude/rdd/file-state/BACKLOG.md",
+		".claude/rdd/file-state/EPICS.md",
+		".claude/rdd/file-state/GATES.md",
+		".claude/rdd/file-state/REQUIREMENTS.md",
+		".claude/rdd/file-state/WORK-SELECTION.md",
 		".modernpath/rdd/CLAUDE.md",
 		".claude/rdd/CLAUDE.md",
 		".modernpath/rdd/skills/rdd-start/agents/openai.yaml",
@@ -493,11 +504,10 @@ func TestAgentsBlockPointsAtTheKnowledgeCore(t *testing.T) {
 	agents := string(raw)
 
 	for _, want := range []string{
-		"modernpath process prepare-inputs", // refresh before sourced work
-		"rg -n",                             // find locally
-		".modernpath/<system-slug>/",        // read locally
-		"modernpath search",                 // live fallback
-		"modernpath read-doc",               // live fallback
+		"rg -n",                      // find locally
+		".modernpath/<system-slug>/", // read locally
+		"modernpath search",          // live fallback
+		"modernpath read-doc",        // live fallback
 	} {
 		if !strings.Contains(agents, want) {
 			t.Fatalf("AGENTS.md never mentions %q:\n%s", want, agents)
@@ -512,7 +522,7 @@ func TestAgentsBlockPointsAtTheKnowledgeCore(t *testing.T) {
 
 	// It has to live inside the managed region, or an upgrade cannot refresh it.
 	managed := agents[strings.Index(agents, BeginMarker):strings.Index(agents, EndMarker)]
-	if !strings.Contains(managed, "modernpath process prepare-inputs") {
+	if !strings.Contains(managed, "modernpath docs sync") {
 		t.Fatal("the knowledge section must be inside the managed block")
 	}
 }
@@ -709,7 +719,7 @@ func TestInstallPlacesTheReverseEngineeringSkill(t *testing.T) {
 	if !strings.Contains(skill, "name: rdd-reverse-engineer") {
 		t.Fatalf("skill needs its frontmatter name:\n%s", skill[:min(400, len(skill))])
 	}
-	for _, want := range []string{"Baseline ready for use", "DERIVED additions for approval", "source-scoped", "without overwriting approved content"} {
+	for _, want := range []string{"requirements", "typed Traces", "PROPOSED", "native identity and kind"} {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("the method never mentions %q — the decisions it encodes are missing", want)
 		}
@@ -745,155 +755,22 @@ func min(a, b int) int {
 	return b
 }
 
-// REQ-CROSS-042 (EPIC-ONB-001, `USER:2026-08-11`): the first method derived from
-// endpoints and produced 47 system requirements, zero user requirements, and
-// never opened one of 42 view files. The skill now carries three phases, and
-// these assert the decisions that distinguish them — an endpoint-first method
-// would pass a test that only checked the file exists.
-func TestReverseEngineerSkillCarriesTheThreePhases(t *testing.T) {
+// The installed reverse-engineering skill carries native source and lifecycle boundaries.
+func TestReverseEngineerSkillCarriesNativeBoundaries(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Install(root); err != nil {
 		t.Fatal(err)
 	}
-
 	skill := installedReverseEngineeringInstructions(t, root)
-
-	for _, want := range []struct{ token, why string }{
-		{"aggregate ownership", "D-ONB-8: contexts come from who writes which table, not route-file layout"},
-		{"role gate", "D-ONB-10: a user requirement cites the gate that admits its actor"},
-		{"Report missing joins", "D-ONB-11: views calling nothing and endpoints no view reaches are findings"},
-		{"actor/outcome URs", "surfaces produce user outcomes, not only system requirements"},
-		{"Create an Epic only when the user requested a real grouping", "SR-RDD-ONBOARD-004: discovery must not fabricate delivery groupings"},
+	for _, want := range []string{
+		"Use native IDs for trace endpoints",
+		"File references name repository and path",
+		"New requirements start as PROPOSED",
+		"Source changes do not invalidate recorded requirements",
+		"ordinary Epic lifecycle",
 	} {
-		if !strings.Contains(skill, want.token) {
-			t.Fatalf("skill is missing %q — %s", want.token, want.why)
-		}
-	}
-
-	// Order matters: domain before surfaces before requirements. A skill that
-	// mentions all three but derives requirements first is the method we replaced.
-	domain := strings.Index(skill, "| Domain |")
-	surfaces := strings.Index(skill, "| Surfaces |")
-	if domain < 0 || surfaces < 0 || domain > surfaces {
-		t.Fatalf("phases out of order: domain at %d, surfaces at %d", domain, surfaces)
-	}
-}
-
-// REQ-CROSS-079/083 (EPIC-ARCH-001, spec approved `USER:2026-08-13`): the pass
-// gains a fourth phase. Three passes produced 7,000+ requirements and not one
-// line about the system's shape — no document names the subsystems, the external
-// interfaces, the datastores, or the path a request takes.
-//
-// Asserted against the INSTALLED copy, never the source: the two have diverged
-// before, and only what `modernpath install` writes is what another repository
-// actually gets.
-func TestReverseEngineerSkillCarriesPhaseDAndItsDocuments(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Install(root); err != nil {
-		t.Fatal(err)
-	}
-
-	skill := installedReverseEngineeringInstructions(t, root)
-
-	for _, want := range []struct{ token, why string }{
-		{"03-architecture", "D-ARCH-2: the document a reader opens first — subsystems, interfaces, datastores"},
-		{"20-deployment-topology", "D-ARCH-2: what runs where, and what a request traverses"},
-		{"21-integrations", "D-ARCH-2: every external system, and what happens when it is unreachable"},
-		{"22-cross-cutting", "D-ARCH-2: auth, tenancy, observability, resilience — as implemented"},
-		{"23-data-flow", "D-ARCH-4: adopted from the nine-document set; structure and events are not flow"},
-		{"docs/adr/", "D-ARCH-2: decisions the code already made"},
-		{"observed", "D-ARCH-2: an ADR may not claim a ratification the repository never performed"},
-		{"unreachable", "SCN-ARCH-002: the column a dependency list cannot give you"},
-		{"maintained project guides", "D-ARCH-5: human-written lenses, read before the pass walks anything"},
-		{"lens", "REQ-CROSS-083: a guide directs attention and never supplies evidence"},
-	} {
-		if !strings.Contains(skill, want.token) {
-			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
-		}
-	}
-}
-
-// REQ-CROSS-080/081: the NFR ledger, and the guard that makes it safe.
-func TestReverseEngineerSkillCarriesTheNFRRules(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Install(root); err != nil {
-		t.Fatal(err)
-	}
-
-	skill := installedReverseEngineeringInstructions(t, root)
-
-	for _, want := range []struct{ token, why string }{
-		{"NFR-REQUIREMENTS.md", "D-ARCH-1: quality attributes get their own context, not a contract kind"},
-		{"performance", "the eight-term taxonomy — an open list becomes forty labels in two passes"},
-		{"operability", "same taxonomy; a term nobody would invent by accident"},
-		{"DERIVED exception", "a latent threshold is a question, never a baseline assertion"},
-	} {
-		if !strings.Contains(skill, want.token) {
-			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
-		}
-	}
-}
-
-// REQ-CROSS-085 (`USER:2026-08-13`, "for client repo's, we need a process /
-// loop to run all of them at a same time?"): phases A–C have an exit criterion —
-// `process/coverage.md`, and C11's rule that the loop ends when every context
-// has a ledger. Phase D had NEITHER. It was described and never runnable: no
-// coverage row, no definition of done, and nothing telling a loop when to stop
-// invoking it.
-//
-// A phase a loop cannot terminate is a phase that either never runs or never
-// stops, and on a client repository nobody is watching which.
-func TestReverseEngineerSkillMakesPhaseDRunnable(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Install(root); err != nil {
-		t.Fatal(err)
-	}
-
-	skill := installedReverseEngineeringInstructions(t, root)
-
-	for _, want := range []struct{ token, why string }{
-		{"verify the published revision and content", "recovered design has a persisted exit criterion"},
-		{"one system-wide account per applicable role", "design is system-wide rather than duplicated per context"},
-		{"| Design |", "the run order includes recovered design after behavior"},
-		{"Use `rdd-audit`", "design citations must be checked"},
-	} {
-		if !strings.Contains(skill, want.token) {
-			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
-		}
-	}
-}
-
-// REQ-CROSS-086 (`RUN:2026-08-13`): two rules the FIRST real phase-D run
-// exposed, neither of which the skill had. Both are duplication hazards, and
-// both would have produced a confidently wrong artefact:
-//
-//   - The target repository already had a 303-line ARCHITECTURE.md covering
-//     services, schema, inter-service communication and design decisions. Writing
-//     docs/03-architecture.md beside it would create exactly the two-answers
-//     problem this epic exists to avoid.
-//   - MAX_CONDITIONAL_FOLLOWUPS = 3 already has REQ-CON-042. An NFR row for it
-//     would be a duplicate wearing a different id.
-func TestReverseEngineerSkillRefusesToDuplicateWhatExists(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Install(root); err != nil {
-		t.Fatal(err)
-	}
-
-	skill := installedReverseEngineeringInstructions(t, root)
-
-	// REQ-CROSS-086 records three hazards from the first real phase-D run, all
-	// three found in the first ten minutes against a repository nobody wrote the
-	// skill for. Two were pinned here; the third was not, and it is the one that
-	// fabricates rather than duplicates.
-	for _, want := range []struct{ token, why string }{
-		{"Adopt or extend existing documents", "adopt equivalent documents rather than competing with them"},
-		{"check existing ownership", "avoid duplicate quality requirements"},
-		{"read complete configuration expressions and units", "a grep hit stopping at the line start turned " +
-			"`MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB` into \"50 bytes\" — a fabricated " +
-			"absurdity in an architecture document costs more trust than the row was worth"},
-	} {
-		if !strings.Contains(skill, want.token) {
-			t.Errorf("installed rdd-reverse-engineer is missing %q — %s", want.token, want.why)
+		if !strings.Contains(skill, want) {
+			t.Errorf("installed reverse-engineering skill is missing %q", want)
 		}
 	}
 }
@@ -915,7 +792,7 @@ func installedReverseEngineeringInstructions(t *testing.T, root string) string {
 		}
 		instructions += "\n" + string(reference)
 	}
-	return strings.Join(strings.Fields(instructions), " ")
+	return strings.Join(strings.Fields(strings.NewReplacer("**", "", "`", "").Replace(instructions)), " ")
 }
 
 func TestInstallAndCheckSkillReferences(t *testing.T) {
@@ -923,7 +800,7 @@ func TestInstallAndCheckSkillReferences(t *testing.T) {
 	if _, err := Install(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"coverage.md", "file-backed.md", "recovered-documents.md"} {
+	for _, name := range []string{"coverage.md", "recovered-documents.md"} {
 		relative := "rdd-reverse-engineer/references/" + name
 		want, err := assets.ReadFile("assets/rdd/skills/" + relative)
 		if err != nil {
@@ -1005,148 +882,4 @@ func TestCheckReportsDamagedMarkersAsDrift(t *testing.T) {
 	}
 	t.Fatalf("damaged markers reported as %v — a workspace whose managed block cannot be located "+
 		"reads as up to date, and the next install cannot repair what it cannot find", drift)
-}
-
-// A store-backed workspace has no ledger files by declaration: the flip
-// retires tasks/*-REQUIREMENTS.md and the marker process/store-backed.md
-// records it. The ledger skill's own trigger is "changing a requirement's
-// status", so installing it there hands every later session a procedure whose
-// first step recreates a retired file — which the dual-authority guard then
-// flags. The skill is withheld under the marker, an installed copy is retired,
-// and Check treats its presence there as drift rather than its absence.
-func TestInstallWithholdsTheLedgerSkillOnAStoreBackedWorkspace(t *testing.T) {
-	const ledger = ".claude/skills/rdd-ledger/SKILL.md"
-
-	fileBacked := t.TempDir()
-	if _, err := Install(fileBacked); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(fileBacked, ledger)); err != nil {
-		t.Fatalf("a file-backed workspace still gets the ledger skill: %v", err)
-	}
-
-	storeBacked := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(storeBacked, "process"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(storeBacked, "process", "store-backed.md")
-	if err := os.WriteFile(marker, []byte("# Store-backed declaration\n\nretired: tasks/*-REQUIREMENTS.md\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// A copy left behind by an install made before the flip.
-	if err := os.MkdirAll(filepath.Join(storeBacked, ".claude/skills/rdd-ledger"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(storeBacked, ledger), []byte("stale pre-flip copy\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := Install(storeBacked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(storeBacked, ledger)); !os.IsNotExist(err) {
-		t.Fatalf("the ledger skill must be withheld on a store-backed workspace (stat err=%v)", err)
-	}
-	removed := false
-	for _, r := range res.Removed {
-		if r == ledger {
-			removed = true
-		}
-	}
-	if !removed {
-		t.Fatalf("the pre-flip copy must be reported as removed, got Removed=%v", res.Removed)
-	}
-	for _, w := range res.Written {
-		if w == ledger {
-			t.Fatalf("the ledger skill must not be reported as written on a store-backed workspace")
-		}
-	}
-
-	drift, err := Check(storeBacked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(drift) != 0 {
-		t.Fatalf("absence of the ledger skill is the configuration, not drift: %v", drift)
-	}
-
-	// A session that recreates it is the drift.
-	if err := os.MkdirAll(filepath.Join(storeBacked, ".claude/skills/rdd-ledger"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(storeBacked, ledger), []byte("recreated\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	drift, err = Check(storeBacked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(drift) != 1 || !strings.HasPrefix(drift[0], ledger) {
-		t.Fatalf("a ledger skill present on a store-backed workspace must be reported as drift, got %v", drift)
-	}
-}
-
-// After the flip the managed block is the only place a session is told how to
-// write. "author is the only write path" was wrong on the day it was written:
-// packet sections and item patches go through working-set push, the frozen
-// scope through working-set select, cold-review findings through process
-// findings, automatic transitions through process reconcile, and evidence and
-// human answers through the factory verbs. A block naming one of six channels
-// leaves an agent unable to record a finding or a packet without inventing a
-// path.
-func TestAgentsBlockNamesEveryStoreBackedWriteChannel(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Install(root); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	agents := string(raw)
-	managed := agents[strings.Index(agents, BeginMarker):strings.Index(agents, EndMarker)]
-
-	// The write-channel table left the block for the tooling skill so no
-	// session pays for it in context unless a step needs it (USER:2026-09-12,
-	// D-1/D-3 of the tooling self-sufficiency plan). The block must point at
-	// the skill by name and by installed path, and the skill must still name
-	// every channel — otherwise the pointer is a dangling one.
-	for _, want := range []string{
-		"mp-process-cli",
-		".claude/skills/mp-process-cli/SKILL.md",
-		".modernpath/cli-reference.md",
-		"store-backed.md",
-	} {
-		if !strings.Contains(managed, want) {
-			t.Fatalf("the managed block never names %q:\n%s", want, managed)
-		}
-	}
-	skillRaw, err := os.ReadFile(filepath.Join(root, ".claude", "skills", "mp-process-cli", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("the tooling skill the block points at is not installed: %v", err)
-	}
-	skill := string(skillRaw)
-	for _, want := range []string{
-		"modernpath author",
-		"working-set push",
-		"working-set select",
-		"process findings",
-		"process reconcile",
-		"factory evidence",
-		"factory answer",
-	} {
-		if !strings.Contains(skill, want) {
-			t.Fatalf("the tooling skill never names the write channel %q", want)
-		}
-	}
-	// The release registry is not among the retired path families; a session
-	// must be told so, or rdd-start's release preflight has nowhere to look.
-	if !strings.Contains(managed, "process/releases.md") {
-		t.Fatal("the managed block must say where the release registry lives after the flip")
-	}
-	// The ledger skill is withheld under the marker; the block must not promise it.
-	if !strings.Contains(managed, "rdd-ledger") {
-		t.Fatal("the managed block must scope the ledger skill to a file-backed workspace")
-	}
 }

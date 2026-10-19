@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -26,6 +25,12 @@ var (
 	readDocTier   string
 	readDocAngle  string
 	readDocList   bool
+	readFileJSON  bool
+	readDocJSON   bool
+	readDocQuery  string
+	readDocLimit  int
+	readDocCursor string
+	readDocOrder  string
 )
 
 var readFileCmd = &cobra.Command{
@@ -64,6 +69,8 @@ Examples:
 }
 
 func init() {
+	readFileCmd.Flags().BoolVar(&readFileJSON, "json", false, "Emit the complete file response as JSON")
+	readDocCmd.Flags().BoolVar(&readDocJSON, "json", false, "Emit complete documents as JSON")
 	// read-file flags
 	readFileCmd.Flags().IntVar(&readStartLine, "start", 0, "Start line number (1-based)")
 	readFileCmd.Flags().IntVar(&readEndLine, "end", 0, "End line number (inclusive)")
@@ -73,6 +80,11 @@ func init() {
 	readDocCmd.Flags().StringVar(&readDocTier, "tier", "", "Filter by tier (module, subsystem, architecture)")
 	readDocCmd.Flags().StringVar(&readDocAngle, "angle", "", "Filter by angle (e.g., architecture, api, data)")
 	readDocCmd.Flags().BoolVar(&readDocList, "list", false, "List available documents, optionally filtered by tier or angle")
+	readDocCmd.Flags().StringVar(&readDocQuery, "query", "", "Search document titles")
+	readDocCmd.Flags().IntVar(&readDocLimit, "limit", 20, "Documents per page (1–200)")
+	readDocCmd.Flags().StringVar(&readDocCursor, "cursor", "", "Continue from a previous page")
+	readDocCmd.Flags().StringVar(&readDocOrder, "order", "", "Order: tier, title, tier_desc")
+	addRecordReadFlags(readDocCmd)
 
 	// Add commands to root
 	rootCmd.AddCommand(readFileCmd)
@@ -99,7 +111,7 @@ type DocReadResponse struct {
 	Error   string `json:"error,omitempty"`
 	Data    struct {
 		// Single doc fields
-		ID      string `json:"id,omitempty"`
+		ID      any    `json:"id,omitempty"`
 		Title   string `json:"title,omitempty"`
 		Content string `json:"content,omitempty"`
 		Summary string `json:"summary,omitempty"`
@@ -108,7 +120,7 @@ type DocReadResponse struct {
 
 		// List/search results
 		Documents []struct {
-			ID      string `json:"id"`
+			ID      any    `json:"id"`
 			Title   string `json:"title"`
 			Summary string `json:"summary"`
 			Tier    string `json:"tier"`
@@ -125,7 +137,7 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
@@ -152,41 +164,30 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 
 	requestURL := fmt.Sprintf("%s/api/files/read?%s", baseURL, params.Encode())
 
-	// Make authenticated request
-	client := newReadAPIClient(cfg, env.token)
-	resp, err := client.Get(requestURL)
+	route := strings.TrimPrefix(requestURL, baseURL)
+	status, response, err := env.call("GET", route, nil)
 	if err != nil {
-		printError("Failed to connect to API: %v\n", err)
 		return err
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	if status != http.StatusOK {
+		return serverRefusal("read", status, response)
+	}
+	if success, exists := response["success"]; exists && success == false {
+		return serverRefusal("read failed", status, response)
+	}
+	data, ok := response["data"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("read response is missing data")
+	}
+	if readFileJSON {
+		return writeSearchJSON(cmd.OutOrStdout(), data)
+	}
+	body, err := json.Marshal(response)
 	if err != nil {
-		printError("Failed to read response: %v\n", err)
 		return err
 	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		err := env.credentialRejected()
-		printError("%v\n", err)
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
-			printError("API error: %s\n", errResp.Error)
-			return fmt.Errorf("API error: %s", errResp.Error)
-		}
-		printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
-		return fmt.Errorf("API error: HTTP %d", resp.StatusCode)
-	}
-
 	var fileResp FileReadResponse
 	if err := json.Unmarshal(body, &fileResp); err != nil {
-		printError("Failed to parse response: %v\n", err)
 		return err
 	}
 
@@ -229,6 +230,13 @@ func displayFileContent(resp *FileReadResponse) {
 }
 
 func runReadDoc(cmd *cobra.Command, args []string) error {
+	allowedFields := []string{"id", "title", "summary", "tier", "angle", "target_path"}
+	if readDocID != "" {
+		allowedFields = append(allowedFields, "content")
+	}
+	if err := validateRecordSelection(cmd, allowedFields); err != nil {
+		return err
+	}
 	// REQ-CROSS-405: binding and credential statements before any request.
 	env, err := apiClientCredentialLoad()
 	if err != nil {
@@ -236,7 +244,7 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
@@ -254,103 +262,107 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 	// Determine request type
 	if readDocID != "" {
 		params.Set("doc_id", readDocID)
-	} else if readDocList && readDocTier == "" && readDocAngle == "" {
-		params.Set("list", "true")
-	} else if len(args) > 0 && !readDocList {
-		params.Set("title", strings.Join(args, " "))
-	} else if readDocTier != "" || readDocAngle != "" {
-		// Filter mode
+	} else {
+		params.Set("paged", "true")
+		query := readDocQuery
+		if query == "" && len(args) > 0 && !readDocList {
+			query = strings.Join(args, " ")
+		}
+		if query != "" {
+			params.Set("q", query)
+		}
+		if readDocLimit < 1 || readDocLimit > 200 {
+			return fmt.Errorf("--limit must be between 1 and 200")
+		}
+		params.Set("limit", strconv.Itoa(readDocLimit))
+		if readDocCursor != "" {
+			params.Set("cursor", readDocCursor)
+		}
+		if readDocOrder != "" {
+			params.Set("order", readDocOrder)
+		}
 		if readDocTier != "" {
 			params.Set("tier", readDocTier)
 		}
 		if readDocAngle != "" {
 			params.Set("angle", readDocAngle)
 		}
-	} else {
-		// Default to list
-		params.Set("list", "true")
 	}
 
 	requestURL := fmt.Sprintf("%s/api/docs/read?%s", baseURL, params.Encode())
 
-	// Make authenticated request
-	client := newReadAPIClient(cfg, env.token)
-	resp, err := client.Get(requestURL)
+	route := strings.TrimPrefix(requestURL, baseURL)
+	status, response, err := env.call("GET", route, nil)
 	if err != nil {
-		printError("Failed to connect to API: %v\n", err)
 		return err
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	if status != http.StatusOK {
+		return serverRefusal("read", status, response)
+	}
+	if success, exists := response["success"]; exists && success == false {
+		return serverRefusal("read failed", status, response)
+	}
+	data, ok := response["data"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("read response is missing data")
+	}
+	body, err := json.Marshal(response)
 	if err != nil {
-		printError("Failed to read response: %v\n", err)
 		return err
 	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		err := env.credentialRejected()
-		printError("%v\n", err)
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
-			printError("API error: %s\n", errResp.Error)
-			return fmt.Errorf("API error: %s", errResp.Error)
-		}
-		printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
-		return fmt.Errorf("API error: HTTP %d", resp.StatusCode)
-	}
-
 	var docResp DocReadResponse
 	if err := json.Unmarshal(body, &docResp); err != nil {
-		printError("Failed to parse response: %v\n", err)
 		return err
 	}
-
-	// Display based on response type
-	if len(docResp.Data.Documents) > 0 {
-		displayDocList(&docResp)
-	} else if docResp.Data.Content != "" {
-		displayDocContent(&docResp)
-	} else {
-		printWarning("No documents found.\n")
-	}
-
-	return nil
-}
-
-func displayDocList(resp *DocReadResponse) {
-	docs := resp.Data.Documents
-
-	fmt.Println()
-	bold := color.New(color.Bold)
-	bold.Printf("📚 Documentation (%d documents)\n", len(docs))
-	fmt.Println("═════════════════════════════════════════════════════════════════")
-	fmt.Println()
-
-	for _, doc := range docs {
-		tierColor := color.New(color.FgCyan)
-		tierColor.Printf("[%s/%s] ", doc.Tier, doc.Angle)
-
-		bold.Printf("%s\n", doc.Title)
-
-		if doc.Summary != "" {
-			gray := color.New(color.FgHiBlack)
-			summary := doc.Summary
-			if len(summary) > 100 {
-				summary = summary[:97] + "..."
-			}
-			gray.Printf("  %s\n", summary)
+	if len(docResp.Data.Documents) > 0 || data["documents"] != nil {
+		selected, err := selectSearchItems(cmd, anyRows(data["documents"]), []string{"id", "title", "tier", "angle"}, allowedFields, []string{"id", "title"})
+		if err != nil {
+			return err
 		}
-
-		gray := color.New(color.FgHiBlack)
-		gray.Printf("  ID: %s\n", doc.ID)
-		fmt.Println()
+		if readDocJSON {
+			return writeSearchJSON(cmd.OutOrStdout(), map[string]any{"items": selected, "next_cursor": data["next_cursor"]})
+		}
+		for _, row := range selected {
+			if cmd.Flags().Changed("fields") || flagIsTrue(cmd, "full") {
+				if err := writeRecord(cmd, row); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "%v  %s\n", row["id"], strings.Join(strings.Fields(fmt.Sprint(row["title"])), " "))
+			}
+		}
+		if cursor, _ := data["next_cursor"].(string); cursor != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Next cursor: %s (repeat the same filters with --cursor)\n", cursor)
+		}
+		return nil
+	} else {
+		selected, err := selectRecordFields(cmd, data, []string{"id", "title", "tier", "angle", "summary", "content"}, allowedFields, []string{"id", "title"})
+		if err != nil {
+			return err
+		}
+		if readDocJSON {
+			return writeCommandJSON(cmd, selected)
+		}
+		body, err = json.Marshal(map[string]any{"data": selected})
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(body, &docResp); err != nil {
+			return err
+		}
 	}
+
+	if cmd.Flags().Changed("fields") || flagIsTrue(cmd, "full") {
+		var envelope struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			return err
+		}
+		return writeRecord(cmd, envelope.Data)
+	}
+	displayDocContent(&docResp)
+	return nil
 }
 
 func displayDocContent(resp *DocReadResponse) {
@@ -363,7 +375,7 @@ func displayDocContent(resp *DocReadResponse) {
 
 	tierColor.Printf("[%s/%s] ", d.Tier, d.Angle)
 	bold.Printf("%s\n", d.Title)
-	gray.Printf("ID: %s\n", d.ID)
+	gray.Printf("ID: %v\n", d.ID)
 	fmt.Println("═════════════════════════════════════════════════════════════════")
 
 	if d.Summary != "" {

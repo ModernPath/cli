@@ -20,7 +20,7 @@ from the ModernPath platform.
 
 This updates the local .modernpath directory with the latest documentation.
 Note: Specifications are synced automatically when selecting an Epic
-via 'modernpath work select'.`,
+via 'modernpath epics specs pull <epic-id> --file specs.json'.`,
 	RunE: runDocsSync,
 }
 
@@ -144,4 +144,7 @@ func init() {
 	docsGenerateCmd.Flags().BoolVarP(&docsGenerateYes, "yes", "y", false, "Start without asking (required without a terminal)")
 	docsRefreshCmd.Flags().BoolVarP(&docsRefreshYes, "yes", "y", false, "Update without asking (required without a terminal)")
 	docsCleanupCmd.Flags().BoolVar(&docsCleanupDryRun, "dry-run", false, "Preview what would be deleted")
+	for _, command := range []*cobra.Command{docsSyncCmd, docsGenerateCmd, docsRefreshCmd, docsPreviewCmd, docsCleanupCmd, docsPushCmd} {
+		command.Flags().Bool("json", false, "Emit the result as JSON")
+	}
 }

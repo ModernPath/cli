@@ -3,7 +3,8 @@ package cmd
 import (
 	"fmt"
 	"net/url"
-	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,26 +18,33 @@ import (
 // REQ-PLN-135.
 
 var (
-	focusClearFlag   bool
-	focusDropRef     string
-	focusInferRef    string
-	focusInferSource string
+	focusClearFlag       bool
+	focusDropRef         string
+	focusInferRef        string
+	focusInferSource     string
+	focusRequirementKind string
 )
 
+var requirementUUIDFocusRef = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 var focusCmd = &cobra.Command{
-	Use:   "focus [REQ-*|EPIC-*]",
+	Use:   "focus [<requirement-uuid>|<epic-id>] [--requirement-kind system_requirement|user_requirement]",
 	Short: "Declare what you're working on right now (visibility only — no assignment, no lock)",
 	Long: `Declare what you are on so teammates see it where they pick work.
 
-  modernpath focus REQ-PLN-133   declare focus on a requirement or epic
-  modernpath focus --drop REQ-X  drop your focus on one ref (you can hold several)
+	  modernpath focus 8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001 --requirement-kind system_requirement
+	  modernpath focus 42  declare focus on an epic
+	  modernpath focus --drop <uuid-or-epic-id>  drop one focus lane
   modernpath focus --clear       end all your focus lanes
   modernpath focus               list who is on what, on this system`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		env, err := factoryEnvLoad()
+		env, err := cliEnvLoad()
 		if err != nil {
 			return err
+		}
+		if machine, _ := cmd.Flags().GetBool("json"); machine {
+			return runFocusJSON(cmd, env, args)
 		}
 
 		switch {
@@ -55,15 +63,66 @@ var focusCmd = &cobra.Command{
 }
 
 func init() {
+	focusCmd.Flags().Bool("json", false, "Emit focus rows or the change receipt as JSON")
 	focusCmd.Flags().BoolVar(&focusClearFlag, "clear", false, "End all your focus lanes")
-	focusCmd.Flags().StringVar(&focusDropRef, "drop", "", "Drop your focus on one ref (REQ-*|EPIC-*)")
-	// --infer is internal: the context hook and factory sync spawn it to post a
-	// CLI-confirmed inferred conclusion (REQ-PLN-135). Not for interactive use.
+	focusCmd.Flags().StringVar(&focusDropRef, "drop", "", "Drop your focus on one requirement UUID or Epic integer ID")
+	focusCmd.Flags().StringVar(&focusRequirementKind, "requirement-kind", "", "Requirement kind required with a requirement UUID")
+	// --infer posts a typed inferred focus conclusion.
 	focusCmd.Flags().StringVar(&focusInferRef, "infer", "", "Post an inferred conclusion for a ref (internal)")
 	focusCmd.Flags().StringVar(&focusInferSource, "source", "", "The inference source for --infer (branch|commit|prompt|cli)")
 	_ = focusCmd.Flags().MarkHidden("infer")
 	_ = focusCmd.Flags().MarkHidden("source")
 	rootCmd.AddCommand(focusCmd)
+}
+
+func runFocusJSON(cmd *cobra.Command, env *cliEnv, args []string) error {
+	var out focusOutcome
+	var err error
+	operation := "listed"
+	switch {
+	case focusInferRef != "":
+		operation = "inferred"
+		out, err = focusInfer(env, focusInferRef, focusInferSource, focusRequirementKind)
+	case focusDropRef != "":
+		operation = "dropped"
+		out, err = focusDrop(env, focusDropRef, focusRequirementKind)
+	case focusClearFlag:
+		operation = "cleared"
+		out, err = focusClear(env)
+	case len(args) == 1:
+		operation = "declared"
+		out, err = focusDeclare(env, args[0], focusRequirementKind)
+	default:
+		out, err = focusList(env)
+	}
+	if err != nil {
+		return err
+	}
+	if out.status != 200 {
+		return fmt.Errorf("focus %s: %s", operation, out.message)
+	}
+	if operation == "listed" {
+		items := make([]map[string]any, 0, len(out.list))
+		for _, entry := range out.list {
+			row := map[string]any{}
+			for _, key := range []string{"ref_id", "ref_kind", "requirement_kind", "title", "user", "set_by", "source", "started_at"} {
+				if value, exists := entry[key]; exists {
+					row[key] = value
+				}
+			}
+			row["display_ref"] = focusDisplayRef(entry)
+			items = append(items, row)
+		}
+		return writeCommandJSON(cmd, map[string]any{"items": items})
+	}
+	receipt := map[string]any{"operation": operation}
+	if out.focus != nil {
+		receipt["ref_id"] = out.focus["ref_id"]
+		receipt["display_ref"] = focusDisplayRef(out.focus)
+	} else {
+		receipt["count"] = len(out.ended)
+	}
+	return writeRecord(cmd, receipt)
 }
 
 // focusOutcome separates the HTTP result from the printing so the doors are
@@ -76,14 +135,21 @@ type focusOutcome struct {
 	message string
 }
 
-func focusDeclare(env *factoryEnv, id string) (focusOutcome, error) {
-	ref := strings.ToUpper(strings.TrimSpace(id))
+func focusDeclare(env *cliEnv, id, requirementKind string) (focusOutcome, error) {
+	ref, kind, err := focusReference(id, requirementKind)
+	if err != nil {
+		return focusOutcome{}, err
+	}
 
-	status, body, err := env.call("POST", "/api/v1/focus", map[string]any{
-		"system_id":       env.SystemID,
-		"ref_external_id": ref,
-		"source":          "cli",
-	})
+	request := map[string]any{
+		"system_id": env.SystemID,
+		"ref_id":    ref,
+		"source":    "cli",
+	}
+	if kind != "" {
+		request["requirement_kind"] = kind
+	}
+	status, body, err := env.call("POST", "/api/v1/focus", request)
 	if err != nil {
 		return focusOutcome{}, err
 	}
@@ -93,7 +159,7 @@ func focusDeclare(env *factoryEnv, id string) (focusOutcome, error) {
 	return focusOutcome{status: 200, focus: focusEntry(body, "focus")}, nil
 }
 
-func focusClear(env *factoryEnv) (focusOutcome, error) {
+func focusClear(env *cliEnv) (focusOutcome, error) {
 	status, body, err := env.call("DELETE", fmt.Sprintf("/api/v1/focus?system_id=%d", env.SystemID), nil)
 	if err != nil {
 		return focusOutcome{}, err
@@ -106,9 +172,15 @@ func focusClear(env *factoryEnv) (focusOutcome, error) {
 
 // focusDrop ends the caller's lane on one ref — DELETE ?ref= (REQ-PLN-142
 // §142.5). Other lanes are untouched.
-func focusDrop(env *factoryEnv, ref string) (focusOutcome, error) {
-	ref = strings.ToUpper(strings.TrimSpace(ref))
-	path := fmt.Sprintf("/api/v1/focus?system_id=%d&ref=%s", env.SystemID, url.QueryEscape(ref))
+func focusDrop(env *cliEnv, ref, requirementKind string) (focusOutcome, error) {
+	nativeRef, kind, err := focusReference(ref, requirementKind)
+	if err != nil {
+		return focusOutcome{}, err
+	}
+	path := fmt.Sprintf("/api/v1/focus?system_id=%d&ref_id=%s", env.SystemID, url.QueryEscape(fmt.Sprint(nativeRef)))
+	if kind != "" {
+		path += "&requirement_kind=" + url.QueryEscape(kind)
+	}
 	status, body, err := env.call("DELETE", path, nil)
 	if err != nil {
 		return focusOutcome{}, err
@@ -119,7 +191,7 @@ func focusDrop(env *factoryEnv, ref string) (focusOutcome, error) {
 	return focusOutcome{status: 200, ended: focusEntryList(body, "ended")}, nil
 }
 
-func focusList(env *factoryEnv) (focusOutcome, error) {
+func focusList(env *cliEnv) (focusOutcome, error) {
 	status, body, err := env.call("GET", fmt.Sprintf("/api/v1/focus?system_id=%d", env.SystemID), nil)
 	if err != nil {
 		return focusOutcome{}, err
@@ -139,18 +211,23 @@ func focusList(env *factoryEnv) (focusOutcome, error) {
 	return focusOutcome{status: 200, list: list}, nil
 }
 
-// focusInfer posts one CLI-confirmed inferred conclusion with the heartbeat
-// identity (REQ-PLN-135 §135.4). Declared-wins is enforced server-side; the
+// focusInfer posts one inferred conclusion. Declared-wins is enforced server-side; the
 // response carries the resulting current focus.
-func focusInfer(env *factoryEnv, ref, source string) (focusOutcome, error) {
-	status, body, err := env.call("POST", "/api/v1/focus", map[string]any{
-		"system_id":           env.SystemID,
-		"ref_external_id":     strings.ToUpper(strings.TrimSpace(ref)),
-		"set_by":              "inferred",
-		"source":              source,
-		"workspace_ref":       filepath.Base(env.Root),
-		"machine_fingerprint": machineFingerprint(env.Root),
-	})
+func focusInfer(env *cliEnv, ref, source, requirementKind string) (focusOutcome, error) {
+	nativeRef, kind, err := focusReference(ref, requirementKind)
+	if err != nil {
+		return focusOutcome{}, err
+	}
+	request := map[string]any{
+		"system_id": env.SystemID,
+		"ref_id":    nativeRef,
+		"set_by":    "inferred",
+		"source":    source,
+	}
+	if kind != "" {
+		request["requirement_kind"] = kind
+	}
+	status, body, err := env.call("POST", "/api/v1/focus", request)
 	if err != nil {
 		return focusOutcome{}, err
 	}
@@ -191,7 +268,7 @@ func focusServerMessage(body map[string]any) string {
 }
 
 func formatFocusLine(entry map[string]any) string {
-	ref := str(entry, "ref_external_id")
+	ref := focusDisplayRef(entry)
 	setBy := str(entry, "set_by")
 	title := str(entry, "title")
 	resolved, _ := entry["resolved"].(bool)
@@ -199,7 +276,7 @@ func formatFocusLine(entry map[string]any) string {
 	if resolved && title != "" {
 		return fmt.Sprintf("%s — %s (%s)", ref, title, setBy)
 	}
-	return fmt.Sprintf("%s (not in this system's ledger) (%s)", ref, setBy)
+	return fmt.Sprintf("%s (not resolved in this system) (%s)", ref, setBy)
 }
 
 func formatFocusListLine(entry map[string]any) string {
@@ -210,7 +287,7 @@ func formatFocusListLine(entry map[string]any) string {
 		}
 	}
 
-	ref := str(entry, "ref_external_id")
+	ref := focusDisplayRef(entry)
 	title := str(entry, "title")
 	line := fmt.Sprintf("%s · %s", name, ref)
 	if title != "" {
@@ -221,6 +298,33 @@ func formatFocusListLine(entry map[string]any) string {
 		line += " · " + age
 	}
 	return line
+}
+
+func focusDisplayRef(entry map[string]any) string {
+	if ref := str(entry, "display_ref"); ref != "" {
+		return ref
+	}
+	if str(entry, "ref_kind") == "epic" {
+		return fmt.Sprint(entry["ref_id"])
+	}
+	return "Requirement"
+}
+
+func focusReference(value, requirementKind string) (any, string, error) {
+	ref := strings.TrimSpace(value)
+	if requirementUUIDFocusRef.MatchString(ref) {
+		if requirementKind != "system_requirement" && requirementKind != "user_requirement" {
+			return nil, "", fmt.Errorf("a requirement UUID requires --requirement-kind system_requirement or user_requirement")
+		}
+		return strings.ToLower(ref), requirementKind, nil
+	}
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil && id > 0 {
+		if requirementKind != "" {
+			return nil, "", fmt.Errorf("--requirement-kind applies only to requirement UUIDs; Epic focus uses its integer ID")
+		}
+		return id, "", nil
+	}
+	return nil, "", fmt.Errorf("focus requires a typed requirement UUID or native Epic integer ID")
 }
 
 func focusAge(startedAt string) string {
@@ -245,63 +349,61 @@ func focusAge(startedAt string) string {
 	}
 }
 
-func runFocusDeclare(env *factoryEnv, id string) error {
-	out, err := focusDeclare(env, id)
+func runFocusDeclare(env *cliEnv, id string) error {
+	out, err := focusDeclare(env, id, focusRequirementKind)
 	if err != nil {
 		return err
 	}
 	if out.status != 200 {
-		printWarning("%s", out.message)
-		return nil
+		return fmt.Errorf("focus request refused: %s", out.message)
 	}
 	printSuccess("focus: %s", formatFocusLine(out.focus))
 	return nil
 }
 
-func runFocusClear(env *factoryEnv) error {
+func runFocusClear(env *cliEnv) error {
 	out, err := focusClear(env)
 	if err != nil {
 		return err
 	}
 	if out.status != 200 {
-		printWarning("%s", out.message)
-		return nil
+		return fmt.Errorf("focus request refused: %s", out.message)
 	}
 	if len(out.ended) == 0 {
 		printInfo("no focus to clear")
 		return nil
 	}
 	for _, e := range out.ended {
-		printSuccess("cleared focus: %s", str(e, "ref_external_id"))
+		printSuccess("cleared focus: %s", focusDisplayRef(e))
 	}
 	return nil
 }
 
-func runFocusDrop(env *factoryEnv, ref string) error {
-	out, err := focusDrop(env, ref)
+func runFocusDrop(env *cliEnv, ref string) error {
+	out, err := focusDrop(env, ref, focusRequirementKind)
 	if err != nil {
 		return err
 	}
 	if out.status != 200 {
-		printWarning("%s", out.message)
-		return nil
+		return fmt.Errorf("focus request refused: %s", out.message)
 	}
 	if len(out.ended) == 0 {
-		printInfo("no focus on %s to drop", strings.ToUpper(strings.TrimSpace(ref)))
+		if requirementUUIDFocusRef.MatchString(strings.TrimSpace(ref)) {
+			printInfo("no focus on the selected requirement to drop")
+		} else {
+			printInfo("no focus on %s to drop", strings.ToUpper(strings.TrimSpace(ref)))
+		}
 		return nil
 	}
 	for _, e := range out.ended {
-		printSuccess("dropped focus: %s", str(e, "ref_external_id"))
+		printSuccess("dropped focus: %s", focusDisplayRef(e))
 	}
 	return nil
 }
 
-// runFocusInfer posts the conclusion and, on success, learns the server's
-// resulting current focus (declared may have won) into the buffer. On failure
-// it logs and leaves the current line as it was, so the next confirmation
-// retries (§135.4) — never fatal, so a hook or sync never fails on it.
-func runFocusInfer(env *factoryEnv) error {
-	out, err := focusInfer(env, focusInferRef, focusInferSource)
+// runFocusInfer posts a typed inferred focus conclusion.
+func runFocusInfer(env *cliEnv) error {
+	out, err := focusInfer(env, focusInferRef, focusInferSource, focusRequirementKind)
 	if err != nil {
 		printWarning("inferred focus not recorded: %v", err)
 		return nil
@@ -310,29 +412,23 @@ func runFocusInfer(env *factoryEnv) error {
 		printWarning("%s", out.message)
 		return nil
 	}
-	if out.focus != nil {
-		// REQ-PLN-143 §143.1: merge the posted lane into the caller's set (declared
-		// may have won its ref) rather than replacing the other lanes.
-		_ = mergeFocusLane(env.Root, str(out.focus, "ref_external_id"), str(out.focus, "set_by"), focusInferSource, time.Now())
-	}
 	return nil
 }
 
-func runFocusList(env *factoryEnv) error {
+func runFocusList(env *cliEnv) error {
 	out, err := focusList(env)
 	if err != nil {
 		return err
 	}
 	if out.status != 200 {
-		printWarning("%s", out.message)
-		return nil
+		return fmt.Errorf("focus list refused: %s", out.message)
 	}
 	if len(out.list) == 0 {
 		printInfo("nobody has declared focus on this system")
 		return nil
 	}
 	for _, entry := range out.list {
-		fmt.Println(formatFocusListLine(entry))
+		fmt.Println(strings.Join(strings.Fields(formatFocusListLine(entry)), " "))
 	}
 	return nil
 }

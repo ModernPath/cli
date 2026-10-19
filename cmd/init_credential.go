@@ -34,7 +34,7 @@ var signInForServer = func(baseURL string) error {
 // server. Nothing is sent to the server on the refusing path.
 func initCredential(baseURL string, now time.Time) (string, error) {
 	root, _ := os.Getwd()
-	env := &factoryEnv{Root: root, APIURL: baseURL}
+	env := &cliEnv{Root: root, APIURL: baseURL}
 	repair := authRepairCommand(baseURL)
 
 	token, err := storedFreshToken(env, now)
@@ -72,9 +72,9 @@ func initCredential(baseURL string, now time.Time) (string, error) {
 }
 
 // storedFreshToken reads the stored credential and applies the same freshness
-// rule the factory verbs use: refresh when it can, refuse when it has expired.
+// shared API-client rule: refresh when it can, refuse when it has expired.
 // An absent credential is ("", nil); an expired one is the refusal itself.
-func storedFreshToken(env *factoryEnv, now time.Time) (string, error) {
+func storedFreshToken(env *cliEnv, now time.Time) (string, error) {
 	auth, err := config.ReadAuth()
 	if err != nil {
 		repair := authRepairCommand(env.APIURL)
@@ -99,9 +99,9 @@ func storedFreshToken(env *factoryEnv, now time.Time) (string, error) {
 // verbs print; anything else names the listing and how to retry or bypass it.
 func initListingRefused(baseURL string, err error) error {
 	if errors.Is(err, api.ErrUnauthorized) {
-		return (&factoryEnv{APIURL: baseURL}).credentialRejected()
+		return (&cliEnv{APIURL: baseURL}).credentialRejected()
 	}
-	return fmt.Errorf("could not list systems (%v) — run 'modernpath init' again, or bind one directly with 'modernpath factory connect --system <id>'", err)
+	return fmt.Errorf("could not list systems (%v) — run 'modernpath init' again, or bind one directly with 'modernpath init --system <id>'", err)
 }
 
 // chooseSystemWithoutTerminal stands in for the picker when stdin is not a

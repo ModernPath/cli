@@ -46,13 +46,8 @@ tree. Behavioral documentation must be checked against `cmd/*.go` and the
 server controllers cited by the canonical guide.
 
 
-Reverse-engineered baselines can be verified from existing execution proof and
-accepted through one exact human decision. Use `modernpath reverse-engineer
-proof-preview`, `execution-proof`, `delivery-proof`, `acceptance-open`,
-`acceptance-apply` and `acceptance-status`; each structured write takes `--file`.
-The installed `rdd-reverse-engineer-verify`, `rdd-reverse-engineer-accept` and
-`mp-process-cli` skills define the proof fields and sequence. The existing
-`factory answer` records the human answer. Eligibility requires complete current
-assertion/execution proof and a separate fetched repository integration
-observation; approval applies PENDING_VERIFICATION → DONE with a durable receipt,
-keeping compliance status unchanged. Normal development still uses RED/GREEN.
+Reverse-engineered baseline evidence is reviewed through ordinary requirement
+verification and the selected Epic's normal completion review. Verification
+does not change requirement content or lifecycle; completion follows the
+server-backed Epic process described in `../.modernpath/rdd/PROCESS.md`. See the
+canonical CLI guide for the commands currently shipped by this source tree.

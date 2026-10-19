@@ -10,7 +10,7 @@ import (
 )
 
 // bindingLines is the one renderer of the server, system and sign-in lines
-// both `status` and `factory status` print, so the two never disagree about
+// the `status` command prints, keeping its workspace details consistent
 // the binding (REQ-CROSS-391). auth may be nil (unreadable credential file).
 func bindingLines(cfg *config.Config, auth *config.Auth) []string {
 	apiURL := cfg.APIURL

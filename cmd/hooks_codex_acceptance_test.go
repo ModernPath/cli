@@ -7,14 +7,9 @@ package cmd
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-const expectedCodexGateMarker = "check --hook PreToolUse"
-
-var expectedCodexSyncEvents = []string{"SessionStart", "Stop", "SessionEnd"}
 
 func selectCodexOnly(t *testing.T) agentConfig {
 	t.Helper()
@@ -28,7 +23,7 @@ func selectCodexOnly(t *testing.T) agentConfig {
 	return agent
 }
 
-func TestCodexAcceptanceCompleteLifecyclePreservesProjectHooks(t *testing.T) {
+func TestCodexContextLifecyclePreservesProjectHooks(t *testing.T) {
 	chdirTemp(t)
 	agent := selectCodexOnly(t)
 	if err := os.MkdirAll(".modernpath", 0o755); err != nil {
@@ -60,8 +55,7 @@ func TestCodexAcceptanceCompleteLifecyclePreservesProjectHooks(t *testing.T) {
 	configured := settingsText(t, agent.configPath)
 	for _, want := range []string{
 		`"description"`, "project-stop", "project-after",
-		contextHookMarker, syncHookMarker, expectedCodexGateMarker,
-		"UserPromptSubmit", "SessionStart", "Stop", "SessionEnd", "PreToolUse",
+		contextHookMarker, "UserPromptSubmit",
 	} {
 		if !strings.Contains(configured, want) {
 			t.Fatalf("complete Codex install is missing %q:\n%s", want, configured)
@@ -69,12 +63,6 @@ func TestCodexAcceptanceCompleteLifecyclePreservesProjectHooks(t *testing.T) {
 	}
 	if got := strings.Count(configured, contextHookMarker); got != 1 {
 		t.Fatalf("context family was duplicated: got %d entries\n%s", got, configured)
-	}
-	if got := strings.Count(configured, syncHookMarker); got != len(expectedCodexSyncEvents) {
-		t.Fatalf("sync family must have one entry per Codex event: got %d\n%s", got, configured)
-	}
-	if got := strings.Count(configured, expectedCodexGateMarker); got != 1 {
-		t.Fatalf("gate family was duplicated: got %d entries\n%s", got, configured)
 	}
 	if strings.Contains(configured, ".claude/") {
 		t.Fatalf("Codex hooks depend on a Claude-owned path:\n%s", configured)
@@ -88,7 +76,7 @@ func TestCodexAcceptanceCompleteLifecyclePreservesProjectHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Context hook: configured", "Sync hooks: configured", "Process gate: configured", "/hooks",
+		"Context hook: configured", "/hooks",
 	} {
 		if !strings.Contains(statusOutput(), want) {
 			t.Fatalf("Codex status must be trust-aware and complete — missing %q:\n%s", want, statusOutput())
@@ -99,10 +87,8 @@ func TestCodexAcceptanceCompleteLifecyclePreservesProjectHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := settingsText(t, agent.configPath)
-	for _, marker := range []string{contextHookMarker, syncHookMarker, expectedCodexGateMarker} {
-		if strings.Contains(after, marker) {
-			t.Fatalf("%q survived Codex uninstall:\n%s", marker, after)
-		}
+	if strings.Contains(after, contextHookMarker) {
+		t.Fatalf("%q survived Codex uninstall:\n%s", contextHookMarker, after)
 	}
 	for _, want := range []string{`"description"`, "project-stop", "project-after"} {
 		if !strings.Contains(after, want) {
@@ -112,21 +98,5 @@ func TestCodexAcceptanceCompleteLifecyclePreservesProjectHooks(t *testing.T) {
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(after), &parsed); err != nil {
 		t.Fatalf("Codex uninstall left invalid JSON: %v", err)
-	}
-}
-
-func TestCodexAcceptanceProcessOnlyInstallArmsGate(t *testing.T) {
-	root := chdirTemp(t)
-	agent := selectCodexOnly(t)
-
-	if err := runHooksInstall(hooksTestCmd(), nil); err != nil {
-		t.Fatal(err)
-	}
-	configured := settingsText(t, filepath.Join(root, agent.configPath))
-	if !strings.Contains(configured, expectedCodexGateMarker) {
-		t.Fatalf("process-only Codex install did not configure the gate:\n%s", configured)
-	}
-	if strings.Contains(configured, contextHookMarker) || strings.Contains(configured, syncHookMarker) {
-		t.Fatalf("process-only install configured server-dependent families:\n%s", configured)
 	}
 }

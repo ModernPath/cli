@@ -8,11 +8,7 @@ description: Find and read the local knowledge-core export before inspecting cod
 <!-- TOOL-OWNED. Installed by `modernpath install`. -->
 
 The platform has already analyzed this repository. Its subsystem and module
-documentation, data model, and file analyses are derived from the code. In a
-bound workspace, `modernpath process prepare-inputs` checks the delivery
-context and reports local documentation sync and server update timestamps before
-sourced work. It does not refresh the export. Run `modernpath docs sync`
-explicitly when a refresh is needed.
+documentation, data model, and file analyses are derived from the code. Run `modernpath docs sync` explicitly when the local export needs refreshing.
 
 ## Search locally first
 
@@ -21,9 +17,7 @@ Search locally first, in this order, and stop at the step that answers:
 1. **The repository.** Search the code and tests for the requirement id and the
    names you are working with — `rg -n "REQ-CROSS-12" .` finds the code, the
    tests and the records that cite it. The code decides.
-2. **The requirement records.** `modernpath working-set pull <id>` materializes
-   the requirement, its epic and its traces as readable files.
-3. **The docs export.** Find documents under `.modernpath/<system-slug>/` with
+2. **The docs export.** Find documents under `.modernpath/<system-slug>/` with
    `rg`, then read the matching files directly:
 
    ```sh
@@ -31,7 +25,7 @@ Search locally first, in this order, and stop at the step that answers:
    cat <matching-document>
    ```
 
-4. **`modernpath ask "<question>"`** for why and how questions the local search
+3. **`modernpath ask "<question>"`** for why and how questions the local search
    cannot answer. It costs a model call; the steps above do not.
 
 These local reads need no additional ModernPath API call. Use the live commands

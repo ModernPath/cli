@@ -14,12 +14,12 @@ import (
 // REQ-CROSS-387 (EPIC-CLI-019) — the history recorder: every user-run
 // invocation lands in .modernpath/cli-history.log with its exit and an output
 // tail; hook-mode invocations and `auth` never do; token-like flag values are
-// redacted; dev and ralph keep the real terminal; the tee is transparent.
+// redacted; dev keeps the real terminal; the tee is transparent.
 
 func historyWorkspace(t *testing.T) string {
 	t.Helper()
-	root := enterFactoryTestWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/config.json", `{"api_url":"http://127.0.0.1:1","system_id":7}`)
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json", `{"api_url":"http://127.0.0.1:1","system_id":7}`)
 	return root
 }
 
@@ -48,21 +48,17 @@ func TestHistoryNeverKeepsAToken(t *testing.T) {
 
 	captureOutput(t, func() {
 		runWithHistory([]string{"auth", "--token", secret}, func() int { return 0 })
-		runWithHistory([]string{"factory", "connect", "--api-token", secret, "--system", "7"}, func() int { return 0 })
-		runWithHistory([]string{"factory", "connect", "--api-token=" + secret}, func() int { return 0 })
-		runWithHistory([]string{"factory", "release", "activate", "R1", "--pin", "246810"}, func() int { return 0 })
+		runWithHistory([]string{"docs", "sync", "--api-token", secret, "--system", "7"}, func() int { return 0 })
+		runWithHistory([]string{"docs", "sync", "--api-token=" + secret}, func() int { return 0 })
 	})
 
 	raw, _ := os.ReadFile(filepath.Join(root, ".modernpath", "cli-history.log"))
 	if strings.Contains(string(raw), secret) {
 		t.Fatalf("the token reached the history:\n%s", raw)
 	}
-	if strings.Contains(string(raw), "246810") {
-		t.Fatalf("the release PIN reached the history (F-CLI019-PR-02):\n%s", raw)
-	}
 	entries := historyEntries(root)
-	if len(entries) != 3 {
-		t.Fatalf("auth must not be recorded; want the two connect entries and the release entry, got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("auth must not be recorded; want the two connect entries, got %d", len(entries))
 	}
 	if !strings.Contains(strings.Join(entries[0].Argv, " "), "<redacted>") {
 		t.Errorf("the flag value must read <redacted>, got %v", entries[0].Argv)
@@ -72,7 +68,7 @@ func TestHistoryNeverKeepsAToken(t *testing.T) {
 // (f) The history and notices files are ignored by git beside auth.json.
 func TestHistoryFilesAreIgnored(t *testing.T) {
 	root := historyWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/.gitignore", "auth.json\n")
+	writeTestFile(t, root, ".modernpath/.gitignore", "auth.json\n")
 
 	captureOutput(t, func() { runWithHistory([]string{"status"}, func() int { return 0 }) })
 
@@ -131,7 +127,7 @@ func TestNoBareOsExitInCmd(t *testing.T) {
 	}
 }
 
-// (i) dev and ralph hand the original fds to their child and record argv and
+// (i) dev hands the original fds to its child and records argv and
 // exit only.
 func TestHistoryLeavesTheTerminalToInteractiveChildren(t *testing.T) {
 	root := historyWorkspace(t)
@@ -153,8 +149,8 @@ func TestHistoryLeavesTheTerminalToInteractiveChildren(t *testing.T) {
 	}
 }
 
-// (j) Hook-mode invocations are not recorded, so --last attaches the user
-// command that came before them.
+// Hook invocations are skipped, while an explicit typed focus inference is a
+// normal user command and remains in history.
 func TestHistorySkipsHookInvocations(t *testing.T) {
 	root := historyWorkspace(t)
 
@@ -162,13 +158,12 @@ func TestHistorySkipsHookInvocations(t *testing.T) {
 		runWithHistory([]string{"process", "next"}, func() int { return 0 })
 		runWithHistory([]string{"check", "--hook", "PreToolUse"}, func() int { return 0 })
 		runWithHistory([]string{"context", "--hook", "UserPromptSubmit"}, func() int { return 0 })
-		runWithHistory([]string{"factory", "sync", "--if-quiescent", "--trigger", "Stop"}, func() int { return 0 })
 		runWithHistory([]string{"focus", "--infer", "REQ-X", "--source", "prompt"}, func() int { return 0 })
 		runWithHistory([]string{"your-move", "--hook", "SessionStart"}, func() int { return 0 })
 	})
 
 	entries := historyEntries(root)
-	if len(entries) != 1 || strings.Join(entries[0].Argv, " ") != "process next" {
-		t.Fatalf("only the user command may be recorded, got %+v", entries)
+	if len(entries) != 2 || strings.Join(entries[0].Argv, " ") != "process next" || strings.Join(entries[1].Argv, " ") != "focus --infer REQ-X --source prompt" {
+		t.Fatalf("hook commands must be skipped and explicit commands recorded, got %+v", entries)
 	}
 }

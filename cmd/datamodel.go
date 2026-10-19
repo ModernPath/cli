@@ -91,6 +91,7 @@ func runDatamodelExport(cmd *cobra.Command, args []string) error {
 
 	zipData, err := downloadDatamodelExport(baseURL, token, cfg.SystemID)
 	if err != nil {
+		err = datamodelExportError(err)
 		printError("Failed to download data model: %v\n", err)
 		return err
 	}
@@ -121,6 +122,13 @@ func runDatamodelExport(cmd *cobra.Command, args []string) error {
 	fmt.Println("  - domains/*.md (one per domain)")
 
 	return nil
+}
+
+func datamodelExportError(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "datamodel_not_found") {
+		return err
+	}
+	return fmt.Errorf("%w; run 'modernpath analysis start --wait' to analyze the system, or for an already analyzed repository run 'modernpath analysis reanalyze <repository-id> --wait' (find its ID with 'modernpath analysis status'), then retry 'modernpath datamodel export'", err)
 }
 
 func downloadDatamodelExport(baseURL, token string, systemID int) ([]byte, error) {

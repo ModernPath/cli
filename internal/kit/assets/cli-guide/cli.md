@@ -86,24 +86,21 @@ and update using the installation method above.
 
 ### Install the process and agent hooks
 
-From the connected repository root, with a valid sign-in and a reachable
-ModernPath server:
+From the connected repository root:
 
 ```sh
 modernpath install
 modernpath hooks install
 ```
 
-`modernpath install` activates store-backed setup by default and writes the
-requirement-driven process and agent instructions for this connected repository.
-It validates local instruction files and the reference manifest before activating
-the store. The first install records activation under your signed-in account and writes
-`process/store-backed.md`; repeat installs reuse the activation. No confirmation,
-decision date or `--source` is needed. `--check` and `--dry-run` are local,
-read-only checks. `--store-backed=false` installs the local kit without contacting
-the server; it does not undo an existing store-backed declaration.
-`modernpath hooks install` gives supported coding agents ModernPath context.
-Commit the generated process and instruction files.
+`modernpath install` installs the CLI's pinned process snapshot and agent
+instructions. `modernpath hooks install` configures the ModernPath integration
+for supported coding agents. Use `modernpath install --check` to inspect drift
+and `modernpath hooks status` to inspect hook configuration.
+
+Hook installation and removal clean up obsolete ModernPath entries while
+preserving project hooks. `modernpath hooks doctor` reports any remaining
+obsolete entries; JSON output includes `retired_hooks` for each agent.
 
 ### Upgrade
 
@@ -191,35 +188,6 @@ command; once expired it refuses before any request, naming the expiry time
 and the remedy. The once-per-credential notices live in
 `.modernpath/cli-notices.json`, local state the CLI keeps for itself.
 
-`modernpath feedback "<line>"` files a tooling gap — a surface the CLI, the
-store or the harness lacked — as a `BACKLOG-TOOL-<n>` record only in the
-current ModernPath workspace, with the CLI build, server contract version
-and time captured. It requires a credential issued by `https://id.modernpath.ai`
-for the ModernPath organization (`371734807656268047`). The server must identify
-the checkout's bound system with slug `modernpath`. Customer credentials and
-customer workspace bindings are refused; feedback never switches destinations.
-`--last` also attaches the previous command you ran, its exit status and the
-tail of its output, read from `.modernpath/cli-history.log`. That history
-records every user-run invocation (never `auth`, never a hook invocation, and
-token-like flag values redacted); `dev` and `ralph` keep the real terminal and
-record only their command line and exit. If the credential or destination
-cannot be verified, feedback fails without creating a record or local fallback
-file. Report the tooling issue in the session instead of adding it to a
-customer backlog. Read feedback records from a checkout bound to ModernPath.
-
-Before its first store write in a process the CLI reads the server's sync
-contract (`GET /sync/contract`): a write that needs a capability this build
-does not implement is refused by name — `this build (<version>) predates
-<capability> … rebuild and install` — and nothing is sent; a read that meets a
-newer contract version (the `x-modernpath-contract` header) warns once. A
-server without the read is older than the check and is written to as before.
-
-A work selection carries a lane: `working-set select <scope> … --lane defect`
-marks a customer-blocking defect, and `process next`, `your-move` and the
-session brief say so (`lane: customer-blocking defect`, a `⚑ defect` chip), so
-a session learns from the store that the clock is different. The default is
-`planned`; a suspend and resume keep the lane.
-
 ### Local development and environment switching
 
 For a local development server, use the local option for both steps:
@@ -266,10 +234,7 @@ binding, with the repository id, is saved to `.modernpath/config.json`.
 and the command exits non-zero with `--yes is required for unattended runs`
 instead of exiting 0 without importing. Declining the confirmation exits 0.
 
-The upload is the only import method: `--local` is accepted and changes
-nothing. Import from a git URL was removed together with its `--git` flag,
-since the server no longer accepts it; a script that passes `--git` now fails
-with `unknown flag: --git`.
+The CLI imports the local directory as an upload.
 
 After the upload the next steps say that the analysis is queued and name the
 verbs that follow it (`modernpath analysis status`) and keep the system
@@ -289,18 +254,13 @@ modernpath source push
 modernpath source push --exclude fixtures --max-size 200
 ```
 
-The verb packs the directory with exactly the import filters (skip lists,
-`.gitignore`, `--exclude`, `--keep`, `--max-size`; see below), computes the
-content revision the server uses, and compares it with the server's before
-uploading anything.
-Nothing changed and the last refresh completed: nothing is uploaded and the
-system is reported unchanged at that revision. Nothing changed but the last
-refresh failed or was stopped: the refresh is queued again without an upload.
-Changed: the archive is uploaded and an incremental run starts: its first
-step makes the tree the current source, superseding the previous one, and its
-next refreshes the knowledge core. The checkout's git head,
-branch and dirty flag travel as metadata and show on the system's Define page
-beside the revision and the time it was received.
+The verb packs the directory with the import filters (skip lists,
+`.gitignore`, `--exclude`, `--keep`, `--max-size`; see below) and always sends
+the selected archive. The server ingests it, computes the source revision and
+reports whether the source changed. The checkout's git head, branch and dirty
+flag travel as metadata and show on the system's Define page beside the
+revision and time it was received. The CLI does not hash the local tree or
+compare a local digest with the server before uploading.
 
 The verb never prompts. A server refusal — the system is being analysed or
 its documentation updated, or the repository is linked to a git provider
@@ -407,39 +367,20 @@ exit non-zero and name the `repository_id` remedy.
 
 ### Explore the Knowledge Core
 
-Before planning a sourced change in a bound workspace, prepare the current
-delivery context and compare the local and server document timestamps:
+When the local document export is missing or stale, refresh it with
+`modernpath docs sync`. Then search and read the exported files locally:
 
 ```sh
-modernpath process prepare-inputs
-```
-
-The command reads the combined context once and reports the actor, bound
-system, server contract, release provenance, held-piece count, pending
-decisions, local last-sync time and latest server document update. It does not
-download documents, select a release or select a piece. A null server update
-means the server has no documents. If the local system document tree is missing,
-the report says it is unavailable and points to `modernpath docs sync`. If the
-export manifest has no server `generated_at` value, its timestamp is unknown
-and the report also points to `modernpath docs sync`.
-Human output shows a compact readiness summary; add `--verbose` for the store,
-contract, CLI, kit and source diagnostics. Scripts can use
-`modernpath process prepare-inputs --json` and check
-`ready` before continuing.
-
-When the local document tree is available, locate and read the full exported
-document without another ModernPath API call. If it is unavailable, its sync
-time is unknown, or the server update is newer than its recorded sync time, run
-`modernpath docs sync` first:
-
-```sh
+modernpath docs sync
 rg -n "authentication" .modernpath/<system-slug>
 cat .modernpath/<system-slug>/architecture/overview.md
 ```
 
 For API-backed discovery or a synthesized answer, use `modernpath search` or
 `modernpath ask`. `modernpath read-doc --list` accepts `--tier` and `--angle`
-to narrow an API-backed document list.
+to narrow an API-backed document list. `search`, `read-file`, `read-doc`,
+`status`, `source`, `analysis`, and `system-docs` support JSON output with
+`--json`. For `ask`, `--json` is an alias for `--format=json`.
 
 `modernpath ask` runs the question in a background job on the server. An
 answer ready within 45 seconds comes back at once; otherwise `ask` waits for
@@ -447,66 +388,116 @@ it, showing `Still working (m:ss)…` on stderr in pretty format, for up to 10
 minutes (`MODERNPATH_ASK_WAIT_LIMIT`, a Go duration such as `20m`, changes the
 limit). A failed ask, or one still running at the limit, prints its reason and
 its ask id and exits non-zero. The job answers within 5 minutes. It starts
-from matching code files as well as documents, and can also search the
-curated patterns and capabilities the system uses. When the model cannot
-answer in time, the answer lists what the search gathered and says that it is
-partial. Each source is
-listed once, by its title or, for a file, by its path. The server names each
-source's kind (document, file, pattern, capability) and id; `--format=json`
-keeps its three keys.
+from matching code files as well as documents, and can also search curated
+patterns and capabilities. Sources are listed once by title or file path; the
+server names each source's kind and id. `--format=json` (or `--json`) emits
+the answer and source references for scripts.
 
-### Connect requirement-driven development to Mission Control
+### CLI output and query contract
 
-Repositories using ModernPath's requirement-driven process have a second,
-independent synchronization path. Install the process package, select the
-active release recorded by the repository, verify the binding, and perform the
-first foreground sync:
+CLI commands serve people and coding agents with the same
+selected data. Discovery is bounded and terse; complete records are explicit.
+
+The common rule for resource commands is: `list` shows only the resource's
+usable ID or display reference and title/name, one item per line, in a bounded
+page. Use that identity with `get` for a short summary, `get --fields
+title,description` to fetch selected fields, or `get --full` to fetch all public
+fields. Large content is returned only when explicitly selected or exported.
+`--json` preserves the same selection and includes list pagination metadata.
+The command-specific details below define identity fields and any exceptions.
+
+- `epics list` prints the native numeric ID and title, one row per Epic.
+  `requirements list` prints the display reference and title, one row per
+  requirement. Titles are kept on one terminal line.
+- Both lists default to 20 items (maximum 200). Filtering, ordering and
+  continuation run on the server before the page is returned. `--order id`
+  is the stable default; `--order title` orders by title with native identity
+  breaking ties. `--cursor` continues the same System, filters and order.
+  A mismatched or malformed cursor is an error; pages are live reads, not
+  snapshots.
+- Epic filters include `--status` and `--query` (literal, case-insensitive
+  text in title, description or scope). Requirement filters include
+  `--status`, `--kind`, `--context` and `--query`. Requirement statuses are
+  `PROPOSED`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`, `BLOCKED`, `DEFERRED` and
+  `OBSOLETE`.
+- `get` defaults to a short identity/title/status summary. `--fields` selects
+  comma-separated public fields, including larger content such as description
+  or scope. `--full` requests all public detail. Unknown or empty field names
+  and combining `--fields` with `--full` are errors.
+- `--json` emits the same selected data as a JSON object. Lists emit
+  `{"items":[...],"next_cursor":null}`; a continuation replaces null with an
+  opaque cursor. Epic list items contain `id` and `title`. Requirement list
+  items contain `id` (native UUID), `requirement_kind`, `display_ref` and `title`.
+  Requirement detail always retains those identity fields (`id`,
+  `requirement_kind`, `display_ref`), including when `--fields` selects content.
+- Text lists print a continuation hint to stderr when another page exists.
+  Progress and warnings also go to stderr. Errors are reported once and exit
+  nonzero. Read commands never prompt. Write commands return a short receipt
+  identifying the affected resource and result; explicit content reads and
+  specification exports may return complete content.
+
+#### Requirement references and native identity
+
+A requirement display reference is `UR-<display_number>-<revision>` for a
+user requirement or `SR-<display_number>-<revision>` for a system requirement.
+For example, `UR-6-0` identifies user requirement number 6 at revision 0.
+Its native UUID is immutable; the display reference changes with the revision.
+All lookups are scoped to the authenticated workspace and bound System.
+
+`requirements get UR-6-0` infers the kind from the prefix. A conflicting
+`--kind` is an error. A revision-qualified reference must match the current
+revision exactly: a stale reference returns an actionable error rather than
+silently returning newer content. This command does not retrieve historical
+accepted content. UUID lookup remains available and requires `--kind user`
+or `--kind system`. The native `user_requirement` and `system_requirement`
+values printed by JSON lists are also accepted.
 
 ```sh
-modernpath install
-modernpath factory release use <release-slug>
-modernpath factory status
-modernpath factory sync
+modernpath epics list
+modernpath epics list --status IN_PROGRESS --query cart --limit 20
+modernpath epics list --order title --json
+modernpath epics get 7 --fields title,scope
+modernpath epics get 7 --fields title,scope --json
+modernpath epics get 7 --full --json
+modernpath requirements list --kind user --query checkout
+modernpath requirements get UR-6-0 --fields title,description
+modernpath requirements get <uuid> --kind user --fields title,description
 ```
 
-`modernpath init` already selects and records a system. Do not immediately run
-`factory connect` after a successful initialization. Use `factory connect` only
-to create or repair a factory-only binding without downloading the Knowledge
-Core export, or to rebind an existing workspace deliberately:
+### Create native requirements
+
+Create a requirement for new behavior in the bound System:
 
 ```sh
-modernpath factory connect --system <system-id>
+modernpath requirements create --kind user --file user-requirement.json --json
+modernpath requirements create --kind system --file - --json < system-requirement.json
 ```
 
-Install agent hooks after the foreground sync succeeds:
+The JSON object requires `title`. Optional common content fields are
+`description`, `context`, `context_name`, `priority`, `release_note` and
+`detail_md`. User requirements also accept `actor` and `intended_use`; system
+requirements accept `boundary`, `rationale` and `verification_method`.
 
-```sh
-modernpath hooks install
-modernpath hooks status
+For example, `system-requirement.json` can contain:
+
+```json
+{"title":"Rotate signing keys","description":"Keys can be rotated without interrupting requests","verification_method":"integration test"}
 ```
 
-The hooks can inject relevant codebase context, run the local process gate, and
-automatically synchronize coherent repository state. The exact families vary
-by supported coding agent; `hooks status` and `hooks doctor` report what is
-configured and which CLI binary will run.
+The CLI supplies the bound `system_id`. The server assigns the native UUID,
+display reference, revision `0`, `PROPOSED` status and authenticated author,
+and records the creation audit atomically. Client identity, lifecycle,
+release assignment and approval fields are rejected.
 
-### Know which sync you are running
-
-The two sync commands have opposite directions and different data:
-
-| Command | Direction | Purpose |
-|---|---|---|
-| `modernpath process prepare-inputs` | read-only server context | Reads preparation context once and reports release readiness and document timestamps; it does not download or write documents. |
-| `modernpath docs sync` | server to repository | Downloads the latest Knowledge Core export into `.modernpath/<system-slug>/`; reserved top-level names use `.modernpath/docs/<system-slug>/`. |
-| `modernpath factory sync` | repository to server | Uploads requirements, epics, specifications, gates, evidence, releases, and loop activity for Mission Control. |
-
-`modernpath status` reports their timestamps separately as **Docs Sync** and
-**State Sync**.
+The receipt includes `id`, `requirement_kind`, `display_ref`, `title`,
+`system_id`, `work_status` and `revision`. Use its native kind and UUID in
+`epics plan save`; propose acceptance criteria and further content there.
+Creating a requirement does not approve implementation or completion.
 
 ### Find synced requirements
 
-Use `requirements list` to search the requirements already synced for the
-bound system without downloading the full ledger:
+Use `requirements list` to read compact requirement summaries from the
+bound system:
 
 ```sh
 modernpath requirements list
@@ -514,22 +505,20 @@ modernpath requirements list --status IN_REVIEW --kind user --context AUTH --que
 modernpath requirements list --status IN_REVIEW --kind user --context AUTH --query "two factor" --limit 25 --cursor "<next_cursor>" --json
 ```
 
-The command returns one page, 50 rows by default and at most 200. Status means
+The command returns one page, 20 rows by default and at most 200. Status means
 the exact `work_status`; kind is `system` or `user`; context is the exact
 context code. These filters combine, while `--query` is a case-insensitive
-literal substring search across the full external ID, title and description.
-Without `--status`, `DERIVED` candidates are omitted; use `--status DERIVED`
-to find them. Null status and context values remain eligible when those filters
-are absent.
+literal substring search across the native UUID, display reference, title and
+description.
+Null status and context values remain eligible when those filters are absent.
 
-Each result contains a title preview up to 200 characters and a description
-preview up to 400 characters, with truncation flags. Pages are live reads, so
-concurrent changes may affect a later page. Continue with the returned cursor
+Each result contains the display reference and title; JSON additionally retains
+the native UUID and requirement kind. Pages are live reads, so concurrent
+changes may affect a later page. Continue with the returned cursor
 and the same filters; the cursor does not provide a snapshot. `--json` prints
-`items` and `next_cursor` for scripts. The command does not retrieve detail,
-acceptance criteria or relations; use `modernpath working-set pull <id>` for
-full content. A server that does not support discovery returns an explicit
-error; the CLI does not fall back to downloading the full corpus.
+`items` and `next_cursor` for scripts. The command returns compact summaries
+only. A server that does not support discovery returns an explicit error; the
+CLI does not fall back to downloading the full corpus.
 
 ### Find requirements and epics by name or meaning
 
@@ -547,290 +536,189 @@ Both run the same server search as MCP's `search_requirements` and
 `search_epics`: an exact match on id, title and description, and a match by
 meaning on the stored embedding, in one ranked list for the bound system. Hits
 found both ways come first, then exact hits by recency, then meaning hits by
-similarity. Each hit shows its id, status, name and how it matched.
+similarity. Default hits show their identity and title on one line. Use `--fields` to select
+content or `--full` to request the complete hit.
 
 `requirements search` covers user requirements, system requirements and test
-cases. It matches external ids and display references (`UR-5`, `SR-12-0`,
-`TC-8`); a row without an external id is shown by its display reference.
-`OBSOLETE` rows are never returned. `DERIVED` requirements and unconfirmed test
-cases are found by exact match only and are marked `candidate`. `epics search`
-shows an epic's code, or `#<id>` when it has none, and says `keyword`,
-`semantic` or both. Each epic includes its app link; JSON items include a
-`url` field. Links use the server-advertised app address, falling back to the
+cases. It matches display references (`UR-5`, `SR-12-0`, `TC-8`) and stored content;
+results retain native identities alongside display references.
+`OBSOLETE` requirement rows are never returned. Unconfirmed test cases are
+found by exact match only and are marked `candidate`. `epics search`
+shows the native Epic ID as `#<id>` and says `keyword`,
+`semantic` or both. The complete Epic hit includes its app link; select `url` or use `--full`
+to include it. Links use the server-advertised app address, falling back to the
 API host when none is available.
 
-`--limit` is 10 by default and at most 25. `--json` prints the server's `query`
-and `items`. A 404 names its cause: an unknown system (check the binding with
+`--limit` is 10 by default and at most 25. These are bounded ranked searches,
+not paged inventories; use list commands for continuation. `--json` prints
+`query` and the selected `items`. A 404 names its cause: an unknown system (check the binding with
 `modernpath status`) or a server without the search routes (update the server).
-Use `requirements list` for exact status filters and paging, and
-`working-set pull <id>` for full content.
+Use `requirements list` for exact status filters and paging.
 
-### Work with server decisions
+### Read Epics and exchange specifications
 
-Mission Control can record human answers and specification edits on the
-server. Inspect and materialize them into the versioned repository with:
-
-```sh
-modernpath factory gates
-modernpath factory gates <external_id>
-modernpath factory gates <external_id> --audit
-modernpath factory gates <external_id> --audit --json
-modernpath factory gates --state answered
-modernpath factory gates --state all --json
-modernpath factory pull
-modernpath factory pull --apply
-```
-
-`factory gates` alone is the open decision queue. `factory gates <external_id>`
-shows one gate — its state and, once it is answered, the answer, its `USER:`
-source, who answered and whether the answer has been applied — so you can
-confirm an approval landed without reading the event stream. An answer that has
-been applied reads as state `closed` with its answer intact; read it by id or
-under `--state all`. `--state open|answered|dismissed|superseded|all` lists gate
-history in the store's vocabulary (an unknown value is refused before any
-request), and `--json` prints the server's gate envelope on stdout and nothing
-else — `{"gates": […]}` for a listing, `{"gate": {…}}` by id — for scripts.
-
-A listing's text output prints at most 50 gates. `--limit N` changes that and
-`--offset K` pages; when more remain, the listing ends with
-`showing N of M · --offset K for more`. Under `--json` every gate is printed
-unless `--limit` is given, so `--state all --json` still returns the whole
-history. `process backlog list` and `process findings list` page their text the
-same way, and `process backlog list --json` prints `{"backlog": […]}` with
-every record unless `--limit` is given. A `--json` listing also carries
-`total`, the number of records, and `has_more`, true when records remain after
-the page.
-
-The by-id text output includes the stored decision brief without `--json` or
-`--verbose`: **What**, **Why now**, **Changes if approved**, **Risk if wrong**
-and **Recommendation**, in that order. Missing or blank fields are omitted;
-multiline content is retained. Compact queue and history listings remain brief.
-
-Applying a lifecycle decision requires a human answer with exactly the `approve`
-option selected. Echoing a decline or free text alone does not authorize the
-transition. Authoring a lifecycle gate requires an `approve` option from the
-start. An entry or completion approval must declare the exact transition,
-including imported approvals; an older decision without it needs a fresh reviewed
-approval before it can be applied. Entry also requires a named independent cold review and no unresolved
-material findings for the reviewed scope; these checks run when the gate opens,
-when it is answered, and when its answer is applied. Completion readiness and
-answering also recheck current passing evidence and reconciled item states.
-Consuming a reentry approval closes it and records it as applied in the same transaction.
-
-`factory gates <external_id> --audit` adds separate answer and application
-results, simultaneous blockers with recovery guidance, and named review contexts
-with their independence results. It reads the gate's own scope without selecting
-work or changing records. Normal listings and detail reads retain their existing
-cost. `--json` returns the same diagnostics under `gate.audit`; an older server
-that omits the requested audit produces an error.
-
-Application checks cover ordinary lifecycle advances. Separate release, reentry,
-declaration and chat application paths are labelled `unsupported`, so `pending`
-is not reported as a stranded approval. Postpone and resume transitions also use
-a separate path: `author advance --decision USER:<source>` moves the item and
-leaves the gate unconsumed. The audit reports this path as `unsupported` and gives
-the decision-reference guidance. The audit preserves exact remaining scope
-IDs and flags closed/pending or fully consumed/unsettled history for reconciliation;
-it does not replay, normalize or withdraw decisions. Independence is unknown when
-the pinned review scope cannot be resolved. These are current read-only checks;
-the write path still validates again when applying a decision.
-
-Run `pull` without `--apply` first to inspect pending intents. Applying a gate
-answer writes its receipt under `mission-control/`; applying a specification
-edit writes the corresponding specification file. The CLI then acknowledges
-the materialized intent to the server. An applying agent or human must still
-propagate a gate decision through the affected requirements and specifications.
-Resolve reported content conflicts manually; the CLI does not choose between
-competing edits.
-
-### Run each delivery phase in one call
-
-In a store-backed workspace every write is still one fingerprint-guarded
-record, but the batch verbs do a whole phase step in one call and report
-each record's result. A refused record is printed with the server's refusal.
-Rerun the same file after a fix: records that were already written are
-skipped or reported unchanged.
+Epics use native IDs. Read, create and update them under the bound System, and exchange
+specifications with the dedicated `epics specs` commands:
 
 ```sh
-modernpath author apply --file plan.yaml            # epic, URs, SRs, relations, membership
-modernpath working-set pull --scope --for-review    # one REVIEW.md with the aggregate stamp
-modernpath process review record --file review.json --review-context <id> # findings, dispositions, cold-review trace
-modernpath process enter EPIC-X
-modernpath author advance --gate ENTRY-EPIC-X       # every record the gate names, members first
-modernpath factory evidence --file runs.json        # RED and passing runs
-modernpath process advance --all --piece EPIC-X --log "go test ./..."
+modernpath epics list
+modernpath epics get <epic-id>
+modernpath epics create --file epic.json
+modernpath epics update <epic-id> --file changes.json
+modernpath epics specs list <epic-id> --full --json
+modernpath epics specs status <epic-id>
+modernpath epics specs generate <epic-id>
+modernpath epics specs pull <epic-id> --file bundle.json
+modernpath epics specs push <epic-id> --file bundle.json
 ```
 
-- `author apply --file` uses the same write engine as `working-set push`. It
-  checks the whole plan before the first write: one invalid record stops the
-  call and nothing is written. A missing record is created, then patched. Each
-  record's changed fields, criteria, relations and membership go in one atomic
-  patch that carries the authoring context. An updated record's line shows the
-  fingerprint it replaced and the new one. **Pull first, or pin
-  fingerprints:** an existing record that would change is guarded by its
-  `expected_fingerprint` in the plan, or else by the fingerprint of its
-  `working-set pull`. Without either, apply refuses it; with a fingerprint
-  that has moved since, apply refuses the call and keeps the other session's
-  edit. New records need neither. `--dry-run` prints the plan. (`--from-pull`
-  is deprecated and has no effect: the pull is always used.)
-- `working-set push` never creates a record: an item file whose id the store
-  does not know is refused before any write, and `author apply` is the only
-  create path. A pulled SR shows its `lane_class`, and push can change it.
-- `working-set pull --scope --for-review` writes `REVIEW.md`, the whole packet
-  in one file, and stamps the packet aggregate. `process review record`
-  refuses before any write when that stamp is missing, when the aggregate has
-  moved since the pull, or when a PASS would leave a material finding open.
-  Each requirement in `REVIEW.md` has a `Sources` line with its served
-  citations. The pull also stamps each record's and packet section's
-  fingerprint (`reviewed: <key> <fingerprint>` lines in `.context`), and
-  `process review record` records them on the trace as
-  `reviewed_fingerprints`.
-- An epic created from a chat carries what the chat's search found. The
-  scope pull's epic file shows them in a read-only `found_in_chat` block and
-  `REVIEW.md` lists them under "Found in chat", each as its kind and name.
-- `working-set pull --scope --for-review --since <trace>` writes a later
-  round's `REVIEW.md`: the previous trace's code revision beside HEAD, what
-  changed since that review in full (no text diff: prior content is not
-  stored), the open findings, the previous verdict, and the unchanged ids with
-  their fingerprints. When the revision moved, the reviewer re-verifies the
-  citations of the unchanged items. It refuses a trace that is not a cold
-  review, belongs to another scope, or carries no reviewed fingerprints, and
-  it is refused with the by-id narrow review. The stamp and the trace still
-  pin the full aggregate.
-- `author demote --ids A,B,C --to … --basis … --reason USER:…` (or `--file`,
-  one id per line) opens one demotion gate over items that are all IN_REVIEW
-  or all DONE; a mixed batch is refused before any write, naming both groups,
-  the group holding user requirements first. The gate id is
-  `DEMOTE-<first id>`, or the next free `-R<n>` when earlier gates in the
-  series are closed or withdrawn; an open or answered one is refused.
-  `author demote --gate-id <gate> --apply` advances every item after the
-  answer, user requirements first: an item already applied is skipped, an
-  item another gate's follow moved is passed over (the output then names
-  `author gate-withdraw` for the gate that cannot close), and any other
-  refusal stops the run listing what was applied and what remains — re-run to
-  resume. `author demote <id> --apply` applies the newest gate in its series.
-- `process findings add --file` and `process findings disposition --file`
-  record lists of findings and dispositions. A single disposition given
-  `--scope` reads the finding's fingerprint itself and needs `--from`, the
-  disposition you saw: it is written only while the finding is still in it.
-  These files, and the review file, refuse a key they do not know and name
-  it. A finding entry takes `introduced_by`, and a disposition entry takes
-  `resolution` (`packet-edit`, `scope` or `decision`) and `widens`, with the
-  rules of `--introduced-by`, `--resolution` and `--widens`: a `RESOLVED`
-  entry must name its resolution. The batch verbs refuse a bad entry and run
-  the rest; a review file with a bad entry is refused before any write.
-- `author advance --gate <GATE>` reads the gate's fingerprint, transition and
-  `approve` answer. Without a record id it advances every record the gate
-  names that is still in the FROM state. A member already past the transition
-  is skipped; a member that is neither, or is missing, keeps the epic where it
-  is, and the call exits non-zero naming it.
-- `factory evidence --file` posts one run per entry. The run ID is derived
-  from the entry, so rerunning the file updates the same runs.
-- `process advance --all --piece <EPIC>` advances every system requirement of
-  the piece. It reports why each one it could not move was refused.
-- `process advance <SR>` judges a TODO member by its own entry at the current
-  packet aggregate, the way reconcile does, not by the epic's entry pin. It
-  needs no `--piece` when the SR is itself one of the pieces you hold.
-- `process next` with several held pieces prints one block per piece instead
-  of refusing.
-- Live requirements under a retained OBSOLETE owning Epic can complete together
-  at the Epic packet pin or individually at their member pins, with current proof
-  and human approval. The owner stays OBSOLETE. Entry, deleted authority and
-  DONE/DEFERRED owners retain their existing guards.
-- Delivery checks ignore OBSOLETE and DEFERRED requirements. Their records,
-  postponement metadata and approval history remain stored. A live user
-  requirement with no applicable required SRs still needs its current upper
-  proof. If a selected scope has no applicable requirements, `process next`
-  reports nothing to deliver and no acceptance recorded; its checks are
-  NOT_APPLICABLE. Restoring deferred work requires reopening completed owners
-  and fresh applicable entry before implementation can resume.
-- `process reconcile` reports the exact trace leaves blocking a reviewed Epic,
-  including purpose, scope, state and expected/observed pins. Fix the failed or
-  stale evaluation and record new current proof. Reapplying a human entry
-  approval does not refresh its old entry audit; record a new independent audit.
-  An unavailable selected authority is reported as a refusal rather than
-  "nothing to do".
-- A DONE scope with current member evidence and its original attributable
-  applied completion receipt can remain settled after canonical section-only
-  edits. Reopened work, live changes and contradictory trace leaves retain
-  their normal guards. The original receipt supplies no new approval.
+`epics create` reads an Epic JSON object from `--file` or `--file -`; it
+returns a short identity receipt without selecting the Epic as active work. `epics update`
+accepts a partial JSON object with `title`, `description`, `scope` or `non_goals`,
+using `--file` or `--file -`; only supplied fields change. Epic content is
+read-only in `IN_PROGRESS` and `IN_REVIEW`; the server refuses these edits.
+`specs status` reports the artifact count and counts by stored status;
+`--fields artifacts` selects the artifact metadata.
+`specs list` summarizes the specification count; `--fields specs` or `--full`
+includes content. `specs pull` writes the server's specification bundle as JSON. `specs push` accepts that
+bundle or an object shaped as `{"specs":[{"category":"architecture",
+"filename":"overview.md","content":"# Overview"}]}`. Partial import
+failures return a nonzero status.
 
-The `mp-process-cli` skill gives these sequences phase by phase, with the
-single-record verbs as the fallback. Run `modernpath install` after upgrading
-to refresh the skill and `.modernpath/cli-reference.md`. The kit's permission
-rules allow `author apply`, `process review record` and `process advance` like
-the other routine writes. `modernpath hooks install` adds them where the
-workspace has not placed them in a list itself.
+Specification generation captures the Epic’s Knowledge Core snapshot when none
+exists and preserves an existing snapshot. It schedules work only after that
+preparation succeeds.
 
-### Take a small change through the lane
+### Read and approve a native Epic plan
 
-A small change is one SR in no epic, of a class the System's lane
-authorization covers, with at most five non-test source files and no excluded
-area. It gets one narrow independent review, enters by the standing
-authorization instead of a per-change human gate, and completes in a batch.
-The server checks every rule and refuses by name.
+Plans and their decisions live in the server process store:
 
 ```sh
-modernpath process lane authorize --classes wording,defect_with_failing_test \
-  --appliers 7 --expires 30d --cap 10     # once per System
-modernpath process lane approve LANE-AUTH  # a workspace admin answers it (or in the web app)
-modernpath author apply --file sr.yaml                   # the SR with lane_class and sources
-modernpath working-set pull REQ-X --for-review           # REVIEW.md for the reviewer
-modernpath process lane review REQ-X --file review.json  # the narrow review
-modernpath process lane enter REQ-X                      # PROPOSED->TODO by the authorization
-modernpath factory evidence --file runs.json             # RED, then the passing run
-modernpath process advance --all --piece REQ-X --log "npx vitest run"
-modernpath process lane check REQ-X --commit <merged sha>
-modernpath process lane complete --log <ci run>          # one lane-batch gate
-modernpath process lane complete --apply                 # after the answer
+modernpath epics plan show <epic-id> --full --json
+modernpath epics plan save <epic-id> --reason "<reason>" < plan.json
+modernpath epics plan approve-implementation <epic-id> --reason "<reason>" < reviewed-plan.json
+modernpath epics plan submit-review <epic-id> --reason "<reason>"
+modernpath epics plan approve-completion <epic-id> --reason "<reason>"
 ```
 
-- Only a workspace admin answers a lane authorization: in the web app, or with
-  `process lane approve <gate> [--text <decision>]`, which answers it as the
-  signed-in user. Admin is read from the roles in your sign-in token.
-  `factory answer` on it is refused, and so is any client other than the web
-  app and the CLI. The approver reads the terms as the server wrote them from
-  what it enforces; any text the requester added follows as a note.
-  `process lane` shows the current one.
-- Set the SR's `lane_class` before the review, because the review pins it.
-  The classes are `defect_with_failing_test`, `wording`, `presentation` and
-  `dependency_patch`.
-- `process lane review` and `process lane enter` take the SR as a `single_sr`
-  work selection when you do not hold it. The server serves the SR's
-  single-SR aggregate only for a held piece.
-- `process lane check` reads the change as it reached the default branch: a
-  merge or squash commit against its first parent, or `--base <sha>` for a
-  rebase delivery. The server cannot read the repository: it judges the file
-  list the CLI reports and records that verdict. The first full report for a
-  commit counts; a later report for the same commit that leaves a file out or
-  uses another base is refused. A DONE or OBSOLETE SR is refused. A FAIL takes
-  the change out of the lane.
-- `process lane complete --log` records the run you name as the run you
-  report; nothing verifies it, and the approver's brief says so.
-- In the lane-batch gate, the answer approves every change it does not reject
-  with `reject:<SR>`. After the answer the batch is pinned to the approved
-  changes only, so fixing a rejected one does not block them.
+`show` summarizes the current plan state; `show --full --json` reads the saved
+plan, human decisions and accepted requirement versions in full.
+`save` and `approve-implementation` read one JSON plan from standard input
+or `--file plan.json`; implementation approval applies to that saved plan.
+Writes accept an optional `--reason` comment. `submit-review` submits the implementation for human completion
+review. `approve-completion` records the human completion decision and
+publishes the approved requirement content. The approved plan and owned
+requirement content remain read-only through `IN_PROGRESS` and `IN_REVIEW`.
+Capture a requested scope change separately; it does not revise the active
+approval. The server remains authoritative.
 
-The subagent guard denies the lane's write verbs to delegated agents. The
-kit's permission rules allow them, except `process lane authorize` and
-`process lane approve`, which ask.
+### Read requirements, test cases, traces and evidence
 
-The subagent guard allows a delegated agent only the verbs listed as reads
-(`process next`, `working-set pull`, `search` and the other reads) and denies
-every other `modernpath` subcommand, so a new write verb is denied until it is
-listed as a read. It reads the command as the shell will run it: quoted verbs
-count, and a subcommand it cannot read literally (`$VAR`, `$(…)`, `eval`,
-`xargs` input, an indirect path to the binary) is denied.
+Read a requirement by display reference, or by native UUID and kind. Use
+`--fields` or `--full` to include stored criteria and trace detail:
+
+```sh
+modernpath requirements get UR-6-0 --fields title,description
+modernpath requirements get <uuid> --kind user --full
+modernpath requirements get <uuid> --kind system --fields title,criteria
+modernpath traces list --entity-type user_requirement --entity-id <uuid>
+modernpath test-cases list
+modernpath test-cases get <uuid>
+```
+
+Trace entity types use the stored names: `user_requirement`,
+`system_requirement`, `test_case`, `system_document`, `source_file`,
+`file_analysis`, `subsystem`, `epic`, or `criterion`. Trace reads are filtered
+to the System bound to the checkout. Requirement and test-case detail reads
+also verify the native entity belongs to that System.
+
+Test cases are procedure records with retained title, description,
+preconditions and ordered steps. Create or update that metadata with JSON:
+
+```sh
+modernpath test-cases create --file test-case.json
+modernpath test-cases update <uuid> --file test-case-update.json
+```
+
+The CLI supplies the bound `system_id`; JSON may contain `title`,
+`description`, `preconditions`, and `steps`. Each step needs `number` and
+`description`; `expected_result` can describe the expected observation. The
+CLI does not execute a TestCase. Record actual test or other verification
+observations as evidence:
+
+```sh
+modernpath evidence record --file evidence.json
+modernpath evidence latest
+modernpath evidence runs --kind local_test
+```
+
+Evidence input includes a run `kind`, `ran_at`, a `runner` attribution, and
+per-target `results`; each result uses the native target type and ID, outcome,
+and optional clause, role, revision and detail. The bound System ID is added
+by the CLI. `latest` is the derived current evidence view; `runs` reads the
+recorded run summaries. Result rows are fetched only when explicitly selected
+with `--full`. Use `--json` for the same selected data
+as JSON; text is the default.
+
+### Other lists, content reads and operational output
+
+The same terse output contract applies across the command surface:
+
+| Commands | Discovery and detail |
+|---|---|
+| `test-cases list`, `get` | Lists show `TC-<number>-<revision>` and title. JSON also retains native UUID. `get` and `update` accept either exact display reference or UUID; stale revisions fail. Lists filter with `--query`, `--status draft|approved`, and `--order id|title`. |
+| `traces list` | Requires an entity type and ID; supports relation filtering and server continuation. Each row identifies the trace and its endpoints. |
+| `evidence latest`, `runs` | Bounded server queries support target, outcome and time filters. `runs` also supports kind. `latest` filters the newest observation per target, so filtering cannot resurrect an older pass. |
+| `read-doc` without `--id` | Paged metadata discovery with query, tier, angle and ordering. Select content through a direct ID read. |
+| `system-docs list`, `get` | Metadata lists support query, type, order and continuation. `get` summarizes by default; select content with `--fields` or `--full`. |
+| `search`, `requirements search`, `epics search` | Bounded ranked hits, compact by default, with `--fields`, `--full` and `--json`. |
+
+Paged inventories default to 20 items, maximum 200, with `--limit` and
+`--cursor`. JSON uses `{"items":[...],"next_cursor":null}`. Cursors are opaque
+and bound to the query scope; continue with the same filters and order.
+`--help` lists each command's supported filters and selectable fields.
+
+`status`, `auth status`, `env` and `env test` return concise summaries and
+support `--fields`, `--full` and `--json`. `auth status` inspects local session
+state without starting login. `env test` uses an explicit `--api-url` when
+provided. A missing workspace or failed connection returns nonzero.
+
+Docs operations, import, scan, hook setup, install, focus, initialization and
+project creation return structured results. Their size varies: for example, `scan
+--json` includes findings, `docs preview --json` returns the preview data, and
+`hooks doctor --json` includes diagnostic detail. Progress and warnings remain
+on stderr; stdout contains the result. Receipt `url` fields contain only URLs; notes about
+a missing advertised app address go to stderr. JSON commands do not enter interactive
+prompts: provide required selectors and explicit `--yes` for operations that
+require confirmation. `init --json` needs an explicit System selector unless
+already bound; `new --json` needs explicit creation inputs and `--yes`.
+
+Full file and document reads, `ask` answers and explicit exports such as
+`system-docs pull` or specification pull intentionally return content.
+`dev setup codex` currently requires manual MCP configuration and returns an
+actionable error; it does not claim to have written a config.
+`dev run` forwards child-process output and rejects `--json`; its child owns
+the output format. Read commands never ask interactive questions.
+
+`system-docs pull` preserves the server's document folder paths, so source
+documents with the same basename remain separate. Receipts name the actual
+written file, including `.content.txt` when only extracted content is available.
+Encrypted-original failures remain errors.
+
+A completed data-model scan can legitimately report zero domains when the
+repository has no schema entities. That empty model is persisted and exportable.
+If no scan artifact exists yet, use `analysis start --wait`, or
+`analysis reanalyze <repository-id> --wait` for an already analyzed repository.
+`analysis status` identifies the bound repository.
 
 ### Diagnose a connection
 
-Start with:
+Start with the active environment, binding and authentication status:
 
 ```sh
 modernpath env
-modernpath env test
 modernpath status
-modernpath factory status
+modernpath auth status
 modernpath hooks doctor
 ```
 
@@ -840,183 +728,64 @@ Common repairs:
 |---|---|
 | Authentication is absent or the server rejects the session | Run `modernpath auth` against the intended server. |
 | Knowledge Core content is old | Run `modernpath docs sync`. |
-| `factory status` reports no system | Run `modernpath init`, or deliberately bind with `factory connect --system <id>`. |
-| `factory status` shows no local sync stamp | Set one with `factory release use <slug>`; this affects only later syncs. The server's shared active release is reported separately. |
-| Hooks use an unexpected or stale binary | Run `modernpath hooks doctor`, update the binary it identifies, and reinstall the hooks if directed. |
-| Local and server process state differ | Run `factory sync` in the foreground, then `factory reconcile`. |
+| The repository is not bound to the intended system | Run `modernpath init` and select the system. |
+| Hooks use an unexpected or stale binary | Run `modernpath hooks doctor`, update the binary it identifies, and reinstall hooks if directed. |
 
-Use `modernpath <command> --help` for the current flags and subcommands.
-
-### Outage mode
-
-When the ModernPath server cannot be reached — no connection, no answer in
-time, or a gateway error the server did not write — and a short reachability
-check fails too, the CLI says the server is unavailable and exits 75
-(EX_TEMPFAIL): this is not a refusal. For 15 seconds afterwards no command
-calls the server again; each further failed check doubles that window, up to
-5 minutes, and the first answer from the server ends it. An expired sign-in
-that cannot be refreshed does not end outage mode: you are asked to sign in
-again only once the server answers. A server address that is not an `http://`
-or `https://` URL is a configuration error (exit 1), not an outage, and
-`factory connect --api-url` refuses it.
-
-When the server limits requests (429), the command waits and sends the request
-again: the `Retry-After` time when the server gives one, else 2 seconds,
-doubling; each wait is at most 30 seconds and all of them at most 2 minutes.
-Only then does it say the server is limiting requests and exit 75. Hooks never
-wait.
-
-During an outage these process writes are kept on this machine, exit 0, and
-print `Kept on this machine (N waiting): <verb> <record>. It is recorded when
-the server is back.`:
-
-| Write | Kept with |
-|---|---|
-| `factory evidence` (one run or `--file`) | each run's id, `ran_at` and branch, fixed when kept |
-| `author update` | its `--expected-fingerprint`; a second edit of the same record waits on the first |
-| `author backlog` | its fields |
-| `process findings add --aggregate <fp>` | the aggregate |
-| `process findings disposition --expected-fingerprint <fp>` | the fingerprint |
-| `factory answer` | the gate's two review pins from its newest `.modernpath/working-set/` snapshot (`Content fingerprint`, and `Scope fingerprint` when it has one), and the `USER:` source, `USER:<date kept>` when none is given |
-| `working-set push` | the piece named by `--piece`, else the one in the local `WORK-SELECTION.md`; the edited files stay as they are, one kept push per piece |
-
-Every other write, `feedback` included, and these without what they are kept
-with — an answer to a gate with no snapshot carrying its content pin, a push
-with neither `--piece` nor a `WORK-SELECTION.md`, `findings add` without
-`--aggregate`, `findings disposition` without `--expected-fingerprint` —
-prints `Waits for the ModernPath server (unavailable since <hh:mm>); nothing
-was kept.` and exits 75. `modernpath outage status` lists the kept writes with their verb,
-record, keep time, the person who kept them and what they wait on, and the
-entries a replay could not record with the server's reason. It reads only this
-machine.
-
-When the server answers again, the next write command records the kept writes
-in order before its own request; `modernpath outage replay` does it on demand.
-A command run with `--dry-run` and the hooks never replay. A kept write the
-server refuses, or whose record or gate changed meanwhile, is moved to the
-refused or conflicted list with the server's reason, and the writes that wait
-on it move with it. A write whose request gets no answer stays kept for
-another try while the rest go on; after three failed tries it is moved to the
-refused list. A server error (5xx), an outage or a request limit stops the
-replay and keeps the rest.
+Use `modernpath <command> --help` for current flags and subcommands.
 
 ## Technical Description
 
 ### Source authority
 
-Paths in this section are relative to the `modernpath-core` repository.
+Paths in this section are relative to `modernpath-core`.
 
 | Concern | Authoritative source |
 |---|---|
 | Command registration and global flags | `CODE:tools/modernpath/cmd/root.go:rootCmd` and each command file's `init` function |
 | Authentication and credential writes | `CODE:tools/modernpath/cmd/auth.go:runAuth`, `CODE:tools/modernpath/internal/config/config.go:WriteAuth` |
-| ZITADEL login: flow choice, loopback authorization code + PKCE, device flow | `CODE:tools/modernpath/internal/zitadel/login.go:Login`, `CODE:tools/modernpath/internal/zitadel/authcode.go:AuthCodeLogin`, `CODE:tools/modernpath/internal/zitadel/deviceflow.go:DeviceLogin`, `CODE:tools/modernpath/internal/browser/host.go:LoopbackUnavailable`, `CODE:tools/modernpath/internal/browser/launch.go:Open` |
+| ZITADEL login and device flow | `CODE:tools/modernpath/internal/zitadel/login.go:Login`, `CODE:tools/modernpath/internal/zitadel/authcode.go:AuthCodeLogin`, `CODE:tools/modernpath/internal/zitadel/deviceflow.go:DeviceLogin` |
 | Repository initialization and Knowledge Core export | `CODE:tools/modernpath/cmd/init.go:runInit`, `CODE:tools/modernpath/cmd/init.go:finalizeSystemInit` |
-| Binding discovery and persistence | `CODE:tools/modernpath/internal/config/config.go:FindConfigDir`, `CODE:tools/modernpath/internal/config/config.go:WriteConfig`, `CODE:tools/modernpath/internal/config/config.go:InitConfig` |
-| Environment mutation | `CODE:tools/modernpath/cmd/env.go:setEnvironment` |
+| Binding discovery and persistence | `CODE:tools/modernpath/internal/config/config.go:FindConfigDir`, `CODE:tools/modernpath/internal/config/config.go:WriteConfig` |
 | Knowledge Core synchronization | `CODE:tools/modernpath/cmd/docs.go:runDocsSync` |
-| Mission Control binding and synchronization | `CODE:tools/modernpath/cmd/factory.go:factoryEnvLoad`, `CODE:tools/modernpath/cmd/factory.go:factorySyncRun` |
-| Requirement discovery | `CODE:tools/modernpath/cmd/requirements_list.go:runRequirementsList`, `CODE:apps/core/lib/core/compliance/requirement_discovery.ex:Core.Compliance.RequirementDiscovery.list/2`, `CODE:apps/core_http_api/lib/core_http_api/controllers/sync_api_controller.ex:requirement_discovery/2` |
-| Server batch authorization and application | `CODE:apps/core_http_api/lib/core_http_api/controllers/sync_api_controller.ex:batch`, `CODE:apps/core_http_api/lib/core_http_api/controllers/sync_api_controller.ex:caller_identity` |
-| Agent hooks | `CODE:tools/modernpath/cmd/hooks.go:runHooksInstall`, `CODE:tools/modernpath/cmd/hooks_pi.go:installPi`, `CODE:tools/modernpath/cmd/hooks_sync.go:syncHookCommand`, `CODE:tools/modernpath/cmd/hooks_doctor.go:runHooksDoctor` |
+| Source upload | `CODE:tools/modernpath/cmd/source.go` |
+| Requirements and native procedure/evidence commands | `CODE:tools/modernpath/cmd/requirements_list.go`, `CODE:tools/modernpath/cmd/requirements_search.go`, `CODE:tools/modernpath/cmd/compliance_native.go` |
+| Epic records, specifications and saved plan commands | `CODE:tools/modernpath/cmd/epics.go`, `CODE:tools/modernpath/cmd/epic_records.go`, `CODE:tools/modernpath/cmd/epic_plan.go` |
+| Agent hooks | `CODE:tools/modernpath/cmd/hooks.go:runHooksInstall`, `CODE:tools/modernpath/cmd/hooks_doctor.go:runHooksDoctor` |
+| Development review | `CODE:tools/modernpath/cmd/review.go` |
 | Installers and release archives | `CODE:tools/modernpath/scripts/install.sh`, `CODE:tools/modernpath/scripts/install.ps1`, `CODE:tools/modernpath/scripts/build-all.sh` |
 
-Generated `.modernpath` documents are useful orientation, but they are caches.
-They are not evidence for CLI behavior when they disagree with the sources
-above.
+Generated `.modernpath` documents are caches, not evidence for CLI behavior
+when they disagree with the sources above.
 
 ### Connection model
 
-The CLI and browser UI are separate clients of the same server. The UI does not
-read `.modernpath/` and the CLI does not connect to the browser.
-
-```text
-browser sign-in at ZITADEL
-        |
-        v
-ZITADEL bearer -----------------+
-                                 |
-.modernpath/config.json          |
-  server URL                     |
-  system ID ---------------------+--> ModernPath API --> tenant/system rows
-  current release (optional)     |                         |
-                                 |                         v
-repository records --------------+                  product UI views
-```
-
-A complete connection therefore has four independent coordinates:
-
-1. server URL;
-2. authenticated workspace identity;
-3. system ID within that workspace;
-4. current release when factory synchronization is release-scoped.
-
-The server rejects a system outside the authenticated workspace as not found.
-The bearer is a ZITADEL access token; its tenant claim becomes the request's
-tenant context before the sync controller looks up the system. The credential
-file records which workspace the token was issued for (`workspace_id`,
-`workspace_name`) and which issuer issued it (`issuer`); `modernpath auth`
-reads them to apply a stored choice on the same plane and to show the
-workspace in `modernpath env`.
+The CLI and browser UI are separate clients of the same server. A repository
+binding records the API URL and system ID; authentication supplies the
+workspace identity. The server verifies that the selected system belongs to
+the authenticated workspace.
 
 ### Authentication and credentials
 
-`modernpath auth` resolves the server in this order:
+`modernpath auth` resolves the server in this order: global `--api-url`,
+`auth --local`, `auth --test`, the current repository binding, then production
+(`https://api.modernpath.ai`). Browser sign-in uses OAuth authorization code
+with PKCE. When a browser cannot reach the machine, the CLI uses the device
+flow; `modernpath auth --device-flow` forces it.
 
-1. global `--api-url`;
-2. `auth --local`;
-3. `auth --test`;
-4. the current repository config, including a binding inherited from a parent directory;
-5. `https://api.modernpath.ai` (cloud production, the default).
-
-Against a baked-in profile the CLI runs OAuth authorization code with PKCE:
-it listens on a free `127.0.0.1` port at `/api/identity/callback`, opens the
-authorization URL in the browser, and exchanges the code the browser brings
-back. The whole sign-in is bounded by a five-minute timeout. When the
-surroundings rule the browser out, or the listener or browser cannot start,
-it falls back to the device flow: a device-authorization request, the
-verification URL printed, and the token endpoint polled until approval or
-expiry. Either flow returns access and refresh tokens; the CLI stores both,
-although current command paths send the access token and do not
-automatically exchange the stored refresh token.
-
-`auth.json` is written with mode `0600`. Before writing it, the CLI ensures that
-the bound `.modernpath/.gitignore` excludes the credential and refuses the
-write if it cannot establish that protection.
-
-Server-authenticated factory commands require the bearer in `auth.json`.
-Credential-free local commands do not load authentication, and `next-id`
-skips optional server enrichment when the bearer is absent.
-
-`modernpath auth login` is not a registered subcommand. Use
-`modernpath auth`; current Cobra argument handling may tolerate the extra word,
-but it has no defined semantics.
+`modernpath auth status` reports the stored credential, workspace, server and
+bound system, expiry, and (unless `--offline` is used) whether the server still
+accepts it. `auth.json` is stored under `.modernpath/` with mode `0600`; the CLI
+protects it through the repository's `.modernpath/.gitignore`. Use this command
+to check authentication rather than reading the credential file directly.
 
 ### Repository-local state
 
-The nearest `.modernpath/` directory at or above the current working directory
-is the active binding:
-
-| Path | Purpose | Persistence |
-|---|---|---|
-| `.modernpath/config.json` | Server, system, the upload repository `import --local` created, initialization mode, selected epic, last sync times, and current release. | Machine-local, gitignored. |
-| `.modernpath/auth.json` | Workspace-scoped bearer and refresh token. | Secret, mode `0600`, gitignored. |
-| `.modernpath/modernpath/` | Downloaded Knowledge Core export. | Regenerated cache. |
-| `.modernpath/rdd/` | Versioned requirement-driven process snapshot. | Repository state; intended to be committed. |
-| `.modernpath/cli-reference.md` | This binary's command reference — every verb, flag and default — rendered from its own command tree by `modernpath install`; `install --check` reports a stale copy as drift. | Repository state; intended to be committed. |
-| `.modernpath/sync-hooks.log` | Automatic factory-sync outcomes and skips. | Machine-local log. |
-| `.modernpath/server-availability.json` | Whether the ModernPath server was last found unavailable, since when, and when that was last checked (see Outage mode). | Machine-local, gitignored. |
-| `.modernpath/outage-journal/` | Process writes kept on this machine while the server was unavailable, one `<seq>-<verb>.json` file each, recorded in order when it is back; `conflicted/` and `refused/` hold those a replay could not record. | Machine-local, gitignored; never edited in place. |
-
-Read-modify-write commands update the binding they found, even when invoked
-from a subdirectory. `modernpath init` is the deliberate exception: it binds
-the current directory through `InitConfig`, allowing an explicitly nested
-workspace.
-
-`modernpath init` constructs a new config from the selected system rather than
-merging every prior field. Reinitializing therefore clears fields such as
-`current_release`; a requirement-driven workspace must reselect its active
-release afterward.
+The nearest `.modernpath/` directory at or above the working directory is the
+active binding. It contains the server and system binding, workspace
+credential, and downloaded Knowledge Core export. The export is a cache that
+can be refreshed with `modernpath docs sync`. The generated
+`.modernpath/cli-reference.md` is the command reference for the installed
+binary and can be refreshed with `modernpath install`.
 
 ### Environment behavior
 
@@ -1029,332 +798,28 @@ The named environments are URL aliases:
 | `local` | `http://localhost:4000` |
 | `custom` | User-supplied URL |
 
-`modernpath env --set` changes `config.json.api_url` and, with it, the
-system binding and the credential: the binding being left is stashed under
-`config.json.environments.<name>` (the system and repository ids, the system
-name and slug, the release) and the credential
-under `auth.json.stash.<issuer>`, and whatever is stashed for the target is
-restored. A custom URL with no known identity provider keeps the active
-credential and says so. `modernpath status` and `modernpath factory status`
-print the server, system and sign-in lines through one renderer, so they
-always agree.
+`modernpath env --set` switches the API binding and restores a credential
+associated with the target identity provider when one is available. A custom
+URL without a known provider keeps the active credential and reports that fact.
 
 ### Initialization and binding
 
-`modernpath init`:
-
-1. resolves the server and reads the repository bearer;
-2. checks server health;
-3. lists systems visible in the bearer's selected workspace;
-4. resolves `--system-id`, `--system`, or an interactive selection;
-5. downloads the system export;
-6. extracts it under `.modernpath/`;
-7. writes the system binding and ignore rules.
-
-`modernpath factory connect` is narrower. It records a system ID and optional
-API URL, then tries to refresh the system name and slug. The binding is saved
-even when the identity lookup cannot reach the server. It does not download a
-Knowledge Core export.
+`modernpath init` checks server health, lists systems visible to the signed-in
+workspace, resolves a selected system, downloads its Knowledge Core export and
+writes the local binding and ignore rules. Re-running `init` deliberately
+selects and binds the current directory to a system.
 
 ### Knowledge Core synchronization
 
-`modernpath process prepare-inputs` is the combined pre-planning path. It
-checks the bound credential, local kit and source freshness, and reads the
-current server context with one request. It reports ready only when the system
-binding is valid, the server contract is supported, exactly one active release
-has an answered `USER:`-sourced selection, and the timestamp/context fields are
-valid. It returns the held-piece count without listing piece details and keeps
-pending decisions in the personal feed's order, including decisions addressed
-to you.
+`modernpath docs sync` downloads and validates the latest export for the bound
+system, replaces the local export and updates its server-generated sync time.
+`modernpath docs push` uploads edited documentation. Both commands operate on
+document exports.
 
-The command does not refresh local files or change `.modernpath/config.json`.
-It reads the export's server-generated `generated_at` from
-`docs_push_manifest.json`; it never uses the client clock or shared config as a
-fallback, so a sibling worktree's timestamp cannot claim freshness for this
-checkout. Exports from older servers without this field show an unknown local
-time. Both `modernpath init` and `modernpath docs sync` store the same server
-timestamp in the export manifest and `last_sync_at` config field. A null server
-update means the server has no documents; an unknown local time suggests an
-explicit sync but does not make preparation fail. Invalid server timestamps
-still make preparation not ready. Local and server times are displayed in UTC.
-`docs sync` validates the archive, replaces the bound export and its exported
-companion files, and rolls back if the config update fails. Existing legacy
-exports under `.modernpath/docs/<slug>/` refresh in place; new exports also use
-that layout when their name would collide with a CLI directory. The old root
-command `modernpath sync` is not registered.
-
-Preparation does not regenerate `working-set/GATES.md`, fetch the latest-
-release cache, refresh credentials, or write process records. After a ready
-result, `rg` and `cat` under `.modernpath/<system-slug>/` locate and read
-available documents locally. API-backed `search` and `ask` remain available
-for discovery and synthesis.
-
-### Mission Control synchronization
-
-`modernpath factory sync` loads the active binding and credential, parses the
-repository into typed operations, validates the operation schema, and sends:
-
-```http
-POST /api/v1/sync/batch
-Authorization: Bearer <workspace-scoped token>
-Content-Type: application/json
-```
-
-```json
-{
-  "schema_version": 1,
-  "system_id": 243,
-  "release": "example-09",
-  "ops": []
-}
-```
-
-The `release` key is omitted when no current release is selected; the CLI warns
-but permits an unscoped sync. The server tenant-guards the system lookup,
-resolves or creates the named release, and applies operations sequentially.
-Each operation has its own transaction. The first invalid operation stops the
-batch, while previously applied operations remain idempotently replayable
-through sync shadows.
-
-The default parser recognizes the repository's requirement ledgers, epic
-records, specification files, decision registers, work-list, commits, sessions,
-and evidence. `factory manifest show` displays the selected document layout;
-`factory manifest init` writes an explicit manifest for a nonstandard layout.
-
-Useful verification paths:
-
-```sh
-modernpath factory sync --dry-run
-modernpath factory sync --dry-run --json
-modernpath factory sync
-modernpath factory reconcile
-```
-
-`--dry-run` still parses and validates locally. `--json` prints the complete
-batch that would be sent.
-
-### Releases, pull, evidence, and sessions
-
-`factory release use <slug>` writes a local `current_release` sync stamp into
-the active config. It scopes later syncs but never activates a release or
-changes the shared server selection. `factory release activate <slug>` changes
-the server's active release for the bound system. It uses the compliance PIN:
-use `--pin`, pipe one value with `--pin-stdin`, or answer the hidden prompt.
-When no PIN exists, interactive activation performs hidden
-confirm-match setup; non-interactive use must first run
-`modernpath factory pin set --pin-stdin`. `--close-current` explicitly closes
-incumbents, while `--reason` and optional `--source` are sent to the server.
-The server composes the source when `--source` is absent and returns the actual
-source and any closed releases.
-If activation is refused because other releases are open, the refusal lists
-each incumbent's name, slug and status. Retry with `--close-current` only when
-you intend to close those releases as part of the activation.
-
-The Releases UI can activate a slugless imported release by its ID. Activation
-assigns a stable `release-<id>` slug (with a suffix if that slug is already in
-use) and keeps the selected release ID stable; the CLI can then use
-that slug for later activation.
-
-Retrying the already-active release records or reuses its approval without
-closing planned releases. A signed-off Validation Bundle must be reopened
-before its release can be activated again. During the ownership migration,
-`migration_pending` means the rollout must finish before that operation can run;
-it does not authorize using another system's release.
-
-`factory pull --apply` handles server-originated gate answers and edited
-specifications. Specification conflicts are refused when both server and local
-content changed since their last common hash.
-
-`factory evidence` posts revision-pinned test evidence. Each invocation gets a
-distinct run ID with a random suffix, so separate observations at the same
-commit and timestamp cannot overwrite each other. The server still updates an
-existing run when the same payload and run ID are replayed; rerunning the CLI
-command records a new observation. `factory evidence --file` is the exception:
-each entry's run ID is derived from the entry, so rerunning the file updates
-the same runs and records only the ones that failed.
-
-`factory drift` compares recorded evidence revisions with the current working tree.
-`factory watch` maintains a server-visible session, synchronizes periodically,
-pulls pending intents, and closes the session on interrupt.
-
-### Working-set record reads
-
-`modernpath working-set pull selection` reads a selection overview into
-`WORK-SELECTION.md`. `WORK-SELECTION` and `WORK-SELECTION.md` are equivalent
-aliases. It shows all parked work in the bound system with its holders,
-reasons and blocker gate IDs. When several current pieces are held, it lists
-them as ambiguous; it does not pick one or report that no work is current.
-Use `--piece <id>` to read a named current selection. Scope-dependent reads
-and writes retain their ambiguity refusals. The overview does not select,
-resume or claim work, and an unavailable or unsupported read remains an error.
-
-`working-set select <id> --suspend --reason "waiting for review" --waiting-on GATE-1`
-stores the blocker shown in that overview. Suspend and resume preserve the
-blocker when `--waiting-on` is omitted; pass `--waiting-on ""` to clear it,
-or a new value to replace it. The closed suspension row retains its history.
-
-`modernpath working-set pull <id>…` downloads only the named records and
-their relevant gate history. The CLI uses the exact-item sync endpoint instead
-of listing every Epic, requirement, gate and backlog record. It preserves
-local edits by writing a conflicting fresh snapshot beside the existing file
-as `.md.pulled`. Use `--include-candidates` explicitly to read a known
-`DERIVED` requirement; pulling it does not confirm it.
-
-Standalone gate snapshots and gate blocks attached to other records include
-the same five decision-brief fields as the by-id terminal output, formatted as
-Markdown. Partial briefs show only their available fields.
-
-`working-set pull --scope` reads the selected record and its frozen member
-IDs through the same bounded endpoint. Packet sections, findings and delivery
-facts remain separate scoped reads. Trace authoring also reads the content
-fingerprints of its named requirements directly.
-
-`working-set check` verifies both the recorded store identity and the hash of
-the snapshot body as it was written. It reports store staleness and local body
-edits independently, including when both are present. It reads metadata only
-from the snapshot header and hashes the body separately; malformed or
-incomplete framing is unverified, and body text is never treated as metadata.
-The check covers named root snapshots and `WORK-SELECTION.md`, not editable
-scoped member files.
-`working-set check --refresh` refreshes clean remote-stale snapshots in place.
-When a local edit or unverified snapshot prevents a safe replacement, it
-preserves the original, writes a fresh comparison copy beside it as `.pulled`,
-continues checking other snapshots, and returns a non-zero result. A refresh
-with only server changes succeeds after updating the snapshot.
-
-`working-set pull --scope --for-review` creates a separate read-only snapshot
-under `.modernpath/working-set-reviews/<scope>/<context-id>/`. It brackets
-repeated selection, selected item, packet and required-section reads with the
-scope aggregate and refuses unavailable aggregates or observed drift before
-writing. It leaves authoring files and context unchanged and scaffolds no
-missing sections. This is a bounded consistency check, not a server transaction.
-
-Use the printed ID as `--review-context <id>` on `process review record`, `process findings add` or
-`author trace --purpose cold-review`. The CLI validates the selected manifest,
-store/system/scope identity, exact file hashes and snapshot digest before
-posting. Its aggregate is the default pin; a conflicting `--aggregate`,
-`--fingerprint` or a finding entry's `aggregate` refuses before any write.
-Review recording retains the originally selected digest through its final
-trace, refusing a replaced snapshot even if its manifest hashes are updated.
-Disposition batches check that same digest before every update; a mismatch
-stops the remaining writes. Restore the original snapshot before retrying;
-already accepted dispositions are skipped.
-The existing stored finding/trace body includes the
-selected context and digest. Cold-review traces require explicit selection;
-ordinary findings without a selector carry no inherited review context.
-Actor attribution remains server-owned. Findings and process projections in a
-snapshot are informational, and changes between bracketed reads can escape
-detection if they change back before the next read.
-
-Scoped authoring pulls stage required reads before changing local files. A
-local hash baseline guards files the pull would replace or remove: an edited,
-deleted or unbaselined managed file refuses the whole refresh. Unserved drafts
-and untracked files remain in place. Packet 404 removes only verified clean
-managed files; it does not recursively remove the packet directory. Server CAS
-fingerprints still guard pushes independently of this local baseline.
-
-If a push reports an error after accepting a write, preserve the scope and
-retry `working-set push` (optionally inspect `--dry-run` first). When canonical
-content already equals the authored content, retry repairs fingerprints and
-baselines without rewriting the authored body. Concurrent local edits refuse
-that metadata refresh. Missing legacy pins or accepted operation markers can
-require manual recovery: rename the whole scope directory to a dated recovery
-directory under `.modernpath/working-set/`, pull a fresh scope, then compare and
-reapply wanted edits. Keep the recovery directory until the edits are verified.
-
-After a successful patch, push refreshes the local file from the mutation's
-canonical record and current fingerprint. The response retains the record kind
-that was actually written, even if another record type shares its external ID.
-When multiple records change, push can reread the exact changed set to include
-effects from later writes in the
-same push. It does not reload the system's Epic and requirement collections.
-
-The CLI sends at most 100 unique IDs per exact-item request and keeps each
-URL-encoded request target at most 7,000 bytes, including the API base path,
-system ID and candidate option. Larger scopes use several requests, each with
-its own server read snapshot. A server that lacks this endpoint is refused;
-the CLI does not fall back to system-wide collection reads. Deploy the
-compatible server before installing or publishing this CLI change.
-
-Sources: `CODE:tools/modernpath/cmd/workingset_read.go:fetchDirectItems`,
-`CODE:tools/modernpath/cmd/workingset_pull.go:workingSetPullScope`,
-`CODE:tools/modernpath/cmd/author.go:readContentHashesFor`.
-
-### Edit requirement citations
-
-Replace an existing requirement's complete citation set with a JSON file:
-
-```sh
-modernpath author update SR-EXAMPLE-001 --citations-file citations.json \
-  --expected-fingerprint '<current-content-fingerprint>'
-```
-
-For example, `citations.json` can combine a legacy process source with a typed
-code citation:
-
-```json
-[
-  {"kind": "process_source", "source_tag": "USER:2026-09-27:approved"},
-  {"kind": "code", "ref": "src/service.ts", "source_file_id": "captured-source-id",
-   "revision": "tested-revision", "sha256": "source-digest"}
-]
-```
-
-The file replaces the whole set, so include every citation you intend to retain.
-Supplied kinds, source IDs, revisions, hashes and document or locator metadata
-are preserved. Legacy `process_source` citations can use `source_tag` or `id`.
-A file containing `[]` clears the set; omitting both citation flags preserves it.
-`--source` and `--citations-file` are mutually exclusive. Invalid input and
-unreadable files are refused before an author write; backlog records do not
-accept this flag. The edit uses the existing authenticated, fingerprint-guarded
-endpoint and retains the requirement's lifecycle state.
-
-### Automatic hooks
-
-`modernpath hooks install` merges ModernPath-owned entries into supported agent
-configuration without replacing project-owned hooks. Target a flavor with
-`--cursor`, `--claude`, `--codex`, `--pi`, or `--all`; with no flag it installs
-for every detected agent directory (`.cursor`, `.claude`, `.codex`, `.pi`).
-It manages four independent families:
-
-| Family | Behavior |
-|---|---|
-| Context | Runs `modernpath context --hook <event>` before a prompt where supported. |
-| Process gate | Runs `modernpath check --hook PreToolUse` before shell execution where supported. |
-| State sync | Detaches `modernpath factory sync --if-quiescent --trigger <event>` at supported session lifecycle events. |
-| Session brief | Runs `modernpath your-move --hook SessionStart` at session start where supported. |
-
-Cursor, Claude Code, and Codex store those families as hook JSON. Pi has no
-Claude-style hooks file: `--pi` writes a generated TypeScript extension at
-`.pi/extensions/modernpath.ts` that shells out to the installed CLI, and
-merges a skills pointer at `../.claude/skills` into `.pi/settings.json`.
-Pi loads project `.pi/` only after the project is trusted (`pi --approve`).
-
-When `process/store-backed.md` is present, Pi installs omit retired file-derived
-sync. Reinstalling with `modernpath hooks install --pi` removes old generated
-sync while retaining context, process gates, the session brief and the skills
-pointer; no `--no-sync` workaround is needed. File-backed Pi installs retain
-sync by default.
-
-In store-backed workspaces, `modernpath hooks status` and
-`modernpath hooks doctor` report absent sync as `retired (store-backed)` for
-Claude Code, Codex and Pi. Configured, partial or legacy sync produces a warning
-with the matching reinstall command: `modernpath hooks install --claude`,
-`modernpath hooks install --codex` or `modernpath hooks install --pi`.
-For Pi legacy sync, the warning says to move `.pi/extensions/modernpath.ts`
-to `.pi/modernpath.ts.bak` (or another unused path outside `.pi/extensions`)
-first, then reinstall: that extension is not managed by ModernPath, and
-reinstall replaces it unconditionally. Renaming a `.ts` or `.js` file inside
-`.pi/extensions` leaves it discoverable by Pi. Store-backed Pi diagnostics
-inspect the extension even when optional `.pi/settings.json` is absent.
-Invalid configuration still produces a warning. File-backed diagnostics are
-unchanged.
-
-The quiescence path checks ledger coherence and operation validity, uses a
-lockfile and minimum interval, logs one outcome, and never surfaces its network
-failure to the coding-agent lifecycle. A successful detached hook is therefore
-not proof that a particular change reached the server; use foreground sync and
-reconciliation for consequential handoffs.
+The export normally lives under `.modernpath/<system-slug>/`; reserved names
+use `.modernpath/docs/<system-slug>/`. After syncing, use `rg` and `cat` to
+read exported documents locally. `modernpath search` and `modernpath ask` remain
+available for API-backed discovery.
 
 ### Coding-agent and MCP setup
 
@@ -1373,44 +838,71 @@ different endpoint. The endpoint inventory is grounded in the monorepo source
 
 ### Command surface
 
-The current root commands are grouped below. Run each command's `--help` for
-its exact flags and registered children.
+Run each command's `--help` for the current flags and registered children.
 
 | Area | Commands |
 |---|---|
 | Connection | `auth`, `init`, `env`, `status` |
+| Current work visibility | `focus` |
 | Knowledge | `search`, `ask`, `context`, `read-doc`, `read-file`, `docs`, `system-docs`, `datamodel` |
-| Requirement-driven delivery | `install`, `check`, `coverage`, `factory`, `hooks` |
-| Planning and development | `work`, `tasks`, `dev` |
-| System creation and analysis | `new`, `import`, `source`, `analysis`, `scan`, `github` |
+| Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
+| Native requirements | `requirements create`, `requirements list`, `requirements search`, `requirements get` |
+| Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
+| Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |
+| Evidence observations | `evidence record/latest/runs` |
+| Reverse engineering | `reverse-engineer record/review/accept` |
+| Agent integration | `install`, `hooks` |
+| Development | `dev run`, `dev setup`, `dev list`, `dev review` |
 
-Important registered subcommands:
+`dev review` inspects the current Git diff.
 
-| Parent | Subcommands |
-|---|---|
-| `docs` | `sync`, `generate`, `refresh`, `preview`, `cleanup`, `push` |
-| `source` | `push` |
-| `analysis` | `start`, `reanalyze`, `reset`, `status` |
-| `factory` | `connect`, `status`, `release`, `sync`, `gates`, `answer`, `pull`, `evidence`, `drift`, `watch`, `reconcile`, `manifest`, `next-id`, `image` |
-| `hooks` | `install`, `uninstall`, `status`, `doctor` |
-| `author` | `apply`, `epic`, `requirement`, `update`, `relate`, `member`, `trace`, `gate`, `gate-withdraw`, `advance`, `demote`, `backlog` |
-| `process` | `prepare-inputs`, `next`, `check`, `reconcile`, `enter`, `advance`, `complete`, `review record`, `findings`, `backlog`, `reapply-entry`, `reenter`, `supersede`, `cascade-mode` |
-| `working-set` | `select`, `pull`, `push`, `check` |
-| `requirements` | `list`, `search` |
-| `epics` | `search` |
-| `work` | `list`, `select`, `status`, `subtasks`, `new`, `derive`, `review`, `specs` |
-| `dev` | `setup`, `list`, `run`, `task`, `ralph` |
+`modernpath reverse-engineer record --file <JSON|->` sends native requirements,
+and their traces to the bound system in one request.
+The JSON object contains `requirements` and `traces` arrays. A trace with a
+`source_file` endpoint supplies `repository_key`, `path`, and optional `revision`
+instead of a file endpoint ID. The server resolves the file internally. New
+requirements are recorded as `PROPOSED`. The command reads the supplied JSON and
+posts it directly; it does not inspect a repository checkout or require a run,
+content digest or proof report. Implementation: `CODE:tools/modernpath/cmd/reverse_engineer.go`.
 
-Current source caveats:
+Select recorded requirements by native kind and UUID to review their current
+content, traces, criteria and evidence:
 
-- The registered one-shot development path is `modernpath dev run <tool>
-  [task]`. The parent help still advertises `modernpath dev <tool> <prompt>`,
-  but the parent has no `RunE` handler.
-- The root `modernpath sync` command was removed; use `modernpath docs sync` or
-  `modernpath factory sync`, depending on the direction and data.
-- `modernpath init` currently tells an already initialized user to run the
-  removed root `modernpath sync`; the correct Knowledge Core update command is
-  `modernpath docs sync`.
+```sh
+modernpath reverse-engineer review --file selection.json --json > review.json
+modernpath reverse-engineer review --file - --json < selection.json
+```
+
+The selection object contains only a `requirements` array, with each item
+`{"kind":"user_requirement|system_requirement","id":"<native-uuid>"}`.
+Review sends a read-only preview request to the bound System and prints the full
+review bundle. An ineligible review still returns its problems for inspection.
+Evidence is read from the existing `evidence` record, latest and runs commands;
+`evidence runs --full` returns criterion results and run provenance, including
+test-case reference, role, outcome, validity, tested revision, detail,
+environment, raw evidence, run source revision and report reference. Acceptance
+requires current complete-run criterion results, each PASS and valid, not RED,
+with a test-case reference and detail that identifies the command or report and
+environment. Use `evidence record` to preserve those observations and
+`evidence runs --full` to read them back.
+
+To accept, wrap the exact JSON review bundle from `review.json` with the
+human's source and reason. Do not construct or edit the review object; the
+server rechecks that exact bundle:
+
+```sh
+jq '{review: ., source: "USER:2026-10-19", reason: "Observed behavior and evidence are accepted"}' review.json > acceptance.json
+```
+
+```sh
+modernpath reverse-engineer accept --file acceptance.json --json
+```
+
+The command requires non-empty `source` and `reason`, then sends the original
+review bundle to the server for a complete recheck and atomic publication as
+`DONE`. It does not prompt for approval. The receipt includes each accepted
+requirement's resulting revision, accepted version, actor, time, reason, and
+whether the request accepted it now or returned an existing acceptance.
 
 ### Build, test, and release
 

@@ -1,25 +1,20 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/fatih/color"
-	"github.com/modernpath/cli/internal/api"
-	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
 var (
-	docsOnly  bool
-	filesOnly bool
-	limit     int
+	docsOnly   bool
+	filesOnly  bool
+	limit      int
+	searchJSON bool
 )
 
 var searchCmd = &cobra.Command{
@@ -37,29 +32,11 @@ Examples:
 }
 
 func init() {
+	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "Emit selected results as JSON")
+	addRecordReadFlags(searchCmd)
 	searchCmd.Flags().BoolVar(&docsOnly, "docs-only", false, "Search only documentation")
 	searchCmd.Flags().BoolVar(&filesOnly, "files-only", false, "Search only file analyses")
 	searchCmd.Flags().IntVar(&limit, "limit", 10, "Maximum results to return")
-}
-
-type SearchResponse struct {
-	Data struct {
-		Docs []struct {
-			ID      interface{} `json:"id"`
-			Title   string      `json:"title"`
-			Summary string      `json:"summary"`
-			Tier    string      `json:"tier"`
-			Angle   string      `json:"angle"`
-		} `json:"docs"`
-		Files []struct {
-			ID           interface{} `json:"id"`
-			RelativePath string      `json:"relative_path"`
-			Language     string      `json:"language"`
-			Purpose      string      `json:"purpose"`
-			Summary      string      `json:"summary"`
-		} `json:"files"`
-	} `json:"data"`
-	Error string `json:"error,omitempty"`
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -70,124 +47,70 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := config.ReadConfig()
-	if err != nil {
-		printError("Failed to read config: %v\n", err)
+	if docsOnly && filesOnly {
+		return fmt.Errorf("--docs-only and --files-only cannot be combined")
+	}
+	if limit < 1 {
+		return fmt.Errorf("--limit must be positive")
+	}
+	allowedFields := []string{"id", "title", "summary", "tier", "angle", "relative_path", "language", "purpose"}
+	if err := validateRecordSelection(cmd, allowedFields); err != nil {
 		return err
 	}
-
 	query := strings.Join(args, " ")
-
-	// Build request URL
-	baseURL := cfg.APIURL
-	if baseURL == "" {
-		baseURL = config.DefaultAPIURL
-	}
-
-	params := url.Values{}
-	params.Set("system_id", strconv.Itoa(cfg.SystemID))
-	params.Set("q", query)
-	params.Set("limit", strconv.Itoa(limit))
-
-	searchType := "all"
+	params := url.Values{"system_id": {strconv.Itoa(env.SystemID)}, "q": {query}, "limit": {strconv.Itoa(limit)}, "type": {"all"}}
 	if docsOnly {
-		searchType = "docs"
+		params.Set("type", "docs")
 	} else if filesOnly {
-		searchType = "files"
+		params.Set("type", "files")
 	}
-	params.Set("type", searchType)
-
-	requestURL := fmt.Sprintf("%s/api/search?%s", baseURL, params.Encode())
-
-	printInfo("Searching for: %s\n\n", query)
-
-	// Make authenticated request
-	resp, err := api.DoGetWithToken(requestURL, env.token, 30*time.Second)
+	status, response, err := env.call("GET", "/api/search?"+params.Encode(), nil)
 	if err != nil {
-		printError("Failed to connect to API: %v\n", err)
 		return err
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	if status != 200 {
+		return serverRefusal("search", status, response)
+	}
+	data, ok := response["data"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("search response is missing data")
+	}
+	selectedDocs, err := projectSearchRows(cmd, anyRows(data["docs"]), []string{"id", "title", "tier", "angle"}, allowedFields, []string{"id", "title"})
 	if err != nil {
-		printError("Failed to read response: %v\n", err)
 		return err
 	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		err := env.credentialRejected()
-		printError("%v\n", err)
+	selectedFiles, err := projectSearchRows(cmd, anyRows(data["files"]), []string{"id", "relative_path", "language"}, allowedFields, []string{"id", "relative_path"})
+	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
-			printError("API error: %s\n", errResp.Error)
-		} else {
-			printError("API error: HTTP %d - %s\n", resp.StatusCode, string(body))
-		}
-		return nil
-	}
-
-	var searchResp SearchResponse
-	if err := json.Unmarshal(body, &searchResp); err != nil {
-		printError("Failed to parse response: %v\n", err)
-		return err
+	if searchJSON {
+		return writeSearchJSON(cmd.OutOrStdout(), map[string]any{"docs": selectedDocs, "files": selectedFiles})
 	}
 
 	totalResults := 0
 
 	// Display doc results
-	if len(searchResp.Data.Docs) > 0 {
+	if len(selectedDocs) > 0 {
 		bold := color.New(color.Bold)
-		bold.Printf("📚 Documentation (%d results)\n", len(searchResp.Data.Docs))
-		fmt.Println("─────────────────────────────────────────")
+		bold.Printf("📚 Documentation (%d results)\n", len(selectedDocs))
 
-		for _, doc := range searchResp.Data.Docs {
-			tierColor := color.New(color.FgCyan)
-			tierColor.Printf("[%s/%s] ", doc.Tier, doc.Angle)
-			fmt.Printf("%s\n", doc.Title)
-			if doc.Summary != "" {
-				gray := color.New(color.FgHiBlack)
-				summary := doc.Summary
-				if len(summary) > 100 {
-					summary = summary[:97] + "..."
-				}
-				gray.Printf("  %s\n", summary)
-			}
-			fmt.Println()
+		for _, row := range selectedDocs {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s [%s/%s] %s\n", str(row, "id"), str(row, "tier"), str(row, "angle"), str(row, "title"))
+			printSearchDetails(cmd, row, "summary")
 		}
-		totalResults += len(searchResp.Data.Docs)
+		totalResults += len(selectedDocs)
 	}
 
 	// Display file results
-	if len(searchResp.Data.Files) > 0 {
+	if len(selectedFiles) > 0 {
 		bold := color.New(color.Bold)
-		bold.Printf("📁 Files (%d results)\n", len(searchResp.Data.Files))
-		fmt.Println("─────────────────────────────────────────")
+		bold.Printf("📁 Files (%d results)\n", len(selectedFiles))
 
-		for _, file := range searchResp.Data.Files {
-			langColor := color.New(color.FgYellow)
-			lang := file.Language
-			if lang == "" {
-				lang = "unknown"
-			}
-			langColor.Printf("[%s] ", lang)
-			fmt.Printf("%s\n", file.RelativePath)
-			if file.Purpose != "" {
-				gray := color.New(color.FgHiBlack)
-				purpose := file.Purpose
-				if len(purpose) > 100 {
-					purpose = purpose[:97] + "..."
-				}
-				gray.Printf("  %s\n", purpose)
-			}
-			fmt.Println()
+		for _, row := range selectedFiles {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s [%s]\n", str(row, "relative_path"), str(row, "language"))
+			printSearchDetails(cmd, row, "purpose")
 		}
-		totalResults += len(searchResp.Data.Files)
+		totalResults += len(selectedFiles)
 	}
 
 	if totalResults == 0 {
@@ -197,4 +120,45 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func anyRows(value any) []map[string]any {
+	raw, _ := value.([]any)
+	rows := make([]map[string]any, 0, len(raw))
+	for _, value := range raw {
+		if row, ok := value.(map[string]any); ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func projectSearchRows(cmd *cobra.Command, rows []map[string]any, defaults, allowed, required []string) ([]map[string]any, error) {
+	selected, err := selectSearchItems(cmd, rows, defaults, allowed, required)
+	if err != nil {
+		return nil, err
+	}
+	for i := range selected {
+		for key := range selected[i] {
+			if _, exists := rows[i][key]; !exists && !containsField(required, key) {
+				delete(selected[i], key)
+			}
+		}
+	}
+	return selected, nil
+}
+
+func containsField(fields []string, target string) bool {
+	for _, field := range fields {
+		if field == target {
+			return true
+		}
+	}
+	return false
+}
+
+func printSearchDetails(cmd *cobra.Command, row map[string]any, field string) {
+	if value, ok := row[field].(string); ok && value != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", value)
+	}
 }

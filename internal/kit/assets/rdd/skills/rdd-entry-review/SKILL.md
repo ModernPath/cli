@@ -1,56 +1,25 @@
 ---
 name: rdd-entry-review
-description: Evaluate and apply the strict implementation-entry gate for an epic, UR, or SR. Use after planning and cold review are complete to audit entry prerequisites, open the human gate only after the entry trace passes, present the decision brief, and apply an attributable human answer. Never substitutes technical review or agent judgment for human approval.
+description: Present the exact saved Epic plan and proposed content for human implementation approval. Stops before implementation.
 ---
 
-# Review implementation entry
+# Obtain implementation approval
 
-Read the project `AGENTS.md`, canonical `PROCESS.md`
-(`.modernpath/rdd/PROCESS.md` in a consuming repository), selected planning
-packet, cold-review findings, current gate records, and relevant sources.
+Read `PROCESS.md`, the Epic's exact saved plan and proposed content, independent
+review findings and their resolution. Confirm that the human is reviewing that
+content and its stated scope.
 
-## Procedure
+Present the user outcome, included requirements and exclusions, material
+sources, risks, test strategy, unresolved decisions and recommendation in
+plain language. Ask the human to approve or revise the plan for
+implementation. Do not imply that a passing review or autopilot grant is
+completion approval.
 
-1. Audit every selected entity against the Entry packet, Strict human
-   transitions, and gate-state rules in `PROCESS.md`.
-2. Fail the entry trace for missing or conflicting sources, `DERIVED` items,
-   candidate links counted as authoritative, ambiguous acceptance, broad SRs,
-   stale reconnaissance, incomplete implementation context, inadequate RED
-   strategy, or unresolved material cold-review findings.
-3. Record the entry trace gate against the exact content fingerprint, before
-   the human gate exists, so the gate names it as its prerequisite; a human
-   gate opened without a named passing trace cannot be answered. Keep the
-   human gate `DRAFT` when the trace does not pass.
-4. After a current trace `PASS`, make only the exact scoped human gate `OPEN`
-   and present its brief, recommendation, and linked list of relevant working-set
-   files before asking, in **plain product language** — see
-   `PROCESS.md` §Gates: self-contained for a reader who has not seen the packet,
-   with every referenced decision, correction, or finding stated by its
-   substance and not its code. Before presenting, reread the brief as that
-   reader and expand any bare identifier or jargon.
-   For a small change there is no per-change human gate: after its narrow pass
-   is `PASS` and its eligibility holds, record its entry as an application of
-   the current lane authorization, which names the human who answered it; a
-   missing, expired, exhausted or non-covering authorization stops here and the
-   change follows the single-SR entry.
-5. Do not answer the gate for the human. If the authorized human answers,
-   record the real actor, role, scope, answer, and `USER:` source; apply only
-   named transitions and reconcile all affected records. The answer and its
-   application are two steps: apply member requirements before a named epic,
-   and report an answer that is recorded but not yet applied as exactly that.
-6. Move approved named `PROPOSED` or `PENDING_VERIFICATION` requirements and
-   any named proposed epic to `TODO`. Otherwise retain the strongest honest
-   state and route requested changes. Report any remaining entry approvals
-   needed for the selected delivery scope; partial approval does not permit
-   development to start on the approved subset.
-7. Report. Asked as a focused pass, the entry pass ends with the applied
-   transitions. In the complete loop the build follows without a new
-   request: an answered entry gate lets the build start (`PROCESS.md`
-   §Gates).
-
-## Report
-
-Report the entry-trace verdict, exact human-gate state, applied transitions,
-remaining blockers, and the exact handoff: `rdd-build`, `rdd-verify`, or the
-earliest planning pass that must be repeated — named as the next pass for the
-human to open, not entered by this one.
+If approved, record the human's actual answer and `USER:` attribution through
+the sanctioned interface and read back the resulting Epic state and plan
+content. Confirm the named requirements atomically acquired the human/Epic
+ownership and moved directly to IN_PROGRESS, with published content unchanged.
+Do not answer for the human or start test/code changes before the
+approval is confirmed. If rejected or revised, report that result and route
+back to `rdd-plan`. If the interface cannot record/read back the approval,
+report the tooling gap and stop before implementation.

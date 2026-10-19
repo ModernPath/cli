@@ -10,6 +10,7 @@ import (
 )
 
 func runDocsSync(cmd *cobra.Command, args []string) error {
+	machine, _ := cmd.Flags().GetBool("json")
 	// REQ-CROSS-405: the binding and credential statements come first, and a
 	// refusal here sends nothing.
 	env, err := apiClientCredentialLoad()
@@ -60,11 +61,11 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 	}
 	slug := cfg.SystemSlug
 	if slug == "" {
-		// A factory-only binding can omit the slug.
+		// A bound workspace without a stored slug can use the server value.
 		slug = served
 	}
 	if slug != served {
-		err = fmt.Errorf("the server's export folder for system %d is .modernpath/%s, this workspace is bound to .modernpath/%s; refresh the binding with modernpath factory connect", cfg.SystemID, served, slug)
+		err = fmt.Errorf("the server's export folder for system %d is .modernpath/%s, this workspace is bound to .modernpath/%s; refresh the binding with modernpath init", cfg.SystemID, served, slug)
 		printError("%v\n", err)
 		return err
 	}
@@ -81,7 +82,9 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printSuccess("Downloaded %d bytes\n", len(zipData))
+	if !machine {
+		printSuccess("Downloaded %d bytes\n", len(zipData))
+	}
 
 	// Validate and replace only the bound system's documentation tree. `init`
 	// keeps its separate extract-into-the-directory-being-initialized behavior.
@@ -99,7 +102,7 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 	if syncedAt == "" {
 		printWarning("The server export has no generated_at timestamp; local sync time will be unknown until the server provides one.\n")
 	}
-	_, install, err := replaceSystemDocsExport(root, slug, zipData)
+	exportPath, install, err := replaceSystemDocsExport(root, slug, zipData)
 	if err != nil {
 		printError("Failed to extract: %v\n", err)
 		return err
@@ -117,6 +120,13 @@ func runDocsSync(cmd *cobra.Command, args []string) error {
 	}
 	install.commit()
 
+	if machine {
+		return writeCommandJSON(cmd, map[string]any{
+			"synced": true, "system_id": cfg.SystemID, "system_slug": slug,
+			"path": exportPath, "docs_sync_at": syncedAt, "bytes": len(zipData),
+			"files": countFiles(filepath.Join(root, filepath.FromSlash(exportPath))),
+		})
+	}
 	printSuccess("Documentation sync complete!\n")
 	return nil
 }

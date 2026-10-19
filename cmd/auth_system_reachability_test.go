@@ -36,7 +36,13 @@ func captureWarnings(t *testing.T, fn func()) string {
 	color.Error = &buf
 	defer func() { color.Error = orig }()
 	fn()
-	return buf.String()
+	var warnings []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if line != "" && !strings.HasPrefix(line, "→ ") {
+			warnings = append(warnings, line)
+		}
+	}
+	return strings.Join(warnings, "\n")
 }
 
 // stubListSystemsFn swaps listSystemsFn (system_reachability.go) — needed
@@ -141,7 +147,7 @@ func TestTokenAuthStillSavesCredentialsWhenTheConfiguredSystemIsUnreachable(t *t
 	if !strings.Contains(warnings, "999") {
 		t.Fatalf("warning must name the configured system 999, got %q", warnings)
 	}
-	if !strings.Contains(warnings, "factory connect --system") {
+	if !strings.Contains(warnings, "init --system") {
 		t.Fatalf("warning must name the repair command, got %q", warnings)
 	}
 	auth, err := config.ReadAuth()

@@ -1,10 +1,7 @@
 // REQ-SYS-211 (EPIC-ANALYSIS-009): `modernpath source push` re-packs the
-// working directory with the import filters and pushes it to the bound
-// system's upload repository, uploading only when the content changed and
-// carrying the customer's git revision as metadata.
-//
-// The server side is REQ-SYS-210; these tests stub it with the shape that
-// contract fixes. Fails today because the verb does not exist.
+// working directory with the import filters and uploads it to the bound
+// system's upload repository, carrying the customer's git revision as
+// metadata. The server computes the revision and reports the result.
 package cmd
 
 import (
@@ -24,9 +21,7 @@ import (
 	"github.com/modernpath/cli/internal/config"
 )
 
-// The digest parity fixture shared with the Elixir suite
-// (system_source_archive_upload_test.exs): the same tree must yield the same
-// hex on both sides, or every push would be a supersede.
+// Response fixture used to make assertions about server-reported revisions.
 var parityFixture = map[string]string{
 	"README.md":            "# App\n",
 	"docs/nested/ärger.md": "ü\n",
@@ -127,23 +122,6 @@ func uploadRepository(revision, trigger, refreshStatus string) map[string]interf
 	return repo
 }
 
-func TestSourcePushDigestMatchesTheServerFixture(t *testing.T) {
-	dir := t.TempDir()
-	writeTree(t, dir, parityFixture)
-
-	files, _, err := collectImportFiles(dir, importFilterOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest, err := treeDigest(files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if digest != parityDigest {
-		t.Fatalf("digest %s, want %s (the server's Core.Storage.Digest.tree/2)", digest, parityDigest)
-	}
-}
-
 func TestSourcePushUploadsAChangedTreeWithGitMetadata(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, parityFixture)
@@ -207,44 +185,64 @@ func TestSourcePushOmitsGitMetadataOutsideACheckout(t *testing.T) {
 	}
 }
 
-func TestSourcePushIsANoOpAfterACompletedRefresh(t *testing.T) {
+func TestSourcePushAlwaysUploadsAndLetsTheServerDetermineWhetherSourceChanged(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, parityFixture)
 	t.Chdir(dir)
 
 	stub := newPushStub(t)
 	stub.repository = uploadRepository(parityDigest, "push", "completed")
+	stub.response = map[string]interface{}{"result": "unchanged", "revision": parityDigest}
 
 	var out bytes.Buffer
 	if err := sourcePush(stub.config(7), sourcePushOptions{MaxSizeMB: 100}, &out); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if len(stub.posts) != 0 {
-		t.Fatalf("nothing may be posted when the server is at the local revision, got %d posts", len(stub.posts))
+	if len(stub.posts) != 1 {
+		t.Fatalf("the selected archive must be uploaded for server-side comparison, got %d posts", len(stub.posts))
+	}
+	if len(stub.zipEntries) != len(parityFixture) {
+		t.Fatalf("upload must contain selected source files, got %v", stub.zipEntries)
 	}
 	if !strings.Contains(out.String(), "unchanged at "+parityDigest[:12]) {
 		t.Fatalf("output must say unchanged:\n%s", out.String())
 	}
 
-	// An import-sealed manifest never retries either, whatever its mark.
-	stub.repository = uploadRepository(parityDigest, "import", "failed")
-	out.Reset()
-	if err := sourcePush(stub.config(7), sourcePushOptions{MaxSizeMB: 100}, &out); err != nil {
+}
+
+func TestSourcePushJSONWritesOnlyTheServerResponseToStdout(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, parityFixture)
+	t.Chdir(dir)
+
+	stub := newPushStub(t)
+	stub.repository = uploadRepository("old", "push", "completed")
+	stub.response = map[string]interface{}{"result": "superseded", "revision": "server-revision", "refresh_job_id": 13}
+
+	var out bytes.Buffer
+	if err := sourcePush(stub.config(7), sourcePushOptions{MaxSizeMB: 100, JSON: true}, &out); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if len(stub.posts) != 0 {
-		t.Fatalf("an import-sealed manifest must not be retried, got %d posts", len(stub.posts))
+	var response map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+		t.Fatalf("stdout must contain JSON only: %q (%v)", out.String(), err)
+	}
+	if response["revision"] != "server-revision" || response["result"] != "superseded" {
+		t.Fatalf("expected the server response, got %v", response)
+	}
+	if len(stub.posts) != 1 || len(stub.zipEntries) != len(parityFixture) {
+		t.Fatalf("JSON mode must still upload selected files, posts=%d entries=%v", len(stub.posts), stub.zipEntries)
 	}
 }
 
-func TestSourcePushRetriesAStoppedRefreshWithoutUploading(t *testing.T) {
+func TestSourcePushUploadsEvenWhenTheServerNeedsToRetryAnUnfinishedRefresh(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, parityFixture)
 	t.Chdir(dir)
 
 	stub := newPushStub(t)
 	stub.repository = uploadRepository(parityDigest, "push", "stopped")
-	stub.response = map[string]interface{}{"result": "refresh_retried", "revision": parityDigest, "refresh_job_id": 9}
+	stub.response = map[string]interface{}{"result": "superseded", "revision": parityDigest, "refresh_job_id": 9}
 
 	var out bytes.Buffer
 	if err := sourcePush(stub.config(7), sourcePushOptions{MaxSizeMB: 100}, &out); err != nil {
@@ -253,24 +251,11 @@ func TestSourcePushRetriesAStoppedRefreshWithoutUploading(t *testing.T) {
 	if len(stub.posts) != 1 {
 		t.Fatalf("expected one retry request, got %d", len(stub.posts))
 	}
-	if stub.zipEntries != nil {
-		t.Fatal("a retry must not upload the archive")
+	if len(stub.zipEntries) != len(parityFixture) {
+		t.Fatalf("the archive must be uploaded, got entries %v", stub.zipEntries)
 	}
-	if stub.jsonBody["revision"] != parityDigest {
-		t.Fatalf("the retry names the current revision, got %v", stub.jsonBody)
-	}
-	if !strings.Contains(out.String(), "unchanged at "+parityDigest[:12]+"; refresh re-queued (job 9)") {
+	if !strings.Contains(out.String(), "pushed "+parityDigest[:12]+" (previous none); refresh queued (job 9)") {
 		t.Fatalf("output must say the refresh was re-queued:\n%s", out.String())
-	}
-
-	// Absent mark on a push-sealed manifest: never ran, so also retried.
-	stub.repository = uploadRepository(parityDigest, "push", "")
-	stub.posts = nil
-	if err := sourcePush(stub.config(7), sourcePushOptions{MaxSizeMB: 100}, &out); err != nil {
-		t.Fatalf("push: %v", err)
-	}
-	if len(stub.posts) != 1 {
-		t.Fatalf("a never-run push refresh must be retried, got %d posts", len(stub.posts))
 	}
 }
 

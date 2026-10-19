@@ -10,19 +10,14 @@ import (
 )
 
 // REQ-PLN-134 §134.3 (EPIC-NEXT-005): `modernpath focus <id>` POSTs
-// {system_id, ref_external_id (upper-cased), source: "cli"} with the workspace
+// {system_id, ref_id, requirement_kind (for UUIDs), source: "cli"} with the workspace
 // bearer, prints the ref and its title; `--clear` DELETEs; the no-arg form GETs
 // and lists; a non-200 is a refusal, never printed under a green success line.
 
-func TestFocusDeclarePostsUppercasedRefAsCli(t *testing.T) {
+func TestFocusDeclarePostsUUIDAsCli(t *testing.T) {
 	var gotBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// REQ-CROSS-390: this fake predates the contract read (an older server).
-		if r.URL.Path == "/api/v1/sync/contract" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/focus" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -30,21 +25,24 @@ func TestFocusDeclarePostsUppercasedRefAsCli(t *testing.T) {
 		_ = json.Unmarshal(raw, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"data":{"focus":{"ref_external_id":"REQ-PLN-133","title":"Focus states recorded per person","resolved":true,"set_by":"declared","source":"cli"},"previous":null}}`)
+		_, _ = io.WriteString(w, `{"data":{"focus":{"ref_id":"8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001","requirement_kind":"user_requirement","ref_kind":"requirement","display_ref":"UR-9-4","title":"Focus states recorded per person","resolved":true,"set_by":"declared","source":"cli"},"previous":null}}`)
 	}))
 	defer srv.Close()
 
-	env := &factoryEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
 
-	out, err := focusDeclare(env, "req-pln-133")
+	out, err := focusDeclare(env, "8F3D6CA1-4DC2-4BC3-9F4A-1BC50E830001", "user_requirement")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.status != http.StatusOK {
 		t.Fatalf("status = %d", out.status)
 	}
-	if gotBody["ref_external_id"] != "REQ-PLN-133" {
-		t.Fatalf("ref not upper-cased: %v", gotBody["ref_external_id"])
+	if gotBody["ref_id"] != "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001" {
+		t.Fatalf("focus ref = %v", gotBody["ref_id"])
+	}
+	if gotBody["requirement_kind"] != "user_requirement" {
+		t.Fatalf("requirement kind = %v", gotBody["requirement_kind"])
 	}
 	if gotBody["source"] != "cli" {
 		t.Fatalf("source = %v, want cli", gotBody["source"])
@@ -54,49 +52,97 @@ func TestFocusDeclarePostsUppercasedRefAsCli(t *testing.T) {
 	}
 
 	line := formatFocusLine(out.focus)
-	if !strings.Contains(line, "REQ-PLN-133") || !strings.Contains(line, "Focus states recorded") {
+	if !strings.Contains(line, "UR-9-4") || !strings.Contains(line, "Focus states recorded") || strings.Contains(line, "8f3d6ca1") {
 		t.Fatalf("declare line %q missing ref/title", line)
 	}
 }
 
-func TestFocusDeclareUnresolvedFlagsNotInLedger(t *testing.T) {
+func TestFocusDeclarePostsNativeEpicInteger(t *testing.T) {
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// REQ-CROSS-390: this fake predates the contract read (an older server).
-		if r.URL.Path == "/api/v1/sync/contract" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"data":{"focus":{"ref_external_id":"REQ-PLN-999","title":null,"resolved":false,"set_by":"declared","source":"cli"},"previous":null}}`)
+		_, _ = io.WriteString(w, `{"data":{"focus":{"ref_id":42,"ref_kind":"epic","title":"Epic","resolved":true,"set_by":"declared","source":"cli"}}}`)
 	}))
 	defer srv.Close()
 
-	env := &factoryEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
-	out, err := focusDeclare(env, "REQ-PLN-999")
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	out, err := focusDeclare(env, "42", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["ref_id"] != float64(42) {
+		t.Fatalf("ref_id = %v, want native Epic ID 42", gotBody["ref_id"])
+	}
+	if _, supplied := gotBody["requirement_kind"]; supplied {
+		t.Fatal("Epic request must not carry requirement_kind")
+	}
+	if got := focusDisplayRef(out.focus); got != "42" {
+		t.Fatalf("Epic display ref = %q, want native integer display", got)
+	}
+}
+
+func TestFocusDeclareRefusesDisplayCodeBeforePost(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer srv.Close()
+
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	_, err := focusDeclare(env, "UR-PLN-133", "user_requirement")
+	if err == nil || !strings.Contains(err.Error(), "typed requirement UUID") {
+		t.Fatalf("error = %v, want native-reference refusal", err)
+	}
+	if called {
+		t.Fatal("retired requirement reference was sent to the server")
+	}
+}
+
+func TestFocusDeclareRequiresKindForRequirementUUID(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	defer srv.Close()
+
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	_, err := focusDeclare(env, "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001", "")
+	if err == nil || !strings.Contains(err.Error(), "requirement-kind") {
+		t.Fatalf("error = %v, want typed UUID requirement", err)
+	}
+	if called {
+		t.Fatal("untyped requirement UUID was sent to the server")
+	}
+}
+
+func TestFocusDeclareUnresolvedFlagsUnresolvedReference(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"data":{"focus":{"ref_id":"8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830002","requirement_kind":"system_requirement","ref_kind":"requirement","title":null,"resolved":false,"set_by":"declared","source":"cli"},"previous":null}}`)
+	}))
+	defer srv.Close()
+
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	out, err := focusDeclare(env, "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830002", "system_requirement")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	line := formatFocusLine(out.focus)
-	if !strings.Contains(line, "REQ-PLN-999") || !strings.Contains(line, "not in this system's ledger") {
+	if !strings.Contains(line, "Requirement") || !strings.Contains(line, "not resolved in this system") || strings.Contains(line, "8f3d6ca1") {
 		t.Fatalf("unresolved line %q must flag the missing ref", line)
 	}
 }
 
 func TestFocusDeclareRefusalCarriesServerMessageNotSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// REQ-CROSS-390: this fake predates the contract read (an older server).
-		if r.URL.Path == "/api/v1/sync/contract" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = io.WriteString(w, `{"error":{"message":"\"nope\" is not a work reference — use REQ-<CTX>-NNN or EPIC-<AREA>-NNN"}}`)
+		_, _ = io.WriteString(w, `{"error":{"message":"focus is unavailable for this UUID"}}`)
 	}))
 	defer srv.Close()
 
-	env := &factoryEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
-	out, err := focusDeclare(env, "nope")
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	out, err := focusDeclare(env, "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001", "user_requirement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +152,8 @@ func TestFocusDeclareRefusalCarriesServerMessageNotSuccess(t *testing.T) {
 	if out.focus != nil {
 		t.Fatalf("a refusal must carry no focus to print under ok: got %v", out.focus)
 	}
-	if !strings.Contains(out.message, "REQ") {
-		t.Fatalf("refusal message %q should name the grammar", out.message)
+	if !strings.Contains(out.message, "focus is unavailable for this UUID") {
+		t.Fatalf("refusal message %q did not preserve the server text", out.message)
 	}
 }
 
@@ -115,19 +161,14 @@ func TestFocusClearSendsDelete(t *testing.T) {
 	var gotMethod, gotQuery string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// REQ-CROSS-390: this fake predates the contract read (an older server).
-		if r.URL.Path == "/api/v1/sync/contract" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		gotMethod = r.Method
 		gotQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"data":{"ended":[{"ref_external_id":"REQ-PLN-133"}]}}`)
+		_, _ = io.WriteString(w, `{"data":{"ended":[{"ref_id":"8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001","requirement_kind":"user_requirement"}]}}`)
 	}))
 	defer srv.Close()
 
-	env := &factoryEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
 	out, err := focusClear(env)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +179,7 @@ func TestFocusClearSendsDelete(t *testing.T) {
 	if !strings.Contains(gotQuery, "system_id=42") {
 		t.Fatalf("query = %q, want system_id=42", gotQuery)
 	}
-	if len(out.ended) != 1 || out.ended[0]["ref_external_id"] != "REQ-PLN-133" {
+	if len(out.ended) != 1 || out.ended[0]["ref_id"] != "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001" {
 		t.Fatalf("ended = %v", out.ended)
 	}
 }
@@ -147,51 +188,41 @@ func TestFocusDropSendsDeleteWithRef(t *testing.T) {
 	var gotMethod, gotQuery string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// REQ-CROSS-390: this fake predates the contract read (an older server).
-		if r.URL.Path == "/api/v1/sync/contract" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		gotMethod = r.Method
 		gotQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"data":{"ended":[{"ref_external_id":"REQ-PLN-133"}]}}`)
+		_, _ = io.WriteString(w, `{"data":{"ended":[{"ref_id":"8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001","requirement_kind":"user_requirement"}]}}`)
 	}))
 	defer srv.Close()
 
-	env := &factoryEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
-	// a lowercase ref is upcased into the query (REQ-PLN-142 §142.5)
-	out, err := focusDrop(env, "req-pln-133")
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	// A UUID is normalized before being sent as the scoped focus reference.
+	out, err := focusDrop(env, "8F3D6CA1-4DC2-4BC3-9F4A-1BC50E830001", "user_requirement")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodDelete {
 		t.Fatalf("method = %s, want DELETE", gotMethod)
 	}
-	if !strings.Contains(gotQuery, "system_id=42") || !strings.Contains(gotQuery, "ref=REQ-PLN-133") {
-		t.Fatalf("query = %q, want system_id=42 and ref=REQ-PLN-133", gotQuery)
+	if !strings.Contains(gotQuery, "system_id=42") || !strings.Contains(gotQuery, "ref_id=8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001") || !strings.Contains(gotQuery, "requirement_kind=user_requirement") {
+		t.Fatalf("query = %q, want native requirement ref and kind", gotQuery)
 	}
-	if len(out.ended) != 1 || out.ended[0]["ref_external_id"] != "REQ-PLN-133" {
+	if len(out.ended) != 1 || out.ended[0]["ref_id"] != "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001" {
 		t.Fatalf("ended = %v", out.ended)
 	}
 }
 
 func TestFocusListGetsAndFormatsPerPerson(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// REQ-CROSS-390: this fake predates the contract read (an older server).
-		if r.URL.Path == "/api/v1/sync/contract" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		if r.Method != http.MethodGet {
 			t.Fatalf("method = %s, want GET", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"data":{"focus_states":[{"user":{"id":1,"name":"Pasi"},"ref_external_id":"REQ-PLN-133","title":"Focus states","set_by":"declared","source":"cli","started_at":"2026-08-29T09:00:00.000000Z"}]}}`)
+		_, _ = io.WriteString(w, `{"data":{"focus_states":[{"user":{"id":1,"name":"Pasi"},"ref_id":"8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001","ref_kind":"requirement","requirement_kind":"user_requirement","display_ref":"UR-9-4","title":"Focus states","set_by":"declared","source":"cli","started_at":"2026-08-29T09:00:00.000000Z"}]}}`)
 	}))
 	defer srv.Close()
 
-	env := &factoryEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
 	out, err := focusList(env)
 	if err != nil {
 		t.Fatal(err)
@@ -201,9 +232,28 @@ func TestFocusListGetsAndFormatsPerPerson(t *testing.T) {
 	}
 
 	line := formatFocusListLine(out.list[0])
-	for _, want := range []string{"Pasi", "REQ-PLN-133", "declared"} {
+	for _, want := range []string{"Pasi", "UR-9-4", "declared"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("list line %q missing %q", line, want)
 		}
+	}
+}
+
+func TestFocusLabelsUseDisplayRefWhileKeepingUUIDTarget(t *testing.T) {
+	entry := map[string]any{
+		"ref_id":           "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001",
+		"requirement_kind": "user_requirement",
+		"requirement_id":   "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001",
+		"display_ref":      "UR-9-4",
+		"title":            "Pinned requirement",
+		"resolved":         true,
+		"set_by":           "declared",
+	}
+
+	if got := formatFocusLine(entry); !strings.Contains(got, "UR-9-4") || strings.Contains(got, "8f3d6ca1") {
+		t.Fatalf("formatFocusLine = %q; want display reference without UUID", got)
+	}
+	if got := formatFocusListLine(entry); !strings.Contains(got, "UR-9-4") || strings.Contains(got, "8f3d6ca1") {
+		t.Fatalf("formatFocusListLine = %q; want display reference without UUID", got)
 	}
 }

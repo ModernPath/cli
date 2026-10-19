@@ -104,3 +104,35 @@ func TestPushDocsReadsReservedSystemFromNestedExport(t *testing.T) {
 		}
 	}
 }
+
+func TestPushDocsRejectsMalformedOrIncompleteSuccessResponses(t *testing.T) {
+	for name, response := range map[string]string{
+		"malformed":    `{"success":`,
+		"empty object": `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(response))
+			}))
+			defer server.Close()
+
+			root := t.TempDir()
+			docDir := filepath.Join(root, ".modernpath", "sandbox")
+			if err := os.MkdirAll(docDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(docDir, "doc.md"), []byte("# Doc\n\nBody.\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(root)
+
+			count, err := pushDocs(&config.Config{APIURL: server.URL, SystemID: 42, SystemSlug: "sandbox"})
+			if err == nil {
+				t.Fatalf("response %q was treated as successful; count=%d", response, count)
+			}
+			if count != 0 {
+				t.Fatalf("count = %d on invalid response, want 0", count)
+			}
+		})
+	}
+}

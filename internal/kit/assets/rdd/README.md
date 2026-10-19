@@ -1,77 +1,68 @@
 # Requirement-driven delivery
 
-Reusable agent instructions for delivering software through human gates,
-user/system requirements, red-first TDD, and V-model traceability.
+Reusable agent instructions for delivering software through explicit human
+implementation and completion approvals, sourced requirements, red-first
+engineering and traceable evidence.
 
 The process traces:
 
 ```text
-EPIC -- optionally groups --> UR and/or SR
+EPIC -> optional UR/SR requirements
 UR -> acceptance scenario -> TEST_CASE -> TEST_RESULT
 UR acceptance scenario -- may require --> SR
 SR -> CODE -> TEST_CASE -> TEST_RESULT
 ```
 
-Normal development passes planning, technical review, human entry, red-first
-evidence, implementation, cleanup, verification, delivery, reconciliation,
-and human completion. An eligible source-scoped baseline uses existing-proof
-verification and one human acceptance instead; publication alone proves neither
-verification nor delivery.
-
-Product repositories hold authoritative process records in one selected store,
-alongside specifications, code, tests, evidence, and attributable gate answers.
-`file-state/` defines the canonical serialization of those records: a
-store-backed repository materializes the shapes as uncommitted snapshots and
-projections, a file-backed repository versions them as the store itself — one
-or the other, never both at once.
+Normal delivery uses the human-selected Epic, saves and independently reviews
+its plan and proposed content, and obtains implementation approval. That approval
+locks requirements to one user and Epic and starts implementation. Review keeps
+the published content and lock unchanged. Human completion approval atomically
+publishes approved content, raises revisions, retains immutable accepted versions,
+records audit and releases ownership. Reverse engineering records requirements
+and file traces directly; it has no hash, source capture or as-built proof
+prerequisite.
 
 ## Read first
 
-1. [`AGENTS.md`](AGENTS.md) — binding agent rules.
-2. [`PROCESS.md`](PROCESS.md) — the complete canonical process.
-3. [`skills/rdd-start/SKILL.md`](skills/rdd-start/SKILL.md) — session entry and scope routing.
+1. [`AGENTS.md`](AGENTS.md) — shared agent rules and session entry.
+2. [`PROCESS.md`](PROCESS.md) — canonical product-delivery process.
+3. [`skills/rdd-start/SKILL.md`](skills/rdd-start/SKILL.md) — session entry and
+   scope routing.
 4. [`skills/rdd-deliver/SKILL.md`](skills/rdd-deliver/SKILL.md) — complete-loop
-   orchestration; use the other `skills/rdd-*/SKILL.md` files for explicitly
-   bounded passes.
+   orchestration; use a focused skill when a request ends at one pass.
 
 ## Process authority
 
-[`PROCESS.md`](PROCESS.md) is the single source for process semantics. Skills
-apply that model; `file-state/` serializes its records without redefining it.
+[`PROCESS.md`](PROCESS.md) is the process authority. Skills apply it using the
+consuming project's sanctioned process interface; they do not define CLI
+verbs or a second record format. The server is authoritative for Epics,
+requirements, saved plans, exact approved content and human decisions. This
+repository has no file-backed process ledger.
 
 ## Repository contents
 
 | Path | Purpose |
 |---|---|
-| `AGENTS.md` | shared agent policy and canonical entry point |
-| `PROCESS.md` | complete canonical process |
-| `skills/` | delivery orchestration, an autopilot sprint (`rdd-autopilot`), and focused passes; `rdd-verify` for entered verification work; `rdd-reverse-engineer` for baseline publication or DERIVED additions; `rdd-reverse-engineer-verify` and `rdd-reverse-engineer-accept` for eligible existing baselines; `rdd-audit` for documents and citations |
-| `file-state/` | canonical serialization shapes for Epic, requirement, gate, work-selection, and backlog/gap records |
+| `AGENTS.md` | Shared agent policy and canonical entry point |
+| `PROCESS.md` | Canonical process authority and engineering workflow |
+| `skills/` | End-to-end orchestration, autopilot, focused delivery passes, and shared citation/measurement audit |
 
 ## Distribution
 
-Consuming repositories do not vendor this repository. A distribution tool —
-for ModernPath workspaces, the `modernpath` CLI — embeds a byte-identical
-snapshot of these files and installs it under `.modernpath/rdd/`, so in a
-consuming repository the canonical process resolves at
-`.modernpath/rdd/PROCESS.md` with every `skills/rdd-*/SKILL.md` beside it.
-Platform-specific metadata, compatibility files, registration and hooks belong
-to the distribution tool. This repository supplies the shared instructions and
-skills; the installer supplies the adapters for each platform in use.
+Consuming repositories do not vendor this repository. A distribution tool
+embeds a versioned snapshot of these instructions and installs it into the
+workspace. Platform-specific metadata, compatibility files, registration and
+hooks belong to that distribution tool; this repository supplies shared
+instructions and skills.
 
-In a store-backed consuming repository the tooling additionally materializes
-two uncommitted projections (for ModernPath workspaces,
-`.modernpath/working-set/` and `.modernpath/your-move/`): the session working
-set — shape files pulled on demand, each stamped with its source-store
-revision — and the pending human-decision queue, which lists only `OPEN`
-human gates with current passing prerequisites. Neither is an authority; see
-`PROCESS.md` "State records and reconciliation".
+Product documents remain ordinary repository sources and use the consuming
+project's documented documentation workflow. They are not process state.
 
 ## Process maintenance
 
-Changes to lifecycle, status meanings, trace relationships, gate requirements,
-evidence rules, or record ownership belong in `PROCESS.md`. Validate internal
-links and search the skills and flat-file shapes for competing authority
-statements whenever it changes.
+Changes to item identity, traces, lifecycle, human approvals, evidence or
+completion belong in `PROCESS.md`. Check internal links and search skills for
+competing authority statements. Keep reverse-engineering skills and their
+shared audit utility aligned with the process sections they consume.
 
 License: MIT.

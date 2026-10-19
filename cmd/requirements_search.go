@@ -26,32 +26,42 @@ var requirementsSearchCmd = &cobra.Command{
 system by id, display reference (UR-5, SR-12, TC-8), title, description or
 meaning, in one ranked list.
 
-Each hit shows its external id (or its display reference when it has none),
-kind, work status, name and how it matched: exact, semantic, or both. Hits
-found both ways come first. DERIVED requirements and unconfirmed test cases
-are found by exact match only and are marked candidate.
+	Each hit shows its native id, display reference, kind, work status and name.
+	Use --fields or --full to include descriptions and match detail. Hits
+	found both ways come first. Unconfirmed test cases are found by exact match
+	only and are marked candidate.
 
-For exact status filters use requirements list; for one requirement in full
-use working-set pull.`,
+For exact status filters use requirements list; for one native requirement with
+acceptance criteria and trace links use requirements get <uuid> --kind user|system.`,
 	RunE: runRequirementsSearch,
 }
 
 func init() {
 	requirementsSearchCmd.Flags().IntVar(&requirementsSearchLimit, "limit", 10, "hits to return (1–25)")
 	requirementsSearchCmd.Flags().BoolVar(&requirementsSearchJSON, "json", false, "emit the query and items as JSON")
+	addRecordReadFlags(requirementsSearchCmd)
 	requirementsCmd.AddCommand(requirementsSearchCmd)
 }
 
 func runRequirementsSearch(cmd *cobra.Command, args []string) error {
 	cmd.SilenceUsage = true
+	allowed := []string{"id", "requirement_kind", "kind", "display_ref", "display_id", "name", "title", "work_status", "candidate", "description", "matched", "similarity", "system"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
 	data, err := syncSearch(args, requirementsSearchLimit, "/api/v1/sync/requirements/search", "requirement search", "requirements search")
 	if err != nil {
 		return err
 	}
-	if requirementsSearchJSON {
-		return writeSearchJSON(cmd.OutOrStdout(), data)
+	defaults := []string{"id", "requirement_kind", "display_ref", "name", "work_status", "candidate"}
+	items, err := selectSearchItems(cmd, searchItems(data), defaults, allowed, []string{"id", "requirement_kind", "display_ref"})
+	if err != nil {
+		return err
 	}
-	return writeRequirementSearchHuman(cmd.OutOrStdout(), searchItems(data))
+	if requirementsSearchJSON {
+		return writeSearchJSON(cmd.OutOrStdout(), map[string]any{"query": data["query"], "items": items})
+	}
+	return writeRequirementSearchHuman(cmd.OutOrStdout(), items)
 }
 
 // syncSearch validates the query and limit, calls one search route for the
@@ -62,7 +72,7 @@ func syncSearch(args []string, limit int, route, what, command string) (map[stri
 	return syncSearchWithEnv(nil, args, limit, route, what, command)
 }
 
-func syncSearchWithEnv(env *factoryEnv, args []string, limit int, route, what, command string) (map[string]any, error) {
+func syncSearchWithEnv(env *cliEnv, args []string, limit int, route, what, command string) (map[string]any, error) {
 	query := strings.TrimSpace(strings.Join(args, " "))
 	if query == "" {
 		return nil, fmt.Errorf("the search text must not be empty")
@@ -73,7 +83,7 @@ func syncSearchWithEnv(env *factoryEnv, args []string, limit int, route, what, c
 
 	if env == nil {
 		var err error
-		env, err = factoryEnvLoad()
+		env, err = cliEnvLoad()
 		if err != nil {
 			return nil, err
 		}
@@ -112,16 +122,31 @@ func searchItems(data map[string]any) []map[string]any {
 	items := make([]map[string]any, 0, len(raw))
 	for _, item := range raw {
 		if m, ok := item.(map[string]any); ok {
+			if _, exists := m["title"]; !exists {
+				m["title"] = m["name"]
+			}
 			items = append(items, m)
 		}
 	}
 	return items
 }
 
-func writeSearchJSON(out io.Writer, data map[string]any) error {
-	if _, ok := data["items"]; !ok {
-		data["items"] = []any{}
+func selectSearchItems(cmd *cobra.Command, items []map[string]any, defaults, allowed, required []string) ([]map[string]any, error) {
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return nil, err
 	}
+	selected := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		row, err := selectRecordFields(cmd, item, defaults, allowed, required)
+		if err != nil {
+			return nil, err
+		}
+		selected = append(selected, row)
+	}
+	return selected, nil
+}
+
+func writeSearchJSON(out io.Writer, data map[string]any) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(data)
@@ -144,12 +169,12 @@ func writeRequirementSearchHuman(out io.Writer, items []map[string]any) error {
 		return nil
 	}
 	for _, item := range items {
-		id := str(item, "external_id")
-		if id == "" {
-			id = str(item, "display_id")
+		id := firstNonEmpty(str(item, "display_ref"), str(item, "id"))
+		fmt.Fprintf(out, "%s (%s) [%s / %s] %s", id, str(item, "id"), orDash(str(item, "requirement_kind")),
+			orDash(str(item, "work_status")), str(item, "name"))
+		if _, exists := item["matched"]; exists {
+			fmt.Fprintf(out, " (%s)", searchMatched(item))
 		}
-		fmt.Fprintf(out, "%s [%s / %s] %s (%s)", id, orDash(str(item, "requirement_kind")),
-			orDash(str(item, "work_status")), str(item, "name"), searchMatched(item))
 		if candidate, _ := item["candidate"].(bool); candidate {
 			fmt.Fprint(out, " candidate")
 		}

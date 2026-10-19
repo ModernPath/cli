@@ -119,12 +119,12 @@ func readAppURL(client *authenticatedClient) string {
 
 // systemAppLink is the address of a system's page in the app (REQ-CROSS-502
 // C3): on the app host the capabilities read names (REQ-SYS-236), else on the
-// API host, with a note saying so — the API host does not serve the app.
+// API host. Keep this value a URL so JSON consumers can use it directly.
 func systemAppLink(appURL, apiBase string, systemID int, facet string) string {
 	if appURL != "" {
 		return fmt.Sprintf("%s/systems/%d/%s", strings.TrimRight(appURL, "/"), systemID, facet)
 	}
-	return fmt.Sprintf("%s/systems/%d/%s (the API host: the server does not name its app address)",
+	return fmt.Sprintf("%s/systems/%d/%s",
 		strings.TrimRight(apiBase, "/"), systemID, facet)
 }
 

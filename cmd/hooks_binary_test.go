@@ -33,34 +33,6 @@ func writeStub(t *testing.T, path, says string) {
 	}
 }
 
-func TestHookCommandsPreferTheWorkspaceLinkThenPath(t *testing.T) {
-	project := t.TempDir()
-	pathDir := t.TempDir()
-	command := hookCommand("context --hook UserPromptSubmit", "printf '{}'")
-
-	if got := runHook(t, command, project, pathDir); got != "{}" {
-		t.Fatalf("with no binary anywhere the hook must answer '{}', got %q", got)
-	}
-	writeStub(t, filepath.Join(pathDir, "modernpath"), "PATH")
-	if got := runHook(t, command, project, pathDir); got != "PATH" {
-		t.Fatalf("without the link PATH resolves the binary, got %q", got)
-	}
-	writeStub(t, filepath.Join(project, hooksBinaryRel), "LINK")
-	if got := runHook(t, command, project, pathDir); got != "LINK" {
-		t.Fatalf("the workspace link must win over PATH, got %q", got)
-	}
-	// The install directory missing from the hook shell's PATH is the reported
-	// failure; the link makes the hook independent of it.
-	if got := runHook(t, command, project, t.TempDir()); got != "LINK" {
-		t.Fatalf("the link must run with nothing on PATH, got %q", got)
-	}
-	for _, c := range []string{gateHookCommand, briefHookCommand(), contextHookCommand("UserPromptSubmit"), codexSyncHookCommand("Stop")} {
-		if !strings.HasPrefix(c, hookPrelude) {
-			t.Errorf("every hook family goes through the prelude: %s", c)
-		}
-	}
-}
-
 func TestLinkHooksBinaryPointsAtTheRunningExecutable(t *testing.T) {
 	root := t.TempDir()
 	target, note, err := linkHooksBinary(root)
@@ -112,9 +84,13 @@ func TestLinkHooksBinaryPointsAtTheRunningExecutable(t *testing.T) {
 // holds the context entry: the previous writer appended only when no entry
 // carried the marker, so the bare-name command outlived the launcher change.
 func TestClaudeContextEntryIsUpgradedOnReinstall(t *testing.T) {
-	agent := gateTestAgent(t)
+	chdirTemp(t)
+	agent := hookAgents["claude"]
 	agent.eventName = "UserPromptSubmit"
 	agent.scriptName = "modernpath-context.sh"
+	if err := os.MkdirAll(filepath.Dir(agent.configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	stale := `{"hooks":{"UserPromptSubmit":[` +
 		`{"matcher":"*","hooks":[{"type":"command","command":"command -v modernpath >/dev/null 2>&1 && modernpath context --hook UserPromptSubmit 2>/dev/null || echo '{}'","timeout":60}]},` +
 		`{"hooks":[{"type":"command","command":"project-own.sh"}]}]}}`

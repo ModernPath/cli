@@ -10,6 +10,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -17,6 +18,25 @@ import (
 )
 
 const appURL = "https://cloud.example.test"
+
+func TestImportJSONReturnsCreatedSystemReceipt(t *testing.T) {
+	s := newLifecycleStub(t)
+	importCommandWorkspace(t, s)
+	stdout, stderr, err := runAskStreams(t, "import", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("import --json: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+		t.Fatalf("import stdout must be JSON only, got %q: %v", stdout, err)
+	}
+	if receipt["imported"] != true || receipt["system_id"] != float64(42) || receipt["system_name"] != "Legacy Estate" || receipt["analysis_status"] != "queued" {
+		t.Fatalf("unexpected import receipt: %#v", receipt)
+	}
+	if stderr == "" {
+		t.Fatal("import progress should be reported on stderr")
+	}
+}
 
 // importCommandWorkspace is a checkout to import: a small tree, a sign-in, the
 // stub as the server, and no bound system yet.
@@ -26,7 +46,7 @@ func importCommandWorkspace(t *testing.T, s *lifecycleStub) {
 	t.Setenv("HOME", t.TempDir())
 	writeTree(t, dir, smallTree())
 	writeJSON(t, dir, ".modernpath/config.json", map[string]any{"api_url": s.server.URL})
-	writeFactoryTestFile(t, dir, ".modernpath/auth.json", `{"token":"t"}`)
+	writeTestFile(t, dir, ".modernpath/auth.json", `{"token":"t"}`)
 	t.Chdir(dir)
 	s.answer(http.MethodGet, capabilitiesPath, http.StatusOK, map[string]any{"upload_limit_bytes": 90000000, "app_url": appURL})
 	s.answer(http.MethodPost, importPath, http.StatusCreated, map[string]any{"success": true, "data": map[string]any{

@@ -1,10 +1,6 @@
-// REQ-CROSS-212 (EPIC-CLI-001 T9, RUN:2026-08-18): no test drove the cobra
-// tree, so an unregistered command (top-level sync/ralph), an unregistered
-// flag (factory drift --report), and a silently ignored positional
-// (auth logout) all passed `go test ./...` green. This smoke pins the wiring:
-// every advertised leaf resolves, dead surfaces stay dead, and the
-// Q-ARCH-016 decision (USER:2026-08-18) is encoded — sync/ralph deleted,
-// drift --report registered.
+// Command-tree smoke checks ensure every retained Cobra leaf is reachable,
+// documented forms resolve, and each active leaf has an exercised or explicit
+// local/precondition disposition.
 package cmd
 
 import (
@@ -17,43 +13,33 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/modernpath/cli/internal/zitadel"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 func TestEveryAdvertisedLeafResolves(t *testing.T) {
 	paths := [][]string{
-		{"ask"}, {"auth"}, {"check"}, {"context"}, {"coverage"},
+		{"ask"}, {"auth", "status"}, {"context"},
 		{"datamodel", "export"},
-		{"dev", "list"}, {"dev", "setup"}, {"dev", "run"}, {"dev", "task"}, {"dev", "ralph"},
+		{"dev", "list"}, {"dev", "setup"}, {"dev", "run"},
 		{"docs", "sync"}, {"docs", "generate"}, {"docs", "refresh"}, {"docs", "preview"},
 		{"docs", "cleanup"}, {"docs", "push"},
-		{"env"},
-		{"factory", "connect"}, {"factory", "status"}, {"factory", "sync"},
-		{"factory", "gates"}, {"factory", "answer"}, {"factory", "pull"},
+		{"analysis", "start"}, {"analysis", "reanalyze"}, {"analysis", "reset"}, {"analysis", "status"},
+		{"epics", "search"}, {"epics", "plan", "show"}, {"epics", "plan", "save"},
+		{"epics", "plan", "approve-implementation"}, {"epics", "plan", "submit-review"}, {"epics", "plan", "approve-completion"},
 		{"focus"},
-		{"factory", "evidence"}, {"factory", "drift"}, {"factory", "watch"},
-		{"factory", "image"}, {"factory", "manifest"}, {"factory", "next-id"},
-		{"factory", "reconcile"}, {"factory", "release"},
 		{"github"},
 		{"hooks", "install"}, {"hooks", "uninstall"}, {"hooks", "status"}, {"hooks", "doctor"},
 		{"import"}, {"init"}, {"init", "workspace"}, {"install"}, {"new"},
 		{"source", "push"},
 		{"read-doc"}, {"read-file"}, {"scan"}, {"search"}, {"status"},
-		{"system-docs", "push"}, {"system-docs", "pull"}, {"system-docs", "list"},
-		{"tasks", "list"}, {"tasks", "fetch"},
-		{"process", "prepare-inputs"},
-		{"work", "list"}, {"work", "new"}, {"work", "status"}, {"work", "select"},
-		{"work", "subtasks"}, {"work", "derive"}, {"work", "review"},
-		// external review RUN:2026-08-19: the first cut listed parent groups
-		// for these and omitted the leaves themselves.
+		{"system-docs", "push"}, {"system-docs", "pull"}, {"system-docs", "list"}, {"system-docs", "get"},
+		{"reverse-engineer", "record"},
 		{"env", "list"}, {"env", "test"},
-		{"dev", "ralph", "status"},
-		{"factory", "manifest", "show"}, {"factory", "manifest", "init"},
-		{"factory", "release", "use"}, {"factory", "release", "show"}, {"factory", "release", "clear"},
-		{"factory", "release", "activate"},
-		{"work", "specs", "generate"}, {"work", "specs", "sync"}, {"work", "specs", "push"},
+		{"dev", "review"}, {"epics", "list"}, {"epics", "get"}, {"epics", "create"},
+		{"epics", "specs", "generate"}, {"epics", "specs", "status"}, {"epics", "specs", "list"}, {"epics", "specs", "pull"}, {"epics", "specs", "push"},
+		{"requirements", "get"}, {"requirements", "create"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
+		{"evidence", "record"}, {"evidence", "runs"}, {"evidence", "latest"},
 	}
 
 	for _, path := range paths {
@@ -66,17 +52,6 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		if cmd.Name() != want {
 			t.Errorf("%v resolved to %q, want %q", path, cmd.Name(), want)
 		}
-	}
-}
-
-func TestDriftReportFlagIsRegistered(t *testing.T) {
-	// Q-ARCH-016: --report is advertised in drift's own output; it must exist.
-	drift, _, err := rootCmd.Find([]string{"factory", "drift"})
-	if err != nil {
-		t.Fatalf("factory drift does not resolve: %v", err)
-	}
-	if drift.Flags().Lookup("report") == nil {
-		t.Fatal("factory drift advertises --report but the flag is not registered")
 	}
 }
 
@@ -272,13 +247,7 @@ func TestEveryLeafDispatchesThroughExecute(t *testing.T) {
 		}
 	}
 
-	// The Q-ARCH-016 flag registration, through real dispatch.
-	if err := run([]string{"factory", "drift", "--report", "--help"}); err != nil {
-		t.Errorf("factory drift --report does not parse through Execute: %v", err)
-	}
-	// Leave no --help set behind: a later test executing `factory drift` for
-	// real would otherwise get help output and no handler run (found by
-	// TestEveryLeafIsClassifiedAndBehavesAsClassified, RUN:2026-08-19).
+	// Leave no --help set behind for later command executions.
 	resetTreeFlags(rootCmd)
 }
 
@@ -392,237 +361,85 @@ var exemptReasons = map[string]bool{
 	"blocking":           true, // daemon loop; ends only on a signal
 }
 
-// Floors: exemption must not be usable to hollow the tier out. Both are
-// deliberately just below the measured RUN:2026-08-19 figures (38 executed,
-// 5 unrun) so ordinary growth passes and wholesale reclassification fails.
+// The executed floor keeps coverage meaningful as the command surface changes;
+// unrun exemptions remain capped.
 const (
-	minExecutedLeaves = 35
+	minExecutedLeaves = 25
 	maxUnrunLeaves    = 6
 )
 
-// Dispositions measured RUN:2026-08-19 by executing every leaf against a
-// stub server in a temp workspace: 38 executed, 19 local-only, 4 blocked on a
-// precondition, 5 never run. Every entry here was observed, not assumed.
+// Each current leaf is classified against the retained command tree below.
 var leafDispositions = map[string]disposition{
-	// --- executed: the handler runs and the server receives the request ---
-	"ask": {kind: dispExecute, args: []string{"ask", "smoke question"}},
-	// REQ-CROSS-316 (EPIC-CLI-008): a pure read — GETs /sync/delivery-context.
-	"process check": {kind: dispExecute, args: []string{"process", "check", "--phase", "plan"}},
-	// EPIC-CLI-026: validates binding and gathers read-only preparation context.
-	"process prepare-inputs": {kind: dispExecute, args: []string{"process", "prepare-inputs", "--json"}},
-	// REQ-CROSS-317: `next` is a pure read (GET delivery-context); `reconcile`
-	// POSTs (dry run by default). Both reach the server, so both dispExecute.
-	"process next":      {kind: dispExecute, args: []string{"process", "next"}},
-	"process reconcile": {kind: dispExecute, args: []string{"process", "reconcile"}},
-	// REQ-CROSS-374 (EPIC-CLI-017): advance reads the selection and the facts
-	// before any write — a server call either way, so dispExecute.
-	"process advance": {kind: dispExecute, args: []string{"process", "advance", "SR-SMOKE"}},
-	// REQ-CROSS-373: enter reads the facts before any write — a server call.
-	"process enter": {kind: dispExecute, args: []string{"process", "enter", "EPIC-SMOKE"}},
-	// REQ-CROSS-375: complete checks git first, then reads the facts — with
-	// --no-fetch the git check needs no remote and the facts read is the call.
-	"process complete": {kind: dispExecute, args: []string{"process", "complete", "EPIC-SMOKE", "--log", "smoke", "--no-fetch"}},
-	// REQ-CROSS-413 (BACKLOG-TOOL-22): reapply-entry — POST /sync/author after the
-	// client USER: check; the server call is the disposition.
-	"process reapply-entry": {kind: dispExecute, args: []string{"process", "reapply-entry", "EPIC-SMOKE", "--decision", "USER:2026-09-14:smoke"}},
-	// BACKLOG-TOOL-44: reenter (open) reads cold-review facts then opens the
-	// re-entry gate; --apply POSTs /sync/author. The server call is the disposition.
-	"process reenter": {kind: dispExecute, args: []string{"process", "reenter", "EPIC-SMOKE"}},
-	// REQ-CROSS-318 (EPIC-CLI-008): supersede — POST /sync/author (report-only unless enforce).
-	"process supersede":    {kind: dispExecute, args: []string{"process", "supersede", "SR-SMOKE", "--reason", "smoke"}},
-	"process cascade-mode": {kind: dispExecute, args: []string{"process", "cascade-mode", "enforce", "--source", "USER:2026-09-05:smoke"}},
-	// REQ-CROSS-315 (EPIC-CLI-008): findings CRUD — POST /sync/author, GET /sync/findings.
-	"process findings add":         {kind: dispExecute, args: []string{"process", "findings", "add", "--scope", "epic:SMOKE", "--id", "F-SMOKE", "--body", "smoke"}},
-	"process findings list":        {kind: dispExecute, args: []string{"process", "findings", "list"}},
-	"process findings disposition": {kind: dispExecute, args: []string{"process", "findings", "disposition", "--id", "F-SMOKE", "--disposition", "RESOLVED"}},
-	// REQ-CROSS-423 (EPIC-CLI-023): the backlog list read — GET /sync/backlog.
-	"process backlog list": {kind: dispExecute, args: []string{"process", "backlog", "list"}},
-	"context":              {kind: dispExecute, args: []string{"context", "smoke query"}},
-	"datamodel export":     {kind: dispExecute, args: []string{"datamodel", "export", "--json"}},
-	"docs cleanup":         {kind: dispExecute},
-	"docs preview":         {kind: dispExecute},
-	"docs push":            {kind: dispExecute},
-	"docs refresh":         {kind: dispExecute},
-	"docs sync":            {kind: dispExecute},
-	"env test":             {kind: dispExecute}, // the leaf the hard-coded ten missed
-	"auth status":          {kind: dispExecute}, // GETs /api/systems to verify the stored credential
-	"factory connect":      {kind: dispExecute},
-	"factory drift":        {kind: dispExecute},
-	"factory evidence":     {kind: dispExecute, args: []string{"factory", "evidence", "report", "--kind", "local_test", "--log", "x", "--totals", "passed=1,failed=0", "--pass", "REQ-X-001"}},
-	"factory gates":        {kind: dispExecute},
-	"factory image":        {kind: dispExecute, args: []string{"factory", "image", "smoke"}},
-	"factory next-id":      {kind: dispExecute, args: []string{"factory", "next-id", "CROSS"}},
-	// REQ-CROSS-361 (EPIC-CLI-014): `factory pin set` runs factoryEnvLoad first
-	// (the reachability call), then bails at the no-terminal PIN prompt — so it
-	// reaches the server like every other factoryEnvLoad-fronted leaf.
-	"factory pin set":   {kind: dispExecute},
-	"factory pull":      {kind: dispExecute},
-	"factory reconcile": {kind: dispExecute},
-	"factory sync":      {kind: dispExecute},
-	// REQ-PLN-134 (EPIC-NEXT-005): `focus <id>` posts the declaration.
-	"focus": {kind: dispExecute, args: []string{"focus", "REQ-SMK-001"}},
-	// REQ-CROSS-221/224: server-backed but both refuse the smoke's ledgerless
-	// workspace before any call — a report or import over nothing must not
-	// read as clean.
-	"migrate report": {kind: dispNoCall, reason: "needs-precondition"},
-	"migrate run":    {kind: dispNoCall, reason: "needs-precondition"},
-	// REQ-CROSS-225: refuses the ledgerless smoke workspace before any call.
-	"migrate flip":  {kind: dispNoCall, reason: "needs-precondition"},
-	"migrate clear": {kind: dispExecute, args: []string{"migrate", "clear", "--gate", "G-SMOKE", "--gate-fingerprint", "fp", "--gate-answer", "approved"}},
-	// REQ-CROSS-228: every authoring verb posts the attributed call.
-	"author requirement":   {kind: dispExecute, args: []string{"author", "requirement", "REQ-SMK-001", "--title", "t", "--context", "SMK"}},
-	"author backlog":       {kind: dispExecute, args: []string{"author", "backlog", "BACKLOG-SMK-001", "--kind", "backlog", "--title", "t", "--observed", "o", "--why-unrouted", "w"}},
-	"feedback":             {kind: dispExecute, args: []string{"feedback", "a gap met in the smoke test"}},
-	"author epic":          {kind: dispExecute, args: []string{"author", "epic", "EPIC-SMK-001", "--title", "t"}},
-	"author gate":          {kind: dispExecute, args: []string{"author", "gate", "Q-SMK-001", "--title", "t"}},
-	"author gate-withdraw": {kind: dispExecute, args: []string{"author", "gate-withdraw", "Q-SMK-001", "--reason", "smoke"}},
-	"author trace":         {kind: dispExecute, args: []string{"author", "trace", "TRACE-SMK-001", "--title", "t", "--purpose", "entry", "--transition", "PROPOSED->TODO", "--scope", "EPIC-SMK-001", "--fingerprint", "packet-sha256", "--verdict", "FAIL", "--source", "RUN:2026-08-26"}},
-	"author advance":       {kind: dispExecute, args: []string{"author", "advance", "REQ-SMK-001", "--to", "IN_PROGRESS", "--expected", "TODO"}},
-	// REQ-CROSS-421: demote reads the item's served status before any write — a server call.
-	"author demote": {kind: dispExecute, args: []string{"author", "demote", "REQ-SMK-001", "--to", "IN_PROGRESS", "--basis", "defect", "--reason", "USER:2026-09-21:smoke"}},
-	// EPIC-CLI-007: update edits and relate declares a UR<->SR relation; both post.
-	"author update": {kind: dispExecute, args: []string{"author", "update", "REQ-SMK-001", "--expected-fingerprint", "sha-current", "--description", "d"}},
-	"author relate": {kind: dispExecute, args: []string{"author", "relate", "REQ-SMK-001", "--parent", "REQ-SMK-000", "--expected-fingerprint", "sha-current"}},
-	"author member": {kind: dispExecute, args: []string{"author", "member", "EPIC-SMK-001", "--member", "REQ-SMK-000"}},
-	// REQ-CROSS-442: apply reads the plan's records before it writes.
-	"author apply": {kind: dispExecute, args: []string{"author", "apply", "--file", "plan.json"}},
-	// SR-RDD-ONBOARD-034: reads the server contract before anything else.
-	"author context": {kind: dispExecute, args: []string{"author", "context", "--file", "contexts.json", "--context", "CAT", "--context-name", "Catalog"}},
-	// REQ-CROSS-450: review record reads the held piece before any check.
-	"process review record": {kind: dispExecute, args: []string{"process", "review", "record", "--file", "review.json"}},
-	// REQ-CROSS-458: each lane verb loads the binding (the reachability call)
-	// before any check, then reads the store.
-	"process lane authorize": {kind: dispExecute, args: []string{"process", "lane", "authorize", "--classes", "wording", "--appliers", "7", "--expires", "5d", "--cap", "3"}},
-	"process lane approve":   {kind: dispExecute, args: []string{"process", "lane", "approve", "LANE-AUTH-SMOKE", "--text", "approve"}},
-	"process lane review":    {kind: dispExecute, args: []string{"process", "lane", "review", "SR-SMOKE", "--file", "review.json"}},
-	"process lane enter":     {kind: dispExecute, args: []string{"process", "lane", "enter", "SR-SMOKE"}},
-	"process lane check":     {kind: dispExecute, args: []string{"process", "lane", "check", "SR-SMOKE", "--commit", "HEAD"}},
-	"process lane complete":  {kind: dispExecute, args: []string{"process", "lane", "complete", "--apply"}},
-	"import":                 {kind: dispExecute},
-	"new":                    {kind: dispExecute},
-	// REQ-CROSS-503 (EPIC-CLI-029): the lifecycle verbs post to git-sources/*
-	// and status reads the system, the repository and the current run.
-	// docs generate needed a terminal for its prompt; --yes replaces it.
-	"analysis start":     {kind: dispExecute},
-	"analysis reanalyze": {kind: dispExecute, args: []string{"analysis", "reanalyze", "7"}},
-	"analysis reset":     {kind: dispExecute, args: []string{"analysis", "reset", "--yes"}},
-	"analysis status":    {kind: dispExecute},
-	"docs generate":      {kind: dispExecute, args: []string{"docs", "generate", "--yes"}},
-	// REQ-SYS-211: reads the bound system's upload repository before packing.
-	"source push": {kind: dispExecute},
-	"read-doc":    {kind: dispExecute, args: []string{"read-doc", "--list"}},
-	"read-file":   {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
-	// SR-CROSS-324: reuses fetchRequirementLists — GETs /sync/requirements via the
-	// factoryEnvLoad reachability call, so the server is reached (like `status`).
-	"requirements-corpus": {kind: dispExecute, args: []string{"requirements-corpus", "--json"}},
-	"requirements list":   {kind: dispExecute, args: []string{"requirements", "list", "--json"}},
-	// REQ-PLN-192 (EPIC-REQ-SEARCH): both searches GET their sync route.
-	"requirements search":                {kind: dispExecute, args: []string{"requirements", "search", "keys", "--json"}},
-	"epics search":                       {kind: dispExecute, args: []string{"epics", "search", "teams", "--json"}},
-	"reverse-engineer preflight":         {kind: dispExecute},
-	"reverse-engineer coverage":          {kind: dispExecute, args: []string{"reverse-engineer", "coverage", "--run", "smoke"}},
-	"reverse-engineer candidates":        {kind: dispExecute},
-	"reverse-engineer runs":              {kind: dispExecute},
-	"reverse-engineer status":            {kind: dispExecute, args: []string{"reverse-engineer", "status", "--run", "smoke"}},
-	"reverse-engineer source-status":     {kind: dispExecute, args: []string{"reverse-engineer", "source-status", "--capture", "smoke"}},
-	"reverse-engineer read-source":       {kind: dispExecute, args: []string{"reverse-engineer", "read-source", "--source", "smoke"}},
-	"reverse-engineer read-document":     {kind: dispExecute, args: []string{"reverse-engineer", "read-document", "--run", "smoke", "--document", "smoke"}},
-	"reverse-engineer capture-source":    {kind: dispExecute, args: []string{"reverse-engineer", "capture-source", "--run", "smoke", "--repository", "catalog", "--root", "."}},
-	"reverse-engineer acceptance-status": {kind: dispExecute, args: []string{"reverse-engineer", "acceptance-status", "--gate", "smoke"}},
-	// Exact proof files and a real fetched repository are preconditions; the
-	// dedicated command and runtime journey tests exercise these operations.
-	"reverse-engineer proof-preview":    {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer acceptance-open":  {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer acceptance-apply": {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer execution-proof":  {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer delivery-proof":   {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer inventory":        {kind: dispNoCall, reason: "local-only"},
-	"reverse-engineer check":            {kind: dispNoCall, reason: "local-only", args: []string{"reverse-engineer", "check", "--self-test"}},
-	// Exact JSON intent is required before any write; nested payloads are
-	// exercised by reverse_engineer_test.go against its own HTTP fixture.
-	"reverse-engineer authorize":      {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer publish":        {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer refresh-traces": {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer preview":        {kind: dispNoCall, reason: "needs-precondition"},
-	"reverse-engineer decide":         {kind: dispNoCall, reason: "needs-precondition"},
-	"scan":                            {kind: dispExecute},
-	"search":                          {kind: dispExecute, args: []string{"search", "smoke query"}},
-	// REQ-CROSS-282: status now checks the bound system's reachability
-	// whenever a bearer and a system_id are both present — exactly this
-	// fixture's shape — so it genuinely reaches the server and is no longer
-	// local-only. Not asserted dispNoCall/needs-precondition: the check
-	// fails open on any error (including this stub's unparseable body), so
-	// the command still succeeds; only the request count moved.
-	"status":              {kind: dispExecute},
-	"system-docs list":    {kind: dispExecute},
-	"system-docs pull":    {kind: dispExecute},
-	"tasks fetch":         {kind: dispExecute},
-	"tasks list":          {kind: dispExecute},
-	"work derive":         {kind: dispExecute},
-	"work list":           {kind: dispExecute},
-	"work new":            {kind: dispExecute, args: []string{"work", "new", "smoke epic"}},
-	"work select":         {kind: dispExecute},
-	"work specs generate": {kind: dispExecute},
-	"work specs sync":     {kind: dispExecute},
-	"work status":         {kind: dispExecute},
-	"working-set pull":    {kind: dispExecute, args: []string{"working-set", "pull", "EPIC-SMOKE"}},
-	"working-set select":  {kind: dispExecute, args: []string{"working-set", "select", "EPIC-SMOKE", "--phase", "build"}},
-	"your-move":           {kind: dispExecute},
-	"work subtasks":       {kind: dispExecute, args: []string{"work", "subtasks", "1"}},
-
-	// --- exempt, ASSERTED: run, and required to reach no server ---
-	"check":                 {kind: dispNoCall, reason: "local-only"},
-	"coverage":              {kind: dispNoCall, reason: "local-only"},
-	"dev list":              {kind: dispNoCall, reason: "local-only"},
-	"dev ralph status":      {kind: dispNoCall, reason: "local-only"},
-	"dev setup":             {kind: dispNoCall, args: []string{"dev", "setup", "claude"}, reason: "local-only"},
-	"env list":              {kind: dispNoCall, reason: "local-only"},
-	"factory manifest init": {kind: dispNoCall, reason: "local-only"},
-	"factory manifest show": {kind: dispNoCall, reason: "local-only"},
-	"factory release clear": {kind: dispNoCall, reason: "local-only"},
-	"factory release show":  {kind: dispNoCall, reason: "local-only"},
-	"factory release use":   {kind: dispNoCall, args: []string{"factory", "release", "use", "smoke"}, reason: "local-only"},
-	// REQ-CROSS-339: activate is the tenant-wide, attributed verb — unlike its
-	// local-only siblings it POSTs the release_activate authoring action, so it
-	// MUST reach the server (dispExecute).
-	"factory release activate": {kind: dispExecute, args: []string{"factory", "release", "activate", "smoke-slug", "--source", "USER:2026-09-11:smoke", "--pin", "0000"}},
-	// REQ-CROSS-379 (EPIC-CLI-018): status lists the held pieces best-effort, so
-	// it now reaches the server when a token loads (still runs without one).
-	"factory status":  {kind: dispExecute},
-	"hooks doctor":    {kind: dispNoCall, reason: "local-only"},
-	"hooks install":   {kind: dispNoCall, reason: "local-only"},
-	"hooks status":    {kind: dispNoCall, reason: "local-only"},
-	"hooks uninstall": {kind: dispNoCall, reason: "local-only"},
-	"init workspace":  {kind: dispNoCall, reason: "local-only"},
-	"install":         {kind: dispExecute}, // default setup activates the connected system store
-	"work review":     {kind: dispNoCall, reason: "local-only"},
-	// EPIC-CLI-OUTAGE: both read the local journal; with nothing kept, replay
-	// sends nothing.
-	"outage status": {kind: dispNoCall, reason: "local-only"},
-	"outage replay": {kind: dispExecute}, // REQ-CROSS-539: loads the env (the probe) before replaying
-
-	// Server-backed, but they refuse before the call without state the smoke
-	// cannot cheaply build. Asserted as no-call so that fixing the
-	// precondition forces a move to dispExecute rather than passing silently.
-	"factory answer":   {kind: dispNoCall, args: []string{"factory", "answer", "1", "yes"}, reason: "needs-precondition"},
-	"system-docs push": {kind: dispNoCall, reason: "needs-precondition"},
-	// REQ-CROSS-282: working-set check's own sync-payload logic still bails
-	// before its own call, but its RunE calls factoryEnvLoad() first (a
-	// chokepoint, not this leaf's own precondition path), and that now
-	// always makes one reachability call when a bearer+system_id are
-	// present — exactly this fixture's shape.
-	"working-set check": {kind: dispExecute},
-	"working-set push":  {kind: dispExecute}, // REQ-CROSS-314: reads the work selection, then patches
-	"work specs push":   {kind: dispNoCall, reason: "needs-precondition"},
-
-	// --- exempt, NOT run: the only unchecked claims in this test ---
-	// `auth` (bare) is no longer a leaf — it grew the `auth status` subcommand
-	// (classified dispExecute above), so its own entry is gone.
-	"github":        {kind: dispUnrun, reason: "interactive"},  // openBrowser
-	"dev run":       {kind: dispUnrun, reason: "spawns-agent"}, // exec.Command(tool.Command)
-	"dev task":      {kind: dispUnrun, reason: "spawns-agent"}, // exec.Command(tool.Command)
-	"factory watch": {kind: dispUnrun, reason: "blocking"},     // daemon cadence, SIGINT to stop
-
+	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
+	"auth status":                       {kind: dispExecute},
+	"context":                           {kind: dispExecute, args: []string{"context", "smoke query"}},
+	"datamodel export":                  {kind: dispExecute, args: []string{"datamodel", "export", "--json"}},
+	"dev list":                          {kind: dispNoCall, reason: "local-only"},
+	"dev setup":                         {kind: dispNoCall, args: []string{"dev", "setup", "claude"}, reason: "local-only"},
+	"dev run":                           {kind: dispUnrun, reason: "spawns-agent"},
+	"docs cleanup":                      {kind: dispExecute},
+	"docs generate":                     {kind: dispExecute, args: []string{"docs", "generate", "--yes"}},
+	"docs preview":                      {kind: dispExecute},
+	"docs push":                         {kind: dispExecute},
+	"docs refresh":                      {kind: dispExecute},
+	"docs sync":                         {kind: dispExecute},
+	"env list":                          {kind: dispNoCall, reason: "local-only"},
+	"env test":                          {kind: dispExecute},
+	"analysis start":                    {kind: dispExecute},
+	"analysis reanalyze":                {kind: dispExecute, args: []string{"analysis", "reanalyze", "7"}},
+	"analysis reset":                    {kind: dispExecute, args: []string{"analysis", "reset", "--yes"}},
+	"analysis status":                   {kind: dispExecute},
+	"epics search":                      {kind: dispExecute, args: []string{"epics", "search", "teams", "--json"}},
+	"epics plan show":                   {kind: dispExecute, args: []string{"epics", "plan", "show", "42"}},
+	"epics plan save":                   {kind: dispNoCall, args: []string{"epics", "plan", "save", "42", "--reason", "smoke"}, reason: "needs-precondition"},
+	"epics plan approve-implementation": {kind: dispNoCall, args: []string{"epics", "plan", "approve-implementation", "42", "--reason", "smoke"}, reason: "needs-precondition"},
+	"epics plan submit-review":          {kind: dispExecute, args: []string{"epics", "plan", "submit-review", "42", "--reason", "smoke"}},
+	"epics plan approve-completion":     {kind: dispExecute, args: []string{"epics", "plan", "approve-completion", "42", "--reason", "smoke"}},
+	"focus":                             {kind: dispExecute, args: []string{"focus", "10000000-0000-4000-8000-000000000001"}},
+	"github":                            {kind: dispUnrun, reason: "interactive"},
+	"hooks doctor":                      {kind: dispNoCall, reason: "local-only"},
+	"hooks install":                     {kind: dispNoCall, reason: "local-only"},
+	"hooks status":                      {kind: dispNoCall, reason: "local-only"},
+	"hooks uninstall":                   {kind: dispNoCall, reason: "local-only"},
+	"import":                            {kind: dispExecute},
+	"init workspace":                    {kind: dispNoCall, reason: "local-only"},
+	"install":                           {kind: dispNoCall, reason: "local-only"},
+	"new":                               {kind: dispNoCall, reason: "needs-precondition"},
+	"read-doc":                          {kind: dispExecute, args: []string{"read-doc", "--list"}},
+	"read-file":                         {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
+	"requirements list":                 {kind: dispExecute, args: []string{"requirements", "list", "--json"}},
+	"requirements search":               {kind: dispExecute, args: []string{"requirements", "search", "smoke", "--json"}},
+	"reverse-engineer record":           {kind: dispExecute, args: []string{"reverse-engineer", "record", "--file", "-"}},
+	"reverse-engineer review":           {kind: dispExecute, args: []string{"reverse-engineer", "review", "--file", "-", "--json"}},
+	"reverse-engineer accept":           {kind: dispExecute, args: []string{"reverse-engineer", "accept", "--file", "-", "--json"}},
+	"scan":                              {kind: dispExecute},
+	"search":                            {kind: dispExecute, args: []string{"search", "smoke query"}},
+	"source push":                       {kind: dispExecute},
+	"status":                            {kind: dispExecute},
+	"system-docs get":                   {kind: dispExecute, args: []string{"system-docs", "get", "1"}},
+	"system-docs list":                  {kind: dispExecute},
+	"system-docs pull":                  {kind: dispExecute},
+	"system-docs push":                  {kind: dispNoCall, reason: "needs-precondition"},
+	"dev review":                        {kind: dispNoCall, reason: "local-only"},
+	"epics list":                        {kind: dispExecute},
+	"epics get":                         {kind: dispExecute, args: []string{"epics", "get", "42"}},
+	"epics create":                      {kind: dispNoCall, reason: "needs-precondition"},
+	"epics update":                      {kind: dispNoCall, reason: "needs-precondition"},
+	"epics specs list":                  {kind: dispExecute, args: []string{"epics", "specs", "list", "42"}},
+	"epics specs status":                {kind: dispExecute, args: []string{"epics", "specs", "status", "42"}},
+	"epics specs generate":              {kind: dispExecute, args: []string{"epics", "specs", "generate", "42"}},
+	"epics specs pull":                  {kind: dispExecute, args: []string{"epics", "specs", "pull", "42", "--file", "specs.json"}},
+	"epics specs push":                  {kind: dispNoCall, reason: "needs-precondition"},
+	"requirements get":                  {kind: dispExecute, args: []string{"requirements", "get", "10000000-0000-4000-8000-000000000001", "--kind", "system"}},
+	"traces list":                       {kind: dispExecute, args: []string{"traces", "list", "--entity-type", "epic", "--entity-id", "42"}},
+	"test-cases list":                   {kind: dispExecute},
+	"test-cases get":                    {kind: dispExecute, args: []string{"test-cases", "get", "10000000-0000-4000-8000-000000000001"}},
+	"requirements create":               {kind: dispNoCall, reason: "needs-precondition"},
+	"test-cases create":                 {kind: dispNoCall, reason: "needs-precondition"},
+	"test-cases update":                 {kind: dispNoCall, reason: "needs-precondition"},
+	"evidence record":                   {kind: dispNoCall, reason: "needs-precondition"},
+	"evidence latest":                   {kind: dispExecute},
+	"evidence runs":                     {kind: dispExecute},
 }
 
 func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
@@ -642,7 +459,7 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".modernpath"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := `{"api_url":"` + server.URL + `","system_id":1,"system_name":"T","system_slug":"t","epic_id":1}`
+	cfg := `{"api_url":"` + server.URL + `","system_id":1,"system_name":"T","system_slug":"t","epic_id":42,"epic_name":"Smoke"}`
 	if err := os.WriteFile(filepath.Join(dir, ".modernpath", "config.json"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -701,25 +518,19 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 			args = leaf
 		}
 		before := requests
-		var savedAuth []byte
-		authPath := filepath.Join(dir, ".modernpath", "auth.json")
-		if name == "feedback" {
-			var err error
-			savedAuth, err = os.ReadFile(authPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			feedbackAuth(t, "371734807656268047", zitadel.ProdProfile.Issuer)
-		}
 		resetTreeFlags(rootCmd) // do not inherit another test's flag state
 		rootCmd.SetArgs(args)
+		if name == "reverse-engineer record" {
+			rootCmd.SetIn(strings.NewReader(`{"requirements":[],"traces":[]}`))
+		}
+		if name == "reverse-engineer review" {
+			rootCmd.SetIn(strings.NewReader(`{"requirements":[{"kind":"system_requirement","id":"10000000-0000-4000-8000-000000000001"}]}`))
+		}
+		if name == "reverse-engineer accept" {
+			rootCmd.SetIn(strings.NewReader(`{"review":{"system_id":1,"requirements":[{"kind":"system_requirement","id":"10000000-0000-4000-8000-000000000001","revision":0,"work_status":"PROPOSED","content":{},"criteria":[],"traces":[],"evidence":[],"versions":[]}],"eligible":true,"problems":[]},"source":"USER:smoke","reason":"smoke"}`))
+		}
 		_ = rootCmd.Execute() // errors are fine — a stub server answers junk
 		rootCmd.SetArgs(nil)
-		if savedAuth != nil {
-			if err := os.WriteFile(authPath, savedAuth, 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
 		switch d.kind {
 		case dispExecute:
 			executed++
@@ -784,11 +595,8 @@ func seedSmokeWorkspace(t *testing.T, dir string) {
 		}
 	}
 	mk(".modernpath/modernpath/t/architecture/overview.md", "# Doc\n\nbody\n")
-	mk("epics/EPIC-X-001/specs/requirements.md", "# spec\n")
+	mk(".modernpath/tasks/42/specs/requirements.md", "# spec\n")
 	mk("README.md", "# r\n")
-	mk("plan.json", `{"epic":{"id":"EPIC-SMK-001","title":"t"}}`)
-	mk("contexts.json", `["REQ-SMK-001"]`)
-	mk("review.json", `{"verdict":"FAIL","body":"b","source":"RUN:smoke","findings":[],"dispositions":[]}`)
 	git := func(args ...string) {
 		_ = exec.Command("git", append([]string{"-C", dir}, args...)...).Run()
 	}

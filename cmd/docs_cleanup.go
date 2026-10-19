@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 	"io"
 	"net/http"
@@ -11,23 +10,25 @@ import (
 )
 
 func runDocsCleanup(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadConfig()
+	machine, _ := cmd.Flags().GetBool("json")
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return err
 	}
 
 	if cfg.SystemID == 0 {
-		printError("No system configured. Run 'modernpath init' first.\n")
-		return nil
+		return fmt.Errorf("no system configured. Run 'modernpath init' first")
 	}
 
-	fmt.Println()
-	fmt.Println("🧹 Documentation Cleanup")
-	fmt.Println("═══════════════════════════════════════════════════════════")
-	fmt.Printf("System: %s (ID: %d)\n", cfg.SystemName, cfg.SystemID)
-	fmt.Printf("Mode: %s\n", map[bool]string{true: "dry-run (preview only)", false: "delete"}[docsCleanupDryRun])
-	fmt.Println()
+	if !machine {
+		fmt.Println()
+		fmt.Println("🧹 Documentation Cleanup")
+		fmt.Println("═══════════════════════════════════════════════════════════")
+		fmt.Printf("System: %s (ID: %d)\n", cfg.SystemName, cfg.SystemID)
+		fmt.Printf("Mode: %s\n", map[bool]string{true: "dry-run (preview only)", false: "delete"}[docsCleanupDryRun])
+		fmt.Println()
+	}
 
 	// Call cleanup endpoint
 	client := newAuthenticatedClient(cfg)
@@ -64,6 +65,13 @@ func runDocsCleanup(cmd *cobra.Command, args []string) error {
 	if err := json.Unmarshal(body, &result); err != nil {
 		printError("Failed to parse response: %v\n", err)
 		return err
+	}
+	if machine {
+		return writeCommandJSON(cmd, map[string]any{
+			"system_id": cfg.SystemID, "dry_run": docsCleanupDryRun,
+			"files_to_delete": result.Data.FilesToDelete, "total_lines": result.Data.TotalLines,
+			"sample_files": result.Data.SampleFiles, "deleted_count": result.Data.DeletedCount,
+		})
 	}
 
 	if docsCleanupDryRun {

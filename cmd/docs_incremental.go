@@ -57,7 +57,8 @@ type IncrementalUpdateResponse struct {
 }
 
 func runDocsPreview(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadConfig()
+	machine, _ := cmd.Flags().GetBool("json")
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return reportedError{err}
@@ -73,9 +74,9 @@ func runDocsPreview(cmd *cobra.Command, args []string) error {
 		return reportedError{err}
 	}
 
-	fmt.Println()
-	printInfo("🔍 Scanning for changes in repository...\n")
-	fmt.Println()
+	if !machine {
+		printInfo("Scanning for changes in repository...\n")
+	}
 
 	// Call preview API
 	preview, err := getIncrementalPreview(cfg, repoID)
@@ -84,12 +85,16 @@ func runDocsPreview(cmd *cobra.Command, args []string) error {
 		return reportedError{err}
 	}
 
+	if machine {
+		return writeCommandJSON(cmd, preview)
+	}
 	displayPreview(preview)
 	return nil
 }
 
 func runDocsRefresh(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadConfig()
+	machine, _ := cmd.Flags().GetBool("json")
+	cfg, err := commandConfig()
 	if err != nil {
 		printError("Failed to read config: %v\n", err)
 		return reportedError{err}
@@ -105,9 +110,9 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 		return reportedError{err}
 	}
 
-	fmt.Println()
-	printInfo("🔍 Step 1: Scanning for changes...\n")
-	fmt.Println()
+	if !machine {
+		printInfo("Scanning for changes...\n")
+	}
 
 	// First get preview
 	preview, err := getIncrementalPreview(cfg, repoID)
@@ -117,11 +122,19 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 	}
 
 	// Display what will be updated
-	displayPreview(preview)
+	if !machine {
+		displayPreview(preview)
+	}
 
 	if !preview.Data.HasChanges {
+		if machine {
+			return writeCommandJSON(cmd, map[string]any{"updated": false, "reason": "no changes", "preview": preview.Data})
+		}
 		printSuccess("✅ Documentation is up to date!\n")
 		return nil
+	}
+	if machine && !docsRefreshYes {
+		return fmt.Errorf("docs refresh --json requires --yes when an update is available")
 	}
 
 	// Ask for confirmation
@@ -144,6 +157,9 @@ func runDocsRefresh(cmd *cobra.Command, args []string) error {
 		return reportFailure(fmt.Errorf("failed to queue the update: %w", err))
 	}
 
+	if machine {
+		return writeCommandJSON(cmd, map[string]any{"updated": true, "repository_id": queued.RepositoryID, "run_id": queued.RunID, "job_id": queued.JobID, "message": queued.Message})
+	}
 	displayUpdateResult(queued)
 	return nil
 }

@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,10 +21,9 @@ import (
 
 // REQ-SYS-211 (EPIC-ANALYSIS-009): `modernpath source push` keeps an
 // upload-sourced system current from a network the platform cannot reach.
-// It re-packs the working directory with exactly the import filters, computes
-// the content revision the server uses, and posts the archive to the bound
-// system's upload repository (REQ-SYS-210) — uploading only when the content
-// changed, and carrying the checkout's git revision as metadata. It never
+// It packs the selected source files and posts the archive to the bound
+// system's upload repository (REQ-SYS-210), carrying the checkout's git
+// revision as metadata. The server computes the source revision. It never
 // prompts, so it runs from cron or CI.
 
 var (
@@ -35,6 +31,7 @@ var (
 	sourcePushExclude   []string
 	sourcePushKeep      []string
 	sourcePushNoIgnore  bool
+	sourcePushJSON      bool
 )
 
 var sourceCmd = &cobra.Command{
@@ -52,16 +49,8 @@ var sourcePushCmd = &cobra.Command{
 
 The tree is packed with the same filters as ` + "`modernpath import --local`" + `
 (skip lists, .gitignore, --exclude, --keep, --max-size), and the scan report
-says what each filter left out. Pass the same --exclude and --keep as the
-import, or the pushed tree differs from the imported one. Its content revision
-is compared with the server's before anything is uploaded:
-
-  unchanged, refresh completed   nothing is uploaded or re-analysed (exit 0)
-  unchanged, refresh not done    the refresh is queued again, no upload (exit 0)
-  changed                        the archive is uploaded and an incremental
-                                 run is queued: it makes the tree current,
-                                 superseding the previous source, then
-                                 refreshes the knowledge core (exit 0)
+says what each filter left out. The selected archive is always sent; the server
+ingests it, computes its revision and reports whether it changed.
 
 --max-size bounds the compressed zip. Before uploading, the request is
 compared with the server's upload limit; one that does not fit is refused
@@ -81,12 +70,9 @@ Examples:
 	// Each error is printed once, by RunE (REQ-CROSS-500, D4).
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.ReadConfig()
+		cfg, err := commandConfig()
 		if err != nil {
 			return reportFailure(err)
-		}
-		if apiURL != "" {
-			cfg.APIURL = apiURL
 		}
 		if cfg.SystemID == 0 {
 			return reportFailure(fmt.Errorf("no bound system; run 'modernpath import --local' here first"))
@@ -100,6 +86,7 @@ Examples:
 			Keep:        sourcePushKeep,
 			MaxSizeMB:   sourcePushMaxSizeMB,
 			NoGitignore: sourcePushNoIgnore,
+			JSON:        sourcePushJSON,
 			Root:        root,
 		}
 		if err := sourcePush(cfg, opts, os.Stdout); err != nil {
@@ -114,6 +101,7 @@ func init() {
 	sourcePushCmd.Flags().StringArrayVar(&sourcePushExclude, "exclude", nil, excludeUsage)
 	sourcePushCmd.Flags().StringArrayVar(&sourcePushKeep, "keep", nil, keepUsage)
 	sourcePushCmd.Flags().BoolVar(&sourcePushNoIgnore, "no-gitignore", false, noIgnoreUsage)
+	sourcePushCmd.Flags().BoolVar(&sourcePushJSON, "json", false, "print the server response as JSON")
 	sourceCmd.AddCommand(sourcePushCmd)
 	rootCmd.AddCommand(sourceCmd)
 }
@@ -124,6 +112,7 @@ type sourcePushOptions struct {
 	Keep        []string
 	MaxSizeMB   int
 	NoGitignore bool
+	JSON        bool
 	// Root is the tree to pack: the directory the binding lives in, never
 	// merely the working directory (see pushRoot). Empty means the working
 	// directory, for callers that resolved it already.
@@ -138,8 +127,7 @@ func (o sourcePushOptions) filters() importFilterOptions {
 // `.modernpath` directory ReadConfig resolves. The config is found by walking
 // up from the working directory, so a push run from a subdirectory (a CI
 // step with a working-directory, a developer in services/api) would
-// otherwise pack the subtree alone and, since its digest differs, replace
-// the repository's whole source with it.
+// otherwise upload only that subtree and replace the repository's source.
 func pushRoot() (string, error) {
 	bindingDir, err := config.BindingDir()
 	if err != nil {
@@ -159,20 +147,10 @@ func pushRoot() (string, error) {
 	return root, nil
 }
 
-// sourceState is what the repository read (REQ-SYS-210 AC8) says about the
-// server's current source: enough to decide before packing whether to
-// upload, to ask for a retry, or to do nothing.
+// sourceState provides the repository URL needed to reject provider-linked
+// repositories, which the platform refreshes itself.
 type sourceState struct {
-	ID            int    `json:"id"`
-	Provider      string `json:"provider"`
 	RepositoryURL string `json:"repository_url"`
-	Revision      string `json:"source_revision"`
-	Metadata      struct {
-		Trigger string `json:"trigger"`
-	} `json:"source_metadata"`
-	Refresh *struct {
-		Status string `json:"status"`
-	} `json:"source_refresh"`
 }
 
 // pushResult is the endpoint's whole response vocabulary (REQ-SYS-210 AC9).
@@ -181,6 +159,7 @@ type pushResult struct {
 	Revision         string `json:"revision"`
 	PreviousRevision string `json:"previous_revision"`
 	RefreshJobID     int    `json:"refresh_job_id"`
+	raw              []byte
 }
 
 func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error {
@@ -214,35 +193,22 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 			repositoryID, remote.RepositoryURL)
 	}
 
+	progress := out
+	if opts.JSON {
+		progress = os.Stderr
+	}
+
 	// AC1: exactly the import filters, reported as import reports them
 	// (REQ-CROSS-501).
 	files, report, err := collectImportFiles(root, opts.filters())
 	if err != nil {
 		return err
 	}
-	printImportReport(out, report)
-	local, err := treeDigest(files)
-	if err != nil {
-		return err
-	}
+	printImportReport(progress, report)
 
 	pushURL := fmt.Sprintf("%s/api/systems/%d/repositories/%d/source-archive", client.baseURL, cfg.SystemID, repositoryID)
 
-	// AC2: the same tree.
-	if remote.Revision == local {
-		if !remote.retryable() {
-			fmt.Fprintf(out, "unchanged at %s\n", shortRevision(local))
-			return nil
-		}
-		body, _ := json.Marshal(map[string]string{"revision": local})
-		result, err := postPush(client, pushURL, "application/json", bytes.NewReader(body))
-		if err != nil {
-			return err
-		}
-		return reportPush(out, result, local)
-	}
-
-	// Changed: pack and upload with the checkout's revision as metadata (AC3).
+	// The server ingests the archive and decides whether it changes source.
 	archive, err := zipFiles(files)
 	if err != nil {
 		return err
@@ -281,7 +247,7 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 	if sizes.body > limit.bytes {
 		return sizes.overLimit(limit.bytes)
 	}
-	fmt.Fprintf(out, "pushing %d files (%.2f MB) at %s\n", len(files), float64(archive.Len())/(1024*1024), shortRevision(local))
+	fmt.Fprintf(progress, "pushing %d files (%.2f MB)\n", len(files), float64(archive.Len())/(1024*1024))
 	result, err := postPush(client, pushURL, form.FormDataContentType(), &body)
 	var tooLarge bodyTooLargeError
 	if errors.As(err, &tooLarge) {
@@ -290,19 +256,14 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 	if err != nil {
 		return err
 	}
-	return reportPush(out, result, local)
+	return reportPush(out, result, opts.JSON)
 }
 
-// A same-tree push retries only a push-sealed manifest whose own refresh did
-// not complete (USER:2026-09-25); an import-sealed one never retries.
-func (s sourceState) retryable() bool {
-	if s.Metadata.Trigger == "" || s.Metadata.Trigger == "import" {
-		return false
+func reportPush(out io.Writer, result *pushResult, jsonOutput bool) error {
+	if jsonOutput {
+		_, err := out.Write(append(result.raw, '\n'))
+		return err
 	}
-	return s.Refresh == nil || s.Refresh.Status != "completed"
-}
-
-func reportPush(out io.Writer, result *pushResult, local string) error {
 	switch result.Result {
 	case "unchanged":
 		fmt.Fprintf(out, "unchanged at %s\n", shortRevision(result.Revision))
@@ -315,7 +276,7 @@ func reportPush(out io.Writer, result *pushResult, local string) error {
 		}
 		fmt.Fprintf(out, "pushed %s (previous %s); refresh queued (job %d)\n", shortRevision(result.Revision), previous, result.RefreshJobID)
 	default:
-		return fmt.Errorf("unexpected result %q from the server (revision %s)", result.Result, shortRevision(local))
+		return fmt.Errorf("unexpected result %q from the server (revision %s)", result.Result, shortRevision(result.Revision))
 	}
 	return nil
 }
@@ -337,6 +298,7 @@ func postPush(client *authenticatedClient, url, contentType string, body io.Read
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("unexpected response %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
+	result.raw = raw
 	return &result, nil
 }
 
@@ -415,26 +377,6 @@ func resolveUploadRepository(client *authenticatedClient, systemID int) (int, er
 	default:
 		return 0, fmt.Errorf("system %d has %d upload repositories; set repository_id in .modernpath/config.json", systemID, len(uploads))
 	}
-}
-
-// treeDigest is the content revision the server computes for the same tree
-// (Core.Storage.Digest.tree/2): SHA-256 over, in byte-sorted path order,
-// each slash-separated relative path followed by the lower-case hex SHA-256
-// of the file's contents.
-func treeDigest(files []importFile) (string, error) {
-	sorted := append([]importFile(nil), files...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].rel < sorted[j].rel })
-	hash := sha256.New()
-	for _, file := range sorted {
-		contents, err := os.ReadFile(file.abs)
-		if err != nil {
-			continue // zipFiles skips what it cannot read; the digest covers the same set
-		}
-		sum := sha256.Sum256(contents)
-		hash.Write([]byte(file.rel))
-		hash.Write([]byte(hex.EncodeToString(sum[:])))
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // AC3: HEAD, the branch and whether the tree is dirty when the directory is a

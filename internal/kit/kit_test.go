@@ -107,14 +107,12 @@ func TestKnowledgeAssetsStateOneLocalFirstOrder(t *testing.T) {
 	const anchor = "Search locally first"
 	steps := []string{
 		"requirement id",
-		"working-set pull",
 		"docs export",
 		"modernpath ask",
 	}
 	for _, asset := range []string{
 		"assets/skills/mp-knowledge-search/SKILL.md",
 		"assets/agents-block.md",
-		"assets/skills/mp-process-cli/SKILL.md",
 	} {
 		b, err := assets.ReadFile(asset)
 		if err != nil {

@@ -2,17 +2,21 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +38,14 @@ var (
 	analysisStartMode string
 	analysisResetMode string
 	analysisResetYes  bool
+	analysisJSON      bool
+	analysisWait      bool
+	analysisTimeout   time.Duration
+)
+
+const (
+	defaultAnalysisTimeout = 10 * time.Minute
+	maxAnalysisTimeout     = 30 * time.Minute
 )
 
 // analysisResetWipes is what a reset deletes and keeps
@@ -56,7 +68,8 @@ bound to, through the same lifecycle the UI uses.
 
 A server refusal prints its error code and message and exits non-zero, so a
 script fails loudly. Only reset asks for a confirmation; without a terminal it
-needs --yes.`,
+needs --yes. Mutating commands accept --json for native response data and
+--wait --timeout to wait up to 30 minutes for that exact run.`,
 }
 
 var analysisStartCmd = &cobra.Command{
@@ -143,6 +156,12 @@ func init() {
 	analysisStartCmd.Flags().StringVar(&analysisStartMode, "mode", defaultAnalysisMode, "Analysis mode: independent_repos or unified_workspace")
 	analysisResetCmd.Flags().StringVar(&analysisResetMode, "mode", "", "Analysis mode of the new run: independent_repos or unified_workspace (default: the system's last mode)")
 	analysisResetCmd.Flags().BoolVarP(&analysisResetYes, "yes", "y", false, "Reset without asking (required without a terminal)")
+	for _, command := range []*cobra.Command{analysisStartCmd, analysisReanalyzeCmd, analysisResetCmd} {
+		command.Flags().BoolVar(&analysisJSON, "json", false, "print the server response as JSON")
+		command.Flags().BoolVar(&analysisWait, "wait", false, "wait for the started analysis run to finish")
+		command.Flags().DurationVar(&analysisTimeout, "timeout", defaultAnalysisTimeout, "maximum time to wait (requires --wait; at most 30m)")
+	}
+	analysisStatusCmd.Flags().BoolVar(&analysisJSON, "json", false, "print status as JSON")
 	analysisCmd.AddCommand(analysisStartCmd, analysisReanalyzeCmd, analysisResetCmd, analysisStatusCmd)
 	rootCmd.AddCommand(analysisCmd)
 }
@@ -192,12 +211,9 @@ func validateAnalysisMode(mode string) error {
 // analysisConfig is the bound workspace the analysis verbs act on; the
 // global --api-url overrides its server, as for `source push`.
 func analysisConfig() (*config.Config, error) {
-	cfg, err := config.ReadConfig()
+	cfg, err := commandConfig()
 	if err != nil {
 		return nil, err
-	}
-	if apiURL != "" {
-		cfg.APIURL = apiURL
 	}
 	if cfg.SystemID == 0 {
 		return nil, errNoBoundSystem
@@ -225,6 +241,7 @@ type lifecycleAnswer struct {
 		Status         string `json:"status"`
 		SourceRevision string `json:"source_revision"`
 	} `json:"run"`
+	raw json.RawMessage
 }
 
 // startAnalysis posts the lifecycle Start the UI sends. It is system-scoped,
@@ -249,30 +266,154 @@ func postLifecycle(cfg *config.Config, route string, body map[string]string) (*l
 		return nil, pushRefusal(resp, raw)
 	}
 	var envelope struct {
-		Data lifecycleAnswer `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("unexpected response %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
-	return &envelope.Data, nil
+	var answer lifecycleAnswer
+	if err := json.Unmarshal(envelope.Data, &answer); err != nil {
+		return nil, fmt.Errorf("unexpected response %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	if _, err := canonicalRunID(answer.Run.ID); err != nil || strings.TrimSpace(answer.Run.Status) == "" {
+		return nil, fmt.Errorf("unexpected response %s: analysis run is missing a valid id or status", resp.Status)
+	}
+	if answer.AnalysisMode != "independent_repos" && answer.AnalysisMode != "unified_workspace" {
+		return nil, fmt.Errorf("unexpected response %s: analysis_mode is missing or invalid", resp.Status)
+	}
+	answer.raw = envelope.Data
+	return &answer, nil
 }
 
 func printLifecycleRun(answer *lifecycleAnswer) {
-	printSuccess("Analysis run %s: %s\n", answer.Run.ID, answer.Run.Status)
-	fmt.Printf("  mode:          %s\n", answer.AnalysisMode)
+	printLifecycleRunTo(os.Stdout, answer)
+}
+
+func printLifecycleRunTo(out io.Writer, answer *lifecycleAnswer) {
+	fmt.Fprintf(out, "Analysis run %s: %s\n", answer.Run.ID, answer.Run.Status)
+	fmt.Fprintf(out, "  mode:          %s\n", answer.AnalysisMode)
 	if answer.Run.SourceRevision != "" {
-		fmt.Printf("  source:        %s\n", shortRevision(answer.Run.SourceRevision))
+		fmt.Fprintf(out, "  source:        %s\n", shortRevision(answer.Run.SourceRevision))
 	}
 	if len(answer.Started) > 0 {
 		names := make([]string, 0, len(answer.Started))
 		for _, repository := range answer.Started {
 			names = append(names, fmt.Sprintf("%s (%s)", repository.RepositoryName, repository.RepositoryID))
 		}
-		fmt.Printf("  repositories:  %s\n", strings.Join(names, ", "))
+		fmt.Fprintf(out, "  repositories:  %s\n", strings.Join(names, ", "))
 	}
 }
 
+func lifecycleOptions(cmd *cobra.Command) (jsonOutput, wait bool, timeout time.Duration, err error) {
+	jsonOutput, err = cmd.Flags().GetBool("json")
+	if err != nil {
+		return
+	}
+	wait, err = cmd.Flags().GetBool("wait")
+	if err != nil {
+		return
+	}
+	timeout, err = cmd.Flags().GetDuration("timeout")
+	if err != nil {
+		return
+	}
+	if !wait && cmd.Flags().Changed("timeout") {
+		err = fmt.Errorf("--timeout requires --wait")
+		return
+	}
+	if wait && (timeout <= 0 || timeout > maxAnalysisTimeout) {
+		err = fmt.Errorf("--timeout must be greater than 0 and at most %s", maxAnalysisTimeout)
+		return
+	}
+	return
+}
+
+func reportLifecycleResult(cmd *cobra.Command, cfg *config.Config, answer *lifecycleAnswer) error {
+	jsonOutput, wait, timeout, err := lifecycleOptions(cmd)
+	if err != nil {
+		return reportFailure(err)
+	}
+	if !wait {
+		if jsonOutput {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(answer.raw))
+			return err
+		}
+		printLifecycleRunTo(cmd.OutOrStdout(), answer)
+		return nil
+	}
+
+	current, err := waitForAnalysisRun(cfg, answer.Run.ID, timeout)
+	if err != nil {
+		return reportFailure(err)
+	}
+	if jsonOutput {
+		result := struct {
+			Started json.RawMessage `json:"started"`
+			Current json.RawMessage `json:"current"`
+		}{Started: answer.raw, Current: current.raw}
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+			return err
+		}
+	} else {
+		printLifecycleRunTo(cmd.OutOrStdout(), answer)
+		fmt.Fprintf(cmd.OutOrStdout(), "  final status:  %s\n", current.Run.Status)
+	}
+	if current.Run.Status == "failed" || current.Run.Status == "cancelled" {
+		return reportFailure(fmt.Errorf("analysis run %s ended with status %s", answer.Run.ID, current.Run.Status))
+	}
+	return nil
+}
+
+func waitForAnalysisRun(cfg *config.Config, startedID string, timeout time.Duration) (*runSnapshot, error) {
+	wantedID, err := canonicalRunID(startedID)
+	if err != nil {
+		return nil, fmt.Errorf("cannot wait for analysis run with unsupported id %q: %w", startedID, err)
+	}
+	client := newAuthenticatedClient(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		current, err := readCurrentRunContext(ctx, client, cfg.SystemID)
+		if err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("timed out after %s waiting for analysis run %s", timeout, wantedID)
+			}
+			return nil, err
+		}
+		if current != nil {
+			currentID, err := canonicalRunID(string(current.Run.ID))
+			if err != nil {
+				return nil, fmt.Errorf("cannot wait for current analysis run with unsupported id %q: %w", current.Run.ID, err)
+			}
+			if currentID != wantedID {
+				return nil, fmt.Errorf("current analysis run changed from %s to %s; refusing to wait on another run", wantedID, currentID)
+			}
+			if current.Run.Status == "completed" || current.Run.Status == "failed" || current.Run.Status == "cancelled" {
+				return current, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timed out after %s waiting for analysis run %s", timeout, wantedID)
+		case <-ticker.C:
+		}
+	}
+}
+
+func canonicalRunID(id string) (string, error) {
+	number, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || number <= 0 {
+		return "", fmt.Errorf("expected a positive numeric run id")
+	}
+	return strconv.FormatInt(number, 10), nil
+}
+
 func runAnalysisStart(cmd *cobra.Command, args []string) error {
+	if _, _, _, err := lifecycleOptions(cmd); err != nil {
+		return reportFailure(err)
+	}
 	if err := validateAnalysisMode(analysisStartMode); err != nil {
 		return reportFailure(err)
 	}
@@ -284,11 +425,13 @@ func runAnalysisStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	printLifecycleRun(answer)
-	return nil
+	return reportLifecycleResult(cmd, cfg, answer)
 }
 
 func runAnalysisReanalyze(cmd *cobra.Command, args []string) error {
+	if _, _, _, err := lifecycleOptions(cmd); err != nil {
+		return reportFailure(err)
+	}
 	repositoryID, err := strconv.Atoi(args[0])
 	if err != nil || repositoryID <= 0 {
 		return reportFailure(fmt.Errorf("repository id must be a positive number, got %q; 'modernpath analysis status' prints the bound repository's id", args[0]))
@@ -301,11 +444,13 @@ func runAnalysisReanalyze(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	printLifecycleRun(answer)
-	return nil
+	return reportLifecycleResult(cmd, cfg, answer)
 }
 
 func runAnalysisReset(cmd *cobra.Command, args []string) error {
+	if _, _, _, err := lifecycleOptions(cmd); err != nil {
+		return reportFailure(err)
+	}
 	body := map[string]string{}
 	if analysisResetMode != "" {
 		if err := validateAnalysisMode(analysisResetMode); err != nil {
@@ -318,13 +463,31 @@ func runAnalysisReset(cmd *cobra.Command, args []string) error {
 		return reportFailure(err)
 	}
 	if !analysisResetYes {
-		fmt.Println(analysisResetWipes)
-		ok, err := confirmAction("Reset the analysis of "+boundSystemLabel(cfg), false, false)
+		jsonOutput, _, _, optionsErr := lifecycleOptions(cmd)
+		if optionsErr != nil {
+			return reportFailure(optionsErr)
+		}
+		if jsonOutput {
+			fmt.Fprintln(cmd.ErrOrStderr(), analysisResetWipes)
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), analysisResetWipes)
+		}
+		var ok bool
+		var err error
+		if jsonOutput {
+			ok, err = confirmActionToStderr("Reset the analysis of " + boundSystemLabel(cfg))
+		} else {
+			ok, err = confirmAction("Reset the analysis of "+boundSystemLabel(cfg), false, false)
+		}
 		if err != nil {
 			return reportFailure(err)
 		}
 		if !ok {
-			fmt.Println("Reset cancelled.")
+			if jsonOutput {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), `{"cancelled":true}`)
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Reset cancelled.")
 			return nil
 		}
 	}
@@ -332,8 +495,16 @@ func runAnalysisReset(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	printLifecycleRun(answer)
-	return nil
+	return reportLifecycleResult(cmd, cfg, answer)
+}
+
+func confirmActionToStderr(label string) (bool, error) {
+	if !stdinIsTerminal() {
+		return false, errUnattendedConfirmation
+	}
+	prompt := promptui.Prompt{Label: label, IsConfirm: true, Stdin: os.Stdin, Stdout: os.Stderr}
+	result, err := prompt.Run()
+	return err == nil && strings.EqualFold(result, "y"), err
 }
 
 // repositoryStatus is what the repository read (REQ-SYS-210 AC8) says about
@@ -352,22 +523,42 @@ type repositoryStatus struct {
 		Reason string `json:"reason"`
 		At     string `json:"at"`
 	} `json:"source_refresh"`
+	raw json.RawMessage
 }
 
 // runSnapshot is the current analysis run (REQ-OBAN-005). It carries no
 // phase of its own; phase derives one from the steps.
 type runSnapshot struct {
 	Run struct {
-		ID             int    `json:"id"`
-		Status         string `json:"status"`
-		AnalysisMode   string `json:"analysis_mode"`
-		SourceRevision string `json:"source_revision"`
+		ID             analysisRunID `json:"id"`
+		Status         string        `json:"status"`
+		AnalysisMode   string        `json:"analysis_mode"`
+		SourceRevision string        `json:"source_revision"`
 	} `json:"run"`
 	Steps []struct {
 		Stage        string `json:"stage"`
 		State        string `json:"state"`
 		RepositoryID *int   `json:"repository_id"`
 	} `json:"steps"`
+	raw json.RawMessage
+}
+
+type analysisRunID string
+
+func (id *analysisRunID) UnmarshalJSON(data []byte) error {
+	var value string
+	if len(data) > 0 && data[0] == '"' {
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*id = analysisRunID(value)
+		return nil
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("invalid run id")
+	}
+	*id = analysisRunID(string(data))
+	return nil
 }
 
 func runAnalysisStatus(cmd *cobra.Command, args []string) error {
@@ -388,6 +579,28 @@ func runAnalysisStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
+	if analysisJSON {
+		var rawRun json.RawMessage
+		if run != nil {
+			rawRun = run.raw
+		}
+		result := struct {
+			System struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"system"`
+			Repository json.RawMessage `json:"repository"`
+			Run        json.RawMessage `json:"run"`
+		}{}
+		result.System.ID = cfg.SystemID
+		result.System.Name = cfg.SystemName
+		result.Repository = repository.raw
+		result.Run = rawRun
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+			return err
+		}
+		return nil
+	}
 	printAnalysisStatus(cmd.OutOrStdout(), cfg, repository, run)
 	return nil
 }
@@ -406,18 +619,37 @@ func readRepositoryStatus(client *authenticatedClient, systemID, repositoryID in
 		return nil, pushRefusal(resp, raw)
 	}
 	var envelope struct {
-		Data repositoryStatus `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("failed to parse repository %d: %w", repositoryID, err)
 	}
-	return &envelope.Data, nil
+	var repository repositoryStatus
+	if err := json.Unmarshal(envelope.Data, &repository); err != nil {
+		return nil, fmt.Errorf("failed to parse repository %d: %w", repositoryID, err)
+	}
+	repository.raw = envelope.Data
+	return &repository, nil
 }
 
 // readCurrentRun returns the system's current analysis run, or nil when the
 // read answers 404: the system has no run yet.
 func readCurrentRun(client *authenticatedClient, systemID int) (*runSnapshot, error) {
-	resp, err := client.Get(fmt.Sprintf("%s/api/systems/%d/analysis/runs/current", client.baseURL, systemID))
+	return readCurrentRunContext(context.Background(), client, systemID)
+}
+
+func readCurrentRunContext(ctx context.Context, client *authenticatedClient, systemID int) (*runSnapshot, error) {
+	url := fmt.Sprintf("%s/api/systems/%d/analysis/runs/current", client.baseURL, systemID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the analysis run: %w", err)
+	}
+	platform.Prepare(req)
+	req.Header.Set("Accept", "application/json")
+	if err := platform.Authorize(req, client.token); err != nil {
+		return nil, err
+	}
+	resp, err := client.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the analysis run: %w", err)
 	}
@@ -430,12 +662,17 @@ func readCurrentRun(client *authenticatedClient, systemID int) (*runSnapshot, er
 		return nil, pushRefusal(resp, raw)
 	}
 	var envelope struct {
-		Data runSnapshot `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("failed to parse the analysis run: %w", err)
 	}
-	return &envelope.Data, nil
+	var snapshot runSnapshot
+	if err := json.Unmarshal(envelope.Data, &snapshot); err != nil {
+		return nil, fmt.Errorf("failed to parse the analysis run: %w", err)
+	}
+	snapshot.raw = envelope.Data
+	return &snapshot, nil
 }
 
 func printAnalysisStatus(out io.Writer, cfg *config.Config, repository *repositoryStatus, run *runSnapshot) {
@@ -450,7 +687,7 @@ func printAnalysisStatus(out io.Writer, cfg *config.Config, repository *reposito
 		fmt.Fprintln(out, "Analysis run:   no analysis run recorded")
 		return
 	}
-	fmt.Fprintf(out, "Analysis run %d: %s\n", run.Run.ID, run.Run.Status)
+	fmt.Fprintf(out, "Analysis run %s: %s\n", run.Run.ID, run.Run.Status)
 	fmt.Fprintf(out, "  mode:           %s\n", orDash(run.Run.AnalysisMode))
 	fmt.Fprintf(out, "  source:         %s\n", orDash(shortRevision(run.Run.SourceRevision)))
 	fmt.Fprintf(out, "  phase:          %s\n", run.phase())

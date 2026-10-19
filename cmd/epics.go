@@ -19,32 +19,34 @@ var epicsSearchJSON bool
 
 var epicsCmd = &cobra.Command{
 	Use:   "epics",
-	Short: "Find epics",
+	Short: "Read and write Epics, specifications and saved plans",
 }
 
 var epicsSearchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Find epics by name or meaning",
 	Args:  cobra.MinimumNArgs(1),
-	Long: `Find epics of the bound system by code, title, description or meaning, in
-one ranked list.
-
-Each hit shows its code (or #id when it has none), process status, name, app link and
-how it matched: keyword, semantic, or both. Hits found both ways come first.
-Pull an epic in full with working-set pull.`,
+	Long: `Find epics of the bound system by title, description or meaning.
+Each hit shows its native ID, process status, name, app link and how it matched.
+Read a saved plan with epics plan show <epic-id>.`,
 	RunE: runEpicsSearch,
 }
 
 func init() {
 	epicsSearchCmd.Flags().IntVar(&epicsSearchLimit, "limit", 10, "hits to return (1–25)")
 	epicsSearchCmd.Flags().BoolVar(&epicsSearchJSON, "json", false, "emit the query and items as JSON")
+	addRecordReadFlags(epicsSearchCmd)
 	epicsCmd.AddCommand(epicsSearchCmd)
 	rootCmd.AddCommand(epicsCmd)
 }
 
 func runEpicsSearch(cmd *cobra.Command, args []string) error {
 	cmd.SilenceUsage = true
-	env, err := factoryEnvLoad()
+	allowed := []string{"id", "name", "title", "process_status", "url", "description", "matched", "similarity", "system"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
+	env, err := cliEnvLoad()
 	if err != nil {
 		return err
 	}
@@ -67,10 +69,15 @@ func runEpicsSearch(cmd *cobra.Command, args []string) error {
 			item["url"] = strings.TrimRight(base, "/") + path
 		}
 	}
-	if epicsSearchJSON {
-		return writeSearchJSON(cmd.OutOrStdout(), data)
+	defaults := []string{"id", "name", "process_status", "url"}
+	items, err = selectSearchItems(cmd, items, defaults, allowed, []string{"id"})
+	if err != nil {
+		return err
 	}
-	return writeEpicSearchHuman(cmd.OutOrStdout(), searchItems(data))
+	if epicsSearchJSON {
+		return writeSearchJSON(cmd.OutOrStdout(), map[string]any{"query": data["query"], "items": items})
+	}
+	return writeEpicSearchHuman(cmd.OutOrStdout(), items)
 }
 
 func writeEpicSearchHuman(out io.Writer, items []map[string]any) error {
@@ -79,11 +86,12 @@ func writeEpicSearchHuman(out io.Writer, items []map[string]any) error {
 		return nil
 	}
 	for _, item := range items {
-		id := str(item, "code")
-		if id == "" {
-			id = fmt.Sprintf("#%v", item["id"])
+		id := fmt.Sprintf("#%v", item["id"])
+		fmt.Fprintf(out, "%s [%s] %s", id, orDash(str(item, "process_status")), str(item, "name"))
+		if _, exists := item["matched"]; exists {
+			fmt.Fprintf(out, " (%s)", searchMatched(item))
 		}
-		fmt.Fprintf(out, "%s [%s] %s (%s)\n", id, orDash(str(item, "process_status")), str(item, "name"), searchMatched(item))
+		fmt.Fprintln(out)
 		if link := str(item, "url"); link != "" {
 			fmt.Fprintf(out, "  %s\n", link)
 		}

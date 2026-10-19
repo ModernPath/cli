@@ -107,8 +107,8 @@ func TestAuthStatusOfflineCatchesStaleAudience(t *testing.T) {
 // runAuthStatus returns an error when not authenticated, so a script can gate
 // on the exit code.
 func TestAuthStatusExitsNonZeroWhenNotAuthenticated(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/config.json", `{"api_url":"https://api.modernpath.ai"}`)
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json", `{"api_url":"https://api.modernpath.ai"}`)
 
 	err := captureStdout(t, func() error { return runAuthStatus(authStatusCmd, nil) })
 	if err == nil {
@@ -246,8 +246,8 @@ func TestAuthStatusDoesNotLeakToken(t *testing.T) {
 // --json owns stdout on the not-authenticated path too, and still exits
 // non-zero.
 func TestAuthStatusJSONUnauthenticatedStdoutIsPureJSON(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/config.json", `{"api_url":"https://api.modernpath.ai"}`)
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json", `{"api_url":"https://api.modernpath.ai"}`)
 
 	saved := authStatusJSON
 	authStatusJSON = true
@@ -270,8 +270,8 @@ func TestAuthStatusJSONUnauthenticatedStdoutIsPureJSON(t *testing.T) {
 // The exit-code contract holds when the command is reached the real way —
 // through the Cobra tree — not only by calling runAuthStatus directly.
 func TestAuthStatusExitCodeRoutesThroughCobra(t *testing.T) {
-	root := enterFactoryTestWorkspace(t)
-	writeFactoryTestFile(t, root, ".modernpath/config.json", `{"api_url":"https://api.modernpath.ai"}`)
+	root := enterTestWorkspace(t)
+	writeTestFile(t, root, ".modernpath/config.json", `{"api_url":"https://api.modernpath.ai"}`)
 
 	savedOff, savedJSON := authStatusOffline, authStatusJSON
 	t.Cleanup(func() {

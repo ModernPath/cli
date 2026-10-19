@@ -1,76 +1,30 @@
 ---
 name: rdd-build
-description: Implement one approved SR from TODO through current lower evidence and IN_REVIEW using RED, GREEN, cleanup and regression checks. Use after normal development entry for new or changed behavior. Use rdd-verify for entered verification work and rdd-reverse-engineer-verify for eligible source-scoped baselines with existing proof.
+description: Implement behavior within a human-approved Epic plan, using red-first development and proportional cleanup and regression checks.
 ---
 
-# Build one SR slice
+# Build approved behavior
 
-Read the project `AGENTS.md`, canonical `PROCESS.md`
-(`.modernpath/rdd/PROCESS.md` in a consuming repository), selected SR,
-applicable UR acceptance content, optional epic, technical reconnaissance,
-code, tests, and current records.
+Read `PROCESS.md` and verify through the sanctioned interface that the current
+saved plan and proposed content has human implementation approval. Confirm the Epic and
+requirement IDs and remain inside approved scope. The active approved plan and
+owned requirement content are read-only during implementation and completion
+review. Surface a requested scope or acceptance change as a human decision and
+record the new work separately; do not revise the active approval in place.
 
-## Procedure
+For each behavior:
 
-1. Check that current applied normal entry approval covers the whole selected
-   delivery scope, including the Epic when selected, under `PROCESS.md`.
-   Then select exactly one `TODO` or `IN_PROGRESS` SR with current planning
-   and no active hold. A reopened baseline without that approval needs
-   planning and entry first. Under a current autopilot grant, reversible
-   local build-ahead (`PROCESS.md` §Autopilot) may precede this check; it is
-   set aside before RED and authorizes no RED evidence or status change.
-   Work on a reviewable feature branch and preserve unrelated changes.
-2. Before its first implementation iteration, establish upper RED for selected
-   UR scenarios requiring new evidence. Re-validation of previously proven
-   unchanged scenarios needs no new RED. Keep upper evidence on the UR.
-   Under an autopilot grant, a scenario's upper RED is established in the
-   batch that can make it pass (`PROCESS.md` §AI TDD inner loop).
-3. Select one unmet approved SR clause, establish its focused lower RED for the
-   expected reason, and link the stable test identity to the clause.
-4. Implement the smallest behavior that makes the focused evidence pass.
-   Capture discoveries instead of silently expanding scope.
-5. Perform requirement-scoped cleanup or record a no-op. Return to RED if the
-   cleanup exposes a correctness change.
-6. Run focused and proportional post-cleanup gates and record current SR lower
-   evidence. Separately rerun affected UR scenarios and update their upper
-   evidence, including live-browser and screenshot evidence for UI behavior.
-7. Re-evaluate the selected SR clauses and affected UR scenarios. Repeat from
-   step 3 while an unmet result is caused by approved behavior in this SR.
-8. Move the SR to `IN_REVIEW` when its lower trace passes. An affected UR moves
-   to `IN_REVIEW` only when its upper trace passes and every applicable required SR is
-   `IN_REVIEW` or `DONE`.
-9. Reconcile the affected graph and derived views. Return remaining approved
-   trace failures to `rdd-deliver` for another AI iteration. Hand fully eligible
-   `IN_REVIEW` scope to `rdd-completion-review`; do not deliver or solicit
-   completion here.
+1. Write or select a focused assertion for the approved outcome.
+2. Run it against current code and confirm the expected failure. A compile
+   error or unrelated failure is not RED evidence.
+3. Implement the smallest passing change.
+4. Run focused checks, then boundary-appropriate regression checks.
+5. Clean up without changing behavior and rerun affected checks.
+6. Preserve actual commands, outputs and tested revisions; keep RED separate
+   from passing results.
 
-Do not ask for human input inside the loop. Return to planning only when drift
-creates a new product, scope, architecture, acceptance, priority, release,
-workflow, or material technical decision. Record an external blocker exactly.
-
-The project's commit gate binds the GREEN, cleanup, and reconciliation
-commits. A RED waypoint may legitimately fail the very suite the gate runs —
-its targeted failing test is its gate, and committing it before the change
-that satisfies it is what makes red-first auditable in history. Record the
-RED evidence while the repository stands at the RED commit, so the evidence
-is pinned to the revision that produced it.
-
-Under a current autopilot grant, `PROCESS.md` §Autopilot's batch cadence
-applies: one RED commit carries a connected batch's failing tests, with a
-failing assertion for every clause the batch implements; adjacent
-actions are implemented together, and full-verifier feedback runs wait for
-closeout.
-A RED commit carries only failing tests that its next commit turns green;
-that commit lands the whole batch. To land a batch SR by SR, use one RED/GREEN
-pair per SR. A journey assertion is written in the batch that can make it
-pass. A test is never skipped, disabled or left failing to get a commit past
-the project's gate, other than the declared RED tests of a RED commit as the
-gate admits them; the gate runs on every commit as configured, even when it
-runs the full suite.
-The exit to `IN_REVIEW` in step 8 does not change.
-
-## Report
-
-Report the planning revision, RED and passing observations, code and test
-references, cleanup, final gates, status changes, discoveries, gaps, and the
-exact next skill or hold.
+Never disable or weaken tests to get past a project check. Keep security,
+authorization, tenant isolation and atomic data integrity in the first
+functioning slice. Do not claim a change is verified from code inspection
+alone. Hand complete evidence to `rdd-verify` or, when explicitly requested,
+report the bounded pass and remaining work.

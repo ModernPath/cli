@@ -43,12 +43,16 @@ type localGitRepo struct {
 
 func runInitWorkspace(cmd *cobra.Command, args []string) error {
 	if config.IsInitialized() && !force {
-		cfg, _ := config.ReadConfig()
-		printWarning("Already initialized with system: %s\n", cfg.SystemName)
-		printInfo("Use --force to reinitialize or 'modernpath docs sync' to update\n")
-		return nil
+		cfg, err := config.ReadConfig()
+		if err != nil {
+			return err
+		}
+		return writeRecord(cmd, map[string]any{"operation": "unchanged", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL})
 	}
 
+	if initJSON && systemIDFlag <= 0 && systemNameFlag == "" {
+		return fmt.Errorf("--system-id or --system is required with --json")
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -67,10 +71,11 @@ func runInitWorkspace(cmd *cobra.Command, args []string) error {
 	}
 
 	printInfo("Found %d local Git repositories:\n", len(localRepos))
-	for _, repo := range localRepos {
-		fmt.Printf("  • %s/\n", repo.Name)
+	if verbose {
+		for _, repo := range localRepos {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s/\n", repo.Name)
+		}
 	}
-	fmt.Println()
 
 	client, baseURL, err := connectInitClient()
 	if err != nil {
@@ -108,9 +113,12 @@ func runInitWorkspace(cmd *cobra.Command, args []string) error {
 		selectedSystem = full
 	}
 
-	printWorkspaceMemberMapping(localRepos, selectedSystem.WorkspaceMembers)
+	if verbose {
+		printWorkspaceMemberMapping(localRepos, selectedSystem.WorkspaceMembers)
+	}
 
 	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{
+		command:         cmd,
 		force:           force,
 		initMode:        "workspace",
 		localRepos:      localRepos,
@@ -234,16 +242,16 @@ func printWorkspaceMemberMapping(localRepos []localGitRepo, members []api.Worksp
 		return
 	}
 
-	fmt.Println("Platform ↔ local folder mapping:")
+	fmt.Fprintln(os.Stderr, "Platform ↔ local folder mapping:")
 	for _, member := range members {
 		local := matchLocalRepoFolder(localRepos, member)
 		if local == "" {
-			fmt.Printf("  • %s (%s) — no matching local folder\n", member.Slug, member.FullName)
+			fmt.Fprintf(os.Stderr, "  • %s (%s) — no matching local folder\n", member.Slug, member.FullName)
 			continue
 		}
-		fmt.Printf("  • %s (%s) → ./%s/\n", member.Slug, member.FullName, local)
+		fmt.Fprintf(os.Stderr, "  • %s (%s) → ./%s/\n", member.Slug, member.FullName, local)
 	}
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 }
 
 func matchLocalRepoFolder(localRepos []localGitRepo, member api.WorkspaceMember) string {

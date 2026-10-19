@@ -30,6 +30,7 @@ var (
 	importExclude   []string
 	importKeep      []string
 	importNoIgnore  bool
+	importJSON      bool
 )
 
 const (
@@ -99,18 +100,20 @@ func init() {
 	importCmd.Flags().StringArrayVar(&importExclude, "exclude", nil, localUploadLabel+excludeUsage)
 	importCmd.Flags().StringArrayVar(&importKeep, "keep", nil, localUploadLabel+keepUsage)
 	importCmd.Flags().BoolVar(&importNoIgnore, "no-gitignore", false, localUploadLabel+noIgnoreUsage)
+	importCmd.Flags().BoolVar(&importJSON, "json", false, "Emit the import result as JSON")
 
 	rootCmd.AddCommand(importCmd)
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
-	bold := color.New(color.Bold)
-	cyan := color.New(color.FgCyan)
+	machine, _ := cmd.Flags().GetBool("json")
+	if machine && !importYes {
+		return reportFailure(fmt.Errorf("import --json requires --yes for unattended execution"))
+	}
 
-	fmt.Println()
-	bold.Println("📦 ModernPath Import")
-	fmt.Println("═══════════════════════════════════════════════════════════")
-	fmt.Println()
+	if !machine {
+		color.New(color.Bold).Println("ModernPath Import")
+	}
 
 	// Get current directory info
 	cwd, err := os.Getwd()
@@ -119,13 +122,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	folderName := filepath.Base(cwd)
 
-	fmt.Printf("📁 Directory: %s\n", cwd)
-	if origin := detectGitRemote(); origin != "" {
-		cyan.Printf("🔗 Git remote origin: %s\n", origin)
-	} else {
-		fmt.Println("🔗 Git remote origin: none")
+	if !machine {
+		fmt.Printf("Directory: %s\n", cwd)
+		if origin := detectGitRemote(); origin != "" {
+			fmt.Printf("Git remote origin: %s\n", origin)
+		} else {
+			fmt.Println("Git remote origin: none")
+		}
 	}
-	fmt.Println()
 
 	// Get API URL and check connection
 	baseURL := getAPIURL()
@@ -155,24 +159,23 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Confirm before proceeding
-	bold.Println("📋 Import Summary")
-	fmt.Println("───────────────────────────────────────────────────────────")
-	fmt.Printf("Name:     %s\n", archName)
-	fmt.Printf("Source:   %s (packed and uploaded as a zip)\n", cwd)
-	fmt.Printf("API:      %s\n", baseURL)
-	fmt.Println()
+	if !machine {
+		fmt.Printf("Import: %s\nSource: %s\nAPI: %s\n", archName, cwd, baseURL)
+	}
 
 	ok, err := confirmAction("Proceed with import", importYes, false)
 	if err != nil {
 		return reportFailure(err)
 	}
 	if !ok {
+		if machine {
+			return writeCommandJSON(cmd, map[string]any{"imported": false, "cancelled": true})
+		}
 		printInfo("Import cancelled.\n")
 		return nil
 	}
 
-	fmt.Println()
-	return importViaUpload(baseURL, auth.Token, archName, cwd)
+	return importViaUpload(baseURL, auth.Token, archName, cwd, cmd)
 }
 
 // detectGitRemote is the URL of the checkout's origin remote, shown for
@@ -392,8 +395,7 @@ func fileCount(n int) string {
 
 // zipFiles packs exactly the given files, in memory. The set was decided by
 // collectImportFiles; zipping walks that list rather than the tree again, so
-// the archive cannot disagree with the size that was checked or the digest
-// that was computed.
+// the archive cannot disagree with the files whose size was checked.
 func zipFiles(files []importFile) (*bytes.Buffer, error) {
 	var zipBuffer bytes.Buffer
 	zipWriter := zip.NewWriter(&zipBuffer)
@@ -421,7 +423,13 @@ func zipFiles(files []importFile) (*bytes.Buffer, error) {
 // importViaUpload packs sourceDir, checks the zip against --max-size and the
 // request body against the server's upload limit (REQ-CROSS-500), and posts
 // it. Every failure is printed once and returned as a reportedError.
-func importViaUpload(baseURL, token, name, sourceDir string) error {
+func importViaUpload(baseURL, token, name, sourceDir string, output ...*cobra.Command) error {
+	var cmd *cobra.Command
+	machine := false
+	if len(output) > 0 {
+		cmd = output[0]
+		machine, _ = cmd.Flags().GetBool("json")
+	}
 	printInfo("Scanning directory...\n")
 
 	files, report, err := collectImportFiles(sourceDir, importFilterOptions{
@@ -433,7 +441,9 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	printImportReport(os.Stdout, report)
+	if !machine {
+		printImportReport(os.Stdout, report)
+	}
 
 	printInfo("Creating zip archive...\n")
 
@@ -441,7 +451,9 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	fmt.Printf("  Zip size: %s\n", byteCount(int64(zipBuffer.Len())))
+	if !machine {
+		fmt.Printf("  Zip size: %s\n", byteCount(int64(zipBuffer.Len())))
+	}
 	sizes := uploadSizes{command: "modernpath import --local", zip: zipBuffer.Bytes()}
 	if int64(zipBuffer.Len()) > int64(importMaxSizeMB)*1024*1024 {
 		return reportFailure(sizes.overMaxSize(importMaxSizeMB))
@@ -519,8 +531,18 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 		return reportFailure(fmt.Errorf("failed to parse response: %w", err))
 	}
 
-	if err := handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, result.Data.RepositoryID); err != nil {
+	if err := handleImportSuccess(baseURL, result.Data.ID, result.Data.Name, result.Data.Slug, result.Data.RepositoryID, machine); err != nil {
 		return err
+	}
+	if machine && cmd != nil {
+		return writeCommandJSON(cmd, map[string]any{
+			"imported": true, "system_id": result.Data.ID, "system_name": result.Data.Name,
+			"system_slug": result.Data.Slug, "repository_id": result.Data.RepositoryID,
+			"analysis_status": "queued", "api_url": baseURL,
+		})
+	}
+	if capabilities.appURL == "" {
+		printInfo("The server does not name its app address; links use the API host.\n")
 	}
 	printImportNextSteps(systemAppLink(capabilities.appURL, baseURL, result.Data.ID, "overview"), result.Data.RepositoryID)
 	return nil
@@ -531,41 +553,43 @@ func importViaUpload(baseURL, token, name, sourceDir string) error {
 // enclosing workspace — merging into the file's other fields (REQ-SYS-211
 // AC6). repositoryID is the upload repository `source push` targets; 0 when
 // the import created none.
-func handleImportSuccess(baseURL string, archID int, archName, archSlug string, repositoryID int) error {
-	fmt.Println()
-	printSuccess("System created successfully!\n")
-	fmt.Printf("  ID:   %d\n", archID)
-	fmt.Printf("  Name: %s\n", archName)
-	fmt.Printf("  Slug: %s\n", archSlug)
-	if repositoryID != 0 {
-		fmt.Printf("  Repository: %d\n", repositoryID)
+func handleImportSuccess(baseURL string, archID int, archName, archSlug string, repositoryID int, jsonOutput ...bool) error {
+	machine := len(jsonOutput) > 0 && jsonOutput[0]
+	if !machine {
+		printSuccess("System created: %s (system %d)\n", archName, archID)
+		if repositoryID != 0 {
+			fmt.Printf("Repository: %d\n", repositoryID)
+		}
 	}
 
 	// Save config
 	cwd, _ := os.Getwd()
 	modernpathDir := filepath.Join(cwd, ".modernpath")
 
-	if err := os.MkdirAll(modernpathDir, 0755); err == nil {
-		configPath := filepath.Join(modernpathDir, "config.json")
-		cfg := &config.Config{}
-		if existing, err := os.ReadFile(configPath); err == nil {
-			_ = json.Unmarshal(existing, cfg)
-		}
-		cfg.APIURL = baseURL
-		cfg.SystemID = archID
-		cfg.SystemName = archName
-		cfg.SystemSlug = archSlug
-		cfg.RepositoryID = repositoryID
-
-		configData, _ := json.MarshalIndent(cfg, "", "  ")
-		if err := os.WriteFile(configPath, configData, 0644); err == nil {
-			printSuccess("Config saved to .modernpath/config.json\n")
-		}
-
-		// Create .gitignore
-		gitignorePath := filepath.Join(modernpathDir, ".gitignore")
-		gitignoreContent := "# ModernPath - ignore sensitive files\nauth.json\n*.log\n"
-		os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644)
+	if err := os.MkdirAll(modernpathDir, 0755); err != nil {
+		return fmt.Errorf("system %d was created but .modernpath could not be written: %w", archID, err)
+	}
+	configPath := filepath.Join(modernpathDir, "config.json")
+	cfg := &config.Config{}
+	if existing, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(existing, cfg)
+	}
+	cfg.APIURL = baseURL
+	cfg.SystemID = archID
+	cfg.SystemName = archName
+	cfg.SystemSlug = archSlug
+	cfg.RepositoryID = repositoryID
+	configData, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(configPath, configData, 0644); err != nil {
+		return fmt.Errorf("system %d was created but binding could not be saved: %w", archID, err)
+	}
+	if !machine {
+		printSuccess("Binding saved to .modernpath/config.json\n")
+	}
+	gitignorePath := filepath.Join(modernpathDir, ".gitignore")
+	gitignoreContent := "# ModernPath - ignore sensitive files\nauth.json\n*.log\n"
+	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+		printWarning("Could not update .modernpath/.gitignore: %v\n", err)
 	}
 
 	return nil

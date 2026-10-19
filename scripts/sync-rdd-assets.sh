@@ -38,7 +38,9 @@ snapshot_root="$temporary_root/rdd"
 expected_record="$temporary_root/rdd-source.txt"
 mkdir -p "$snapshot_root"
 
+# Repository-maintenance hooks are not part of the consuming delivery kit.
 while IFS= read -r relative_path; do
+  [ "$relative_path" = .pre-commit-config.yaml ] && continue
   mkdir -p "$snapshot_root/$(dirname "$relative_path")"
   cp "$source_root/$relative_path" "$snapshot_root/$relative_path"
 done < <(git -C "$source_root" ls-files '*.md' '*.yaml' '*.yml' '*.mjs')

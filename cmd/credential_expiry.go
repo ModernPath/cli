@@ -35,11 +35,11 @@ const (
 var errCredentialLockBusy = errors.New("another process holds the credential lock")
 
 // ensureFreshCredential is the pre-call expiry step every store verb runs
-// through factoryEnvLoad (REQ-CROSS-389): inside the window it refreshes
+// through cliEnvLoad (REQ-CROSS-389): inside the window it refreshes
 // where the issuer allows, warns once per credential when it cannot, and
 // refuses before any request once expired — naming the expiry and the
 // remedy instead of letting the server answer a bare 401.
-func ensureFreshCredential(env *factoryEnv, auth *config.Auth, now time.Time) (*config.Auth, error) {
+func ensureFreshCredential(env *cliEnv, auth *config.Auth, now time.Time) (*config.Auth, error) {
 	expiry := storedExpiry(auth)
 	if expiry.IsZero() || expiry.Sub(now) > expiryWarnWindow {
 		return auth, nil

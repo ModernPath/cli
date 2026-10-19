@@ -60,6 +60,7 @@ Examples:
 func init() {
 	authStatusCmd.Flags().BoolVar(&authStatusJSON, "json", false, "Print a single JSON object on stdout and nothing else")
 	authStatusCmd.Flags().BoolVar(&authStatusOffline, "offline", false, "Do not contact the server; report only what the stored credential says")
+	addRecordReadFlags(authStatusCmd)
 	authStatusCmd.SilenceUsage = true
 	// Return an error for the exit code (below) without Cobra also printing its
 	// own "Error: …" line: the Execute() wrapper (root.go) prints it once, and
@@ -91,6 +92,10 @@ type authStatus struct {
 }
 
 func runAuthStatus(cmd *cobra.Command, args []string) error {
+	allowed := []string{"authenticated", "server", "environment", "workspace_id", "workspace_name", "issuer", "token_present", "checked_online", "detail", "actor", "system_id", "expires_at", "expires_in_seconds", "reason"}
+	if err := validateRecordSelection(cmd, allowed); err != nil {
+		return err
+	}
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		cfg = &config.Config{APIURL: config.DefaultAPIURL}
@@ -104,7 +109,27 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	st := evaluateAuthStatusAt(apiURL, cfg.SystemID, auth, authStatusOffline, time.Now())
 
 	if authStatusJSON {
-		renderAuthStatusJSON(st)
+		if !cmd.Flags().Changed("fields") && !flagIsTrue(cmd, "full") {
+			if err := writeCommandJSON(cmd, st); err != nil {
+				return err
+			}
+		} else {
+			selected, err := selectRecordFields(cmd, authStatusRecord(st), nil, allowed, []string{"authenticated"})
+			if err != nil {
+				return err
+			}
+			if err := writeCommandJSON(cmd, selected); err != nil {
+				return err
+			}
+		}
+	} else if cmd.Flags().Changed("fields") || flagIsTrue(cmd, "full") {
+		selected, err := selectRecordFields(cmd, authStatusRecord(st), nil, allowed, nil)
+		if err != nil {
+			return err
+		}
+		if err := writeRecord(cmd, selected); err != nil {
+			return err
+		}
 	} else {
 		renderAuthStatusHuman(st)
 	}
@@ -120,6 +145,27 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not authenticated: %s", st.Detail)
 	}
 	return nil
+}
+
+func flagIsTrue(cmd *cobra.Command, name string) bool {
+	value, _ := cmd.Flags().GetBool(name)
+	return value
+}
+
+func authStatusRecord(st authStatus) map[string]any {
+	data := map[string]any{"authenticated": st.Authenticated, "server": st.Server, "environment": st.Environment, "token_present": st.TokenPresent, "checked_online": st.CheckedOnline, "detail": st.Detail}
+	for key, value := range map[string]string{"workspace_id": st.WorkspaceID, "workspace_name": st.WorkspaceName, "issuer": st.Issuer, "actor": st.Actor, "expires_at": st.ExpiresAt, "reason": st.Reason} {
+		if value != "" {
+			data[key] = value
+		}
+	}
+	if st.SystemID != 0 {
+		data["system_id"] = st.SystemID
+	}
+	if st.ExpiresInSeconds != 0 {
+		data["expires_in_seconds"] = st.ExpiresInSeconds
+	}
+	return data
 }
 
 // evaluateAuthStatus decides the state without printing, so both renderers and
