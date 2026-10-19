@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.21.0 — batch reverse engineering
+
+### Upgrading from v0.20.0
+
+- Publish this CLI only after supported servers include
+  ModernPath/modernpath-v1#932 and #934. `author update --actor --outcome`
+  and `reverse-engineer refresh-traces` need the server side of those
+  changes; an older server refuses them.
+- Run `modernpath install` from each connected repository root after upgrading
+  to refresh the process kit, agent definitions and CLI guide, then
+  `modernpath install --check`.
+
+### Reverse-engineer several contexts in one session
+
+- One orchestrating session runs a context worker per bounded context. The
+  worker's instructions ship in the process kit
+  (`rdd-reverse-engineer/references/context-worker.md`); `modernpath install`
+  writes the adapters for Claude Code (`.claude/agents/rdd-context-deriver.md`,
+  `rdd-cold-reviewer.md`) and Codex (`.codex/agents/*.toml`). Cursor reads
+  both. Workers stage and hand back; only the orchestrating session writes to
+  the store.
+- `modernpath reverse-engineer check --file … | --dir …` checks draft groups
+  offline against the content-quality rules: unique ids, distinct statements,
+  required fields and citations.
+- `modernpath reverse-engineer publish --run <id> --dir <folder>` publishes
+  every group file in a folder in order, checking the folder first.
+- `modernpath reverse-engineer read-source --capture <id> --out <dir>` writes
+  a capture's files as plain files in one call, each verified against its
+  captured sha256. `--prefix` and `--paths-from` narrow the selection.
+- `reverse-engineer status --summary` and `coverage --summary` print a few
+  lines instead of the full report. `--limit` bounds the listed files.
+
+### Correct reverse-engineered requirements in place
+
+- `modernpath author update --actor --outcome` sets a user requirement's
+  actor and intended outcome after publish.
+- `modernpath reverse-engineer refresh-traces` makes a system requirement's
+  `implements` and `verifies` links match its current code and test
+  citations: it adds missing links and withdraws, with an audit entry, links
+  to files no longer cited. Citations to an earlier run's captures are
+  rebound.
+
+### Process kit
+
+- Re-pinned to req-driven-dev `2490622`. Agents stop only at human
+  decisions; merging, deploying and releasing still wait for an explicit
+  instruction.
+- Reverse-engineering rules: runs are scoped by whole repositories or
+  directories, every baselined requirement cites production code, missing
+  test citations are shown before publishing, URs state an outcome rather
+  than a template, and the mode question is asked once.
+- The publish guide names `intended_use` as the UR outcome field; an
+  `outcome` key is dropped by the server.
+
 ## v0.20.0 — simpler setup and tracked documentation updates
 
 ### Upgrading from v0.19.0
