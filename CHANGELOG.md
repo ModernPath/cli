@@ -4,6 +4,10 @@
 
 ### Upgrade and command changes
 
+- `reverse-engineer schema` reads the recording input JSON Schema from the bound
+  server. Recording instructions now query it instead of duplicating fields.
+  Deploy the matching schema endpoint before publishing this CLI.
+
 - Requires the matching server changes from ModernPath/modernpath-v1#936.
   Publish this CLI only after supported servers include those changes.
 - After upgrading, run `modernpath install` and `modernpath install --check`

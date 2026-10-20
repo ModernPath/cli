@@ -58,56 +58,46 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 	command.Flags().Bool("json", false, "emit the compact receipt as JSON")
 	_ = command.MarkFlagRequired("file")
 	root.AddCommand(command)
+	root.AddCommand(&cobra.Command{
+		Use: "schema", Short: "Read the server JSON Schema for record input", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			env, err := load()
+			if err != nil {
+				return err
+			}
+			if env.SystemID <= 0 {
+				return fmt.Errorf("connect this workspace to a system before reading its recording schema")
+			}
+			status, body, err := env.call(http.MethodGet, fmt.Sprintf("/api/v1/systems/%d/reverse-engineering/schema", env.SystemID), nil)
+			if err != nil {
+				return err
+			}
+			if status < 200 || status >= 300 {
+				return serverRefusal("schema read refused", status, body)
+			}
+			schema, ok := body["data"].(map[string]any)
+			if !ok || schema["$schema"] == nil {
+				return fmt.Errorf("schema response is missing its JSON Schema object")
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(schema)
+		},
+	})
 	addReverseAcceptanceCommands(root, load)
 	return root
 }
 
-// reverseRecordHelp is the record file's contract as the server enforces it
-// (Core.RDD.ReverseEngineering.Recording). It is the only place an agent can
-// read the field names from, so it names every accepted key.
-const reverseRecordHelp = `Record requirements and their typed traces in the bound System in one atomic
-request. The file is one JSON object with exactly two arrays:
+// reverseRecordHelp describes recording behavior; the server owns the input model.
+const reverseRecordHelp = `Record requirements and their typed traces in the bound System in one atomic request.
 
-  {"requirements": [...], "traces": [...]}
+Before constructing input, read the current server JSON Schema:
 
-A requirement object:
+  modernpath reverse-engineer schema
 
-  kind         user_requirement | system_requirement (required)
-  id           a UUID you generate; optional. Give every new requirement one,
-               because a trace in the same file names it by this id.
-  title, description, context, context_name, priority, release_note,
-  detail_md, delivered_revision
-  actor, intended_use                           (user_requirement only)
-  boundary, rationale, verification_method      (system_requirement only)
-  criteria     a list of {id?, kind: criterion | scenario, position,
-               statement (criterion) | given, when, then (scenario),
-               status?: active, introduced_in_revision?}; a scenario needs
-               given and then, a criterion needs statement
-
-A trace object:
-
-  source_type, target_type   user_requirement, system_requirement, test_case,
-                             source_file, criterion (UUID endpoints, in
-                             source_id / target_id) or system_document,
-                             file_analysis, subsystem, epic (integer
-                             endpoints, in source_integer_id / target_integer_id)
-  link_kind                  implements | verifies | derives | relates
-                             (a requirement-to-document trace must be relates)
-  id                         optional UUID
-  A source_file endpoint is named by repository_key and path (revision is
-  optional, descriptive context) instead of an id; the server resolves or
-  creates the file record. Every other endpoint must already exist in the
-  System, so an existing requirement is named by its UUID in the trace alone.
-
-Example:
-
-  {"requirements":[{"kind":"system_requirement","id":"<uuid>","title":"Catalog lookup",
-    "description":"...","boundary":"...","verification_method":"integration test",
-    "criteria":[{"kind":"criterion","position":1,"statement":"..."}]}],
-   "traces":[{"source_type":"system_requirement","source_id":"<uuid>",
-    "target_type":"source_file","repository_key":"catalog","path":"src/catalog.go","link_kind":"implements"},
-    {"source_type":"system_requirement","source_id":"<uuid>","target_type":"user_requirement",
-    "target_id":"<existing UR uuid>","link_kind":"derives"}]}
+Use that schema for accepted fields, criteria and endpoint types. Do not copy
+field lists from older instructions. The schema command requires a bound System
+and a server that supports schema discovery; a failed read has no fallback.
 
 A requirement without an id receives a fresh server UUID on every submission.
 With a supplied UUID the System does not hold, it is created with that UUID.

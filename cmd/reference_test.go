@@ -168,10 +168,7 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 	}
 	for section, keys := range map[string][]string{
 		"modernpath reverse-engineer record": {
-			"user_requirement | system_requirement", "criteria", "given, when, then", "statement",
-			"source_type", "link_kind", "implements | verifies | derives | relates",
-			"repository_key", "source_integer_id", "existing_requirement_conflict",
-			"actor, intended_use", "boundary, rationale, verification_method",
+			"modernpath reverse-engineer schema", "server JSON Schema", "existing_requirement_conflict",
 		},
 		"modernpath reverse-engineer review": {
 			`{"requirements": [{"kind"`, "missing_criterion_evidence", "test_identity_required",

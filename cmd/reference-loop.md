@@ -57,7 +57,7 @@ exact JSON it accepts.
 | Verify | `rdd-verify` | `evidence record --file` for focused, boundary and user-flow runs; read back `evidence latest`, `evidence runs --full --target-id <uuid>` |
 | Review, publish and complete | `rdd-completion-review` | `epics plan submit-review <id> --reason` (to IN_REVIEW; the approver runs it); the human decides; `epics plan approve-completion <id> --reason "USER:<date>: <answer>"`; read back `epics plan show --full --json` (`completion_approval`, `versions`) and `requirements get` (`DONE`, revision +1) |
 | Discoveries and blockers | `rdd-triage` | `backlog create --file` (`kind`: `backlog` or `gap` for product discoveries; `tooling` for missing capabilities only under the System-name rule above); `requirements obsolete <uuid> --kind … --reason`; `requirements set-context`; new scope after approval: a new Epic and plan, never an edit of the approved one |
-| Record existing behavior | `rdd-reverse-engineer` | `reverse-engineer record --file group.json`; read back `requirements get --full`, `traces list` |
+| Record existing behavior | `rdd-reverse-engineer` | `reverse-engineer schema`, then `reverse-engineer record --file group.json`; read back `requirements get --full`, `traces list` |
 | Verify existing behavior | `rdd-reverse-engineer-verify` | `evidence record --file` with `target_type: criterion` results (see `evidence record`); `reverse-engineer review --file selection.json --json > review.json` lists what still blocks acceptance under `problems` |
 | Accept existing behavior | `rdd-reverse-engineer-accept` | `reverse-engineer review … --json > review.json`; the human decides; `reverse-engineer accept --file acceptance.json`, wrapping that exact bundle with `source` and `reason` |
 

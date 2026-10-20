@@ -414,6 +414,7 @@ var leafDispositions = map[string]disposition{
 	"requirements search":               {kind: dispExecute, args: []string{"requirements", "search", "smoke", "--json"}},
 	"requirements obsolete":             {kind: dispExecute, args: []string{"requirements", "obsolete", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--reason", "smoke"}},
 	"requirements set-context":          {kind: dispExecute, args: []string{"requirements", "set-context", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--context", "snake-game"}},
+	"reverse-engineer schema":           {kind: dispExecute, args: []string{"reverse-engineer", "schema"}},
 	"reverse-engineer record":           {kind: dispExecute, args: []string{"reverse-engineer", "record", "--file", "-"}},
 	"reverse-engineer review":           {kind: dispExecute, args: []string{"reverse-engineer", "review", "--file", "-", "--json"}},
 	"reverse-engineer accept":           {kind: dispExecute, args: []string{"reverse-engineer", "accept", "--file", "-", "--json"}},
@@ -452,6 +453,10 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+		if strings.HasSuffix(r.URL.Path, "/reverse-engineering/schema") {
+			_, _ = w.Write([]byte(`{"data":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{}}`))
 	}))

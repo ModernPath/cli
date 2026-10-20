@@ -902,35 +902,27 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
 | Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
-| Reverse engineering | `reverse-engineer record/review/accept` |
+| Reverse engineering | `reverse-engineer schema/record/review/accept` |
 | Agent integration | `install`, `hooks` |
 | Development | `dev run`, `dev setup`, `dev list`, `dev review` |
 
 `dev review` inspects the current Git diff.
 
-`modernpath reverse-engineer record --file <JSON|->` sends native requirements
-and their traces to the bound system in one request. The JSON object contains
-`requirements` and `traces` arrays and nothing else. A requirement names its
-`kind` (`user_requirement` or `system_requirement`), an optional UUID `id`
-(give every new requirement one so a trace in the same file can name it), its
-content fields (`title`, `description`, `context`, `context_name`, `priority`,
-`release_note`, `detail_md`, `delivered_revision`, plus `actor` and
-`intended_use` for a user requirement or `boundary`, `rationale` and
-`verification_method` for a system requirement) and `criteria` (`kind`
-`criterion` with a `statement`, or `scenario` with `given`, `when`, `then`).
-A trace names `source_type`, `target_type`, `link_kind` (`implements`,
-`verifies`, `derives`, `relates`) and its endpoints by UUID (`source_id`,
-`target_id`) or integer (`source_integer_id`, `target_integer_id` for
-`system_document`, `file_analysis`, `subsystem`, `epic`). A trace with a
-`source_file` endpoint supplies `repository_key`, `path`, and optional `revision`
-instead of a file endpoint ID; the server resolves the file internally. New
-requirements are recorded as `PROPOSED`; a requirement whose id the System
-already holds is reused when the content matches and refused when it differs.
-The command reads the supplied JSON and posts it directly; it does not inspect
-a repository checkout or require a run, content digest or proof report.
-`modernpath reverse-engineer record --help` and the installed
-`.modernpath/cli-reference.md` carry the complete field list and the refusals.
-Implementation: `CODE:tools/modernpath/cmd/reverse_engineer.go`.
+`modernpath reverse-engineer record --file <JSON|->` sends native requirements,
+and their traces to the bound system in one request.
+Before constructing input, query the server's current JSON Schema:
+
+```sh
+modernpath reverse-engineer schema > recording-schema.json
+```
+
+Use that schema for requirement content, criteria and trace endpoints. The
+command reads the authenticated bound System and prints the schema directly;
+failed reads report an error rather than falling back to a copied model. This
+requires a server version that exposes recording schema discovery.
+New requirements are recorded as `PROPOSED`. The command reads the supplied JSON and
+posts it directly; it does not inspect a repository checkout or require a run,
+content digest or proof report. Implementation: `CODE:tools/modernpath/cmd/reverse_engineer.go`.
 
 Select recorded requirements by native kind and UUID to review their current
 content, traces, criteria and evidence:
