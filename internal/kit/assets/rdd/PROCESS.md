@@ -5,7 +5,7 @@ This document defines the delivery process. Skills apply it. The project's sanct
 ## Canonical model
 
 ```text
-EPIC -> optional UR/SR requirements -> native code and test references
+EPIC -> required UR/SR requirements -> native code and test references
 UR -> acceptance scenario -> TEST_CASE -> TEST_RESULT
 UR acceptance scenario -- may require --> SR
 SR -> CODE -> TEST_CASE -> TEST_RESULT
@@ -18,6 +18,16 @@ UR/SR: PROPOSED -> IN_PROGRESS -> IN_REVIEW -> DONE
 Human decisions: implementation approval -> completion approval
                  or explicit acceptance of verified existing behavior
 ```
+
+Every product Epic must include one or more native UR/SR requirements that
+cover its in-scope behavior, with explicit acceptance criteria and planned
+code/test traces before implementation approval. Use URs for user outcomes
+and SRs for system behavior as applicable; both kinds are not required for
+every Epic. Acceptance checks written only in a saved plan do not substitute
+for native requirements. Small changes have no exemption. During delivery,
+connect those requirements to actual implementation and criterion-level test
+evidence before completion review. Meta-work remains outside the product
+loop under `AGENTS.md` §Product work and meta-work.
 
 The Epic is the normal unit of authorized delivery. Requirements express
 behavior and link to implementation and evidence; they do not replace the
@@ -88,7 +98,9 @@ The approved Epic plan, its scope and the owned requirement content are read-onl
 through `IN_PROGRESS` and `IN_REVIEW`. Do not revise an active approval in place
 or treat a new request as permission to edit it. Surface a requested scope or
 acceptance change as a human decision and record the new work separately;
-implementation continues only within the approved scope.
+implementation continues only within the approved scope. New work requires
+its own saved plan and human implementation approval; unaffected authorized
+implementation may continue.
 
 `IN_REVIEW` means implementation is complete and awaits human completion
 approval. The ownership lock, approved proposal and prior published requirement
@@ -261,7 +273,12 @@ existing ownership and constraints, then verify each relevant match in its
 source. A source inventory is not an implementation plan. For persisted or
 shared state, inspect the actual writers, readers, existing data shapes,
 partial-failure behavior and recovery; document the risks and mitigation in
-the saved plan. Do not replace reconnaissance with a citation list.
+the saved plan. Do not replace reconnaissance with a list of source links.
+
+A plan with no native requirements, uncovered in-scope behavior, missing
+criteria or missing planned code/test traces is not ready for implementation
+approval. Return it to planning rather than approving plan-only acceptance
+checks.
 
 An independent cold review checks the saved plan against its sources, scope,
 acceptance, architecture, state boundaries, risks and test strategy. Record
@@ -296,7 +313,7 @@ gap.
 | Review, publish and complete | `rdd-completion-review` | Human-approved content atomically published/versioned/audited, ownership released, or incomplete work reported |
 | Verify existing behavior | `rdd-reverse-engineer-verify` | Current PROPOSED content traced to existing behavior and complete applicable test outcomes recorded; no lifecycle transition |
 | Accept existing behavior | `rdd-reverse-engineer-accept` | Exact verified targets explicitly accepted by a human and atomically published as DONE, or left PROPOSED with the tooling gap reported |
-| Discoveries and blockers | `rdd-triage` | Discovery routed into the saved plan or reported as a decision/blocker |
+| Discoveries and blockers | `rdd-triage` | Discovery routed into a draft plan or reported as a separate-work decision/blocker; active approvals preserved |
 
 A focused pass is a handoff, not whole-task completion. Stop when its exit is
 reached and report what remains.
@@ -322,12 +339,14 @@ failures; do not restore removed machinery, invent replacements, weaken tests
 of retained behavior or manufacture RED/GREEN evidence.
 
 If an upper/user-flow failure remains after lower-level requirements pass,
-diagnose it. Repeat the loop when it is within approved behavior. Return to
-planning and obtain renewed approval when fixing it requires changed scope,
-acceptance, architecture, priority or a material technical decision. Record an
-external impediment as blocked. UI evidence requires the live stack, loaded
-assets and inspected browser output; never mutate production-like data to
-verify rendering.
+diagnose it. Repeat the loop when it is within approved behavior. If fixing it
+requires changed scope, acceptance, architecture, priority or a material
+technical decision, keep the active approved plan and owned requirements
+read-only, surface the change as a human decision and record new work
+separately for its own plan and human implementation approval. Continue
+unaffected work within the active approved scope. Record an external impediment
+as blocked. UI evidence requires the live stack, loaded assets and inspected
+browser output; never mutate production-like data to verify rendering.
 
 ### Delegated passes
 
@@ -400,7 +419,7 @@ tooling gap and leave the item explicitly incomplete.
 
 | Discovery | Route |
 |---|---|
-| New behavior or changed user outcome | Add sourced scope to the Epic plan and obtain renewed human implementation approval before affected work |
+| New behavior or changed user outcome | Revise the saved plan only while the Epic is PROPOSED and obtain human implementation approval; after approval, preserve the active plan and owned requirements and record new work separately for its own plan and human approval, continuing unaffected authorized work |
 | Missing human decision or ambiguous intent | Ask the human and record the answer with its source before relying on it |
 | Technical failure inside approved behavior | Continue red-first implementation and verification |
 | External impediment | Report the blocker, its owner and the next action |

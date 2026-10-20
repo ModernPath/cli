@@ -44,8 +44,8 @@ Epic delivery path.
 `skills/rdd-audit/SKILL.md` is a shared utility invoked by other passes, not a phase.
 
 Read relevant product documents and inspect their cited code and tests. A
-citation or file audit establishes that a source can be opened; it does not
-show that the source supports the claim. Keep source text, code/test links and
+valid Trace establishes a relationship; inspect its endpoints and source
+material to establish support for a claim. Keep source text, code/test links and
 process identity distinct.
 
 ## Product work and meta-work
@@ -86,11 +86,7 @@ verify Git, PR and deployment state separately before making those claims.
 
 ## Repository checks
 
-This source repository's pre-commit configuration runs the existing shared
-audit test suite with `node --test skills/rdd-audit/audit-citations.test.mjs`.
-Install it with `prek install --prepare-hooks`. The hook clears Git
-repository/index variables before tests create their own temporary repositories;
-otherwise an outer commit can redirect fixture Git operations. It supplies the missing
-configuration needed by the required hook installation, without changing the
-consuming project's checks or adding a delivery protocol. Process edits also
-require review of internal links and competing instruction statements.
+Process edits require review of internal links and competing instruction
+statements, and `git diff --check`. Inspect native Traces and their supporting
+records through the consuming project's sanctioned interface; this repository
+has no process store or local evidence checker.

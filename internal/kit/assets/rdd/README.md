@@ -7,7 +7,7 @@ engineering and traceable evidence.
 The process traces:
 
 ```text
-EPIC -> optional UR/SR requirements
+EPIC -> required UR/SR requirements
 UR -> acceptance scenario -> TEST_CASE -> TEST_RESULT
 UR acceptance scenario -- may require --> SR
 SR -> CODE -> TEST_CASE -> TEST_RESULT
@@ -45,7 +45,7 @@ repository has no file-backed process ledger.
 |---|---|
 | `AGENTS.md` | Shared agent policy and canonical entry point |
 | `PROCESS.md` | Canonical process authority and engineering workflow |
-| `skills/` | End-to-end orchestration, autopilot, focused delivery passes, and shared citation/measurement audit |
+| `skills/` | End-to-end orchestration, autopilot, focused delivery passes, and shared Trace and evidence audit |
 
 ## Distribution
 

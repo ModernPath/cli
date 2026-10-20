@@ -662,6 +662,18 @@ Trace entity types use the stored names: `user_requirement`,
 to the System bound to the checkout. Requirement and test-case detail reads
 also verify the native entity belongs to that System.
 
+For a Trace audit, read each in-scope requirement with criteria, then enumerate
+its Traces and those touching its criteria. Use `--json` and follow every
+returned cursor with `--cursor`; an initial page is not the complete set.
+Inspect each source/relation/target tuple and read its connected records with
+the supported requirement, document, test-case and evidence commands. Open the
+referenced code and assertions. Check endpoint kind and System, relationship
+meaning, criterion coverage and the actual test observation. A valid Trace is
+not proof that a document supports intent, code implements it or a test passed.
+Report unsupported endpoint reads as tooling gaps rather than querying private
+transport. During planning assess intended targets; during verification and
+completion assess executed results and their applicability to the tested revision.
+
 Test cases are procedure records with retained title, description,
 preconditions and ordered steps. Create or update that metadata with JSON:
 

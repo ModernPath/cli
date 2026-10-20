@@ -31,7 +31,7 @@ starting product work:
      with typed traces to source files;
    - `rdd-reverse-engineer-verify` — verify existing behavior with criterion-level execution evidence;
    - `rdd-reverse-engineer-accept` — obtain explicit human acceptance and publish verified existing behavior;
-   - `rdd-audit` — shared utility the other passes invoke: resolve citations,
+   - `rdd-audit` — shared utility the other passes invoke: inspect native Traces,
      diff inventories both directions, judge whether a measurement is real.
 
 The CLI ships `mp-knowledge-search` for reading local analysis and live
@@ -41,8 +41,7 @@ the agent definition the CLI installs at `.claude/agents/rdd-cold-reviewer.md`
 session records them. The reviewer is installed for Claude Code
 (`.claude/agents/*.md`) and Codex (`.codex/agents/*.toml`), which Cursor also
 reads; its role is written for any harness. The former workspace `rdd-audit` and `rdd-reverse-engineer` are
-now package skills — the citation auditor installs at
-`.modernpath/rdd/skills/rdd-audit/audit-citations.mjs`.
+now package skills; `rdd-audit` inspects native Traces, endpoints and evidence.
 
 Project instructions may add stack, commands, architecture, domain, and safety
 rules. On conflict the process wins (see "Instruction ownership" in

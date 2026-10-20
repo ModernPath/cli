@@ -30,8 +30,7 @@ var installTargets = map[string]string{
 	// rdd-build-loop/rdd-planning/rdd-ledger/rdd-discovery/rdd-reverse-engineer/
 	// rdd-verify set; those live under assets/rdd/skills and reach
 	// .claude/skills via ClaudeSkillTargetForAsset. rdd-reverse-engineer and
-	// rdd-audit were promoted into the package (its skills/rdd-audit ships
-	// audit-citations.mjs at the canonical .modernpath/rdd path), so the
+	// rdd-audit were promoted into the package, so the
 	// package claims their .claude/skills paths too. The two ModernPath
 	// tooling skills below are not process and remain current.
 	"assets/skills/mp-knowledge-search/SKILL.md": ".claude/skills/mp-knowledge-search/SKILL.md",
@@ -116,16 +115,15 @@ var retiredInstallTargets = []string{
 	// The workspace-authored skills the consolidated package supersedes. Their
 	// SKILL.md files are retired; rdd-verify's, rdd-audit's, and
 	// rdd-reverse-engineer's paths are re-claimed by the package skills of the
-	// same names — the live-target subtraction below keeps those. The legacy
-	// audit-citations.mjs location is retired outright: the package ships the
-	// script beside skills/rdd-audit, so its canonical installed path is
-	// .modernpath/rdd/skills/rdd-audit/audit-citations.mjs and the old copy
-	// would otherwise sit stale beside the new skill forever.
+	// same names — the live-target subtraction below keeps those. Retired
+	// checker paths remain here only so upgrades remove old installations.
 	".claude/skills/rdd-build-loop/SKILL.md",
 	".claude/skills/rdd-planning/SKILL.md",
 	".claude/skills/rdd-discovery/SKILL.md",
 	".claude/skills/rdd-verify/SKILL.md",
 	".claude/skills/rdd-reverse-engineer/audit-citations.mjs",
+	".modernpath/rdd/skills/rdd-audit/audit-citations.mjs",
+	".modernpath/rdd/skills/rdd-audit/audit-citations.test.mjs",
 	".modernpath/rdd/compat/PROCESS.md",
 	".modernpath/rdd/compat/platform.md",
 	".modernpath/rdd/process/interview-flows.md",

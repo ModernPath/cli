@@ -13,6 +13,9 @@ Check that:
 
 - the user outcome, scope and exclusions are explicit and consistent with
   authoritative sources;
+- one or more native UR/SR requirements cover all in-scope behavior, with
+  explicit criteria and planned code/test traces; an empty requirement set
+  or plan-only acceptance checks is a material finding;
 - acceptance and requirement links trace to the intended behavior using
   native identities;
 - reconnaissance covers affected state, interfaces, integrations, failure
@@ -23,7 +26,7 @@ Check that:
 - material security, data-integrity, operational, migration and testability
   concerns are addressed.
 
-A file citation resolving is not proof that it supports the claim. Open the
+A source link resolving is not proof that it supports the claim. Open the
 source and assess the connection. Report findings with severity, the precise
 claim or plan section, inspected evidence and a concrete correction. The
 orchestrator updates and resubmits a materially changed plan. Do not implement,

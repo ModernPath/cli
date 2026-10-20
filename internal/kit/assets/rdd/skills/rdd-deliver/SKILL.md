@@ -12,7 +12,7 @@ the human-selected Epic and its latest saved plan before acting.
 2. Establish sources and scope with `rdd-discover` when needed; save the plan
    with `rdd-plan`.
 3. Obtain an independent plan review with `rdd-cold-review`. Resolve material
-   findings and save a revised plan when needed.
+   findings and revise the draft plan before implementation approval.
 4. Present the exact saved plan and proposed content for human implementation approval
    with `rdd-entry-review`. Do not implement before approval.
 5. Implement red-first with `rdd-build`, then run `rdd-verify` for required
@@ -22,7 +22,10 @@ the human-selected Epic and its latest saved plan before acting.
    content, raises revisions, records audit and releases ownership atomically.
 
 Keep all work inside the approved Epic. A material scope or acceptance change
-returns to planning for a revised plan and renewed approval. Report blockers,
-assumptions, excluded work and evidence honestly. A focused skill exit is a
-handoff, not completion. Never infer completion from code, tests, review or
-publication alone.
+may revise its saved plan only while the Epic is `PROPOSED`. Once implementation
+is approved, keep the active plan and owned requirements read-only, surface the
+change as a human decision and record new work separately for its own plan and
+human implementation approval. Continue unaffected work within the active
+approved scope. Report blockers, assumptions, excluded work and evidence
+honestly. A focused skill exit is a handoff, not completion. Never infer
+completion from code, tests, review or publication alone.

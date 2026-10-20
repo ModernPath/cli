@@ -8,7 +8,7 @@ to complete a template.
 
 Read maintained project guides, where available, as a human lens and preserve
 their provenance separately from code-derived findings. Adopt or extend existing documents before
-creating competing accounts. Verify code/config citations and distinguish
+creating competing accounts. Verify code/config references and distinguish
 implemented behavior from unconfirmed intent.
 
 ## Full-system output roles
@@ -34,7 +34,7 @@ sources, not a second requirement store.
 
 Preserve existing ADRs; key recovered records by slug under the established ADR
 location, defaulting to `docs/adr/NNNN-<slug>.md`. New recovered decisions are
-`observed`, never fabricated ratification. A code citation proves an implemented
+`observed`, never fabricated ratification. A code reference proves an implemented
 choice, not human acceptance.
 
 Derive in-scope NFRs through the same authorized requirement route. Consider

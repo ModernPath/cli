@@ -1,120 +1,75 @@
 ---
 name: rdd-audit
-description: Check document claims, source citations, and inventory completeness against direct evidence. Use within reverse-engineering, planning review, or completion review, or for an explicitly requested document audit. Reports verified findings and measurement limits; does not assign lifecycle state or authorize changes.
+description: Inspect native Traces, their endpoints, requirement coverage and actual evidence. Use within reverse-engineering, planning review, completion review or an explicitly requested audit. Reports findings and limits without changing lifecycle or granting approval.
 ---
 
-# Audit claims and citations
+# Audit Traces and evidence
 
 Read the project `AGENTS.md` and canonical `PROCESS.md`. This is a shared
 utility, not a delivery phase. The invoking pass owns scope and routes findings
-through `rdd-triage`. An audit request alone does not authorize document or
-implementation changes.
+through `rdd-triage`. An audit alone authorizes no record or implementation changes.
 
-## Establish the scope
+## Establish scope
 
-Identify the documents, source repositories, revisions, and claims being checked.
-Use the project's actual document locations. Separate intended behavior from
-claims about implemented behavior: code can establish the latter but cannot
-silently replace approved intent.
+Identify the native System, Epic or requirements and the criteria being checked.
+Read current records and Traces through the project's sanctioned interface.
+Use native endpoint identities and kinds; never infer the corpus from local
+files or recreate retired ledgers. If a required read is unavailable, report
+the tooling gap and leave the check incomplete.
 
-In a store-backed project, use its sanctioned tool for authoritative records,
-typed citations, inventory projections, and immutable source reads. Do not infer
-the requirement corpus from local snapshots or recreate retired task ledgers.
+Separate intended behavior from implemented behavior. Code establishes the
+latter; it does not replace approved intent. For each inventory, state its
+unit, enumeration method and exclusions. Compare both directions: requirements
+without support and relevant implementation or tests without requirement coverage.
+Disclose unresolved items; counts alone do not prove semantic coverage.
 
-For each inventory, state what one item is, how it was enumerated, and which
-items are excluded with reasons. Compare both directions: entries lacking
-support and relevant source items absent from the inventory. Account for each
-item as covered, excluded with a reason, or unresolved. A disclosed unresolved
-gap remains a gap. Counts and percentages describe that population; they do not
-prove semantic coverage or authorize a lifecycle transition.
+## Inspect native Traces
 
-## Check citations
+1. Enumerate Traces touching each in-scope requirement and criterion. Follow
+   pagination to completion. Inspect both endpoints, their native kinds,
+   relationship and System scope. Report missing, invalid, cross-System or
+   wrongly related endpoints.
+2. Inspect the connected records and actual source material. Requirement-to-
+   document Traces use `relates`. Verify that the document supports the claimed
+   intent and that code implements the requirement's behavior. A valid Trace
+   establishes a relationship, not the truth of a claim.
+3. Map each UR acceptance scenario to meaningful user-outcome assertions and
+   any required SRs. Map each SR criterion to implementation, test cases and
+   actual results. During planning inspect proposed targets and expected RED
+   assertions; do not require execution evidence for unimplemented behavior.
+4. For verification and completion inspect actual results, commands/reports,
+   tested revisions, environment where relevant and assertions exercised.
+   Distinguish PASS, FAIL and SKIP. Test metadata or a source-file link does
+   not prove execution; broad suite output proves only exercised assertions.
+5. Report missing criterion coverage, unsupported relationships, contradictory
+   sources and failing or inapplicable evidence. Do not manufacture links,
+   results or coverage to complete a chain. Do not hash sources, capture
+   snapshots, require a matching checkout revision or invalidate recorded
+   requirements merely because sources changed. Assess the applicability of
+   execution evidence to the claimed behavior at its recorded revision.
 
-Use `audit-citations.mjs` beside this skill for local Markdown citations. Pass
-the actual document roots and source repositories explicitly. Substitute the
-paths and repository keys in this command:
+## Verify claims
 
-```text
-node <skill-directory>/audit-citations.mjs <document-root> --repository=<key>=<source-root>
-```
+Open the relevant declaration, callers, assertions and document context before
+reporting a defect. Account for removals, renames, disabled code and boundaries.
+Equal counts can describe different sets; inspect identities and meaning.
+Agreement among documents does not establish authority. Surface conflicting
+intent for a human decision instead of resolving it by timestamp or majority.
 
-Repeat `--repository` for multiple repositories. Git worktrees and explicitly
-declared non-Git roots are supported. A qualified reference has the form
-`CODE:repository@revision:exact/path` or `TEST:` with the same structure.
-Qualified Git revisions must match the declared checkout's HEAD; files must
-exist in that commit, regardless of working-tree changes.
-Unqualified references and `@unversioned` roots use local files. Use the
-sanctioned source reader for captured dirty snapshots or other historical revisions.
-
-The checker resolves cited files for `CODE:`, `TEST:` and `DOC:`. The referenced
-file carries the requirement or other item ID it supports. Optional symbol,
-line, test-name and heading suffixes are ignored. The checker does not read
-source contents or match strings within them. File resolution does not establish
-that the source supports a claim or that a test executed.
-
-Describe missing artifacts as gaps in prose. Do not prefix an absent path with
-`CODE:` or `TEST:` as though it were supporting evidence. Nearby words such as
-“no” or “missing” do not exempt a citation from checking.
-
-Teaching examples may use the per-line `<!-- example-citation -->` marker or
-an `example-citation` fenced block. Those references are reported as skipped,
-never included in the checked denominator. Prompt directories are guarded by
-the checker; use `--force-prompts` only for an intentional review of their
-examples and real references.
-
-The checker uses these exit statuses:
-
-- `0`: the file-resolution check passed and the minimum citation count was met.
-- `1`: broken, ambiguous, unsupported, or elided references, or fewer than
-  `--min=N` citations checked.
-- `2`: a requested document target is missing, the source inventory is invalid,
-  or a guarded prompt target was refused.
-
-Exit `2` means the audit could not run on the requested inputs. Retain the error,
-correct the inputs or invocation, and rerun; it is not a pass or an automatic
-skip. The default minimum is one; `--min` is a citation-count guard against an
-empty or incomplete scan, not an extraction-coverage threshold. Establish an
-expected citation count independently before using a higher minimum.
-
-## Verify meaning and measurement
-
-Open each suspected defect and check the full relevant expression, declaration,
-caller, and document context before reporting it. Distinguish a documented
-exclusion or intended future behavior from an incorrect claim of current behavior.
-
-Check claims about complete sets against an independently enumerated population.
-Account for removals, renames, disabled code, nested route prefixes, and other
-language-specific constructs where they affect that population. Verify named
-references in addition to counts; equal counts can describe different sets.
-
-Validate a new or changed checker against both known-good and known-bad inputs.
-Check exit status, selected inputs, and actual output. Neither a high failure
-rate nor a clean first run establishes whether the checker is correct. Keep
-uninspected detector hits separate from confirmed findings.
-
-Compare related documents to locate disagreements, then resolve factual claims
-against authoritative sources. Agreement among several documents does not make
-their claim authoritative. Do not resolve conflicting intent by majority or
-timestamp.
-
-For published copies, use the sanctioned publication/read-back route and compare
-content or digests at the relevant revision. Content length alone cannot establish
-equality. Check applicable runbook commands, configuration, document links, and
-indexes against their actual targets.
+Use the project's supported source readers and ordinary repository files.
+Unavailable historical material is a disclosed limit, not a reason to recreate
+retired source-capture machinery. Keep uninspected findings separate from
+confirmed defects. If checking published copies, use the sanctioned read-back
+route and compare actual content; length alone does not prove equality.
 
 ## Report
 
-Report the inspected scope and revisions, inventory units and counts, checked
-citations, confirmed findings with direct sources, exclusions, and unresolved
-or unsupported checks. State what was checked and held as well as what failed.
-Preserve command output and exit codes for measurements used by a gate.
+Report native scope, inspected Trace identities and endpoints, criterion-level
+coverage, sources and actual test observations. Include confirmed findings,
+exclusions, unresolved checks and command outcomes. State what each observation
+proves and its limits. Route findings through the invoking pass; an audit does
+not change lifecycle, resolve a gap or authorize implementation or completion.
 
-Route findings through the invoking pass and the sanctioned process store when
-they affect process records. A report does not itself change a requirement,
-resolve a gap, approve a decision, or waive missing evidence.
-
-After an authorized correction, search the audited documents and relevant
-repositories for other occurrences of the corrected claim and its identifiers,
-including examples, configuration, and templates. Verify each occurrence
-against current sources before editing. Correct only within the authorized
-scope and report findings outside it. Recheck affected claims after changes.
+After an authorized correction, check related records, instructions and
+published copies for the same defect within scope. Recheck affected Traces and
+claims; disclose findings outside the authorized work.

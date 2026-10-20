@@ -17,6 +17,11 @@ interface for all process reads.
 2. For the Epic path, confirm the user-selected Epic by its native ID. If none
    is selected, ask which one to work on. Read the Epic, its latest saved plan, implementation approval,
    lifecycle, linked requirements, recent evidence and completion state.
+   If a draft Epic has no native requirements, or its requirements lack
+   behavior coverage, criteria or planned code/test traces, route to
+   `rdd-plan` before approval. If already approved with these gaps, surface
+   the conflict for a human decision; do not silently edit approved content
+   or treat plan-only checks as sufficient.
 3. For an explicit existing-behavior pass, read the native System and
    requirement IDs, current content, criteria, traces, evidence and ownership
    from the sanctioned interface. Route recording to `rdd-reverse-engineer`,

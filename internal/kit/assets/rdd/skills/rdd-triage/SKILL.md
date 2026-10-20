@@ -12,9 +12,13 @@ source, code and test evidence. Preserve native IDs.
    or scope, implementation defect, external blocker, contradictory source,
    or future work outside the Epic.
 2. Continue red-first work for a defect within approved behavior.
-3. Route a material change in user outcome, acceptance, architecture or scope
-   back to `rdd-plan`; affected implementation waits for a revised saved plan
-   and renewed human approval.
+3. For a material change in user outcome, acceptance, architecture or scope,
+   revise the saved plan through `rdd-plan` only while the Epic is `PROPOSED`;
+   implementation waits for human approval. Once implementation is approved,
+   keep the active plan and owned requirements read-only, surface the change
+   as a human decision and record new work separately for its own plan and
+   human implementation approval. Continue unaffected work within the active
+   approved scope.
 4. Ask the human to resolve intent that sources cannot establish. Record the
    decision through the sanctioned interface before relying on it.
 5. Disclose blockers, assumptions and deferred work. Do not silently add

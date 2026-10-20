@@ -13,7 +13,7 @@ Epic, later proposal or remembered approval.
 Check the outcome, scope, exclusions, native requirement identities, criteria
 and traces against authoritative product sources and actual code. Review each
 affected writer, reader, boundary and failure mode. Verify source claims by
-reading them; a citation's existence does not establish support.
+reading them; a Trace's existence does not establish support.
 
 For implementation, check authorization, tenant isolation, atomic ownership,
 accepted-content preservation, immutable versions and audit history where

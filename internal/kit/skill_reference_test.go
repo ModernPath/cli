@@ -20,7 +20,7 @@ import (
 // shape of an extraction. `rdd-audit` was split out of `rdd-reverse-engineer`,
 // which then kept two "→ rdd-audit, §…" redirects where the content used to be.
 // The pointer shipped; the target did not. An agent in the consuming repo
-// follows the arrow to the citation sweep and finds nothing — and nothing errors,
+// follows the arrow to the Trace audit and finds nothing — and nothing errors,
 // because a missing skill is silence, not a failure.
 //
 // So this check runs the other way: enumerate what the corpus REFERENCES and

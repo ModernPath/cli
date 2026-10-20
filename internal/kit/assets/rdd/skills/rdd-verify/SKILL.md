@@ -21,8 +21,12 @@ revision and the work remains within approved scope.
 4. Link each result to its native requirement, test identity and exact code
    revision. Broad suite output proves only exercised assertions. Do not
    reconstruct evidence or mark a skipped test as passing.
-5. Report failures as implementation work within approved behavior, or route
-   material scope/acceptance changes back to `rdd-plan` for renewed approval.
+5. Report failures within approved behavior as implementation work. For a
+   material scope or acceptance change, keep the active approved plan and
+   owned requirements read-only, surface the change as a human decision and
+   record new work separately for its own plan and human implementation
+   approval. Continue unaffected implementation and verification within the
+   active approved scope.
 
 Do not claim completion here. Hand the passing candidate and evidence to
 `rdd-completion-review`; if the process interface cannot store or read back
