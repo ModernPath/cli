@@ -102,6 +102,12 @@ Hook installation and removal clean up obsolete ModernPath entries while
 preserving project hooks. `modernpath hooks doctor` reports any remaining
 obsolete entries; JSON output includes `retired_hooks` for each agent.
 
+Pi uses a generated `.pi/extensions/modernpath.ts` extension. It forwards each
+user prompt to the context hook and adds returned context as a hidden message
+only when the hook succeeds. Pi loads project extensions after project trust
+approval; use `pi --approve` for one run or accept Pi’s trust prompt. Hook
+status and doctor report configuration, which alone does not prove execution.
+
 ### Upgrade
 
 #### macOS and Linux

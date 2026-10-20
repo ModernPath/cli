@@ -936,6 +936,10 @@ func runHooksStatus(cmd *cobra.Command, args []string) error {
 		printSuccess("Context hook: configured; review /hooks in Codex to confirm activation\n")
 	}
 
+	if contextFamilyState(hookAgents["pi"]) == hookStateConfigured {
+		printInfo("Pi: project .pi/ loads only after the project is trusted; configuration alone does not prove execution.\n")
+	}
+
 	// Check modernpath init
 	fmt.Printf("ModernPath: initialized=%t\n", config.IsInitialized())
 

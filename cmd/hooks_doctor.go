@@ -468,8 +468,15 @@ func runHooksDoctor(cmd *cobra.Command, args []string) error {
 		if agent.name == "Pi" && hasRetiredPiHook(agent) {
 			printWarning("Pi: retired managed check/your-move hooks remain in %s — re-run 'modernpath hooks install'.\n", piExtensionPath(agent))
 		}
-		raw, err := os.ReadFile(agent.configPath)
 		// Pi loads project extensions even without its optional settings file.
+		if agent.name == "Pi" {
+			for _, f := range hookFamiliesFor(agent) {
+				reportHookFamily(agent.name, f)
+			}
+			printInfo("Pi: project .pi/ loads only after the project is trusted.\n")
+			continue
+		}
+		raw, err := os.ReadFile(agent.configPath)
 		if err != nil {
 			printWarning("%s: no hooks configured (%s)\n", agent.name, agent.configPath)
 			continue
@@ -486,9 +493,6 @@ func runHooksDoctor(cmd *cobra.Command, args []string) error {
 			for _, f := range hookFamiliesFor(agent) {
 				reportHookFamily(agent.name, f)
 			}
-		}
-		if agent.name == "Pi" {
-			printInfo("Pi: project .pi/ loads only after the project is trusted.\n")
 		}
 
 		if strings.Contains(text, agent.scriptName) {

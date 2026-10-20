@@ -1,6 +1,6 @@
 package cmd
 
-// Pi (https://pi.dev) has no Claude-style hooks JSON. The four families land
+// Pi (https://pi.dev) has no Claude-style hooks JSON. Context hooks land
 // as one generated TypeScript extension that calls the installed CLI — the
 // same "no tracked script" rule as the other agents. Skills are a settings
 // pointer at the copies `modernpath install` already writes under
@@ -158,13 +158,15 @@ func piExtensionState(agent agentConfig, marker string) hookFamilyState {
 		return hookStateInvalid
 	}
 	text := string(raw)
+	matches := strings.Contains(text, marker) ||
+		(marker == contextHookMarker && strings.Contains(text, `["context", "--hook", "UserPromptSubmit"]`))
 	if !strings.Contains(text, piManagedHeader) {
-		if strings.Contains(text, marker) {
+		if matches {
 			return hookStateLegacy
 		}
 		return hookStateAbsent
 	}
-	if strings.Contains(text, marker) {
+	if matches {
 		return hookStateConfigured
 	}
 	return hookStateAbsent
@@ -198,11 +200,14 @@ func piExtensionSource() string {
 import { spawnSync } from "node:child_process";
 
 export default function (pi) {
-  pi.on("before_agent_start", () => {
+  pi.on("before_agent_start", (event) => {
+    if (typeof event.prompt !== "string" || !event.prompt) return;
     try {
       const result = spawnSync("modernpath", ["context", "--hook", "UserPromptSubmit"], {
+        input: JSON.stringify({ prompt: event.prompt }),
         encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], timeout: 30000,
       });
+      if (result.status !== 0 || result.error) return;
       const context = JSON.parse(result.stdout || "{}")?.hookSpecificOutput?.additionalContext || "";
       if (!context) return;
       return { message: { customType: "modernpath", content: context, display: false } };
