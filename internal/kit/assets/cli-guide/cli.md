@@ -494,6 +494,36 @@ The receipt includes `id`, `requirement_kind`, `display_ref`, `title`,
 `epics plan save`; propose acceptance criteria and further content there.
 Creating a requirement does not approve implementation or completion.
 
+### Obsolete an unpublished requirement
+
+Use the explicit lifecycle operation when an unowned requirement is no longer
+needed. The server accepts `PROPOSED`, `BLOCKED` and `DEFERRED` requirements,
+records the authenticated actor and required reason in the audit trail, and
+rejects requirements owned by active Epic work or requirements with a published
+accepted version. Obsoletion preserves the requirement content, criteria and
+traces.
+
+```sh
+modernpath requirements obsolete <uuid> --kind system --reason "The interface was removed"
+```
+
+### Set a requirement's grouping context
+
+`context` and `context_name` are current grouping metadata. They can change on
+`DONE` requirements without changing status, revision, criteria, traces or
+immutable accepted versions. Existing accepted versions retain the context
+values they recorded; newly accepted versions omit grouping metadata. The
+current requirement row can therefore have a newer grouping value than an
+older accepted snapshot. Active implementation work rejects regrouping.
+
+```sh
+modernpath requirements set-context <uuid> --kind system --context snake-game --context-name "Snake game"
+modernpath requirements set-context <uuid> --kind system --context shifts
+```
+
+When omitted, `--context-name` defaults to the `--context` value. The server
+records the actor and old/new grouping values in the requirement audit trail.
+
 ### Find synced requirements
 
 Use `requirements list` to read compact requirement summaries from the
@@ -846,7 +876,7 @@ Run each command's `--help` for the current flags and registered children.
 | Current work visibility | `focus` |
 | Knowledge | `search`, `ask`, `context`, `read-doc`, `read-file`, `docs`, `system-docs`, `datamodel` |
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
-| Native requirements | `requirements create`, `requirements list`, `requirements search`, `requirements get` |
+| Native requirements | `requirements create`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
 | Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
@@ -918,3 +948,14 @@ Contributor commands:
 
 The release build targets Darwin amd64/arm64, Linux amd64/arm64, and Windows
 amd64 when the required archive tools are available.
+
+### Backlog discoveries
+
+`modernpath backlog create --file discovery.json --json` adds an attributed
+`OPEN` record to the bound System. Use `--file -` for stdin. Input requires
+`title`; optional `kind` is `backlog` (default), `gap` or `tooling`. Gaps require
+`gap_kind` of `capability` or `specification`. See
+[Backlog](../../docs/features/backlog.md) for content fields and mock-data examples.
+Read back with `modernpath backlog list --json` and
+`modernpath backlog get <uuid> --full --json`. List output supports `--limit`
+and `--offset`; detail output supports `--fields` or `--full`.

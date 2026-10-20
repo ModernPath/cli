@@ -100,7 +100,7 @@ func TestMergeManagedBlockRefusesDuplicateBlocks(t *testing.T) {
 // REQ-CROSS-478 (EPIC-TOOL-CLEANUP): the three places the CLI installs that
 // tell an agent where codebase knowledge comes from state one local-first
 // order — a repository search for the requirement id, code and tests; the
-// working-set pull; the docs export — and `modernpath ask` only for the why
+// docs export — and `modernpath ask` only for the why
 // and how the local search cannot answer. The skill once said only "rg the
 // export", so an agent went to the export before the code it was changing.
 func TestKnowledgeAssetsStateOneLocalFirstOrder(t *testing.T) {

@@ -38,7 +38,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"env", "list"}, {"env", "test"},
 		{"dev", "review"}, {"epics", "list"}, {"epics", "get"}, {"epics", "create"},
 		{"epics", "specs", "generate"}, {"epics", "specs", "status"}, {"epics", "specs", "list"}, {"epics", "specs", "pull"}, {"epics", "specs", "push"},
-		{"requirements", "get"}, {"requirements", "create"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
+		{"requirements", "get"}, {"requirements", "create"}, {"requirements", "obsolete"}, {"requirements", "set-context"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
 		{"evidence", "record"}, {"evidence", "runs"}, {"evidence", "latest"},
 	}
 
@@ -370,6 +370,9 @@ const (
 
 // Each current leaf is classified against the retained command tree below.
 var leafDispositions = map[string]disposition{
+	"backlog create":                    {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
+	"backlog list":                      {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
+	"backlog get":                       {kind: dispExecute, args: []string{"backlog", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
 	"auth status":                       {kind: dispExecute},
 	"context":                           {kind: dispExecute, args: []string{"context", "smoke query"}},
@@ -409,6 +412,8 @@ var leafDispositions = map[string]disposition{
 	"read-file":                         {kind: dispExecute, args: []string{"read-file", "lib/app.ex"}},
 	"requirements list":                 {kind: dispExecute, args: []string{"requirements", "list", "--json"}},
 	"requirements search":               {kind: dispExecute, args: []string{"requirements", "search", "smoke", "--json"}},
+	"requirements obsolete":             {kind: dispExecute, args: []string{"requirements", "obsolete", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--reason", "smoke"}},
+	"requirements set-context":          {kind: dispExecute, args: []string{"requirements", "set-context", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--context", "snake-game"}},
 	"reverse-engineer record":           {kind: dispExecute, args: []string{"reverse-engineer", "record", "--file", "-"}},
 	"reverse-engineer review":           {kind: dispExecute, args: []string{"reverse-engineer", "review", "--file", "-", "--json"}},
 	"reverse-engineer accept":           {kind: dispExecute, args: []string{"reverse-engineer", "accept", "--file", "-", "--json"}},
@@ -520,6 +525,9 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		before := requests
 		resetTreeFlags(rootCmd) // do not inherit another test's flag state
 		rootCmd.SetArgs(args)
+		if name == "backlog create" {
+			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke discovery"}`))
+		}
 		if name == "reverse-engineer record" {
 			rootCmd.SetIn(strings.NewReader(`{"requirements":[],"traces":[]}`))
 		}

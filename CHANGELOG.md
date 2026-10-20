@@ -42,6 +42,8 @@
 - `traces list` reads typed native associations. `test-cases` manages test
   procedures, while `evidence record`, `evidence latest` and `evidence runs`
   record and inspect execution results against native targets.
+- Add `backlog create`, `backlog list` and `backlog get` for attributed, System-scoped discoveries through the authenticated Backlog API.
+
 - `read-doc` applies cursor, order and limit validation to every paginated read,
   including calls without a filter or `--list`.
 

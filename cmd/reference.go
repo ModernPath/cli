@@ -134,9 +134,8 @@ type inheritedFlags struct {
 
 // inheritedFlagTables returns the persistent flags a subcommand inherits,
 // grouped by the ancestor that declares them, nearest first. Without this a
-// group's persistent flag was printed only on the group — `--piece` is
-// declared on `process` and on `working-set`, so `working-set pull --piece`
-// was a documented flag that appeared in no verb's table (BACKLOG-TOOL-68).
+// group's persistent flag was printed only on the group, leaving inherited
+// flags absent from the subcommand's table (BACKLOG-TOOL-68).
 // The root's own persistent flags are deliberately not repeated here: they
 // apply to every verb and the reference lists them once under "Global flags",
 // so echoing them under all ~90 sections would be noise, not information.
