@@ -7,7 +7,7 @@ starting product work:
 1. `.modernpath/rdd/AGENTS.md` — binding shared agent rules;
 2. `.modernpath/rdd/PROCESS.md` — the canonical process: authority, items,
    traces, lifecycles, planning, development, evidence and human completion. It names phases and required exits and never
-   names a verb;
+   names a command;
 3. the procedures under `.modernpath/rdd/skills/` — the path is not
    agent-specific: follow them as checklists whatever agent you are (Claude
    Code also discovers byte-identical copies under `.claude/skills/`).
@@ -33,6 +33,11 @@ starting product work:
    - `rdd-reverse-engineer-accept` — obtain explicit human acceptance and publish verified existing behavior;
    - `rdd-audit` — shared utility the other passes invoke: inspect native Traces,
      diff inventories both directions, judge whether a measurement is real.
+4. `.modernpath/cli-reference.md` — the installed `modernpath` binary's commands,
+   flags, JSON file shapes, the phase-to-command map of the loop and the refusal
+   glossary, rendered by `modernpath install` from the binary itself. The
+   skills say what a pass records; this says how. Look a command or a file
+   format up there rather than guessing it.
 
 The CLI ships `mp-knowledge-search` for reading local analysis and live
 knowledge documents. The delegated cold review runs in

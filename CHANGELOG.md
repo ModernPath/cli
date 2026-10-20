@@ -34,6 +34,23 @@
   explicit human source and reason. The server rechecks the reviewed content
   before publishing verified existing behavior.
 
+### Command reference and help
+
+- The generated `.modernpath/cli-reference.md` now opens with "Operating the
+  delivery loop": the rules every command shares, the map from each `PROCESS.md`
+  phase and rdd skill to the commands that serve it, the lifecycle as the commands
+  see it and a refusal glossary. This replaces the retired `mp-process-cli`
+  skill, which described commands that no longer exist, and the managed
+  `AGENTS.md` block now points at the reference.
+- `reverse-engineer record`, `reverse-engineer review`, `reverse-engineer
+  accept`, `epics plan` and its operations, `evidence record` and `traces
+  list` document their complete input shapes in `--help` and therefore in the
+  reference: every accepted key, its allowed values, what the server reuses or
+  refuses, and what to read back.
+- The `reverse-engineer record` receipt lists each requirement's `kind` and
+  `display_number`; it previously selected a `display_ref` key the server does
+  not return.
+
 ### Reads, test cases and evidence
 
 - Native record reads provide compact output by default, `--fields` for

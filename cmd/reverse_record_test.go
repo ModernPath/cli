@@ -67,6 +67,33 @@ func TestReverseEngineerRecordPostsNativeRequirementsWithoutRunOrRevisionProof(t
 	}
 }
 
+// The server projects display_number, not display_ref; the receipt used to
+// select a key that was never there and so printed no display reference.
+func TestReverseEngineerRecordReceiptNamesKindAndDisplayNumber(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"requirements":[{"id":"8f5ec2c0-57c1-4a9f-aeb0-a8dfc4d12a9c","kind":"system_requirement","display_number":12,"title":"Catalog lookup","work_status":"PROPOSED","description":"long text the receipt leaves out"}],"traces":[{"id":"t1"}]}}`))
+	}))
+	defer server.Close()
+
+	command := newReverseEngineerCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	command.SetIn(strings.NewReader(`{"requirements":[],"traces":[]}`))
+	command.SetArgs([]string{"record", "--file", "-", "--json"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("record failed: %v; output %s", err, out.String())
+	}
+	for _, want := range []string{`"kind": "system_requirement"`, `"display_number": 12`, `"work_status": "PROPOSED"`, `"trace_count": 1`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("receipt lacks %s: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "long text") {
+		t.Errorf("receipt is not compact: %s", out.String())
+	}
+}
+
 func TestReverseEngineerRecordRejectsSeparateFilesArray(t *testing.T) {
 	command := newReverseEngineerCommand(func() (*cliEnv, error) {
 		t.Fatal("invalid input must not load the connection")

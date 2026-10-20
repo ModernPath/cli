@@ -32,7 +32,7 @@ func findCommand(t *testing.T, root *cobra.Command, path []string) *cobra.Comman
 // The installed CLI reference is rendered from the binary's own command tree
 // so it cannot drift from the build that wrote it (tooling self-sufficiency
 // plan C4, USER:2026-09-12). These checks pin what makes it usable as a
-// lookup: every visible verb is there with its flags, the loop verbs carry the
+// lookup: every visible command is there with its flags, the loop commands carry the
 // prerequisites their long help was given (plan B1–B7), and the rendering is
 // deterministic so `install --check` compares bytes, not luck.
 // availableCommands walks the tree by cobra's own notion of availability,
@@ -122,6 +122,77 @@ func TestCLIReferenceListsInheritedGroupFlagsUnderEachSubcommand(t *testing.T) {
 	}
 	if strings.Contains(section, "`--api-url`") {
 		t.Fatal("root global flags are repeated under a child command")
+	}
+}
+
+// The reference is the document the installed rdd skills call "the current
+// CLI reference" and the only place an agent can read how a phase maps onto
+// this binary's commands and what each input file holds. The retired
+// mp-process-cli skill carried that; PR #936 dropped it without moving it
+// here, and a reverse-engineering session then found `record --help` naming
+// no field at all. These checks pin the loop section and the file contracts
+// so a future command change cannot leave the how behind again.
+func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
+	ref := renderCLIReference(rootCmd)
+	loop := ref[:strings.Index(ref, "## Global flags")]
+	for _, want := range []string{
+		"## Operating the delivery loop",
+		"### Phase to command",
+		"### Refusals and what clears them",
+		"`rdd-start`", "`rdd-plan`", "`rdd-entry-review`", "`rdd-build`", "`rdd-verify`",
+		"`rdd-completion-review`", "`rdd-reverse-engineer`", "`rdd-reverse-engineer-verify`",
+		"`rdd-reverse-engineer-accept`", "`rdd-triage`",
+		"One store command per shell call",
+		"tooling gap",
+	} {
+		if !strings.Contains(loop, want) {
+			t.Errorf("the loop section before the command tree is missing %q", want)
+		}
+	}
+	// Every command the phase table names must exist, or the table sends an
+	// agent to a command the binary does not have.
+	for _, path := range []string{
+		"epics plan save", "epics plan show", "epics plan approve-implementation",
+		"epics plan submit-review", "epics plan approve-completion",
+		"requirements create", "requirements get", "requirements obsolete", "requirements set-context",
+		"reverse-engineer record", "reverse-engineer review", "reverse-engineer accept",
+		"evidence record", "evidence latest", "evidence runs", "traces list",
+		"test-cases create", "backlog create", "epics create", "epics update",
+	} {
+		if !strings.Contains(loop, "`"+path) && !strings.Contains(loop, "`"+strings.TrimPrefix(path, "epics plan ")) {
+			t.Errorf("the phase table never names %q", path)
+		}
+		if _, _, err := rootCmd.Find(strings.Fields(path)); err != nil {
+			t.Errorf("the loop section names %q, which this binary lacks: %v", path, err)
+		}
+	}
+	for section, keys := range map[string][]string{
+		"modernpath reverse-engineer record": {
+			"user_requirement | system_requirement", "criteria", "given, when, then", "statement",
+			"source_type", "link_kind", "implements | verifies | derives | relates",
+			"repository_key", "source_integer_id", "existing_requirement_conflict",
+			"actor, intended_use", "boundary, rationale, verification_method",
+		},
+		"modernpath reverse-engineer review": {
+			`{"requirements": [{"kind"`, "missing_criterion_evidence", "test_identity_required",
+			"evidence_predates_current_content", "requirement_owned",
+		},
+		"modernpath reverse-engineer accept":           {`{"review":`, `"source"`, `"reason"`, "review_changed", "already_accepted"},
+		"modernpath epics plan":                        {`"body"`, `"requirements"`, `"traces"`, "incomplete reviewed content", "change_epic_id"},
+		"modernpath epics plan approve-implementation": {"USER:", "IN_PROGRESS"},
+		"modernpath epics plan approve-completion":     {"USER:", "DONE"},
+		"modernpath evidence record": {
+			"ci | local_test | browser_verification | manual | migration",
+			"pass | fail | skip | error | inconclusive", "RED", "criterion", "test_case_ref", "requirement_kind",
+		},
+		"modernpath traces list": {"implements, verifies, derives or relates"},
+	} {
+		body := referenceSection(t, ref, section)
+		for _, key := range keys {
+			if !strings.Contains(body, key) {
+				t.Errorf("section %q does not document %q", section, key)
+			}
+		}
 	}
 }
 

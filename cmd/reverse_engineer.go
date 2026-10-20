@@ -24,6 +24,7 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "record",
 		Short: "Record requirements and traces from a JSON file",
+		Long:  reverseRecordHelp,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path, _ := cmd.Flags().GetString("file")
@@ -48,7 +49,7 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 				if !ok {
 					return fmt.Errorf("reverse-engineering response contains an invalid requirement")
 				}
-				items = append(items, selectKeys(row, []string{"id", "display_ref", "title", "work_status"}))
+				items = append(items, selectKeys(row, []string{"id", "kind", "display_number", "title", "work_status"}))
 			}
 			return writeRecord(cmd, map[string]any{"requirements": items, "trace_count": len(traces)})
 		},
@@ -60,6 +61,72 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 	addReverseAcceptanceCommands(root, load)
 	return root
 }
+
+// reverseRecordHelp is the record file's contract as the server enforces it
+// (Core.RDD.ReverseEngineering.Recording). It is the only place an agent can
+// read the field names from, so it names every accepted key.
+const reverseRecordHelp = `Record requirements and their typed traces in the bound System in one atomic
+request. The file is one JSON object with exactly two arrays:
+
+  {"requirements": [...], "traces": [...]}
+
+A requirement object:
+
+  kind         user_requirement | system_requirement (required)
+  id           a UUID you generate; optional. Give every new requirement one,
+               because a trace in the same file names it by this id.
+  title, description, context, context_name, priority, release_note,
+  detail_md, delivered_revision
+  actor, intended_use                           (user_requirement only)
+  boundary, rationale, verification_method      (system_requirement only)
+  criteria     a list of {id?, kind: criterion | scenario, position,
+               statement (criterion) | given, when, then (scenario),
+               status?: active, introduced_in_revision?}; a scenario needs
+               given and then, a criterion needs statement
+
+A trace object:
+
+  source_type, target_type   user_requirement, system_requirement, test_case,
+                             source_file, criterion (UUID endpoints, in
+                             source_id / target_id) or system_document,
+                             file_analysis, subsystem, epic (integer
+                             endpoints, in source_integer_id / target_integer_id)
+  link_kind                  implements | verifies | derives | relates
+                             (a requirement-to-document trace must be relates)
+  id                         optional UUID
+  A source_file endpoint is named by repository_key and path (revision is
+  optional, descriptive context) instead of an id; the server resolves or
+  creates the file record. Every other endpoint must already exist in the
+  System, so an existing requirement is named by its UUID in the trace alone.
+
+Example:
+
+  {"requirements":[{"kind":"system_requirement","id":"<uuid>","title":"Catalog lookup",
+    "description":"...","boundary":"...","verification_method":"integration test",
+    "criteria":[{"kind":"criterion","position":1,"statement":"..."}]}],
+   "traces":[{"source_type":"system_requirement","source_id":"<uuid>",
+    "target_type":"source_file","repository_key":"catalog","path":"src/catalog.go","link_kind":"implements"},
+    {"source_type":"system_requirement","source_id":"<uuid>","target_type":"user_requirement",
+    "target_id":"<existing UR uuid>","link_kind":"derives"}]}
+
+A requirement without an id receives a fresh server UUID on every submission.
+With a supplied UUID the System does not hold, it is created with that UUID.
+Both receive a display reference, revision 0 and PROPOSED. A requirement whose
+id the System holds is reused when the supplied fields and criteria equal
+the stored ones; different content refuses the whole request
+(existing_requirement_conflict), so a content change is Epic work, not a
+record. A trace with the same endpoints and link kind as an active one is
+reused. Retain and reuse every requirement UUID for retry safety. Repeating a
+file that omits requirement ids creates duplicate requirements; if the first
+response was lost, inspect the stored requirements before retrying. Reusing
+the same requirement UUIDs and unchanged content avoids creating new requirements.
+Any refusal leaves nothing written. Recording is neither verification nor
+acceptance; nothing here hashes files or needs a clean checkout.
+
+The receipt lists each requirement's id, kind, display_number, title and
+work_status, and the number of traces. Read back with requirements get
+<uuid> --kind user|system --full and traces list --entity-type <kind>
+--entity-id <uuid>.`
 
 type reverseRecordPayload struct {
 	Requirements []map[string]any `json:"requirements"`

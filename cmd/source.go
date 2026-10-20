@@ -62,7 +62,7 @@ updated, or the repository is linked to a git provider the platform
 refreshes itself — exits non-zero with the
 server's error code and message, so a CI job fails loudly. The command never
 prompts. The API URL and token come from the workspace config and
-environment, as for every other verb.
+environment, as for every other command.
 
 Examples:
   modernpath source push

@@ -29,7 +29,42 @@ func newReverseEngineerReviewCommand(load func() (*cliEnv, error)) *cobra.Comman
 		Short: "Review current requirement content and evidence",
 		Long: `Read a complete review bundle for selected native requirements. This command
 uses POST for a read-only preview. Use --json to capture the exact bundle for
-reverse-engineer accept --file.`,
+reverse-engineer accept --file.
+
+The selection file is {"requirements": [{"kind": "user_requirement" |
+"system_requirement", "id": "<uuid>"}, ...]} and nothing else; at most 1000
+rows, no duplicates.
+
+The bundle is {"system_id", "eligible", "problems": [...], "requirements":
+[...]}. Each requirement row carries kind, id, revision, work_status, content,
+criteria (active ones), traces (active confirmed ones touching it or its
+criteria), evidence (the newest non-RED criterion results) and versions
+(accepted versions so far). A problem is {"kind", "id", "criterion_id",
+"reason"}; the bundle is eligible only when the list is empty. Reasons and
+what clears them:
+
+  requirement_not_proposed        only PROPOSED requirements are accepted
+  candidate_unconfirmed           an unconfirmed candidate; confirm it first
+  requirement_owned               an Epic owns it; it completes through that Epic
+  missing_criteria                it has no active criteria; record some
+  missing_criterion_evidence      no evidence result targets the criterion
+                                  (target_type criterion, target_id its UUID)
+  incomplete_evidence_run         the run's status is not complete
+  evidence_not_current            the result's validity is not current
+  criterion_not_passing           the newest result is not pass
+  execution_evidence_required     the run kind is migration; record a real execution
+  test_identity_required          the result has no test_case_ref
+  tested_revision_required        no revision on the result, nor sha or
+                                  source_revision on the run
+  execution_report_required       no raw_evidence, log_ref or detail.command
+  environment_required            neither result nor run carries an environment
+  evidence_predates_current_content  the requirement, a criterion or a trace
+                                  changed after the evidence; run and record again
+
+Only results whose role is not RED count, and only those of the newest run
+that observed the criterion. Record evidence with evidence record; see its
+help for the fields. An ineligible bundle is still printed, so this command is
+the read that tells a verification pass what remains.`,
 		Args: cobra.NoArgs,
 	}
 	command.Flags().String("file", "", "JSON selection file; - reads stdin (required)")
@@ -60,7 +95,27 @@ func newReverseEngineerAcceptCommand(load func() (*cliEnv, error)) *cobra.Comman
 		Short: "Accept reviewed existing behavior for requirements",
 		Long: `Accept an exact review bundle after a human has decided its content and
 evidence are sufficient. The server rechecks the bundle and atomically publishes
-the requirements as DONE. Repeat submissions return the existing versions.`,
+the requirements as DONE. Repeat submissions return the existing versions.
+
+The file is {"review": <the bundle reverse-engineer review --json printed,
+unchanged>, "source": "USER:<date>: <who decided>", "reason": "<their words>"}.
+Both strings are required and non-empty; the review object is validated
+locally and must belong to the bound System. For example:
+
+  jq '{review: ., source: "USER:2026-10-19: <name> accepted", reason: "..."}' review.json > acceptance.json
+
+The server requires the bundle to read eligible with no problems, re-derives
+each row and refuses when anything moved since the review (review_changed,
+409) or a problem appeared (acceptance_not_ready, 409); then, in one
+transaction, it sets each requirement DONE, raises its revision by one and
+retains an immutable version of acceptance_kind existing_behavior with the
+criteria, traces, evidence links, actor, time and reason. Nothing changes on
+a refusal. A requirement already accepted with the same content answers
+already_accepted and gets no second version.
+
+This command applies a decision the human has already made in the session; it
+never asks. The receipt lists kind, id, revision, work_status, result
+(accepted | already_accepted) and the version per requirement.`,
 		Args: cobra.NoArgs,
 	}
 	command.Flags().String("file", "", "JSON acceptance file; - reads stdin (required)")

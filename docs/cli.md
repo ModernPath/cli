@@ -237,7 +237,7 @@ instead of exiting 0 without importing. Declining the confirmation exits 0.
 The CLI imports the local directory as an upload.
 
 After the upload the next steps say that the analysis is queued and name the
-verbs that follow it (`modernpath analysis status`) and keep the system
+commands that follow it (`modernpath analysis status`) and keep the system
 current (`modernpath source push`). The View in UI link opens the system on
 the app host the server names in its capabilities read; a server that names
 none gets a link on the API host, marked as such.
@@ -254,7 +254,7 @@ modernpath source push
 modernpath source push --exclude fixtures --max-size 200
 ```
 
-The verb packs the directory with the import filters (skip lists,
+The command packs the directory with the import filters (skip lists,
 `.gitignore`, `--exclude`, `--keep`, `--max-size`; see below) and always sends
 the selected archive. The server ingests it, computes the source revision and
 reports whether the source changed. The checkout's git head, branch and dirty
@@ -262,7 +262,7 @@ flag travel as metadata and show on the system's Define page beside the
 revision and time it was received. The CLI does not hash the local tree or
 compare a local digest with the server before uploading.
 
-The verb never prompts. A server refusal — the system is being analysed or
+The command never prompts. A server refusal — the system is being analysed or
 its documentation updated, or the repository is linked to a git provider
 the platform refreshes itself — exits non-zero with the server's error code
 and message, so a CI job fails loudly. A busy refusal names the run and the
@@ -339,7 +339,7 @@ running analysis and deletes the system's analysis results (file analyses and
 dependencies, subsystems, capabilities, patterns, findings, libraries and
 generated documentation), keeps the repositories, their uploaded source and
 planning data, and starts a new analysis. It asks first; `--yes` skips the
-question, and without a terminal `--yes` is required. Each verb prints the run
+question, and without a terminal `--yes` is required. Each command prints the run
 the server answers with, or the server's refusal once by its error code and
 message (`analysis_already_complete`, `sources_required`,
 `source_materials_not_ready`, …) and exits non-zero.
@@ -635,6 +635,11 @@ modernpath epics plan approve-completion <epic-id> --reason "<reason>"
 plan, human decisions and accepted requirement versions in full.
 `save` and `approve-implementation` read one JSON plan from standard input
 or `--file plan.json`; implementation approval applies to that saved plan.
+The plan is `{"body": "<markdown>", "requirements": [{"kind", "id",
+"content", "criteria"}], "traces": [...]}`; `save` accepts a partial draft the
+server completes, while `approve-implementation` takes the complete plan that
+`show --fields plan --json` returns. `modernpath epics plan --help` and the
+installed `.modernpath/cli-reference.md` carry the field list and refusals.
 Writes accept an optional `--reason` comment. `submit-review` submits the implementation for human completion
 review. `approve-completion` records the human completion decision and
 publishes the approved requirement content. The approved plan and owned
@@ -670,8 +675,10 @@ the supported requirement, document, test-case and evidence commands. Open the
 referenced code and assertions. Check endpoint kind and System, relationship
 meaning, criterion coverage and the actual test observation. A valid Trace is
 not proof that a document supports intent, code implements it or a test passed.
-Report unsupported endpoint reads as tooling gaps rather than querying private
-transport. During planning assess intended targets; during verification and
+Handle unsupported endpoint reads under the System-name rule in the delivery
+loop reference: tooling backlog items only when the bound System name contains
+`modernpath` (case-insensitive), no missing-capability reports or backlog items
+for other Systems. Never query private transport. During planning assess intended targets; during verification and
 completion assess executed results and their applicability to the tested revision.
 
 Test cases are procedure records with retained title, description,
@@ -881,6 +888,9 @@ different endpoint. The endpoint inventory is grounded in the monorepo source
 ### Command surface
 
 Run each command's `--help` for the current flags and registered children.
+`modernpath install` renders the same help, every input file's shape, the
+phase-to-command map of the delivery loop and the refusal glossary into
+`.modernpath/cli-reference.md`, the reference the installed rdd skills name.
 
 | Area | Commands |
 |---|---|
@@ -898,14 +908,29 @@ Run each command's `--help` for the current flags and registered children.
 
 `dev review` inspects the current Git diff.
 
-`modernpath reverse-engineer record --file <JSON|->` sends native requirements,
-and their traces to the bound system in one request.
-The JSON object contains `requirements` and `traces` arrays. A trace with a
+`modernpath reverse-engineer record --file <JSON|->` sends native requirements
+and their traces to the bound system in one request. The JSON object contains
+`requirements` and `traces` arrays and nothing else. A requirement names its
+`kind` (`user_requirement` or `system_requirement`), an optional UUID `id`
+(give every new requirement one so a trace in the same file can name it), its
+content fields (`title`, `description`, `context`, `context_name`, `priority`,
+`release_note`, `detail_md`, `delivered_revision`, plus `actor` and
+`intended_use` for a user requirement or `boundary`, `rationale` and
+`verification_method` for a system requirement) and `criteria` (`kind`
+`criterion` with a `statement`, or `scenario` with `given`, `when`, `then`).
+A trace names `source_type`, `target_type`, `link_kind` (`implements`,
+`verifies`, `derives`, `relates`) and its endpoints by UUID (`source_id`,
+`target_id`) or integer (`source_integer_id`, `target_integer_id` for
+`system_document`, `file_analysis`, `subsystem`, `epic`). A trace with a
 `source_file` endpoint supplies `repository_key`, `path`, and optional `revision`
-instead of a file endpoint ID. The server resolves the file internally. New
-requirements are recorded as `PROPOSED`. The command reads the supplied JSON and
-posts it directly; it does not inspect a repository checkout or require a run,
-content digest or proof report. Implementation: `CODE:tools/modernpath/cmd/reverse_engineer.go`.
+instead of a file endpoint ID; the server resolves the file internally. New
+requirements are recorded as `PROPOSED`; a requirement whose id the System
+already holds is reused when the content matches and refused when it differs.
+The command reads the supplied JSON and posts it directly; it does not inspect
+a repository checkout or require a run, content digest or proof report.
+`modernpath reverse-engineer record --help` and the installed
+`.modernpath/cli-reference.md` carry the complete field list and the refusals.
+Implementation: `CODE:tools/modernpath/cmd/reverse_engineer.go`.
 
 Select recorded requirements by native kind and UUID to review their current
 content, traces, criteria and evidence:

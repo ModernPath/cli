@@ -121,7 +121,15 @@ func requirementDetailFields(kind string) []string {
 }
 
 func newTraceListCommand(load func() (*cliEnv, error)) *cobra.Command {
-	cmd := &cobra.Command{Use: "list", Short: "List traces touching a native entity", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "list", Short: "List traces touching a native entity", Args: cobra.NoArgs,
+		Long: `List the active traces whose source or target is one native entity of the
+bound System. Each row is source, relation and target; an endpoint is its type
+and id (a source_file endpoint shows repository and path). --relation filters
+by link kind: implements, verifies, derives or relates. A requirement's
+criteria are entities of their own: list a criterion's traces with
+--entity-type criterion. Traces are written by reverse-engineer record and by
+an Epic plan at implementation and completion approval; there is no direct
+trace write.`}
 	entityType, entityID := "", ""
 	cmd.Flags().StringVar(&entityType, "entity-type", "", "native entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion)")
 	cmd.Flags().StringVar(&entityID, "entity-id", "", "native entity id")
@@ -367,7 +375,7 @@ func validateTestCaseWrite(payload map[string]any, creating bool) error {
 
 func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 	root := &cobra.Command{Use: "evidence", Short: "Record and read evidence observations"}
-	root.AddCommand(&cobra.Command{Use: "record", Short: "Record an evidence run and per-target observations", Args: cobra.NoArgs, Long: `Record a CI, local test, browser, or manual observation. Input example: {"kind":"local_test","sha":"<commit>","branch":"<branch>","ran_at":"2026-10-18T10:00:00Z","runner":{"kind":"agent","agent_slug":"codex"},"status":"complete","totals":{"pass":1},"results":[{"target_type":"requirement","requirement_kind":"system_requirement","target_id":"<native-uuid>","result":"pass","role":"green","revision":"<commit>"}]}.`, RunE: func(cmd *cobra.Command, _ []string) error {
+	root.AddCommand(&cobra.Command{Use: "record", Short: "Record an evidence run and per-target observations", Args: cobra.NoArgs, Long: evidenceRecordHelp, RunE: func(cmd *cobra.Command, _ []string) error {
 		f, _ := cmd.Flags().GetString("file")
 		payload, err := readObjectInput(cmd, f)
 		if err != nil {
@@ -478,6 +486,61 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 	}
 	return root
 }
+
+// evidenceRecordHelp is the run file as Core.Evidence and the evidence
+// schemas accept it, with the fields the acceptance review later requires,
+// so a verification pass records what the review will read.
+const evidenceRecordHelp = `Record one test, CI, browser or manual run and its per-target results. The
+CLI adds the bound system_id. Example:
+
+  {"kind":"local_test","sha":"<commit>","branch":"<branch>","ran_at":"2026-10-18T10:00:00Z",
+   "runner":{"kind":"agent","agent_slug":"claude-code"},"status":"complete",
+   "totals":{"pass":1,"fail":0},"log_ref":"<command or CI run url>","environment":{"os":"darwin"},
+   "results":[{"target_type":"requirement","requirement_kind":"system_requirement",
+               "target_id":"<uuid>","result":"pass","role":"GREEN","revision":"<commit>",
+               "test_case_ref":"test/catalog_test.exs:12","detail":{"command":"mix test test/catalog_test.exs"}}]}
+
+The run:
+
+  kind        ci | local_test | browser_verification | manual | migration (required)
+  ran_at      RFC 3339 time (required)
+  runner      optional: {"kind": "agent", "agent_slug": "<slug>"} names the
+              agent that ran it, with the signed-in person as the human
+              behind it; left out, the run is attributed to the signed-in
+              person
+  sha, branch, source_revision, status (running | complete | error; default
+  complete), totals, log_ref, environment, raw_evidence
+  id          an existing run to update: supplied results replace its result
+              set, and omitted fields keep their values. Ordinary runs allow
+              proof to be overwritten. Only runs stored with
+              raw_payload.as_built_proof set to execution or delivery refuse
+              changed proof under the same id
+
+Each result:
+
+  target_type       requirement | criterion | test_case | backlog_record | epic
+  target_id         the target's UUID, or its integer ID for an epic
+  requirement_kind  user_requirement | system_requirement, required with a
+                    requirement target
+  result            pass | fail | skip | error | inconclusive
+  role              RED for the red-first failing run, GREEN (or none) for a
+                    passing run; a RED never shadows a later pass
+  revision, target_clause, test_case_ref, detail (a map; put the command
+  under "command"), environment, raw_evidence
+
+Record the RED run before the passing run, each at its tested commit. Omit
+id to create a new run for each execution, including reruns. Requirement-level
+results drive evidence latest and the Epic's build state. For existing-behavior acceptance
+(reverse-engineer review), record one result per criterion with target_type
+criterion and target_id the criterion's id (requirements get <uuid> --kind …
+--full lists them), result pass, a test_case_ref, a revision on the result or
+sha on the run, a report (raw_evidence, log_ref or detail.command) and an
+environment on the result or the run, in a complete run of a kind other than
+migration, after the requirement's content, criteria and traces last changed.
+
+The receipt is run_id, result (created | updated | replayed) and the number
+of results. Read back with evidence runs --full --target-id <uuid> and
+evidence latest.`
 
 func lenAny(value any) int { rows, _ := value.([]any); return len(rows) }
 
