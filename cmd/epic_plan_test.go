@@ -59,7 +59,7 @@ func TestEpicPlanSaveForwardsEmptyDraftAndKeepsSuccessfulJSON(t *testing.T) {
 }
 
 func TestEpicPlanCoverageRefusalIsReadableAndNonzero(t *testing.T) {
-	const message = "A selected requirement is already covered by another Roadmap line."
+	const message = "A selected requirement is already covered by another initiative."
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"error":"already_on_roadmap","ids":["00e93572-d3ec-454e-b07e-2be7f29232f7"],"message":"` + message + `"}`))
