@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix Epic reads sending a JSON `null` request body: `epics get` and
+  `epics list`, `epics plan show`, and specification reads now send bodyless
+  GET requests accepted by the gateway. Read callers use a payload-free GET
+  interface; writes use a separate POST/PUT/PATCH/DELETE interface.
+
 ### Upgrade and command changes
 
 - `reverse-engineer schema` reads the recording input JSON Schema from the bound

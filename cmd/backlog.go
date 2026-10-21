@@ -38,7 +38,7 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 				return fmt.Errorf("Backlog creation requires a bound System")
 			}
 			payload["system_id"] = env.SystemID
-			data, err := backlogRequest(env, "POST", "/api/v1/backlog", payload)
+			data, err := backlogWrite(env, "POST", "/api/v1/backlog", payload)
 			if err != nil {
 				return err
 			}
@@ -73,7 +73,7 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 		if err != nil {
 			return err
 		}
-		data, err := backlogRequest(env, "GET", "/api/v1/backlog/"+url.PathEscape(args[0])+"?system_id="+fmt.Sprint(env.SystemID), nil)
+		data, err := backlogGet(env, "/api/v1/backlog/"+url.PathEscape(args[0])+"?system_id="+fmt.Sprint(env.SystemID))
 		if err != nil {
 			return err
 		}
@@ -105,7 +105,7 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 		if err != nil {
 			return err
 		}
-		data, err := backlogRequest(env, "GET", "/api/v1/backlog?system_id="+fmt.Sprint(env.SystemID), nil)
+		data, err := backlogGet(env, "/api/v1/backlog?system_id="+fmt.Sprint(env.SystemID))
 		if err != nil {
 			return err
 		}
@@ -141,8 +141,15 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 	return parent
 }
 
-func backlogRequest(env *cliEnv, method, path string, payload any) (any, error) {
-	status, body, err := env.call(method, path, payload)
+func backlogGet(env *cliEnv, path string) (any, error) {
+	return backlogResponse(env.get(path))
+}
+
+func backlogWrite(env *cliEnv, method, path string, payload map[string]any) (any, error) {
+	return backlogResponse(env.write(method, path, payload))
+}
+
+func backlogResponse(status int, body map[string]any, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}

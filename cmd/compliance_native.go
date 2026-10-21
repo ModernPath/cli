@@ -208,7 +208,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return err
 		}
 		payload["system_id"] = env.SystemID
-		status, body, err := env.call("POST", "/api/compliance/test-cases", payload)
+		status, body, err := env.write("POST", "/api/compliance/test-cases", payload)
 		if err != nil {
 			return err
 		}
@@ -328,7 +328,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return fmt.Errorf("test-case detail response is missing its native ID")
 		}
 		id = url.PathEscape(id)
-		status, body, err := env.call("PATCH", "/api/compliance/test-cases/"+id, payload)
+		status, body, err := env.write("PATCH", "/api/compliance/test-cases/"+id, payload)
 		if err != nil {
 			return err
 		}
@@ -386,7 +386,7 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return err
 		}
 		payload["system_id"] = env.SystemID
-		status, body, err := env.call("POST", "/api/v1/sync/evidence", payload)
+		status, body, err := env.write("POST", "/api/v1/sync/evidence", payload)
 		if err != nil {
 			return err
 		}
@@ -637,7 +637,7 @@ func nativeGet(cmd *cobra.Command, load func() (*cliEnv, error), route, what str
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(body)
 }
 func nativeGetData(env *cliEnv, route, what string, requireEntity bool) (map[string]any, error) {
-	status, body, err := env.call("GET", route, nil)
+	status, body, err := env.get(route)
 	if err != nil {
 		return nil, err
 	}

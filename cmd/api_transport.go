@@ -39,7 +39,21 @@ var limitSleep = time.Sleep
 // so a test can shrink it.
 var defaultCallTimeout = 120 * time.Second
 
-func (e *cliEnv) call(method, apiPath string, payload any) (int, map[string]any, error) {
+// get performs a read; GET requests cannot carry a payload.
+func (e *cliEnv) get(apiPath string) (int, map[string]any, error) {
+	return e.request(http.MethodGet, apiPath, nil)
+}
+
+func (e *cliEnv) write(method, apiPath string, payload any) (int, map[string]any, error) {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return e.request(method, apiPath, payload)
+	default:
+		return 0, nil, fmt.Errorf("write requires POST, PUT, PATCH or DELETE; got %s", method)
+	}
+}
+
+func (e *cliEnv) request(method, apiPath string, payload any) (int, map[string]any, error) {
 	var waited time.Duration
 	next := limitFirstWait
 	for {
@@ -67,6 +81,9 @@ func (e *cliEnv) call(method, apiPath string, payload any) (int, map[string]any,
 
 // sendOnce sends one request.
 func (e *cliEnv) sendOnce(method, apiPath string, payload any) (int, map[string]any, error) {
+	if method == http.MethodGet && payload != nil {
+		return 0, nil, fmt.Errorf("GET requests cannot carry a payload")
+	}
 	var body *bytes.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)

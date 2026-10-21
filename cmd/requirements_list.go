@@ -100,7 +100,7 @@ func runRequirementsList(cmd *cobra.Command, _ []string) error {
 	query.Set("limit", fmt.Sprint(requirementsListLimit))
 	query.Set("order", requirementsListOrder)
 
-	status, body, err := env.call("GET", "/api/v1/sync/requirements/discovery?"+query.Encode(), nil)
+	status, body, err := env.get("/api/v1/sync/requirements/discovery?" + query.Encode())
 	if err != nil {
 		return err
 	}

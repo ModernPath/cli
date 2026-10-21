@@ -42,7 +42,7 @@ func newRequirementObsoleteCommand(load func() (*cliEnv, error)) *cobra.Command 
 			return err
 		}
 		route := fmt.Sprintf("/api/v1/systems/%d/requirements/%s/%s/obsolete", env.SystemID, kind, url.PathEscape(id))
-		status, body, err := env.call("POST", route, map[string]string{"reason": reason})
+		status, body, err := env.write("POST", route, map[string]string{"reason": reason})
 		if err != nil {
 			return err
 		}

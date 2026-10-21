@@ -43,7 +43,7 @@ func TestA401AgainstABearerReportsAnExpiredSession(t *testing.T) {
 	srv := rejectingServer(t, http.StatusUnauthorized)
 	env := &cliEnv{APIURL: srv.URL, token: "expired-bearer"}
 
-	_, _, err := env.call("GET", "/api/v1/sync/gates", nil)
+	_, _, err := env.get("/api/v1/sync/gates")
 	if err == nil {
 		t.Fatal("a 401 came back as a bare status, so the caller prints `server 401` and the expired session is left to be inferred")
 	}
@@ -79,7 +79,7 @@ func TestOtherFailuresKeepReturningTheirStatus(t *testing.T) {
 		srv := rejectingServer(t, status)
 		env := &cliEnv{APIURL: srv.URL, token: "t"}
 
-		got, _, err := env.call("GET", "/api/v1/sync/gates", nil)
+		got, _, err := env.get("/api/v1/sync/gates")
 		if err != nil {
 			t.Fatalf("%d must stay a status for the caller to format, got error: %v", status, err)
 		}
@@ -102,7 +102,7 @@ func TestASuccessfulCallIsUnaffected(t *testing.T) {
 	defer srv.Close()
 	env := &cliEnv{APIURL: srv.URL, token: "t"}
 
-	status, body, err := env.call("GET", "/api/v1/sync/gates", nil)
+	status, body, err := env.get("/api/v1/sync/gates")
 	if err != nil || status != 200 {
 		t.Fatalf("a good call must be untouched: status=%d err=%v", status, err)
 	}
@@ -124,7 +124,7 @@ func TestSuccessfulResponseMustContainOneJSONObject(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			status, body, err := (&cliEnv{APIURL: srv.URL}).call("GET", "/api/test", nil)
+			status, body, err := (&cliEnv{APIURL: srv.URL}).get("/api/test")
 			if err == nil {
 				t.Fatalf("successful HTTP response with %q body silently succeeded: status=%d body=%v", response, status, body)
 			}
@@ -266,7 +266,7 @@ func TestSlowAPICallPrintsANotice(t *testing.T) {
 	defer func() { slowCallNoticeAfter, slowCallNoticeTo = prevAfter, prevTo }()
 
 	env := &cliEnv{APIURL: srv.URL, token: "t"}
-	if _, _, err := env.call("POST", "/api/v1/sync/batch", map[string]any{}); err != nil {
+	if _, _, err := env.write("POST", "/api/v1/sync/batch", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -288,7 +288,7 @@ func TestFastAPICallPrintsNothing(t *testing.T) {
 	defer func() { slowCallNoticeAfter, slowCallNoticeTo = prevAfter, prevTo }()
 
 	env := &cliEnv{APIURL: srv.URL, token: "t"}
-	if _, _, err := env.call("GET", "/api/v1/sync/gates", nil); err != nil {
+	if _, _, err := env.get("/api/v1/sync/gates"); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "" {
@@ -297,7 +297,7 @@ func TestFastAPICallPrintsNothing(t *testing.T) {
 }
 
 // testSystemsServer answers GET /api/systems and counts requests of
-// any kind, so a test can assert "no further env.call happened."
+// any kind, so a test can assert "no further API request happened."
 func testSystemsServer(t *testing.T, status int, systemIDs ...int) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
@@ -398,7 +398,7 @@ func TestNearExpiryCredentialIsRefreshedBeforeTheCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cliEnvLoad: %v", err)
 	}
-	if _, _, err := env.call("GET", "/api/v1/sync/gates", nil); err != nil {
+	if _, _, err := env.get("/api/v1/sync/gates"); err != nil {
 		t.Fatalf("call: %v", err)
 	}
 
@@ -529,4 +529,64 @@ func chdirTemp(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
 	return root
+}
+
+func TestGETRejectsPayloadBeforeSending(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+	var absent map[string]any
+	for _, payload := range []any{absent, map[string]any{}} {
+		_, _, err := (&cliEnv{APIURL: server.URL}).sendOnce(http.MethodGet, "/api/test", payload)
+		if err == nil {
+			t.Error("GET with a payload must be rejected")
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("invalid GET reached server %d times", requests.Load())
+	}
+}
+
+func TestReadAndWriteRequestContracts(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if r.Method == http.MethodGet || r.Method == http.MethodDelete {
+			if len(body) != 0 {
+				t.Errorf("%s body = %q; want empty", r.Method, body)
+			}
+		} else if string(body) != `{"title":"Keep this write"}` {
+			t.Errorf("%s payload changed: %s", r.Method, body)
+		}
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+	env := &cliEnv{APIURL: server.URL}
+	if _, _, err := env.get("/api/test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		var payload any
+		if method != http.MethodDelete {
+			payload = map[string]any{"title": "Keep this write"}
+		}
+		if _, _, err := env.write(method, "/api/test", payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead, "get", ""} {
+		if _, _, err := env.write(method, "/api/test", map[string]any{}); err == nil {
+			t.Errorf("write accepted method %q", method)
+		}
+	}
+	if requests.Load() != 5 {
+		t.Fatalf("expected only the read and four writes to reach server; got %d", requests.Load())
+	}
 }

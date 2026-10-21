@@ -48,7 +48,7 @@ func newRequirementSetContextCommand(load func() (*cliEnv, error)) *cobra.Comman
 			return err
 		}
 		route := fmt.Sprintf("/api/v1/systems/%d/requirements/%s/%s/context", env.SystemID, kind, url.PathEscape(id))
-		status, body, err := env.call("PUT", route, map[string]string{"context": context, "context_name": contextName})
+		status, body, err := env.write("PUT", route, map[string]string{"context": context, "context_name": contextName})
 		if err != nil {
 			return err
 		}

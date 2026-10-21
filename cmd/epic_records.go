@@ -54,7 +54,7 @@ func init() {
 		if cursor, _ := cmd.Flags().GetString("cursor"); cursor != "" {
 			p.Set("cursor", cursor)
 		}
-		data, err := epicRequest(env, "GET", "/api/work/epics?"+p.Encode(), nil)
+		data, err := epicGet(env, "/api/work/epics?"+p.Encode())
 		if err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func init() {
 			return fmt.Errorf("omit system_id; the CLI supplies the bound System")
 		}
 		payload["system_id"] = env.SystemID
-		data, err := epicRequest(env, "POST", "/api/work/epics", payload)
+		data, err := epicWrite(env, "POST", "/api/work/epics", payload)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ other server-managed fields cannot be set here. The server rejects content edits
 		if _, err := readBoundEpic(env, id); err != nil {
 			return err
 		}
-		data, err := epicRequest(env, "PUT", fmt.Sprintf("/api/work/epics/%d", id), map[string]any{"epic": payload})
+		data, err := epicWrite(env, "PUT", fmt.Sprintf("/api/work/epics/%d", id), map[string]any{"epic": payload})
 		if err != nil {
 			return err
 		}
@@ -294,7 +294,13 @@ other server-managed fields cannot be set here. The server rejects content edits
 					return err
 				}
 			}
-			data, err := epicRequest(env, op.method, fmt.Sprintf("/api/work/epics/%d%s", id, op.suffix), payload)
+			path := fmt.Sprintf("/api/work/epics/%d%s", id, op.suffix)
+			var data any
+			if op.method == "GET" {
+				data, err = epicGet(env, path)
+			} else {
+				data, err = epicWrite(env, op.method, path, payload)
+			}
 			if err != nil {
 				return err
 			}
@@ -432,7 +438,7 @@ func explicitEpic(raw string) (*cliEnv, int64, error) {
 }
 
 func readBoundEpic(env *cliEnv, id int64) (map[string]any, error) {
-	raw, err := epicRequest(env, "GET", fmt.Sprintf("/api/work/epics/%d", id), nil)
+	raw, err := epicGet(env, fmt.Sprintf("/api/work/epics/%d", id))
 	if err != nil {
 		return nil, err
 	}
@@ -461,8 +467,15 @@ func validateBoundEpic(data map[string]any, systemID int, id int64) error {
 	return nil
 }
 
-func epicRequest(env *cliEnv, method, path string, payload map[string]any) (any, error) {
-	status, response, err := env.call(method, path, payload)
+func epicGet(env *cliEnv, path string) (any, error) {
+	return epicResponse(env.get(path))
+}
+
+func epicWrite(env *cliEnv, method, path string, payload map[string]any) (any, error) {
+	return epicResponse(env.write(method, path, payload))
+}
+
+func epicResponse(status int, response map[string]any, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}

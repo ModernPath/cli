@@ -46,7 +46,7 @@ criteria and requirement changes. Example: {"title":"Rotate signing keys","descr
 			return fmt.Errorf("requirement creation requires a bound System")
 		}
 		payload["system_id"] = env.SystemID
-		status, body, err := env.call("POST", "/api/compliance/"+kind+"-requirements", payload)
+		status, body, err := env.write("POST", "/api/compliance/"+kind+"-requirements", payload)
 		if err != nil {
 			return err
 		}

@@ -64,7 +64,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	} else if filesOnly {
 		params.Set("type", "files")
 	}
-	status, response, err := env.call("GET", "/api/search?"+params.Encode(), nil)
+	status, response, err := env.get("/api/search?" + params.Encode())
 	if err != nil {
 		return err
 	}

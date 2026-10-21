@@ -149,7 +149,7 @@ func focusDeclare(env *cliEnv, id, requirementKind string) (focusOutcome, error)
 	if kind != "" {
 		request["requirement_kind"] = kind
 	}
-	status, body, err := env.call("POST", "/api/v1/focus", request)
+	status, body, err := env.write("POST", "/api/v1/focus", request)
 	if err != nil {
 		return focusOutcome{}, err
 	}
@@ -160,7 +160,7 @@ func focusDeclare(env *cliEnv, id, requirementKind string) (focusOutcome, error)
 }
 
 func focusClear(env *cliEnv) (focusOutcome, error) {
-	status, body, err := env.call("DELETE", fmt.Sprintf("/api/v1/focus?system_id=%d", env.SystemID), nil)
+	status, body, err := env.write("DELETE", fmt.Sprintf("/api/v1/focus?system_id=%d", env.SystemID), nil)
 	if err != nil {
 		return focusOutcome{}, err
 	}
@@ -181,7 +181,7 @@ func focusDrop(env *cliEnv, ref, requirementKind string) (focusOutcome, error) {
 	if kind != "" {
 		path += "&requirement_kind=" + url.QueryEscape(kind)
 	}
-	status, body, err := env.call("DELETE", path, nil)
+	status, body, err := env.write("DELETE", path, nil)
 	if err != nil {
 		return focusOutcome{}, err
 	}
@@ -192,7 +192,7 @@ func focusDrop(env *cliEnv, ref, requirementKind string) (focusOutcome, error) {
 }
 
 func focusList(env *cliEnv) (focusOutcome, error) {
-	status, body, err := env.call("GET", fmt.Sprintf("/api/v1/focus?system_id=%d", env.SystemID), nil)
+	status, body, err := env.get(fmt.Sprintf("/api/v1/focus?system_id=%d", env.SystemID))
 	if err != nil {
 		return focusOutcome{}, err
 	}
@@ -227,7 +227,7 @@ func focusInfer(env *cliEnv, ref, source, requirementKind string) (focusOutcome,
 	if kind != "" {
 		request["requirement_kind"] = kind
 	}
-	status, body, err := env.call("POST", "/api/v1/focus", request)
+	status, body, err := env.write("POST", "/api/v1/focus", request)
 	if err != nil {
 		return focusOutcome{}, err
 	}

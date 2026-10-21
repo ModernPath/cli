@@ -2,12 +2,55 @@ package cmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestEpicReadsSendNoRequestBody(t *testing.T) {
+	for _, args := range [][]string{
+		{"epics", "get", "42", "--full", "--json"},
+		{"epics", "list", "--json"},
+		{"epics", "plan", "show", "42", "--full", "--json"},
+		{"epics", "specs", "list", "42", "--json"},
+		{"epics", "specs", "status", "42", "--json"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/systems" {
+					healthyProbe(w, r)
+					return
+				}
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				if r.Method != http.MethodGet || len(body) != 0 {
+					t.Errorf("Epic read must send GET without a body: method=%s body=%q", r.Method, body)
+					http.Error(w, "request body not allowed for GET", http.StatusBadRequest)
+					return
+				}
+				if strings.HasPrefix(r.URL.Path, "/api/work/epics/42") {
+					_, _ = w.Write([]byte(`{"data":{"id":42,"epic_id":42,"system_id":1,"description":"Full Epic details","specs":[],"artifact_count":0,"artifacts":[]}}`))
+				} else {
+					_, _ = w.Write([]byte(`{"data":{"items":[],"next_cursor":null}}`))
+				}
+			}))
+			defer server.Close()
+			cobraWorkspace(t, server)
+			out, err := runRoot(t, args...)
+			if err != nil || !json.Valid([]byte(out)) {
+				t.Fatalf("Epic read failed: output=%q err=%v", out, err)
+			}
+			if args[1] == "get" && !strings.Contains(out, "Full Epic details") {
+				t.Fatalf("full Epic content missing: %s", out)
+			}
+		})
+	}
+}
 
 func TestEpicListUsesBoundedServerPageAndCompactOutput(t *testing.T) {
 	var gotQuery url.Values

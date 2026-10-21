@@ -52,7 +52,13 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return err
 				}
 				path := fmt.Sprintf("/api/work/epics/%d%s", id, op.suffix)
-				status, response, err := env.call(op.method, path, payload)
+				var status int
+				var response map[string]any
+				if op.method == "GET" {
+					status, response, err = env.get(path)
+				} else {
+					status, response, err = env.write(op.method, path, payload)
+				}
 				if err != nil {
 					return err
 				}

@@ -165,7 +165,7 @@ func runReadFile(cmd *cobra.Command, args []string) error {
 	requestURL := fmt.Sprintf("%s/api/files/read?%s", baseURL, params.Encode())
 
 	route := strings.TrimPrefix(requestURL, baseURL)
-	status, response, err := env.call("GET", route, nil)
+	status, response, err := env.get(route)
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func runReadDoc(cmd *cobra.Command, args []string) error {
 	requestURL := fmt.Sprintf("%s/api/docs/read?%s", baseURL, params.Encode())
 
 	route := strings.TrimPrefix(requestURL, baseURL)
-	status, response, err := env.call("GET", route, nil)
+	status, response, err := env.get(route)
 	if err != nil {
 		return err
 	}

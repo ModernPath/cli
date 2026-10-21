@@ -68,7 +68,7 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 			if env.SystemID <= 0 {
 				return fmt.Errorf("connect this workspace to a system before reading its recording schema")
 			}
-			status, body, err := env.call(http.MethodGet, fmt.Sprintf("/api/v1/systems/%d/reverse-engineering/schema", env.SystemID), nil)
+			status, body, err := env.get(fmt.Sprintf("/api/v1/systems/%d/reverse-engineering/schema", env.SystemID))
 			if err != nil {
 				return err
 			}
@@ -180,7 +180,7 @@ func reverseRecordCall(env *cliEnv, payload reverseRecordPayload) (map[string]an
 	if env.SystemID <= 0 {
 		return nil, fmt.Errorf("connect this workspace to a system before reverse-engineering")
 	}
-	status, body, err := env.call(http.MethodPost, fmt.Sprintf("/api/v1/systems/%d/reverse-engineering/requirements", env.SystemID), payload)
+	status, body, err := env.write(http.MethodPost, fmt.Sprintf("/api/v1/systems/%d/reverse-engineering/requirements", env.SystemID), payload)
 	if err != nil {
 		return nil, err
 	}

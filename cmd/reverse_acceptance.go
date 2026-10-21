@@ -276,7 +276,7 @@ func reverseAcceptanceReviewCall(env *cliEnv, selection []reverseRequirementRef)
 		return nil, fmt.Errorf("connect this workspace to a system before reverse-engineering")
 	}
 	payload := map[string]any{"requirements": selection}
-	status, body, err := env.call(http.MethodPost, fmt.Sprintf(reverseAcceptancePrefix+"/preview", env.SystemID), payload)
+	status, body, err := env.write(http.MethodPost, fmt.Sprintf(reverseAcceptancePrefix+"/preview", env.SystemID), payload)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func reverseAcceptanceAcceptCall(env *cliEnv, input reverseAcceptanceInput) (map
 		Source string          `json:"source"`
 		Reason string          `json:"reason"`
 	}{Review: input.RawReview, Source: input.Source, Reason: input.Reason}
-	status, body, err := env.call(http.MethodPost, fmt.Sprintf(reverseAcceptancePrefix, env.SystemID), payload)
+	status, body, err := env.write(http.MethodPost, fmt.Sprintf(reverseAcceptancePrefix, env.SystemID), payload)
 	if err != nil {
 		return nil, err
 	}

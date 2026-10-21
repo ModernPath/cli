@@ -94,7 +94,7 @@ func syncSearchWithEnv(env *cliEnv, args []string, limit int, route, what, comma
 		"q":         {query},
 		"limit":     {fmt.Sprint(limit)},
 	}
-	status, body, err := env.call("GET", route+"?"+params.Encode(), nil)
+	status, body, err := env.get(route + "?" + params.Encode())
 	if err != nil {
 		return nil, err
 	}
