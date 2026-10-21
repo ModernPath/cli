@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Restore native `releases list/activate` and compliance PIN setup/status, with thin `factory release activate` and `factory pin` compatibility. Activation uses the compliance API, validates System and target receipts, and binds incumbent close consent to an exact release ID; PINs use hidden prompts/stdin. Requires the restored server activation endpoint.
+
+
 - Add `backlog update <uuid> --file` for scoped notes and disposition updates,
   with server-owned latest-update attribution and retained original raiser.
   Requires the matching Backlog PATCH endpoint to be deployed before CLI release.

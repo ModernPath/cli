@@ -9,6 +9,39 @@ Other READMEs and UI surfaces should link here instead of maintaining a second
 command guide. When this document and `modernpath --help` disagree, the current
 binary and the source files cited below win.
 
+## Delivery release activation
+
+From a workspace bound to the intended System:
+
+```sh
+modernpath releases list
+modernpath releases pin set
+modernpath releases activate modernpath-v1-09
+```
+
+PIN setup prompts twice without echo (4–6 digits). Activation prompts once;
+`--pin-stdin` accepts a PIN from a secret store or protected file for either
+command. Do not put a PIN on the command line. `releases pin status` reports
+whether a PIN exists.
+
+If another delivery release is active, activation refuses unless
+`--close-current` explicitly consents to closing it. Consent is bound to the
+incumbent read by the command; a concurrent change requires a new attempt.
+An incumbent with unfinished work must first be closed using the release close
+flow. `--reason` adds an optional audit reason; `--json` emits the scoped
+activation receipt. IDs or exact slugs select the target. If a numeric slug
+matches another release’s ID, selection refuses before reading the PIN; use
+`--by id` or `--by slug` to disambiguate explicitly. Base cannot be
+activated, creation remains planned, and repeating activation is idempotent
+but still requires the PIN.
+
+`factory release activate` and `factory pin set/status` are compatibility
+entry points for these native operations. They no longer call the retired
+Author API or create process-store gates. A compatible server must expose
+`POST /api/compliance/releases/:id/activate`; UI and CLI share this endpoint.
+Source: `tools/modernpath/cmd/releases.go` and
+`apps/core/lib/core/compliance/release_lifecycle.ex`.
+
 ## Getting Started
 
 ### Install the CLI

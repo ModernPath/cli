@@ -370,6 +370,14 @@ const (
 
 // Each current leaf is classified against the retained command tree below.
 var leafDispositions = map[string]disposition{
+	"releases list":            {kind: dispExecute},
+	"releases activate":        {kind: dispExecute, args: []string{"releases", "activate", "2", "--pin-stdin"}},
+	"releases pin status":      {kind: dispExecute},
+	"releases pin set":         {kind: dispExecute, args: []string{"releases", "pin", "set", "--pin-stdin"}},
+	"factory pin status":       {kind: dispExecute},
+	"factory pin set":          {kind: dispExecute, args: []string{"factory", "pin", "set", "--pin-stdin"}},
+	"factory release activate": {kind: dispExecute, args: []string{"factory", "release", "activate", "2", "--pin-stdin"}},
+
 	"backlog create":                    {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
 	"backlog update":                    {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"backlog list":                      {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
@@ -531,6 +539,9 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		before := requests
 		resetTreeFlags(rootCmd) // do not inherit another test's flag state
 		rootCmd.SetArgs(args)
+		if strings.HasSuffix(name, "pin set") {
+			rootCmd.SetIn(strings.NewReader("2468\n"))
+		}
 		if name == "backlog create" {
 			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke discovery"}`))
 		}
