@@ -78,7 +78,7 @@ criteria and requirement changes. Example: {"title":"Rotate signing keys","descr
 
 func validateRequirementCreate(payload map[string]any, kind string) error {
 	allowed := map[string]bool{}
-	for _, field := range strings.Fields("title description context context_name priority release_note detail_md") {
+	for _, field := range strings.Fields("title description context context_name release_note detail_md") {
 		allowed[field] = true
 	}
 	fields := "actor intended_use"

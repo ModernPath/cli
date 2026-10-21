@@ -166,7 +166,7 @@ func TestAgentEpicUpdatePreservesPartialContentAndRejectsWrongSystem(t *testing.
 		t.Fatalf("scope mismatch reached update: %d writes", writes)
 	}
 	wrongSystem = false
-	for _, invalid := range []string{`{}`, `{"system_id":2}`, `{"process_status":"DONE"}`, `{"description":42}`} {
+	for _, invalid := range []string{`{}`, `{"system_id":2}`, `{"process_status":"DONE"}`, `{"description":42}`, `{"approved_at":"2026-10-20"}`, `{"summary_status":"ready"}`, `{"metadata":"invalid"}`, `{"evidence":"invalid"}`} {
 		if err := os.WriteFile(file, []byte(invalid), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -176,6 +176,42 @@ func TestAgentEpicUpdatePreservesPartialContentAndRejectsWrongSystem(t *testing.
 	}
 	if writes != 1 {
 		t.Fatalf("invalid payload reached update: %d writes", writes)
+	}
+}
+
+func TestAgentEpicUpdateForwardsAuthoredPlanningMetadata(t *testing.T) {
+	input := `{"assignee_id":1,"release_id":2,"start_date":"2026-10-20","target_date":"2026-11-06","outcome_source":"Reviewable draft scope","severity":"low","category":"planning","metadata":{"demo":true},"shared_context":{"version":1},"impact_assessment":{"version":1},"knowledge_config":{"pattern_status":"golden"},"evidence":[{"description":"Observed locally"}]}`
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		if r.Method == http.MethodPut {
+			writes++
+			var body struct {
+				Epic map[string]any `json:"epic"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Epic["target_date"] != "2026-11-06" || body.Epic["assignee_id"] != float64(1) || len(body.Epic) != 12 {
+				t.Errorf("authored metadata changed: %#v", body.Epic)
+			}
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1,"title":"Local demo"}}`))
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+	file := filepath.Join(t.TempDir(), "epic-fields.json")
+	if err := os.WriteFile(file, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "epics", "update", "42", "--file", file, "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 {
+		t.Fatalf("expected one update, got %d", writes)
 	}
 }
 

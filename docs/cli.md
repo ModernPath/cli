@@ -480,7 +480,7 @@ modernpath requirements create --kind system --file - --json < system-requiremen
 ```
 
 The JSON object requires `title`. Optional common content fields are
-`description`, `context`, `context_name`, `priority`, `release_note` and
+`description`, `context`, `context_name`, `release_note` and
 `detail_md`. User requirements also accept `actor` and `intended_use`; system
 requirements accept `boundary`, `rationale` and `verification_method`.
 
@@ -610,8 +610,12 @@ modernpath epics specs push <epic-id> --file bundle.json
 
 `epics create` reads an Epic JSON object from `--file` or `--file -`; it
 returns a short identity receipt without selecting the Epic as active work. `epics update`
-accepts a partial JSON object with `title`, `description`, `scope` or `non_goals`,
-using `--file` or `--file -`; only supplied fields change. Epic content is
+updates authored planning metadata as well as narrative fields: owner/release IDs,
+start/target dates, outcome, severity/category, target profile, shared context,
+impact assessment, evidence, knowledge configuration and metadata. Server-managed
+lifecycle, approvals and generated summaries remain outside this command.
+
+Use `--file` or `--file -` with a partial JSON object; only supplied fields change. Epic content is
 read-only in `IN_PROGRESS` and `IN_REVIEW`; the server refuses these edits.
 `specs status` reports the artifact count and counts by stored status;
 `--fields artifacts` selects the artifact metadata.
@@ -652,6 +656,15 @@ publishes the approved requirement content. The approved plan and owned
 requirement content remain read-only through `IN_PROGRESS` and `IN_REVIEW`.
 Capture a requested scope change separately; it does not revise the active
 approval. The server remains authoritative.
+
+Saving a `PROPOSED` Epic plan replaces that Epic's selected requirement
+membership with the complete proposal set. Omitting a selected requirement
+removes only that Epic's link; its record, other Epic links and Traces remain.
+A nonblank body may be saved with no requirements, but implementation approval
+requires at least one. Draft membership selects scope without acquiring
+ownership or publishing proposed content. Existing Roadmap coverage and release
+shared-work rules still apply. Legacy drafts reconcile on the next explicit
+save or approval; reads do not mutate membership.
 
 ### Read requirements, test cases, traces and evidence
 

@@ -168,8 +168,15 @@ func init() {
 		}
 		return writeRecord(cmd, map[string]any{"operation": "created", "id": id, "title": row["title"]})
 	}
-	update := &cobra.Command{Use: "update <epic-id>", Short: "Update an Epic's descriptive fields", Args: cobra.ExactArgs(1),
-		Long: `Update title, description, scope or non_goals on an explicit Epic in the bound System. Only supplied fields change. The server rejects content edits while the Epic is IN_PROGRESS or IN_REVIEW. Pass --file=- to read standard input. Input example: {"description":"Updated scope and review findings"}.`}
+	update := &cobra.Command{Use: "update <epic-id>", Short: "Update an Epic's authored planning fields", Args: cobra.ExactArgs(1),
+		Long: `Update authored fields on an explicit Epic in the bound System. Only supplied fields change.
+String fields: title, description, scope, non_goals, outcome_source, start_date,
+target_date, severity, category and target_profile_id. Dates use YYYY-MM-DD.
+Native record IDs: assignee_id and release_id. Object fields: metadata,
+shared_context, impact_assessment and knowledge_config. evidence is an array
+of objects. Null clears an optional field. Existing server validation and
+release/lifecycle rules apply. Approval, lifecycle, generated summary and
+other server-managed fields cannot be set here. The server rejects content edits while the Epic is IN_PROGRESS or IN_REVIEW. Pass --file=- to read standard input. Input example: {"description":"Updated scope and review findings"}.`}
 	update.Flags().String("file", "", "Epic field changes as JSON, or - for standard input (required)")
 	_ = update.MarkFlagRequired("file")
 	update.RunE = func(cmd *cobra.Command, args []string) error {
@@ -183,10 +190,35 @@ func init() {
 		}
 		for field, value := range payload {
 			switch field {
-			case "title", "description", "scope", "non_goals":
+			case "title", "description", "scope", "non_goals", "outcome_source", "start_date", "target_date", "severity", "category", "target_profile_id":
 				if value != nil {
 					if _, ok := value.(string); !ok {
 						return fmt.Errorf("Epic field %q must be a string or null", field)
+					}
+				}
+			case "assignee_id", "release_id":
+				if value != nil {
+					id, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
+					if err != nil || id <= 0 {
+						return fmt.Errorf("Epic field %q must be a positive native record ID or null", field)
+					}
+				}
+			case "metadata", "shared_context", "impact_assessment", "knowledge_config":
+				if value != nil {
+					if _, ok := value.(map[string]any); !ok {
+						return fmt.Errorf("Epic field %q must be an object or null", field)
+					}
+				}
+			case "evidence":
+				if value != nil {
+					items, ok := value.([]any)
+					if !ok {
+						return fmt.Errorf("Epic field %q must be an array of objects or null", field)
+					}
+					for _, item := range items {
+						if _, ok := item.(map[string]any); !ok {
+							return fmt.Errorf("Epic field %q must be an array of objects or null", field)
+						}
 					}
 				}
 			default:

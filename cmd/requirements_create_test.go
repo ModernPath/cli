@@ -63,7 +63,7 @@ func TestRequirementCreateRejectsBadContentBeforeLoadingWorkspace(t *testing.T) 
 		`{}`, `{"title":" "}`, `{"title":4}`, `{"title":"New","id":"11111111-1111-4111-8111-111111111111"}`,
 		`{"title":"New","system_id":8}`, `{"title":"New","tenant_id":9}`, `{"title":"New","work_status":"DONE"}`,
 		`{"title":"New","revision":4}`, `{"title":"New","release_id":3}`, `{"title":"New","criteria":[]}`,
-		`{"title":"New","actor":"Wrong kind"}`, `{"title":"New","description":[]}`, `null`, `[]`, `{"title":"New"} {}`,
+		`{"title":"New","actor":"Wrong kind"}`, `{"title":"New","priority":"high"}`, `{"title":"New","description":[]}`, `null`, `[]`, `{"title":"New"} {}`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			command := newRequirementCreateCommand(func() (*cliEnv, error) { t.Fatal("invalid content loaded workspace"); return nil, nil })

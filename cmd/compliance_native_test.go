@@ -116,6 +116,17 @@ func TestRequirementGetRejectsCandidatePacketField(t *testing.T) {
 	}
 }
 
+func TestRequirementGetRejectsPriorityField(t *testing.T) {
+	root := newRequirementGetCommand(func() (*cliEnv, error) {
+		t.Fatal("retired priority field must fail before loading the environment")
+		return nil, nil
+	})
+	root.SetArgs([]string{"UR-3-2", "--fields", "priority"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("priority field error = %v", err)
+	}
+}
+
 func TestTraceListScopesNativeRequirementBeforeReadingTraces(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

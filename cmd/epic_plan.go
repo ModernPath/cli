@@ -10,6 +10,10 @@ import (
 )
 
 func init() {
+	epicsCmd.AddCommand(newEpicPlanCommand(cliEnvLoad))
+}
+
+func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 	plan := &cobra.Command{Use: "plan", Short: "Read and approve an Epic's saved requirement changes", Long: epicPlanHelp}
 	for _, operation := range []struct {
 		name, help, method, suffix string
@@ -43,7 +47,7 @@ func init() {
 					}
 					payload["plan"] = proposal
 				}
-				env, err := cliEnvLoad()
+				env, err := load()
 				if err != nil {
 					return err
 				}
@@ -53,6 +57,9 @@ func init() {
 					return err
 				}
 				if status < 200 || status >= 300 {
+					if message, ok := response["message"].(string); ok && message != "" {
+						return fmt.Errorf("%w: %s", serverRefusal("epic plan", status, response), message)
+					}
 					return serverRefusal("epic plan", status, response)
 				}
 				data, ok := response["data"].(map[string]any)
@@ -86,7 +93,7 @@ func init() {
 		}
 		plan.AddCommand(command)
 	}
-	epicsCmd.AddCommand(plan)
+	return plan
 }
 
 // epicPlanHelp is the saved-plan contract as Core.Planning.EpicChanges
@@ -107,8 +114,8 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
    "traces": [{"id"?, "source_type", "source_id", "target_type", "target_id",
                "link_kind": "implements" | "verifies" | "derives" | "relates"}]}
 
-content keys are title, description, context, context_name, priority,
-release_note and detail_md, plus actor and intended_use for a user
+content keys are title, description, context, context_name, release_note
+and detail_md, plus actor and intended_use for a user
 requirement or boundary, rationale and verification_method for a system
 requirement. A requirement must already exist in the System (requirements
 create, or reverse-engineer record); the plan proposes what its published
