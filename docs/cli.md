@@ -1007,3 +1007,18 @@ amd64 when the required archive tools are available.
 Read back with `modernpath backlog list --json` and
 `modernpath backlog get <uuid> --full --json`. List output supports `--limit`
 and `--offset`; detail output supports `--fields` or `--full`.
+
+Close or update a resolved discovery with
+`modernpath backlog update <uuid> --file resolution.json --json`.
+The JSON object accepts only `notes_md`, `disposition` and `disposition_ref`;
+omitted fields are preserved. Notes replace existing notes, and an empty reference
+clears the reference. For example:
+
+```json
+{"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md":"Verified the merged fix."}
+```
+
+The server preserves the original raiser and records the authenticated update
+actor and time in metadata. Read back with `backlog get <uuid> --full --json`.
+This changes the backlog disposition, not an Epic approval or completion.
+Requires a server with the Backlog PATCH endpoint; older servers refuse the write.

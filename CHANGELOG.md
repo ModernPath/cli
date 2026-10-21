@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add `backlog update <uuid> --file` for scoped notes and disposition updates,
+  with server-owned latest-update attribution and retained original raiser.
+  Requires the matching Backlog PATCH endpoint to be deployed before CLI release.
+  Backlog detail fields now include disposition references, source references and links.
+
 - Fix Epic reads sending a JSON `null` request body: `epics get` and
   `epics list`, `epics plan show`, and specification reads now send bodyless
   GET requests accepted by the gateway. Read callers use a payload-free GET

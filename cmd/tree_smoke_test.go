@@ -371,6 +371,7 @@ const (
 // Each current leaf is classified against the retained command tree below.
 var leafDispositions = map[string]disposition{
 	"backlog create":                    {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
+	"backlog update":                    {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"backlog list":                      {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
 	"backlog get":                       {kind: dispExecute, args: []string{"backlog", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
@@ -532,6 +533,9 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		rootCmd.SetArgs(args)
 		if name == "backlog create" {
 			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke discovery"}`))
+		}
+		if name == "backlog update" {
+			rootCmd.SetIn(strings.NewReader(`{"notes_md":"Smoke update"}`))
 		}
 		if name == "reverse-engineer record" {
 			rootCmd.SetIn(strings.NewReader(`{"requirements":[],"traces":[]}`))

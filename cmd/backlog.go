@@ -8,12 +8,59 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var backlogFields = strings.Fields("id system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition gap_kind consequence metadata")
+var backlogFields = strings.Fields("id system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links gap_kind consequence metadata")
 
 func init() { rootCmd.AddCommand(newBacklogCommand(cliEnvLoad)) }
 
 func newBacklogCommand(load func() (*cliEnv, error)) *cobra.Command {
-	parent := &cobra.Command{Use: "backlog", Short: "Create and read Backlog discoveries in the bound System"}
+	parent := &cobra.Command{Use: "backlog", Short: "Create, read and update Backlog discoveries in the bound System"}
+	update := &cobra.Command{Use: "update <uuid>", Short: "Update Backlog notes and disposition", Args: cobra.ExactArgs(1),
+		Long: `Update a Backlog record from a JSON object using --file or --file - for stdin.
+Allowed fields: notes_md, disposition, disposition_ref. Omitted fields are preserved.
+Disposition uses OPEN, DEFERRED, ROUTED to <id>, REJECTED with <source>,
+CLOSED by <id>, or ACCEPTED with <source>. Use an empty disposition_ref to clear it.
+The server records the authenticated update actor and time; original attribution is preserved.
+Example: {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md":"Verified fix"}.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !requirementUUIDPattern.MatchString(args[0]) {
+				return fmt.Errorf("Backlog ID must be a UUID")
+			}
+			path, _ := cmd.Flags().GetString("file")
+			payload, err := readObjectInput(cmd, path)
+			if err != nil {
+				return err
+			}
+			if err = validateBacklogUpdate(payload); err != nil {
+				return err
+			}
+			env, err := load()
+			if err != nil {
+				return err
+			}
+			if env.SystemID <= 0 {
+				return fmt.Errorf("Backlog update requires a bound System")
+			}
+			payload["system_id"] = env.SystemID
+			data, err := backlogWrite(env, "PATCH", "/api/v1/backlog/"+url.PathEscape(args[0]), payload)
+			if err != nil {
+				return err
+			}
+			row, ok := data.(map[string]any)
+			if !ok {
+				return fmt.Errorf("Backlog response is missing its record")
+			}
+			if err = validateBacklogRecord(row, env.SystemID); err != nil {
+				return err
+			}
+			if !strings.EqualFold(row["id"].(string), args[0]) {
+				return fmt.Errorf("Backlog response has a different record identity")
+			}
+			return writeRecord(cmd, row)
+		}}
+	update.Flags().String("file", "", "Backlog update JSON file, or - for stdin (required)")
+	_ = update.MarkFlagRequired("file")
+	update.Flags().Bool("json", false, "Emit JSON")
+	parent.AddCommand(update)
 	create := &cobra.Command{Use: "create", Short: "Create an attributed OPEN Backlog record", Args: cobra.NoArgs,
 		Long: `Create a discovery from a JSON object using --file or --file - for stdin.
 Title is required; kind defaults to backlog (backlog, gap or tooling).
@@ -188,8 +235,10 @@ func validateBacklogCreate(payload map[string]any) error {
 			if !ok {
 				return fmt.Errorf("metadata must be an object")
 			}
-			if _, exists := metadata["raised_by_user_id"]; exists {
-				return fmt.Errorf("metadata cannot set server attribution")
+			for _, field := range []string{"raised_by_user_id", "updated_by_user_id", "updated_at"} {
+				if _, exists := metadata[field]; exists {
+					return fmt.Errorf("metadata cannot set server attribution")
+				}
 			}
 		} else if _, ok := value.(string); !ok {
 			return fmt.Errorf("Backlog field %q must be a string", key)
@@ -212,6 +261,31 @@ func validateBacklogCreate(payload map[string]any) error {
 	}
 	if kind != "gap" && hasGap {
 		return fmt.Errorf("gap_kind is only valid for a gap")
+	}
+	return nil
+}
+
+func validateBacklogUpdate(payload map[string]any) error {
+	if len(payload) == 0 {
+		return fmt.Errorf("Backlog update requires notes_md, disposition or disposition_ref")
+	}
+	for key, value := range payload {
+		if key != "notes_md" && key != "disposition" && key != "disposition_ref" {
+			return fmt.Errorf("unsupported Backlog update field %q", key)
+		}
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("Backlog field %q must be a string", key)
+		}
+		if key == "disposition" {
+			valid := text == "OPEN" || text == "DEFERRED"
+			for _, prefix := range []string{"ROUTED to ", "REJECTED with ", "CLOSED by ", "ACCEPTED with "} {
+				valid = valid || (strings.HasPrefix(text, prefix) && strings.TrimSpace(strings.TrimPrefix(text, prefix)) != "" && !strings.ContainsAny(text, "\r\n"))
+			}
+			if !valid {
+				return fmt.Errorf("disposition must be OPEN, DEFERRED, ROUTED to <id>, REJECTED with <source>, CLOSED by <id>, or ACCEPTED with <source>")
+			}
+		}
 	}
 	return nil
 }
