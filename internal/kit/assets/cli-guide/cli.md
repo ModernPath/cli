@@ -42,6 +42,69 @@ Author API or create process-store gates. A compatible server must expose
 Source: `tools/modernpath/cmd/releases.go` and
 `apps/core/lib/core/compliance/release_lifecycle.ex`.
 
+## Move requirements between releases
+
+Move an exact selection of user and system requirements through the supported
+CLI. Sources may have no release, be in Base or be in an open delivery release.
+The destination must be a planned or active non-Base release in the bound System. Closed,
+release-exempt, deleted or foreign requirements refuse the entire request.
+
+Create `selection.json` with native kinds and UUIDs:
+
+```json
+{"requirements":[
+  {"kind":"system_requirement","id":"0951fc74-235d-4041-98ea-0dfa2a870e7d"},
+  {"kind":"user_requirement","id":"d04e4a91-9585-43b0-811a-f90de731ae8d"}
+]}
+```
+
+Preview, review the exact target/selection/source memberships, then apply the
+saved preview without editing it:
+
+```sh
+modernpath releases move-requirements modernpath-v1-09 --file selection.json --json > preview.json
+modernpath releases move-requirements modernpath-v1-09 --file preview.json --apply --json
+modernpath releases members modernpath-v1-09 --all --json
+```
+
+The default preview is read-only. Each requirement row includes its title and
+`work_status`, so review these alongside its UUID and source before applying.
+Requirements recorded through reverse engineering start with no release; assigning
+them to a delivery release includes them in its normal release notes and close
+planning, subject to their status. Preview JSON includes a reusable `apply` object
+with the System, target ID and expected source per item, explicitly null for
+records with no release. `--apply` requires the full preview output; a raw selection
+cannot apply. `--file -` reads stdin. Use `--by id` or `--by slug` when a numeric
+slug is ambiguous. Each request accepts 1–2,000 distinct typed requirements
+in one atomic transaction with audit.
+
+A refused requirement is identified by kind and UUID, with a reason, without
+revealing content from another System or workspace. No selected rows move.
+A changed source returns `requirement_source_changed`: preview again and review
+the new sources. A now-closed target refuses. Already-target eligible rows are
+unchanged. Only selected membership changes; Epics, linked requirements and
+Roadmap records are not moved. Content, lifecycle, accepted versions and evidence
+freshness stay intact; audit owns the movement time. This preservation applies
+to `releases move-requirements`. Older Epic/member moves, release-close carry-forward
+and the maintenance ReleaseRestamp operation still update content timestamps and
+can make reverse-engineering evidence require verification again.
+
+Mutation requests are never retried or split automatically. After a network
+failure or invalid receipt, inspect membership before retrying the reviewed
+request. An unchanged retry creates no mutation event; a later real move records
+a fresh event. Compatible server membership endpoints are required; there is no
+fallback to ReleaseRestamp or direct store access.
+
+`releases members` reads up to 100 requirements; `--all` reads every page. Output
+includes typed UUIDs, `total_count`, `complete` and `next_offset`. Pages are
+separate snapshots: quiesce concurrent changes for an exact inventory, compare
+complete typed-ID sets rather than totals alone, and retry if totals change or
+a page is incomplete. This reads requirement membership, not Epic membership
+or deployment status.
+
+Implementation: `tools/modernpath/cmd/release_membership.go` and
+`apps/core/lib/core/compliance/requirement_release_membership.ex`.
+
 ## Getting Started
 
 ### Install the CLI

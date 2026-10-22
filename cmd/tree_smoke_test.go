@@ -370,13 +370,15 @@ const (
 
 // Each current leaf is classified against the retained command tree below.
 var leafDispositions = map[string]disposition{
-	"releases list":            {kind: dispExecute},
-	"releases activate":        {kind: dispExecute, args: []string{"releases", "activate", "2", "--pin-stdin"}},
-	"releases pin status":      {kind: dispExecute},
-	"releases pin set":         {kind: dispExecute, args: []string{"releases", "pin", "set", "--pin-stdin"}},
-	"factory pin status":       {kind: dispExecute},
-	"factory pin set":          {kind: dispExecute, args: []string{"factory", "pin", "set", "--pin-stdin"}},
-	"factory release activate": {kind: dispExecute, args: []string{"factory", "release", "activate", "2", "--pin-stdin"}},
+	"releases list":              {kind: dispExecute},
+	"releases members":           {kind: dispExecute, args: []string{"releases", "members", "2", "--all", "--json"}},
+	"releases move-requirements": {kind: dispExecute, args: []string{"releases", "move-requirements", "2", "--file", "-", "--json"}},
+	"releases activate":          {kind: dispExecute, args: []string{"releases", "activate", "2", "--pin-stdin"}},
+	"releases pin status":        {kind: dispExecute},
+	"releases pin set":           {kind: dispExecute, args: []string{"releases", "pin", "set", "--pin-stdin"}},
+	"factory pin status":         {kind: dispExecute},
+	"factory pin set":            {kind: dispExecute, args: []string{"factory", "pin", "set", "--pin-stdin"}},
+	"factory release activate":   {kind: dispExecute, args: []string{"factory", "release", "activate", "2", "--pin-stdin"}},
 
 	"backlog create":                    {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
 	"backlog update":                    {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},

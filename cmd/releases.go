@@ -21,8 +21,8 @@ func init() {
 }
 
 func newReleasesCommand(load func() (*cliEnv, error)) *cobra.Command {
-	root := &cobra.Command{Use: "releases", Short: "Read and activate delivery releases in the bound System"}
-	root.AddCommand(newReleaseList(load), newReleaseActivate(load), newReleasePin(load))
+	root := &cobra.Command{Use: "releases", Short: "Read delivery releases, activate them, and move requirement membership"}
+	root.AddCommand(newReleaseList(load), newReleaseActivate(load), newReleasePin(load), newReleaseRequirementMove(load), newReleaseMembers(load))
 	return root
 }
 
