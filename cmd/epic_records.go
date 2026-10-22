@@ -19,6 +19,8 @@ var epicPublicFields = []string{
 	"overview_updated_at", "target_architecture_id", "target_profile_id", "assignee_id", "approved_by_id", "release_id",
 	"metadata", "inserted_at", "updated_at", "system", "target_profile", "assignee", "approved_by", "release",
 	"summary", "scenarios", "audit_events", "user_requirements", "system_requirements", "traces", "relationships",
+	// SR-3812: the backlog records routed to or closed by the Epic.
+	"backlog",
 }
 
 func init() {

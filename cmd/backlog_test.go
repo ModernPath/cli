@@ -282,3 +282,64 @@ func TestBacklogListTextRendersAnEmptyDisposition(t *testing.T) {
 		t.Fatalf("want the row %q in:\n%s", want, out.String())
 	}
 }
+
+// Epic 298 (SR-3813, TC-1398): list rows, get text and the update echo name a
+// routing or closure target by the title the server serves on the link, as
+// `ROUTED to 288 — <title>`; a row without a titled link and JSON output stay
+// as served.
+func TestBacklogListPrintsTheTargetTitle(t *testing.T) {
+	routedID := "11111111-1111-4111-8111-111111111111"
+	closedID := "22222222-2222-4222-8222-222222222222"
+	routed := map[string]any{"id": routedID, "system_id": 4, "kind": "backlog", "title": "Routed discovery", "disposition": "ROUTED to 288",
+		"links": []any{map[string]any{"role": "routed_to", "type": "epic", "id": 288, "title": "Keep backlog routing truthful", "display_ref": nil, "available": true}}}
+	closed := map[string]any{"id": closedID, "system_id": 4, "kind": "tooling", "title": "Closed by text", "disposition": "CLOSED by PR:972", "links": []any{}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var result any
+		switch {
+		case r.Method == "PATCH" && r.URL.Path == "/api/v1/backlog/"+routedID:
+			result = routed
+		case r.Method == "GET" && r.URL.Path == "/api/v1/backlog/"+routedID:
+			result = routed
+		case r.Method == "GET" && r.URL.Path == "/api/v1/backlog":
+			result = []any{routed, closed}
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+			w.WriteHeader(404)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"backlog": result}})
+	}))
+	defer server.Close()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := newBacklogCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		cmd.SetArgs(args)
+		cmd.SetIn(strings.NewReader(`{"disposition":"ROUTED to 288","disposition_ref":"USER:2026-10-22:plan-save"}`))
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	titled := "ROUTED to 288 — Keep backlog routing truthful"
+	list := run("list")
+	if !strings.Contains(list, routedID+"  backlog  "+titled+"  Routed discovery\n") {
+		t.Fatalf("list row lacks the target title: %q", list)
+	}
+	if !strings.Contains(list, closedID+"  tooling  CLOSED by PR:972  Closed by text\n") {
+		t.Fatalf("a row without a titled link changed: %q", list)
+	}
+	if got := run("get", routedID); !strings.Contains(got, "disposition: "+titled+"\n") {
+		t.Fatalf("get text lacks the target title: %q", got)
+	}
+	if echo := run("update", routedID, "--file", "-"); !strings.Contains(echo, "disposition: "+titled+"\n") {
+		t.Fatalf("update echo lacks the target title: %q", echo)
+	}
+	for _, args := range [][]string{{"get", routedID, "--full", "--json"}, {"list", "--json"}, {"update", routedID, "--file", "-", "--json"}} {
+		out := run(args...)
+		if strings.Contains(out, "—") || !strings.Contains(out, "ROUTED to 288") || !strings.Contains(out, "Keep backlog routing truthful") {
+			t.Fatalf("JSON output must serve the disposition and the link as stored: %q", out)
+		}
+	}
+}

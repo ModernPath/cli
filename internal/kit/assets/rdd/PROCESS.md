@@ -253,6 +253,12 @@ the change beyond a narrow, verifiable scope, return to the Epic path before
 implementing the expanded scope. Security, tenant isolation, data integrity,
 project checks and human merge, deployment and release authority still apply.
 
+A small change has no Epic to route a backlog, gap or tooling record to. When
+it delivers such a record, name the record in the PR. If the change cites a
+requirement, use the CLI to mark the record as routed to that requirement and
+read it back. Once the change merges, use the CLI to mark the record as closed
+by that pull request and read it back.
+
 ## Autopilot
 
 Autopilot is a human-granted way to continue implementation across a bounded
@@ -543,6 +549,15 @@ tooling gap and leave the item explicitly incomplete.
 | External impediment | Report the blocker, its owner and the next action |
 | Known future work outside the approved scope | Disclose it and leave it for a separately authorized Epic |
 | Contradicted or removed behavior | Explain the conflict and ask the human how the approved outcome changes |
+
+Backlog, gap and tooling records live on the server like every other delivery
+record: they are created, routed and closed there, through the CLI. When a
+saved plan delivers a record, mark the record as routed to that Epic. After
+human completion approval, mark it as closed by that Epic. If the human wants
+a record left open, leave it open and add a note saying why. Whether a record
+is open, routed or closed (its disposition) is read from the server, not from
+the plan text; a plan only lists the records it delivers. A discovery that
+exists only in a note is not yet a record.
 
 Preserve competing authoritative sources and ask for a human decision; never
 resolve intent by timestamp, branch state, or a convenient test result.

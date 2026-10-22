@@ -44,9 +44,13 @@ process authority.
 6. Record open questions, conflicts, assumptions, deferred scope and risk in
    plain language. Do not invent a CLI command or local plan format.
 7. Save the plan through the CLI and read back the exact
-   saved content. Obtain and record answers to declared decisions, then retain the
-   review bundle. Stop for independent review and human implementation
-   approval; do not change tests or product code in this pass.
+   saved content. Then use the CLI to mark each backlog, gap or tooling
+   record the plan delivers as routed to the Epic, with a reference to this
+   plan save, and read the record back. List those records in the plan body.
+   Do the same when a later plan save adds a record. Obtain and record
+   answers to declared decisions, then retain the review bundle. Stop for
+   independent review and human implementation approval; do not change tests
+   or product code in this pass.
 
 Report the Epic ID, saved plan and proposed content, material decisions, sources and the
 next phase. If saving or reading back is unsupported, surface that tooling gap.

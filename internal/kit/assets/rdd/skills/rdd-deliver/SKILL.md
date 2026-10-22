@@ -24,6 +24,10 @@ human-selected Epic and its latest saved plan before acting.
 6. Use `rdd-completion-review` for independent code review, trace audit and
    separate human completion approval. Only that approval publishes requirement
    content, raises revisions, records audit and releases ownership atomically.
+   After completion approval is read back, use the CLI to mark each backlog,
+   gap or tooling record routed to the Epic as closed by the Epic, and read
+   each record back. If the human wants a record left open, leave it open and
+   add a note saying why.
 
 Keep all work inside the approved Epic. A material scope or acceptance change
 may revise its saved plan only while the Epic is `PROPOSED`. Once implementation

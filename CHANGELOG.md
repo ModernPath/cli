@@ -10,6 +10,18 @@
   `modernpath install`, with official install-script alternatives. An
   unavailable lookup stays unknown; local builds retain source-build advice.
   `hooks doctor` names the release install route when no CLI is on PATH.
+- Keep backlog routing truthful (Epic 298). The CLI reference's phase map names
+  `backlog update` in the Plan and Discoveries rows (`ROUTED to <epic id>` at
+  plan save) and in the Completion row (`CLOSED by <epic id>` after completion
+  approval); the installed process is re-pinned to the req-driven-dev revision
+  whose rdd-plan, rdd-triage, rdd-completion-review, rdd-deliver and PROCESS.md
+  carry the routing and closing steps. `epics get <id> --fields backlog --json`
+  (also under `--full`) serves the records routed to or closed by the Epic.
+  Backlog links carry `title`, `display_ref` and `available`; `backlog list`,
+  `get` and `update` text print the target's title as `ROUTED to 288 — <title>`.
+  Requires the matching server: a `ROUTED to` target that is not an Epic id or
+  a requirement UUID of the bound System is now refused with 422, and the
+  routing or closure link is written with the disposition.
 
 - Update the process snapshot to allow small changes without an Epic while
   retaining the existing RED/GREEN TDD loop and verification evidence. A change

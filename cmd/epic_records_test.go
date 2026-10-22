@@ -181,3 +181,44 @@ func TestSystemAppLinkReturnsOnlyAURL(t *testing.T) {
 		}
 	}
 }
+
+// Epic 298 (SR-3812, TC-1397): `backlog` is a public Epic field, so the records
+// routed to or closed by the Epic are served by --full and --fields backlog and
+// printed as the other array fields are in text.
+func TestEpicGetServesTheBacklogRecordsRoutedToTheEpic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1,"title":"Explicit","process_status":"IN_PROGRESS","backlog":[{"id":"11111111-1111-4111-8111-111111111111","kind":"backlog","title":"Routed discovery","disposition":"ROUTED to 42","disposition_ref":"USER:2026-10-22:plan-save","role":"routed_to","raised_at":"2026-10-21T10:00:00Z","raised_by":"raiser@example.com"}]}}`))
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+
+	out, err := runRoot(t, "epics", "get", "42", "--fields", "backlog", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected map[string]any
+	if err := json.Unmarshal([]byte(out), &selected); err != nil {
+		t.Fatal(err)
+	}
+	backlog, ok := selected["backlog"].([]any)
+	if len(selected) != 1 || !ok || len(backlog) != 1 {
+		t.Fatalf("--fields backlog must pass the list through: %#v", selected)
+	}
+	if row := backlog[0].(map[string]any); row["id"] != "11111111-1111-4111-8111-111111111111" || row["role"] != "routed_to" || row["disposition"] != "ROUTED to 42" {
+		t.Fatalf("unexpected backlog row: %#v", row)
+	}
+
+	out, err = runRoot(t, "epics", "get", "42", "--full", "--json")
+	if err != nil || !strings.Contains(out, "Routed discovery") {
+		t.Fatalf("--full must include the backlog records: %q err=%v", out, err)
+	}
+
+	out, err = runRoot(t, "epics", "get", "42", "--fields", "backlog")
+	if err != nil || !strings.Contains(out, "backlog: [{") || !strings.Contains(out, `"title":"Routed discovery"`) {
+		t.Fatalf("text output must print backlog as a JSON array field: %q err=%v", out, err)
+	}
+}

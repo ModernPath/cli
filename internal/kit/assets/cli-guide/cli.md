@@ -1187,9 +1187,13 @@ amd64 when the required archive tools are available.
 [Backlog](../../docs/features/backlog.md) for content fields and mock-data examples.
 Read back with `modernpath backlog list --json` and
 `modernpath backlog get <uuid> --full --json`. List output supports `--limit`
-and `--offset`; detail output supports `--fields` or `--full`.
+and `--offset`; detail output supports `--fields` or `--full`. Each served
+`links` entry names its target: `title`, `display_ref` (requirements and test
+cases) and `available` (false for a deleted target). Text output prints a
+routing or closure target's title after the disposition, as
+`ROUTED to 288 — <Epic title>`; `--json` serves the disposition as stored.
 
-Close or update a resolved discovery with
+Route or close a discovery with
 `modernpath backlog update <uuid> --file resolution.json --json`.
 The JSON object accepts only `notes_md`, `disposition` and `disposition_ref`;
 omitted fields are preserved. Notes replace existing notes, and an empty reference
@@ -1199,6 +1203,13 @@ clears the reference. For example:
 {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md":"Verified the merged fix."}
 ```
 
+`ROUTED to <id>` must name an Epic of the bound System by integer id (an
+`EPIC-`, `EPIC:` or `Epic ` prefix is tolerated, in any letter case) or a user
+or system requirement by UUID; the server writes the `routed_to` link with the
+record and refuses any other target with 422. `CLOSED by <id>` writes a `closed_by` link when the id names an Epic,
+requirement or test case of the System and keeps any other reference, such as a
+pull-request number, as text. A record routed to an Epic is listed by
+`modernpath epics get <id> --fields backlog --json` (also under `--full`).
 The server preserves the original raiser and records the authenticated update
 actor and time in metadata. Read back with `backlog get <uuid> --full --json`.
 This changes the backlog disposition, not an Epic approval or completion.

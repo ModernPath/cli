@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"strings"
 
@@ -20,7 +21,12 @@ func newBacklogCommand(load func() (*cliEnv, error)) *cobra.Command {
 Allowed fields: notes_md, disposition, disposition_ref. Omitted fields are preserved.
 Disposition uses OPEN, DEFERRED, ROUTED to <id>, REJECTED with <source>,
 CLOSED by <id>, or ACCEPTED with <source>. Use an empty disposition_ref to clear it.
+ROUTED to must name an Epic id or a requirement UUID of the bound System and writes the
+routing link with the record; CLOSED by links an Epic, requirement or test case id and
+keeps any other reference, such as a pull-request number, as text.
 The server records the authenticated update actor and time; original attribution is preserved.
+Text output names a routing or closure target by its title (ROUTED to 288 — <title>);
+--json serves the disposition as stored, with the title on the link.
 Example: {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md":"Verified fix"}.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !requirementUUIDPattern.MatchString(args[0]) {
@@ -56,7 +62,7 @@ Example: {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md"
 			if !strings.EqualFold(row["id"].(string), args[0]) {
 				return fmt.Errorf("Backlog response has a different record identity")
 			}
-			return writeRecord(cmd, row)
+			return writeRecord(cmd, withTextDisposition(cmd, row, row))
 		}}
 	update.Flags().String("file", "", "Backlog update JSON file, or - for stdin (required)")
 	_ = update.MarkFlagRequired("file")
@@ -110,93 +116,102 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 	_ = create.MarkFlagRequired("file")
 	create.Flags().Bool("json", false, "Emit JSON")
 	parent.AddCommand(create)
-	get := &cobra.Command{Use: "get <uuid>", Short: "Read a native Backlog record", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if !requirementUUIDPattern.MatchString(args[0]) {
-			return fmt.Errorf("Backlog ID must be a UUID")
-		}
-		if err := validateRecordSelection(cmd, backlogFields); err != nil {
-			return err
-		}
-		env, err := load()
-		if err != nil {
-			return err
-		}
-		data, err := backlogGet(env, "/api/v1/backlog/"+url.PathEscape(args[0])+"?system_id="+fmt.Sprint(env.SystemID))
-		if err != nil {
-			return err
-		}
-		row, ok := data.(map[string]any)
-		if !ok {
-			return fmt.Errorf("Backlog response is missing its record")
-		}
-		if err = validateBacklogRecord(row, env.SystemID); err != nil {
-			return err
-		}
-		if !strings.EqualFold(row["id"].(string), args[0]) {
-			return fmt.Errorf("Backlog response has a different record identity")
-		}
-		selected, err := selectRecordFields(cmd, row, []string{"id", "system_id", "kind", "title", "disposition"}, backlogFields, nil)
-		if err != nil {
-			return err
-		}
-		return writeRecord(cmd, selected)
-	}}
+	get := &cobra.Command{Use: "get <uuid>", Short: "Read a native Backlog record", Args: cobra.ExactArgs(1),
+		Long: `Read one Backlog record of the bound System. Text output names a routing or closure
+target by its title (ROUTED to 288 — <title>); --json serves the disposition as stored and the
+target's title, display_ref and available on each link.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !requirementUUIDPattern.MatchString(args[0]) {
+				return fmt.Errorf("Backlog ID must be a UUID")
+			}
+			if err := validateRecordSelection(cmd, backlogFields); err != nil {
+				return err
+			}
+			env, err := load()
+			if err != nil {
+				return err
+			}
+			data, err := backlogGet(env, "/api/v1/backlog/"+url.PathEscape(args[0])+"?system_id="+fmt.Sprint(env.SystemID))
+			if err != nil {
+				return err
+			}
+			row, ok := data.(map[string]any)
+			if !ok {
+				return fmt.Errorf("Backlog response is missing its record")
+			}
+			if err = validateBacklogRecord(row, env.SystemID); err != nil {
+				return err
+			}
+			if !strings.EqualFold(row["id"].(string), args[0]) {
+				return fmt.Errorf("Backlog response has a different record identity")
+			}
+			selected, err := selectRecordFields(cmd, row, []string{"id", "system_id", "kind", "title", "disposition"}, backlogFields, nil)
+			if err != nil {
+				return err
+			}
+			return writeRecord(cmd, withTextDisposition(cmd, row, selected))
+		}}
 	addRecordReadFlags(get)
 	get.Flags().Bool("json", false, "Emit JSON")
 	parent.AddCommand(get)
 	page := listPage{}
-	list := &cobra.Command{Use: "list", Short: "List Backlog records in the bound System", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if err := page.validate(); err != nil {
-			return err
-		}
-		env, err := load()
-		if err != nil {
-			return err
-		}
-		data, err := backlogGet(env, "/api/v1/backlog?system_id="+fmt.Sprint(env.SystemID))
-		if err != nil {
-			return err
-		}
-		rows, ok := data.([]any)
-		if !ok {
-			return fmt.Errorf("Backlog response is missing its list")
-		}
-		// Epic 288 (B1): a row the list cannot show is skipped and named, so
-		// one bad record no longer hides every good one. create and get keep
-		// their abort: a single record that fails its own check is no result.
-		records := make([]map[string]any, 0, len(rows))
-		skipped := make([]map[string]any, 0)
-		for _, value := range rows {
-			if problem := backlogRowProblem(value, env.SystemID); problem != "" {
-				id := "?"
-				if row, ok := value.(map[string]any); ok && str(row, "id") != "" {
-					id = str(row, "id")
-				}
-				printWarning("backlog list: skipped record %s: %s\n", id, problem)
-				skipped = append(skipped, map[string]any{"id": id, "reason": problem})
-				continue
+	list := &cobra.Command{Use: "list", Short: "List Backlog records in the bound System", Args: cobra.NoArgs,
+		Long: `List the Backlog records of the bound System, one row per record: <uuid>  <kind>  <disposition>  <title>.
+A routing or closure target with a served title prints as ROUTED to 288 — <title>; --json serves
+the records as stored.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := page.validate(); err != nil {
+				return err
 			}
-			records = append(records, value.(map[string]any))
-		}
-		machine, _ := cmd.Flags().GetBool("json")
-		start, end := page.window(len(records), machine)
-		if machine {
-			blob, err := json.MarshalIndent(map[string]any{"backlog": records[start:end], "total": len(records), "has_more": end < len(records), "skipped": skipped}, "", "  ")
+			env, err := load()
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(blob))
+			data, err := backlogGet(env, "/api/v1/backlog?system_id="+fmt.Sprint(env.SystemID))
+			if err != nil {
+				return err
+			}
+			rows, ok := data.([]any)
+			if !ok {
+				return fmt.Errorf("Backlog response is missing its list")
+			}
+			// Epic 288 (B1): a row the list cannot show is skipped and named, so
+			// one bad record no longer hides every good one. create and get keep
+			// their abort: a single record that fails its own check is no result.
+			records := make([]map[string]any, 0, len(rows))
+			skipped := make([]map[string]any, 0)
+			for _, value := range rows {
+				if problem := backlogRowProblem(value, env.SystemID); problem != "" {
+					id := "?"
+					if row, ok := value.(map[string]any); ok && str(row, "id") != "" {
+						id = str(row, "id")
+					}
+					printWarning("backlog list: skipped record %s: %s\n", id, problem)
+					skipped = append(skipped, map[string]any{"id": id, "reason": problem})
+					continue
+				}
+				records = append(records, value.(map[string]any))
+			}
+			machine, _ := cmd.Flags().GetBool("json")
+			start, end := page.window(len(records), machine)
+			if machine {
+				blob, err := json.MarshalIndent(map[string]any{"backlog": records[start:end], "total": len(records), "has_more": end < len(records), "skipped": skipped}, "", "  ")
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), string(blob))
+				return err
+			}
+			for _, row := range records[start:end] {
+				// Epic 288 (B2): every column through orDash — a null disposition
+				// printed `%!s(<nil>)` — and the title on one line. Epic 298
+				// (SR-3813): the disposition names its target by title.
+				title := strings.Join(strings.Fields(str(row, "title")), " ")
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", orDash(str(row, "id")), orDash(str(row, "kind")), orDash(backlogDispositionText(row)), orDash(title))
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), pageFooter(start, end, len(records)))
 			return err
-		}
-		for _, row := range records[start:end] {
-			// Epic 288 (B2): every column through orDash — a null disposition
-			// printed `%!s(<nil>)` — and the title on one line.
-			title := strings.Join(strings.Fields(str(row, "title")), " ")
-			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", orDash(str(row, "id")), orDash(str(row, "kind")), orDash(str(row, "disposition")), orDash(title))
-		}
-		_, err = fmt.Fprint(cmd.OutOrStdout(), pageFooter(start, end, len(records)))
-		return err
-	}}
+		}}
 	addPageFlags(list, &page)
 	list.Flags().Bool("json", false, "Emit JSON")
 	parent.AddCommand(list)
@@ -325,4 +340,48 @@ func validateBacklogUpdate(payload map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// backlogTargetTitle returns the title the server serves on the record's first
+// routed_to or closed_by link, or "" when no such link carries one (SR-3813).
+func backlogTargetTitle(row map[string]any) string {
+	links, _ := row["links"].([]any)
+	for _, raw := range links {
+		link, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if role, _ := link["role"].(string); role != "routed_to" && role != "closed_by" {
+			continue
+		}
+		if title, _ := link["title"].(string); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+// backlogDispositionText renders a disposition for text output: the stored
+// text, then the routing or closure target's served title, as
+// `ROUTED to 288 — <title>`. A disposition without a titled link is unchanged.
+func backlogDispositionText(row map[string]any) string {
+	disposition, _ := row["disposition"].(string)
+	if title := backlogTargetTitle(row); title != "" {
+		return disposition + " — " + title
+	}
+	return disposition
+}
+
+// withTextDisposition gives a text-mode projection the titled disposition; a
+// --json projection keeps the disposition as stored and the title on the link.
+func withTextDisposition(cmd *cobra.Command, row, selected map[string]any) map[string]any {
+	if machine, _ := cmd.Flags().GetBool("json"); machine {
+		return selected
+	}
+	if _, present := selected["disposition"]; !present {
+		return selected
+	}
+	out := maps.Clone(selected)
+	out["disposition"] = backlogDispositionText(row)
+	return out
 }
