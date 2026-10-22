@@ -1,6 +1,6 @@
 ---
 name: rdd-audit
-description: Inspect native Traces, their endpoints, requirement coverage and actual evidence. Use within reverse-engineering, planning review, completion review or an explicitly requested audit. Reports findings and limits without changing lifecycle or granting approval.
+description: Inspect Traces, their endpoints, requirement coverage and actual evidence. Use within reverse-engineering, planning review, completion review or an explicitly requested audit. Reports findings and limits without changing lifecycle or granting approval.
 ---
 
 # Audit Traces and evidence
@@ -11,9 +11,9 @@ through `rdd-triage`. An audit alone authorizes no record or implementation chan
 
 ## Establish scope
 
-Identify the native System, Epic or requirements and the criteria being checked.
-Read current records and Traces through the project's sanctioned interface.
-Use native endpoint identities and kinds; never infer the corpus from local
+Identify the System, Epic or requirements by their IDs and list the criteria being checked.
+Read current records and Traces through the project's CLI.
+Use endpoint identities and kinds; never infer the corpus from local
 files or recreate retired ledgers. If a required read is unavailable, report
 the tooling gap and leave the check incomplete.
 
@@ -23,10 +23,10 @@ unit, enumeration method and exclusions. Compare both directions: requirements
 without support and relevant implementation or tests without requirement coverage.
 Disclose unresolved items; counts alone do not prove semantic coverage.
 
-## Inspect native Traces
+## Inspect Traces
 
 1. Enumerate Traces touching each in-scope requirement and criterion. Follow
-   pagination to completion. Inspect both endpoints, their native kinds,
+   pagination to completion. Inspect both endpoints, their kinds,
    relationship and System scope. Report missing, invalid, cross-System or
    wrongly related endpoints.
 2. Inspect the connected records and actual source material. Requirement-to-
@@ -34,8 +34,9 @@ Disclose unresolved items; counts alone do not prove semantic coverage.
    intent and that code implements the requirement's behavior. A valid Trace
    establishes a relationship, not the truth of a claim.
 3. Map each UR acceptance scenario to meaningful user-outcome assertions and
-   any required SRs. Map each SR criterion to implementation, test cases and
-   actual results. During planning inspect proposed targets and expected RED
+   any required SRs. For each SR criterion, follow the SR's implementation and
+   test-case traces, then inspect the results that exercise that criterion.
+   During planning inspect proposed targets and expected RED
    assertions; do not require execution evidence for unimplemented behavior.
 4. For verification and completion inspect actual results, commands/reports,
    tested revisions, environment where relevant and assertions exercised.
@@ -59,12 +60,12 @@ intent for a human decision instead of resolving it by timestamp or majority.
 Use the project's supported source readers and ordinary repository files.
 Unavailable historical material is a disclosed limit, not a reason to recreate
 retired source-capture machinery. Keep uninspected findings separate from
-confirmed defects. If checking published copies, use the sanctioned read-back
+confirmed defects. If checking published copies, use the CLI's read-back
 route and compare actual content; length alone does not prove equality.
 
 ## Report
 
-Report native scope, inspected Trace identities and endpoints, criterion-level
+Report scope, inspected Trace identities and endpoints, criterion-level
 coverage, sources and actual test observations. Include confirmed findings,
 exclusions, unresolved checks and command outcomes. State what each observation
 proves and its limits. Route findings through the invoking pass; an audit does

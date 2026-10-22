@@ -34,8 +34,8 @@ prerequisite.
 ## Process authority
 
 [`PROCESS.md`](PROCESS.md) is the process authority. Skills apply it using the
-consuming project's sanctioned process interface; they do not define CLI
-verbs or a second record format. The server is authoritative for Epics,
+consuming project's CLI; they do not define CLI
+commands or a second record format. The server is authoritative for Epics,
 requirements, saved plans, exact approved content and human decisions. This
 repository has no file-backed process ledger.
 

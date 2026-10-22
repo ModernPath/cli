@@ -502,8 +502,8 @@ CLI adds the bound system_id. Example:
 
 The run:
 
-  kind        ci | local_test | browser_verification | manual | migration (required)
-  ran_at      RFC 3339 time (required)
+  kind        ci | local_test | browser_verification | manual | migration (required for a new run)
+  ran_at      RFC 3339 time (required for a new run)
   runner      optional: {"kind": "agent", "agent_slug": "<slug>"} names the
               agent that ran it, with the signed-in person as the human
               behind it; left out, the run is attributed to the signed-in
@@ -512,9 +512,22 @@ The run:
   complete), totals, log_ref, environment, raw_evidence
   id          an existing run to update: supplied results replace its result
               set, and omitted fields keep their values. Ordinary runs allow
-              proof to be overwritten. Only runs stored with
+              proof to be overwritten. Epic-registered runs and runs stored with
               raw_payload.as_built_proof set to execution or delivery refuse
               changed proof under the same id
+
+For approved Epic obligations, register the run with epics gates start-execution
+before running tests, then finalize its returned run_id here. Registered runs
+retain their candidate, obligations, test definitions, role and observed outcomes.
+This requirement applies to every source, including CI and reverse-engineering
+verification: unregistered results for a criterion declared by an IN_PROGRESS or
+IN_REVIEW Epic in the same tenant/System, or an Epic target with a declared check
+clause, are refused with epic_execution_registration_required. Other targets keep
+their ordinary evidence behavior. The implementation approver's signed-in account
+must register the run; a different CI account cannot bypass that ownership rule.
+Omitted results cannot erase an outcome; exact retries are allowed, reruns use
+new registrations. The server records immutable finalization order. See epics
+gates --help for native criterion/check targeting and expected RED assertions.
 
 Each result:
 
@@ -528,8 +541,11 @@ Each result:
   revision, target_clause, test_case_ref, detail (a map; put the command
   under "command"), environment, raw_evidence
 
-Record the RED run before the passing run, each at its tested commit. Omit
-id to create a new run for each execution, including reruns. Requirement-level
+Record the RED run before the passing run, each at its tested commit. For an
+Epic-registered execution, use its returned run_id as id and status complete;
+keep the registration runner unchanged. Every rerun needs a new registration.
+For unregistered evidence outside approved Epic obligations, omit id to create
+a new run for each execution, including reruns. Requirement-level
 results drive evidence latest and the Epic's build state. For existing-behavior acceptance
 (reverse-engineer review), record one result per criterion with target_type
 criterion and target_id the criterion's id (requirements get <uuid> --kind …

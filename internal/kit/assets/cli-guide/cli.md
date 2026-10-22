@@ -725,33 +725,67 @@ Specification generation captures the Epic’s Knowledge Core snapshot when none
 exists and preserves an existing snapshot. It schedules work only after that
 preparation succeeds.
 
-### Read and approve a native Epic plan
+### Epic gates and human approvals
 
-Plans and their decisions live in the server process store:
+Plans and their decisions live in the server process store. The four Epic gate
+checks are:
+
+```sh
+modernpath epics gates check <epic-id> --phase plan-ready --json
+modernpath epics gates check <epic-id> --phase implementation --json
+modernpath epics gates check <epic-id> --phase completion-review --json
+modernpath epics gates check <epic-id> --phase completion --json
+```
+
+Run `plan-ready` after recording the independent plan review, `implementation`
+before asking for implementation approval, `completion-review` before submitting
+implemented work, and `completion` while IN_REVIEW before asking for completion
+approval. Each explicit check records its result and blockers in the Audit Trail,
+including actor, server time, Git SHA source and known dirty status. The CLI uses
+checkout HEAD by default; `--git-sha <full-sha>` supplies an explicit 40- or
+64-character SHA with unknown dirty status. Outside Git, SHA is unavailable.
+The SHA is caller-supplied trace information; the server does not verify it
+against a repository. Both passing and blocked checks are recorded; blocked
+checks exit nonzero, and audit failure returns an error. Reading a preview or
+review bundle records no check. A passing check grants no human approval.
 
 ```sh
 modernpath epics plan show <epic-id> --full --json
-modernpath epics plan save <epic-id> --reason "<reason>" < plan.json
-modernpath epics plan approve-implementation <epic-id> --reason "<reason>" < reviewed-plan.json
+modernpath epics plan save <epic-id> --file plan.json --reason "<reason>"
+modernpath epics gates review-bundle <epic-id> --json > reviewed-bundle.json
+modernpath epics plan approve-implementation <epic-id> --file reviewed-plan.json --presentation-file reviewed-bundle.json --reason "USER:<date>: <actual approval>"
 modernpath epics plan submit-review <epic-id> --reason "<reason>"
-modernpath epics plan approve-completion <epic-id> --reason "<reason>"
+modernpath epics gates presentation <epic-id> --json > completion-presentation.json
+modernpath epics plan approve-completion <epic-id> --file completion-presentation.json --reason "USER:<date>: <actual approval>"
 ```
+
+Run approval commands only after the human approves the exact retained content.
+`reviewed-plan.json` is the `plan` object inside the retained review bundle;
+`reviewed-bundle.json` is the whole bundle. Do not pass the enclosing response
+as the plan, or fetch a new bundle to reuse an earlier human answer. The
+implementation presentation is required when the plan declares human decisions.
+Record those answers before the final independent plan review. Completion uses
+the exact whole presentation shown to the human, including current evidence.
 
 `show` summarizes the current plan state; `show --full --json` reads the saved
 plan, human decisions and accepted requirement versions in full.
 `save` and `approve-implementation` read one JSON plan from standard input
-or `--file plan.json`; implementation approval applies to that saved plan.
-The plan is `{"body": "<markdown>", "requirements": [{"kind", "id",
-"content", "criteria"}], "traces": [...]}`; `save` accepts a partial draft the
-server completes, while `approve-implementation` takes the complete plan that
-`show --fields plan --json` returns. `modernpath epics plan --help` and the
-installed `.modernpath/cli-reference.md` carry the field list and refusals.
-Writes accept an optional `--reason` comment. `submit-review` submits the implementation for human completion
-review. `approve-completion` records the human completion decision and
-publishes the approved requirement content. The approved plan and owned
-requirement content remain read-only through `IN_PROGRESS` and `IN_REVIEW`.
-Capture a requested scope change separately; it does not revise the active
-approval. The server remains authoritative.
+or `--file plan.json`. The plan includes `body`, `requirements` (kind, ID,
+content and criteria), `traces` and `verification`. Declare every active
+criterion and required project check, retained test-case IDs, applicable
+boundaries, author context and issued decision IDs in `verification` before
+approval. `save` accepts a partial draft the server completes; implementation
+approval takes the exact complete plan. The installed CLI reference and
+`modernpath epics plan --help` document the shape; `modernpath epics gates --help`
+documents independent review, candidate declaration, execution registration and
+actual RED/GREEN finalization. Register before running every required execution.
+
+Writes accept an optional `--reason` comment. `submit-review` submits the
+implementation for human completion review. `approve-completion` records the
+separate human completion decision and publishes the approved requirement
+content. The approved plan and owned requirement content remain read-only
+through IN_PROGRESS and IN_REVIEW. Capture changed scope separately; it does not
+revise the active approval. The server remains authoritative.
 
 Saving a `PROPOSED` Epic plan replaces that Epic's selected requirement
 membership with the complete proposal set. Omitting a selected requirement

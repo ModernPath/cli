@@ -5,8 +5,8 @@ description: Verify reverse-engineered requirements against existing behavior an
 
 # Verify existing behavior
 
-Read the project's instructions, current process and sanctioned CLI reference.
-Start from an explicit System and native user/system requirement IDs. Read their
+Read the project's instructions, current process and CLI reference.
+Start from an explicit System and user/system requirement IDs. Read their
 current content, active acceptance criteria and implementation/test traces.
 Acceptance targets are PROPOSED. Existing DONE requirements may support the
 trace, but are not accepted again. Verification does not change lifecycle state.
@@ -21,7 +21,7 @@ trace, but are not accepted again. Verification does not change lifecycle state.
 3. Run the existing tests, or inspect retained execution results that genuinely
    apply to the inspected implementation. Record the command/report, environment,
    tested code revision, test identities, criterion targets and actual PASS,
-   FAIL or SKIP outcomes through the sanctioned evidence interface. A broad
+   FAIL or SKIP outcomes through the CLI. A broad
    passing suite proves only the assertions it executed.
 4. Report uncovered criteria, failures, skipped checks and uncertainty. If tests
    or behavior need changing, leave the requirements PROPOSED and hand the

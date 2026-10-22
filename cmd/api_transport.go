@@ -85,7 +85,7 @@ func (e *cliEnv) sendOnce(method, apiPath string, payload any) (int, map[string]
 		return 0, nil, fmt.Errorf("GET requests cannot carry a payload")
 	}
 	var body *bytes.Reader
-	if payload != nil {
+	if method != http.MethodGet && method != http.MethodHead && payload != nil {
 		raw, err := json.Marshal(payload)
 		if err != nil {
 			return 0, nil, err

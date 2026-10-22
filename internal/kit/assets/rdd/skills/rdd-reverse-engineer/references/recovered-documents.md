@@ -15,7 +15,7 @@ implemented behavior from unconfirmed intent.
 
 Produce one system-wide account per applicable role, not per-context duplicates.
 These paths are defaults; adopt established equivalents explicitly and verify
-the sanctioned document collector recognizes them.
+the project's document collector recognizes them.
 
 | Default path | Content |
 |---|---|
@@ -26,7 +26,7 @@ the sanctioned document collector recognizes them.
 | `docs/23-data-flow.md` | Origins, transformations, destinations and trust boundaries |
 
 Use the project's document publication route and verify the published revision
-and content through the sanctioned read-back operation. A local
+and content through the CLI's read-back operation. A local
 draft does not prove publication. Recovered documents are derived design
 sources, not a second requirement store.
 

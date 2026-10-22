@@ -6,7 +6,7 @@ description: Establish sourced product intent and identify draft planning or sep
 # Discover and classify
 
 Read `PROCESS.md`, the selected Epic and relevant product sources. Use the
-sanctioned interface for process state and preserve native IDs.
+CLI for process state and preserve IDs.
 
 1. Separate explicit user intent from facts established by documents, code,
    tests and runtime evidence.

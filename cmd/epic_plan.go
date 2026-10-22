@@ -47,6 +47,30 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					}
 					payload["plan"] = proposal
 				}
+				if op.name == "approve-implementation" {
+					file, _ := cmd.Flags().GetString("presentation-file")
+					if file != "" {
+						if file == "-" {
+							return fmt.Errorf("--presentation-file requires a saved file path")
+						}
+						presentation, err := commandObject(cmd, file)
+						if err != nil {
+							return err
+						}
+						payload["presentation"] = presentation
+					}
+				}
+				if op.name == "approve-completion" {
+					file, _ := cmd.Flags().GetString("file")
+					if file == "" {
+						return fmt.Errorf("approve-completion requires --file with the exact reviewed presentation (use --file - to read standard input)")
+					}
+					presentation, err := commandObject(cmd, file)
+					if err != nil {
+						return err
+					}
+					payload["presentation"] = presentation
+				}
 				env, err := load()
 				if err != nil {
 					return err
@@ -63,6 +87,9 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return err
 				}
 				if status < 200 || status >= 300 {
+					if problem, ok := response["error"].(map[string]any); ok && problem["gate"] != nil {
+						_ = writeCommandJSON(cmd, problem["gate"])
+					}
 					if message, ok := response["message"].(string); ok && message != "" {
 						return fmt.Errorf("%w: %s", serverRefusal("epic plan", status, response), message)
 					}
@@ -92,7 +119,13 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 			addRecordReadFlags(command)
 		}
 		if op.input {
-			command.Flags().String("file", "-", "Plan JSON file, or - for standard input")
+			command.Flags().String("file", "-", "Plan or completion presentation JSON file, or - for standard input")
+		}
+		if op.name == "approve-completion" {
+			command.Flags().String("file", "", "Exact reviewed completion presentation JSON file; use - for standard input")
+		}
+		if op.name == "approve-implementation" {
+			command.Flags().String("presentation-file", "", "Exact review-bundle JSON shown to the human; required for declared decisions")
 		}
 		if op.method != "GET" {
 			command.Flags().String("reason", "", "Optional comment on the change or decision")
@@ -118,7 +151,13 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
                                    "position", "statement" | "given", "when", "then",
                                    "status": "active"}]}],
    "traces": [{"id"?, "source_type", "source_id", "target_type", "target_id",
-               "link_kind": "implements" | "verifies" | "derives" | "relates"}]}
+               "link_kind": "implements" | "verifies" | "derives" | "relates"}],
+   "verification": {"author_context": "<authoring context>", "decisions": ["<issued decision UUID>"],
+                    "criteria": [{"id": "<criterion UUID>", "changed": true,
+                                  "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
+                    "checks": [{"id"?, "name": "<required project check>",
+                                "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
+                    "boundaries": [{"name": "<name>", "applicable": true}]}}
 
 content keys are title, description, context, context_name, release_note
 and detail_md, plus actor and intended_use for a user
@@ -134,7 +173,12 @@ completion, while code and test links added during implementation survive.
 save (the Epic PROPOSED) accepts a draft: content may name only the fields
 that change, criteria default to the current active ones, traces default to
 the current ones, and missing criterion and trace ids are assigned. The saved
-plan is read back complete by show. approve-implementation (the Epic
+plan is read back complete by show. Before approval, verification must declare
+every active criterion and required project check, with retained test-case IDs.
+Use decisions: [] when no human questions are declared. Omit a new project-check
+id on save to have it assigned; reuse the returned id on later saves. A boundary
+with applicable: false must include its reason. See epics gates --help for
+registration, RED/GREEN evidence and review details. approve-implementation (the Epic
 PROPOSED) takes that complete plan - every content field of the kind, every
 criterion field, and a traces key - and refuses a partial one as
 incomplete reviewed content; send the plan object show returned. Both take
@@ -155,7 +199,19 @@ repeated completion publishes nothing twice.
 show prints id, process_status, implementation_approval and
 completion_approval; --fields plan, versions or suggested_plan, or --full,
 add the plan, the accepted versions and, for an Epic with members but no
-saved plan, the draft the server suggests. Read back after every write.`
+saved plan, the draft the server suggests. Read back after every write.
+
+Named transition preconditions are checked by epics gates check. See epics gates
+--help for verification obligations, execution registration and independent reviews.
+Implementation approval requires the exact current saved plan and its independent
+review. If verification.decisions is nonempty, also pass --presentation-file with
+the exact epics gates review-bundle JSON shown to the human. Capture and present
+it before requesting approval, and pass its plan via --file. Never refresh the
+bundle after the human answers. Changed answers require renewed independent
+review and human approval; answers are immutable after implementation approval.
+Completion requires --file with the exact bundle returned by epics gates
+presentation and reviewed by the human. Changed evidence or content refuses the
+whole transition. A preview is advisory; no Epic gate check grants human approval.`
 
 var epicPlanOperationHelp = map[string]string{
 	"show": `Read the saved plan, the two human approvals and the accepted versions.
@@ -169,15 +225,22 @@ plan shape and the refusals.`,
 The file is the complete plan object show returned; a partial plan is refused
 as incomplete reviewed content. --reason carries their answer as a USER:
 source. Moves the Epic and its requirements to IN_PROGRESS and locks them to
-this Epic and approver. Run only after the human answered in the session.`,
+this Epic and approver. Run only after the human answered in the session.
+For declared decisions, --presentation-file must contain the exact review-bundle
+shown to the human before approval, and --file its plan. A changed decision
+requires renewed independent review and human approval. Do not fetch a new bundle
+to attach to an earlier approval. Decision answers are frozen at implementation
+approval; changed intent becomes separately approved work.`,
 	"submit-review": `Mark the implementation complete: the Epic and its owned requirements move to
 IN_REVIEW with their published content unchanged. Only the approver may run
 it. The human's completion decision follows separately.`,
 	"approve-completion": `Record the human's completion approval and publish the approved content in one
 transaction: revision +1 per requirement, an immutable accepted version,
 audit, released ownership, Epic DONE. --reason carries their answer as a
-USER: source. Run only after the human answered in the session; a repeat on
-a DONE Epic publishes nothing.`,
+USER: source. --file takes the exact bundle returned by epics gates presentation,
+which the human must have reviewed before approving. Changed content, evidence
+or ownership refuses the transaction. An identical retry on DONE publishes
+nothing twice; a different presentation refuses.`,
 }
 
 func readEpicPlan(input io.Reader) (map[string]any, error) {

@@ -5,13 +5,15 @@ description: Deliver an authorized Epic through its saved plan, human implementa
 
 # Deliver an Epic
 
-Read `PROCESS.md` and use the project's sanctioned process interface. Confirm
+Read `PROCESS.md` and use the project's CLI. Confirm
 the human-selected Epic and its latest saved plan before acting.
 
 1. Run `rdd-start` and identify the earliest incomplete phase.
 2. Establish sources and scope with `rdd-discover` when needed; save the plan
    with `rdd-plan`.
-3. Obtain an independent plan review with `rdd-cold-review`. Resolve material
+3. Obtain and record answers to declared decisions before the final plan review.
+   Retain the authoritative bundle. Obtain an independent plan review with
+   `rdd-cold-review`. Resolve and record resolutions for material
    findings and revise the draft plan before implementation approval.
 4. Present the exact saved plan and proposed content for human implementation approval
    with `rdd-entry-review`. Do not implement before approval.

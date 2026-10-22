@@ -137,7 +137,7 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 	loop := ref[:strings.Index(ref, "## Global flags")]
 	for _, want := range []string{
 		"## Operating the delivery loop",
-		"### Phase to command",
+		"### Pass to command",
 		"### Refusals and what clears them",
 		"`rdd-start`", "`rdd-plan`", "`rdd-entry-review`", "`rdd-build`", "`rdd-verify`",
 		"`rdd-completion-review`", "`rdd-reverse-engineer`", "`rdd-reverse-engineer-verify`",

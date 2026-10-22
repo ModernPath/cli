@@ -1,11 +1,11 @@
 # Requirement-driven delivery process
 
-This document defines the delivery process. Skills apply it. The project's sanctioned process interface is the only way to read or change delivery state; its server is authoritative. This process does not define local ledger formats or add a second record system.
+This document defines the delivery process. Skills apply it. The project's CLI is the only way to read or change delivery state; its server is authoritative. This process does not define local ledger formats or add a second record system.
 
 ## Canonical model
 
 ```text
-EPIC -> required UR/SR requirements -> native code and test references
+EPIC -> required UR/SR requirements -> code and test references
 UR -> acceptance scenario -> TEST_CASE -> TEST_RESULT
 UR acceptance scenario -- may require --> SR
 SR -> CODE -> TEST_CASE -> TEST_RESULT
@@ -19,12 +19,12 @@ Human decisions: implementation approval -> completion approval
                  or explicit acceptance of verified existing behavior
 ```
 
-Every product Epic must include one or more native UR/SR requirements that
+Every product Epic must include one or more UR/SR requirements that
 cover its in-scope behavior, with explicit acceptance criteria and planned
 code/test traces before implementation approval. Use URs for user outcomes
 and SRs for system behavior as applicable; both kinds are not required for
 every Epic. Acceptance checks written only in a saved plan do not substitute
-for native requirements. Small changes have no exemption. During delivery,
+for requirements. Small changes have no exemption. During delivery,
 connect those requirements to actual implementation and criterion-level test
 evidence before completion review. Meta-work remains outside the product
 loop under `AGENTS.md` §Product work and meta-work.
@@ -44,7 +44,7 @@ workflow. Agents establish facts, write and review plans, implement approved
 work, and report evidence. They do not infer human approval from silence,
 prior work, a passing test, a commit, or a repository state.
 
-Use the project's sanctioned process interface to read the Epic and its
+Use the project's CLI to read the Epic and its
 requirements, save a plan, obtain recorded approvals, and read back results.
 If it lacks a needed read or write, report the tooling gap through the
 project's named channel. Do not read or edit process state through a local
@@ -56,7 +56,7 @@ faithfully summarize it with the file and location. Code proves existing
 behavior, not intended behavior. Repository status and a change list describe
 the repository; they do not establish process approval or completion.
 
-The process interface attributes human decisions and approvals to the person
+The CLI attributes human decisions and approvals to the person
 who made them. In the saved plan, cite product sources in ordinary prose with
 links or file locations and enough quoted or summarized context for another
 reviewer to inspect the claim. A link audit checks whether a reference
@@ -74,7 +74,7 @@ resolves; it does not prove that the source supports the claim.
 | `TEST_RESULT` | Outcome, command/report, environment when relevant, tested revision and validity |
 
 Requirement and Epic identifiers come from the authoritative process store.
-Use those native IDs in plans, code/test links, review notes and evidence.
+Use those IDs in plans, code/test links, review notes and evidence.
 Never invent, derive, or substitute a path, slug, code, or external key for an
 identity the store owns.
 
@@ -100,7 +100,9 @@ or treat a new request as permission to edit it. Surface a requested scope or
 acceptance change as a human decision and record the new work separately;
 implementation continues only within the approved scope. New work requires
 its own saved plan and human implementation approval; unaffected authorized
-implementation may continue.
+implementation may continue. The narrowly scoped legacy recovery operation below
+is an explicit human-authorized exception that ends the active approval rather
+than revising it in place.
 
 `IN_REVIEW` means implementation is complete and awaits human completion
 approval. The ownership lock, approved proposal and prior published requirement
@@ -122,7 +124,7 @@ It must reject changed content or evidence, incomplete or failing evidence, and
 any requirement owned by active implementation work. It does not create an
 Epic, an implementation approval, or an ownership lock. Already-DONE
 requirements are left unchanged. A missing human decision leaves requirements
-PROPOSED. If the sanctioned interface does not provide this operation, report
+PROPOSED. If the CLI does not provide this operation, report
 the tooling gap and leave them PROPOSED.
 
 This path describes and accepts existing behavior only. If behavior or tests
@@ -131,7 +133,7 @@ approval; verification evidence alone never authorizes the change.
 
 There is no READY/TODO entry step, requirement stage, evidence-conclusion status,
 plan-revision token, fingerprint, generic gate or separate ownership framework.
-Requirements keep their own native UUIDs and types; Epic membership and criterion
+Requirements keep their own UUIDs and types; Epic membership and criterion
 ownership are direct containment, while links among requirements, code,
 documents and tests are traces. Requirement-to-document traces use `relates`.
 `BLOCKED`, `DEFERRED` and `OBSOLETE` retain their actual reason and history when
@@ -145,7 +147,7 @@ scope and write statements that describe the behavior actually found. Use the
 existing domain vocabulary and preserve existing requirement content.
 
 Record requirements, file references and their traces atomically. A source file
-reference has its native identity, repository and path; a known revision is
+reference has its identity, repository and path; a known revision is
 optional descriptive context. Do not hash files, documents, inventories or
 reports, capture source snapshots, or require an authorization run, publication
 group, proof packet, clean checkout, matching revision, coverage gate or
@@ -154,8 +156,8 @@ requirements or their traces.
 
 New requirements start as PROPOSED. Recording is not implementation approval,
 verification, compliance approval or completion. Existing requirements may be
-referenced by native identity and kind without replacing their content.
-Authentication, tenant and System scope, valid native endpoints and atomic
+referenced by identity and kind without replacing their content.
+Authentication, tenant and System scope, valid endpoints and atomic
 writes remain normal store integrity rules.
 
 After recording, verification is a separate pass using
@@ -171,15 +173,14 @@ neither recording nor passing evidence implies human acceptance.
 
 Local working-set files may hold store projections and development inputs.
 They are not a second authority and need no fingerprint or synchronization
-ceremony. Read back the recorded requirements and traces through the sanctioned
-interface and report what was recorded and any remaining work.
+ceremony. Read back the recorded requirements and traces through the CLI and report what was recorded and any remaining work.
 
 ## Human approvals
 
 The human reviews a saved Epic plan and its exact proposed requirement
 content, criteria and traces. Implementation approval retains that content and
 the decision's actor, time and reason. Read back the approval and requirement
-ownership through the sanctioned interface before implementation. A later
+ownership through the CLI before implementation. A later
 changed intent needs fresh human approval; never silently change what an
 existing approval accepted.
 
@@ -212,15 +213,14 @@ branch as merged or deployed without inspecting that external state.
 
 For changed behavior or tests, work on the Epic scope the user selected. If
 scope is missing, ask which Epic to use or whether to prepare a sourced
-proposal. Read its native ID, saved plan, approved proposal, human decisions
-and affected requirements from the sanctioned interface. Choosing work
+proposal. Read its ID, saved plan, approved proposal, human decisions
+and affected requirements from the CLI. Choosing work
 creates no separate selection record or Epic lock. Requirement ownership is
 acquired by implementation approval, not session entry.
 
 For an explicit request limited to recording, verifying or accepting existing
-behavior, an Epic is not required. Read the native System and requirement IDs,
-current content, evidence and implementation ownership from the sanctioned
-interface, then route to the corresponding reverse-engineering pass. If the
+behavior, an Epic is not required. Read the System and requirement IDs,
+current content, evidence and implementation ownership from the CLI, then route to the corresponding reverse-engineering pass. If the
 request entails a behavior or test change, use the Epic path above.
 
 Keep work within the approved outcome and exclusions. Disclose changed intent,
@@ -233,7 +233,7 @@ result.
 Autopilot is a human-granted way to continue implementation across a bounded
 sprint; it is not a completion approval. The grant names the Epic or Epics,
 end date and excluded areas and is recorded with its `USER:` source through
-the sanctioned interface. Under a current grant, the agent may continue
+the CLI. Under a current grant, the agent may continue
 within an approved saved plan and may record ordinary, reversible product
 assumptions for later human confirmation. Unless already explicitly authorized, it must stop for decisions whose
 wrong answer is hard to undo, including deletion or migration of existing
@@ -248,11 +248,14 @@ failures and incomplete work at sprint closeout.
 
 ## Planning and readiness
 
+Epic gates check the recorded conditions for planning readiness, implementation
+approval, completion review and completion approval.
+
 Planning produces a saved, reviewable Epic plan and exact proposed content. It is useful to a
 builder and an independent reviewer without depending on session memory. It
 contains:
 
-- the Epic's native ID, desired user outcome, included requirements and
+- the Epic's ID, desired user outcome, included requirements and
   explicit exclusions;
 - authoritative sources and the claims they support, unresolved decisions,
   assumptions, conflicts and risks;
@@ -275,7 +278,7 @@ shared state, inspect the actual writers, readers, existing data shapes,
 partial-failure behavior and recovery; document the risks and mitigation in
 the saved plan. Do not replace reconnaissance with a list of source links.
 
-A plan with no native requirements, uncovered in-scope behavior, missing
+A plan with no requirements, uncovered in-scope behavior, missing
 criteria or missing planned code/test traces is not ready for implementation
 approval. Return it to planning rather than approving plan-only acceptance
 checks.
@@ -283,27 +286,97 @@ checks.
 An independent cold review checks the saved plan against its sources, scope,
 acceptance, architecture, state boundaries, risks and test strategy. Record
 material findings and correct the plan before asking for implementation
-approval. Re-review material plan changes. The review audits the planned
+approval. Renew the review whenever its reviewed content changes, including
+decision answers, membership, test definitions, candidate or relevant evidence.
+An identical saved value does not itself require another review. Record explicit
+resolutions for material findings, including findings from superseded reviews;
+editing the plan alone does not record their disposition. The review audits the planned
 change, not the amount of prose or the presence of links.
+
+### Epic gates, verification and review
+
+The four Epic gates and their CLI checks are:
+
+| Epic gate | Required conditions | CLI check |
+|---|---|---|
+| Plan readiness (`plan-ready`) | Saved requirements, criteria, code/test traces, test definitions and verification obligations; answered decisions; current independent plan review and resolved material findings. | `modernpath epics gates check <epic-id> --phase plan-ready --json` |
+| Implementation approval (`implementation`) | Plan readiness and requirements available for ownership. Approval also checks the exact reviewed plan and, for declared decisions, the retained presentation shown to the user. | `modernpath epics gates check <epic-id> --phase implementation --json` |
+| Completion review (`completion-review`) | Current candidate, intact membership and ownership, passing results for every obligation, qualifying RED evidence for changed criteria, current implementation review confirming scope, and resolved material findings. | `modernpath epics gates check <epic-id> --phase completion-review --json` |
+| Completion approval (`completion`) | Completion-review conditions while the Epic is IN_REVIEW. Approval also checks the exact retained completion presentation and requires the user's explicit decision. | `modernpath epics gates check <epic-id> --phase completion --json` |
+
+Each explicit check records its readiness result and blockers in the Audit Trail,
+with the actor, server time and Git SHA source, without changing Epic lifecycle.
+The CLI uses checkout HEAD and known dirty status by default; `--git-sha` supplies
+an explicit full SHA. When no SHA is available, the record says so. A supplied
+SHA is trace information and does not prove that the repository was verified.
+Both passing and blocked checks are recorded. Reading a preview or review bundle
+does not record a check. Passing a check grants no approval. The transition commands recheck the
+conditions: `modernpath epics plan approve-implementation`,
+`modernpath epics plan submit-review`, and
+`modernpath epics plan approve-completion`. Follow the CLI reference for their
+required Epic ID, input files and approval arguments.
+
+After recording the independent plan review, `rdd-cold-review` runs the
+`plan-ready` check. Before asking for implementation approval,
+`rdd-entry-review` runs `implementation`. `rdd-completion-review` runs
+`completion-review` before submission and `completion` before asking for
+human completion approval. Inspect each recorded result and resolve blockers
+through the appropriate pass. None of these checks records a human approval.
+
+Before the final plan review, create or reuse test definitions and declare
+verification obligations for every active criterion and required project check.
+Each obligation identifies its test, boundary and expected observation;
+each criterion states whether behavior changes and therefore needs RED evidence.
+Record applicable boundaries and reasons for exclusions, the plan author's
+context, and required human decisions using identities issued by the CLI. Retain each decision question beside its effective human answer.
+These are test definitions, not executable test changes before approval.
+Obtain and record answers to declared decisions before the final independent
+review. A later answer changes the reviewed content and requires a renewed review.
+
+The agent handling the task fetches and retains the authoritative review bundle, supplies it
+to a context independent of the author, and records the returned review against
+that exact bundle. The reviewer covers every criterion and obligation, reports
+material findings separately from notes, and states limitations. Distinct author
+and reviewer context labels attest to separate contexts; they do not prove that
+different people performed the work. Do not replace an independent review with
+an author-assigned label. The agent handling the task records finding resolutions and reads
+back the review; a changed bundle needs review again.
+
+Retain the exact plan and decision answers presented for implementation approval
+before asking the human. Apply their answer to that retained presentation; do
+not refresh it silently to reuse an earlier answer. At completion, similarly
+retain the presentation containing the approved proposal, published baseline,
+candidate, evidence, reviews and readiness before asking. Changed presented
+content requires a current presentation and a fresh human answer.
+
+A legacy active Epic whose approved plan lacks verification obligations needs
+explicit human-authorized recovery through a supported audited operation. Such
+recovery returns it to PROPOSED, releases implementation ownership, preserves
+published content and history, and requires a new saved plan, independent review
+and implementation approval. It is not permission to edit an active approval.
+If that operation is unavailable, report the gap and leave the work incomplete.
 
 ## Development loop
 
 ```text
-CHOOSE EPIC -> SAVE PLAN AND PROPOSED CONTENT -> INDEPENDENT REVIEW
+CHOOSE EPIC -> SAVE PLAN AND PROPOSED CONTENT -> ANSWER DECLARED DECISIONS
+-> RETAIN REVIEW BUNDLE -> INDEPENDENT REVIEW + RECORDED RESOLUTIONS
 -> HUMAN IMPLEMENTATION APPROVAL / IN_PROGRESS + REQUIREMENT OWNERSHIP
--> RED -> GREEN -> CLEANUP -> VERIFY -> IN_REVIEW
+-> REGISTER / EXECUTE / FINALIZE RED -> CANDIDATE
+-> REGISTER / EXECUTE / FINALIZE GREEN -> CLEANUP -> VERIFY
+-> RECORDED INDEPENDENT IMPLEMENTATION REVIEW -> IN_REVIEW
 -> HUMAN COMPLETION APPROVAL / ATOMIC PUBLICATION + REVISION + AUDIT + UNLOCK
 ```
 
 Enter with `rdd-start`. Use `rdd-deliver` for an end-to-end request, and a
 focused skill only when the user explicitly ends the task at that pass. Each
-skill uses the project's sanctioned process interface; it does not prescribe
-or invent CLI verbs. A missing interface capability is reported as a tooling
+skill uses the project's CLI; it does not prescribe
+or invent CLI commands. A missing CLI capability is reported as a tooling
 gap.
 
 | Phase | Skill | Exit |
 |---|---|---|
-| Session entry and scope | `rdd-start` | Epic plan read for changed behavior, or native System/requirements/evidence read for an explicit existing-behavior pass; next phase identified |
+| Session entry and scope | `rdd-start` | Epic plan read for changed behavior, or System/requirements/evidence read for an explicit existing-behavior pass; next phase identified |
 | Discover and classify | `rdd-discover` | Sources and proposed scope/decisions recorded for the selected Epic |
 | Plan | `rdd-plan` | Saved plan and exact proposed content ready for independent review |
 | Cold review | `rdd-cold-review` | Findings resolved or clearly disclosed; reviewed content identified |
@@ -324,12 +397,27 @@ After implementation approval, establish each changed clause's expected
 failure before implementing it. For each clause:
 
 1. Write or select a focused assertion that expresses the approved behavior.
-2. Run it against the current implementation and confirm the expected failure;
+2. Register the RED execution through the CLI before running
+   it, identifying obligations, revision, command and environment. Run it
+   against the current implementation and confirm the expected failure;
    a build error or unrelated failure is not RED evidence.
-3. Implement the smallest change that makes the assertion pass.
-4. Run the focused test, then proportional boundary and regression checks.
-5. Clean up without changing behavior and rerun affected checks.
+3. Finalize and read back the actual RED evidence before registering GREEN.
+   Implement the smallest change that makes the assertion pass.
+4. Declare the candidate revision before GREEN. Register each execution before
+   running the focused test and proportional boundary and regression checks;
+   finalize each returned execution identity with its actual evidence.
+5. Clean up without changing behavior and rerun affected checks with fresh
+   registrations. A changed candidate needs fresh passing evidence and review.
 6. Re-run affected user scenarios and verify the complete changed trace.
+
+Registration is required for evidence claimed against active declared obligations,
+including CI and delegated verification. Use the CLI's authorized
+registration account; a runner attribution does not grant write authority. A
+candidate is required before GREEN, not before RED. If GREEN was registered too
+early, finalize the valid original RED and register and execute a new GREEN;
+do not manufacture a replacement RED. Every rerun needs a new registration.
+Finish evidence collection before the implementation review; a change to reviewed
+evidence requires renewed review before submission.
 
 Do not reconstruct RED or passing evidence after the fact. Preserve the test
 output, command, environment and revision for each result. Never skip or
@@ -351,10 +439,9 @@ browser output; never mutate production-like data to verify rendering.
 ### Delegated passes
 
 A cold review or verification pass may run in an independent context. It
-returns findings, verdict and sources to the orchestrating session; the
-orchestrator records them through the sanctioned process interface. A
-reviewer's returned verdict does not turn the orchestrator into an independent
-reviewer. A delegated pass that encounters a permission, authentication or
+returns findings, verdict and sources to the agent handling the task, who
+records them through the CLI. Recording a reviewer's verdict does not make that
+agent an independent reviewer. A delegated pass that encounters a permission, authentication or
 process-tool refusal stops and returns it verbatim; it does not retry by
 rewriting or splitting the refused action.
 
@@ -374,7 +461,7 @@ browser for UI, endpoint or contract tests for APIs, integration for
 persistence and external integrations, schema conformance for cross-service
 contracts, and harness/smoke for operations. Run project-required checks and
 proportional regression suites after cleanup. Keep test identities and
-requirement links native and stable; file line numbers are navigation aids,
+requirement links stable; file line numbers are navigation aids,
 not identities.
 
 Before completion review, run the required checks and record their actual
@@ -399,9 +486,9 @@ human decisions.
 
 ## Process state and reconciliation
 
-The server-backed process interface is the sole authority for the Epic,
+The server holds the authoritative records for the Epic,
 requirements, saved plan and exact proposed content, implementation,
-completion and existing-behavior acceptance decisions, and their native
+completion and existing-behavior acceptance decisions, and their
 relationships. This process defines no file-backed ledger,
 local process snapshot, generic gate format, local plan authority, or
 synchronization/reconciliation protocol. Ordinary product documents remain
@@ -409,7 +496,7 @@ in their project repositories and are read or refreshed by that project's
 documented documentation workflow; they do not become delivery state.
 
 After each process operation, read back the authoritative result and confirm
-that the expected Epic, saved/approved content, approval, native requirement links or
+that the expected Epic, saved/approved content, approval, requirement links or
 completion state is present. If a write outcome is uncertain, read the server
 before repeating the operation. Never construct or edit a replacement record
 locally. If an expected server read or transition is unavailable, surface the

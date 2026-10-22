@@ -719,7 +719,7 @@ func TestInstallPlacesTheReverseEngineeringSkill(t *testing.T) {
 	if !strings.Contains(skill, "name: rdd-reverse-engineer") {
 		t.Fatalf("skill needs its frontmatter name:\n%s", skill[:min(400, len(skill))])
 	}
-	for _, want := range []string{"requirements", "typed Traces", "PROPOSED", "native identity and kind"} {
+	for _, want := range []string{"requirements", "typed Traces", "PROPOSED", "identity and kind"} {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("the method never mentions %q — the decisions it encodes are missing", want)
 		}
@@ -755,15 +755,15 @@ func min(a, b int) int {
 	return b
 }
 
-// The installed reverse-engineering skill carries native source and lifecycle boundaries.
-func TestReverseEngineerSkillCarriesNativeBoundaries(t *testing.T) {
+// The installed reverse-engineering skill carries source and lifecycle boundaries.
+func TestReverseEngineerSkillCarriesSourceAndLifecycleBoundaries(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Install(root); err != nil {
 		t.Fatal(err)
 	}
 	skill := installedReverseEngineeringInstructions(t, root)
 	for _, want := range []string{
-		"Use native IDs for trace endpoints",
+		"Use IDs for trace endpoints",
 		"File references name repository and path",
 		"New requirements start as PROPOSED",
 		"Source changes do not invalidate recorded requirements",

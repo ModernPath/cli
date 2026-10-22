@@ -5,7 +5,7 @@ description: Implement behavior within a human-approved Epic plan, using red-fir
 
 # Build approved behavior
 
-Read `PROCESS.md` and verify through the sanctioned interface that the current
+Read `PROCESS.md` and verify through the CLI that the current
 saved plan and proposed content has human implementation approval. Confirm the Epic and
 requirement IDs and remain inside approved scope. The active approved plan and
 owned requirement content are read-only during implementation and completion
@@ -15,11 +15,17 @@ record the new work separately; do not revise the active approval in place.
 For each behavior:
 
 1. Write or select a focused assertion for the approved outcome.
-2. Run it against current code and confirm the expected failure. A compile
+2. Register the RED execution with obligations, revision, command and environment
+   through the authorized account, then run it against current code and confirm
+   the expected failure. A compile
    error or unrelated failure is not RED evidence.
-3. Implement the smallest passing change.
-4. Run focused checks, then boundary-appropriate regression checks.
-5. Clean up without changing behavior and rerun affected checks.
+3. Finalize and read back actual RED evidence before registering GREEN.
+   Implement the smallest passing change.
+4. Declare the candidate before GREEN. Register each execution before running
+   focused checks and boundary-appropriate regression checks, then finalize its
+   returned identity with actual evidence and read it back.
+5. Clean up without changing behavior and rerun affected checks with fresh
+   registrations. Update a changed candidate and obtain fresh passing evidence.
 6. Preserve actual commands, outputs and tested revisions; keep RED separate
    from passing results.
 

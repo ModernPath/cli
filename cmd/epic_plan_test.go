@@ -3,8 +3,11 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -80,5 +83,70 @@ func TestEpicApprovalInputIsOneCompletePlanObject(t *testing.T) {
 				t.Fatal("accepted an incomplete or ambiguous reviewed plan")
 			}
 		})
+	}
+}
+
+func TestEpicCompletionApprovalRequiresAnExplicitPresentationFile(t *testing.T) {
+	loads := 0
+	command := newEpicPlanCommand(func() (*cliEnv, error) {
+		loads++
+		return nil, errors.New("unexpected server access")
+	})
+	command.SetArgs([]string{"approve-completion", "42"})
+	command.SetIn(strings.NewReader("stdin must not be read"))
+
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--file") {
+		t.Fatalf("missing presentation file error = %v", err)
+	}
+	if loads != 0 {
+		t.Fatalf("loaded CLI environment %d times before validating required input", loads)
+	}
+}
+
+// SR-1602: transport only the decision bundle shown to the human; never refresh it.
+func TestEpicImplementationApprovalRetainsDecisionPresentation(t *testing.T) {
+	const bundle = `{"plan":{"body":"A","requirements":[]},"decisions":[{"actor_id":9223372036854775807,"content":{"answer":"Choose A","source":"USER: A"}}]}`
+	file := filepath.Join(t.TempDir(), "reviewed.json")
+	if err := os.WriteFile(file, []byte(bundle), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/approve-implementation" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		var input map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		var got, want any
+		decoder := json.NewDecoder(bytes.NewReader(input["presentation"]))
+		decoder.UseNumber()
+		if err := decoder.Decode(&got); err != nil {
+			t.Errorf("missing presentation: %v", err)
+		}
+		decoder = json.NewDecoder(strings.NewReader(bundle))
+		decoder.UseNumber()
+		_ = decoder.Decode(&want)
+		actual, _ := json.Marshal(got)
+		expected, _ := json.Marshal(want)
+		if !bytes.Equal(actual, expected) {
+			t.Errorf("changed decision bundle: %s", actual)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"process_status": "IN_PROGRESS"}})
+	}))
+	defer server.Close()
+	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"approve-implementation", "287", "--file", "-", "--presentation-file", file})
+	command.SetIn(strings.NewReader(`{"body":"A","requirements":[]}`))
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("approval fetched unseen content: %d calls", calls)
 	}
 }

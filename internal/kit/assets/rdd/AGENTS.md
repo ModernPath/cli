@@ -1,21 +1,23 @@
 # Requirement-driven delivery — agent instructions
 
 This repository defines a reusable product-delivery process and its focused
-agent procedures. The server-backed process interface in a consuming project
-is the sole authority for Epics, requirements, saved plans and exact proposed content and
-human approvals. This repository defines no local delivery ledger.
+agent procedures. The project's CLI is the command-line tool named in its
+instructions for reading and updating delivery records. In modernpath-v1, it
+is `modernpath`. The server holds the authoritative Epics, requirements,
+saved plans, exact proposed content and human approvals. This repository
+defines no local delivery ledger.
 
 ## Instruction ownership
 
-- [`PROCESS.md`](PROCESS.md) defines product authority, native item identity,
+- [`PROCESS.md`](PROCESS.md) defines product authority, item identity,
   traces, Epic scope, implementation approval, engineering, evidence, human
   completion and existing-behavior acceptance.
 - [`skills/`](skills/) contains focused procedures that apply that process.
-  They use the consuming project's sanctioned process interface and do not
-  prescribe or invent its CLI verbs.
+  They use the consuming project's CLI and do not prescribe or invent its
+  commands.
 - Project instructions own project-specific architecture, repository layout,
-  commands, environments and test gates. They name the sanctioned process
-  interface and the channel for reporting a tooling gap.
+  commands, environments and test gates. They name the CLI and the channel
+  for reporting a tooling gap.
 - `skills/rdd-reverse-engineer-verify/SKILL.md` verifies PROPOSED requirements
   against existing behavior and actual test evidence; it does not change their
   lifecycle.
@@ -23,7 +25,7 @@ human approvals. This repository defines no local delivery ledger.
   acceptance and uses the supported atomic PROPOSED-to-DONE operation for
   verified existing behavior.
 
-If the process interface lacks a required read or write, report that gap. Do
+If the CLI lacks a required read or write, report that gap. Do
 not create a local ledger, direct transport, or another authority as a
 workaround.
 
@@ -68,7 +70,7 @@ establish facts, plan, review, implement approved work and report results. A hum
 merge, deployment and release authority. Never infer approval from silence,
 code, test results, commits, a passing review or a repository status.
 
-Use only the project's sanctioned process interface for process reads and
+Use only the project's CLI for process reads and
 writes. If it lacks a needed read or transition, report the gap through the
 project's named channel. Never read credentials or private configuration,
 call its transport directly, or write process state by hand. Ordinary product
@@ -87,6 +89,6 @@ verify Git, PR and deployment state separately before making those claims.
 ## Repository checks
 
 Process edits require review of internal links and competing instruction
-statements, and `git diff --check`. Inspect native Traces and their supporting
-records through the consuming project's sanctioned interface; this repository
+statements, and `git diff --check`. Inspect Traces and their supporting
+records through the consuming project's CLI; this repository
 has no process store or local evidence checker.
