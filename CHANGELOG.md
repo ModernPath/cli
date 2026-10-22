@@ -100,6 +100,14 @@
 
 ### Epic plans and requirement publication
 
+- `epics plan history <epic-id>` lists the Epic's saved plan revisions, both
+  human approvals and every content edit from the store, newest first; the
+  default view summarizes each item by counts and the delta against the
+  previous plan, `--full` prints the stored bodies. `epics update` accepts
+  `outcome_source`, `impact_assessment` and `shared_context` next to the
+  content fields; the server accepts the three only while the Epic is
+  `PROPOSED`, refuses server-assigned fields and audits every edit. Both
+  require the matching server changes.
 - `epics plan show` and `epics plan save` read and save the live Epic plan.
   `approve-implementation`, `submit-review` and `approve-completion` provide
   the implementation and completion review workflow.

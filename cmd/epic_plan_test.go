@@ -150,3 +150,105 @@ func TestEpicImplementationApprovalRetainsDecisionPresentation(t *testing.T) {
 		t.Fatalf("approval fetched unseen content: %d calls", calls)
 	}
 }
+
+// Epic 290 (SR6): `epics plan history` summarizes each stored revision by
+// default and prints the served items unchanged with --full.
+func TestEpicPlanHistorySummarizesRevisionsAndForwardsPaging(t *testing.T) {
+	var gotQuery string
+	status := 200
+	plan := map[string]any{
+		"body": "Plan v2 body",
+		"requirements": []any{
+			map[string]any{"kind": "user_requirement", "id": "u1", "content": map[string]any{}, "criteria": []any{map[string]any{"id": "c1"}, map[string]any{"id": "c2"}}},
+			map[string]any{"kind": "system_requirement", "id": "s1", "content": map[string]any{}, "criteria": []any{map[string]any{"id": "c3"}}},
+		},
+		"traces": []any{map[string]any{"id": "t1"}},
+	}
+	previous := map[string]any{
+		"body":         "Plan v1",
+		"requirements": []any{map[string]any{"kind": "user_requirement", "id": "u1", "content": map[string]any{}, "criteria": []any{map[string]any{"id": "c1"}}}},
+		"traces":       []any{},
+	}
+	items := []any{
+		map[string]any{"id": "e2", "action": "updated", "inserted_at": "2026-10-21T10:00:00Z", "user_id": 7, "user_name": "Editor",
+			"details": map[string]any{"description": "Epic content updated.", "fields": []any{"title"}, "previous": map[string]any{"title": "Old"}, "changes": map[string]any{"title": "New"}}},
+		map[string]any{"id": "e1", "action": "plan_saved", "inserted_at": "2026-10-21T09:00:00Z", "user_id": 7, "user_name": "Editor",
+			"details": map[string]any{"description": "Epic plan saved.", "comment": "second draft", "plan": plan, "previous_plan": previous}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		if r.URL.Path != "/api/work/epics/42/plan/history" || r.Method != http.MethodGet {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		gotQuery = r.URL.RawQuery
+		w.WriteHeader(status)
+		if status != 200 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "Epic not found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": items, "total_count": 2, "has_more": false, "limit": 5, "offset": 10}})
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+
+	out, err := runRoot(t, "epics", "plan", "history", "42", "--json", "--limit", "5", "--offset", "10")
+	if err != nil {
+		t.Fatalf("history: %s %v", out, err)
+	}
+	if gotQuery != "limit=5&offset=10" {
+		t.Fatalf("paging not forwarded: %q", gotQuery)
+	}
+	var page struct {
+		Items      []map[string]any `json:"items"`
+		TotalCount int              `json:"total_count"`
+	}
+	if err := json.Unmarshal([]byte(out), &page); err != nil || page.TotalCount != 2 || len(page.Items) != 2 {
+		t.Fatalf("history output: %s %v", out, err)
+	}
+	edit, saved := page.Items[0], page.Items[1]
+	if edit["action"] != "updated" || edit["at"] != "2026-10-21T10:00:00Z" || edit["user_name"] != "Editor" {
+		t.Fatalf("updated item: %#v", edit)
+	}
+	if fields, _ := json.Marshal(edit["fields"]); string(fields) != `["title"]` || edit["saved_plan"] != nil {
+		t.Fatalf("updated item prints fields, not a plan summary: %#v", edit)
+	}
+	counts := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	if saved["comment"] != "second draft" || saved["id"] != "e1" {
+		t.Fatalf("plan_saved item: %#v", saved)
+	}
+	if got := counts(saved["saved_plan"]); got != `{"body_chars":12,"criteria":3,"requirements":2,"traces":1}` {
+		t.Fatalf("saved_plan counts: %s", got)
+	}
+	if got := counts(saved["delta"]); got != `{"body_chars":5,"criteria":2,"requirements":1,"traces":1}` {
+		t.Fatalf("delta counts: %s", got)
+	}
+	if _, has := saved["revision"]; has || strings.Contains(out, "Plan v2 body") {
+		t.Fatalf("summary leaked the body or named a revision: %s", out)
+	}
+
+	out, err = runRoot(t, "epics", "plan", "history", "42", "--json", "--full")
+	if err != nil {
+		t.Fatalf("history --full: %s %v", out, err)
+	}
+	var full struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &full); err != nil || len(full.Items) != 2 {
+		t.Fatalf("full output: %s %v", out, err)
+	}
+	details, _ := full.Items[1]["details"].(map[string]any)
+	if counts(details["plan"]) != counts(plan) || counts(details["previous_plan"]) != counts(previous) {
+		t.Fatalf("--full changed the served details: %#v", details)
+	}
+	if counts(full.Items[0]["details"].(map[string]any)["fields"]) != `["title"]` {
+		t.Fatalf("--full dropped the updated event's fields: %#v", full.Items[0])
+	}
+
+	status = 404
+	if _, err := runRoot(t, "epics", "plan", "history", "42"); err == nil || !strings.Contains(err.Error(), "epic plan history (server 404)") {
+		t.Fatalf("404 is not a named server refusal: %v", err)
+	}
+}

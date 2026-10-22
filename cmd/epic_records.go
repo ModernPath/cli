@@ -170,15 +170,33 @@ func init() {
 		}
 		return writeRecord(cmd, map[string]any{"operation": "created", "id": id, "title": row["title"]})
 	}
-	update := &cobra.Command{Use: "update <epic-id>", Short: "Update an Epic's authored planning fields", Args: cobra.ExactArgs(1),
-		Long: `Update authored fields on an explicit Epic in the bound System. Only supplied fields change.
-String fields: title, description, scope, non_goals, outcome_source, start_date,
-target_date, severity, category and target_profile_id. Dates use YYYY-MM-DD.
-Native record IDs: assignee_id and release_id. Object fields: metadata,
-shared_context, impact_assessment and knowledge_config. evidence is an array
-of objects. Null clears an optional field. Existing server validation and
-release/lifecycle rules apply. Approval, lifecycle, generated summary and
-other server-managed fields cannot be set here. The server rejects content edits while the Epic is IN_PROGRESS or IN_REVIEW. Pass --file=- to read standard input. Input example: {"description":"Updated scope and review findings"}.`}
+	update := &cobra.Command{Use: "update <epic-id>", Short: "Update an Epic's authored and planning fields", Args: cobra.ExactArgs(1),
+		Long: `Update authored fields on an explicit Epic in the bound System. The CLI checks
+JSON types and forwards the fields: strings title, description, scope,
+non_goals, outcome_source, start_date, target_date, severity, category and
+target_profile_id (dates use YYYY-MM-DD); native record IDs assignee_id and
+release_id; objects metadata, shared_context, impact_assessment and
+knowledge_config; evidence, an array of objects. Null clears an optional
+field. The server decides what it writes: the client-writable fields are
+title, description, scope, non_goals, outcome_source, start_date,
+target_date, severity, category, target_profile_id, assignee_id, release_id,
+impact_assessment (object or null) and shared_context (object; the server refuses null); a
+server-assigned field (metadata, evidence, knowledge_config, tenant_id,
+system_id, process_status, plan, ...) is refused with 422 unsupported Epic
+fields and nothing is written. Only supplied fields change; every accepted
+edit is audited with the previous and new values (epics plan history).
+Existing server validation and release/lifecycle rules apply. The server
+rejects content edits while the Epic is IN_PROGRESS or IN_REVIEW, and accepts
+outcome_source, impact_assessment and shared_context only while the Epic is
+PROPOSED. impact_assessment is written whole: its items are normalized (ids,
+disposition and severity assigned), an empty items list is refused (send
+null to clear) and an item the value model rejects makes the server refuse
+the edit. shared_context is the whole version-1 object, the only accepted
+shape (the stored default {} cannot be written back); its references and
+accepted_context_revision must equal the stored values (an Epic created by
+the CLI stores [] and 0), so decisions, assumptions and open_questions are
+what an edit changes. Pass --file=- to read standard input. Input example:
+{"description":"Updated scope and review findings"}.`}
 	update.Flags().String("file", "", "Epic field changes as JSON, or - for standard input (required)")
 	_ = update.MarkFlagRequired("file")
 	update.RunE = func(cmd *cobra.Command, args []string) error {

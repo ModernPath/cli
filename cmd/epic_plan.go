@@ -132,7 +132,108 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 		}
 		plan.AddCommand(command)
 	}
+	plan.AddCommand(epicPlanHistoryCommand())
 	return plan
+}
+
+// epicPlanHistoryCommand reads the plan-scoped history (Epic 290): every
+// saved plan revision, both human approvals and every content edit, newest
+// first. The default view summarizes each item; --full prints the served
+// items unchanged.
+func epicPlanHistoryCommand() *cobra.Command {
+	history := &cobra.Command{
+		Use: "history <epic-id>", Short: "List the saved plan revisions, approvals and content edits",
+		Long: epicPlanOperationHelp["history"], Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || id <= 0 {
+				return fmt.Errorf("epic ID must be a positive integer")
+			}
+			limit, _ := cmd.Flags().GetInt("limit")
+			offset, _ := cmd.Flags().GetInt("offset")
+			full, _ := cmd.Flags().GetBool("full")
+			env, err := cliEnvLoad()
+			if err != nil {
+				return err
+			}
+			path := fmt.Sprintf("/api/work/epics/%d/plan/history?limit=%d&offset=%d", id, limit, offset)
+			status, response, err := env.get(path)
+			if err != nil {
+				return err
+			}
+			if status < 200 || status >= 300 {
+				return serverRefusal("epic plan history", status, response)
+			}
+			data, ok := response["data"].(map[string]any)
+			if !ok {
+				return fmt.Errorf("Epic plan history response is missing its data object")
+			}
+			items, _ := data["items"].([]any)
+			page := map[string]any{
+				"items": items, "total_count": data["total_count"], "has_more": data["has_more"],
+				"limit": data["limit"], "offset": data["offset"],
+			}
+			if !full {
+				summaries := make([]any, 0, len(items))
+				for _, item := range items {
+					summaries = append(summaries, planHistorySummary(item))
+				}
+				page["items"] = summaries
+			}
+			return writeRecord(cmd, page)
+		},
+	}
+	history.Flags().Int("limit", 20, "Items per page, 1..50")
+	history.Flags().Int("offset", 0, "Items to skip, newest first")
+	history.Flags().Bool("full", false, "Print the stored details in full, plan bodies included")
+	history.Flags().Bool("json", false, "Emit JSON")
+	return history
+}
+
+// planHistorySummary is one history item without its plan bodies: the saved
+// plan's counts and the delta against the previous plan (zeros when absent).
+// An `updated` event names its changed fields instead. The key is saved_plan,
+// not revision: a revision is a published requirement version.
+func planHistorySummary(raw any) map[string]any {
+	item, _ := raw.(map[string]any)
+	details, _ := item["details"].(map[string]any)
+	summary := map[string]any{
+		"id": item["id"], "at": item["inserted_at"], "user_name": item["user_name"],
+		"action": item["action"], "comment": details["comment"],
+	}
+	if item["action"] == "updated" {
+		summary["fields"] = details["fields"]
+		return summary
+	}
+	saved := planCounts(details["plan"])
+	previous := planCounts(details["previous_plan"])
+	delta := map[string]any{}
+	for key, count := range saved {
+		delta[key] = count - previous[key]
+	}
+	summary["saved_plan"] = saved
+	summary["delta"] = delta
+	return summary
+}
+
+func planCounts(raw any) map[string]int {
+	counts := map[string]int{"requirements": 0, "criteria": 0, "traces": 0, "body_chars": 0}
+	plan, ok := raw.(map[string]any)
+	if !ok {
+		return counts
+	}
+	body, _ := plan["body"].(string)
+	counts["body_chars"] = len(body)
+	requirements, _ := plan["requirements"].([]any)
+	counts["requirements"] = len(requirements)
+	for _, raw := range requirements {
+		requirement, _ := raw.(map[string]any)
+		criteria, _ := requirement["criteria"].([]any)
+		counts["criteria"] += len(criteria)
+	}
+	traces, _ := plan["traces"].([]any)
+	counts["traces"] = len(traces)
+	return counts
 }
 
 // epicPlanHelp is the saved-plan contract as Core.Planning.EpicChanges
@@ -211,7 +312,15 @@ bundle after the human answers. Changed answers require renewed independent
 review and human approval; answers are immutable after implementation approval.
 Completion requires --file with the exact bundle returned by epics gates
 presentation and reviewed by the human. Changed evidence or content refuses the
-whole transition. A preview is advisory; no Epic gate check grants human approval.`
+whole transition. A preview is advisory; no Epic gate check grants human approval.
+
+history lists what the store retained about the plan, newest first: every
+save (the saved plan and the one it replaced), both human approvals (the
+plan they approved) and every content edit of the Epic (the changed fields
+with their previous and new values). The default view summarizes each item
+by counts; --full prints the stored bodies. Use it to answer "what changed
+between two revisions" and "who edited the Epic" from the record, not from
+memory.`
 
 var epicPlanOperationHelp = map[string]string{
 	"show": `Read the saved plan, the two human approvals and the accepted versions.
@@ -241,6 +350,17 @@ USER: source. --file takes the exact bundle returned by epics gates presentation
 which the human must have reviewed before approving. Changed content, evidence
 or ownership refuses the transaction. An identical retry on DONE publishes
 nothing twice; a different presentation refuses.`,
+	"history": `List the Epic's plan revisions, approvals and content edits, newest first.
+Each item is one retained audit record: plan_saved (the saved plan and the
+previous one), implementation_approved and completion_approved (the plan
+the human approved) and updated (an epics update: the changed fields with
+their previous and new values). The default view prints per item
+{id, at, user_name, action, comment, saved_plan: {requirements, criteria,
+traces, body_chars}, delta} where delta is saved_plan minus the same counts
+of the previous plan (zeros when none); an updated item prints fields
+instead. --full prints the served items unchanged, details.plan and
+details.previous_plan included. --limit 1..50 (default 20) and --offset
+page the list; a 404 means the Epic is not in your workspace or System.`,
 }
 
 func readEpicPlan(input io.Reader) (map[string]any, error) {

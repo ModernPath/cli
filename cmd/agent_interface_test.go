@@ -297,3 +297,79 @@ func TestAgentEpicErrorsAndScopeDoNotReportSuccess(t *testing.T) {
 		t.Fatal("retained shared active Epic selection")
 	}
 }
+
+// Epic 290 (SR5): the three planning fields travel to the server unchanged;
+// the server, not the CLI, decides state and shape.
+func TestAgentEpicUpdateSendsPlanningFields(t *testing.T) {
+	writes := 0
+	var sent map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		if r.URL.Path != "/api/work/epics/42" {
+			t.Errorf("unexpected path: %s", r.URL)
+		}
+		if r.Method == http.MethodPut {
+			writes++
+			var payload struct {
+				Epic map[string]any `json:"epic"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Error(err)
+			}
+			sent = payload.Epic
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": 42, "system_id": 1, "title": "Planned"}})
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+	file := filepath.Join(t.TempDir(), "epic-planning.json")
+	impact := map[string]any{"version": 1, "items": []any{map[string]any{"target_type": "code", "target_id": "lib/a.ex", "description": "Touches a", "proposed_action": "Edit", "disposition": "dismissed"}}, "secondary_impacts": []any{}}
+	shared := map[string]any{"version": 1, "accepted_context_revision": 0, "decisions": []any{map[string]any{"statement": "Native IDs"}}, "assumptions": []any{}, "open_questions": []any{}, "references": []any{}}
+	input, _ := json.Marshal(map[string]any{"outcome_source": "USER:2026-10-20", "impact_assessment": impact, "shared_context": shared})
+	if err := os.WriteFile(file, input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRoot(t, "epics", "update", "42", "--file", file, "--json")
+	if err != nil || writes != 1 {
+		t.Fatalf("update with planning fields: %s %v writes=%d", out, err, writes)
+	}
+	if len(sent) != 3 || sent["outcome_source"] != "USER:2026-10-20" {
+		t.Fatalf("PUT body did not carry exactly the three planning fields: %#v", sent)
+	}
+	wantImpact, _ := json.Marshal(impact)
+	gotImpact, _ := json.Marshal(sent["impact_assessment"])
+	wantShared, _ := json.Marshal(shared)
+	gotShared, _ := json.Marshal(sent["shared_context"])
+	if string(wantImpact) != string(gotImpact) || string(wantShared) != string(gotShared) {
+		t.Fatalf("planning fields changed in transport: %s %s", gotImpact, gotShared)
+	}
+	for _, invalid := range []string{`{"impact_assessment":"text"}`, `{"shared_context":[]}`, `{"outcome_source":1}`, `{"system_id":2}`, `{"process_status":"DONE"}`} {
+		if err := os.WriteFile(file, []byte(invalid), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runRoot(t, "epics", "update", "42", "--file", file); err == nil {
+			t.Fatalf("accepted invalid update: %s", invalid)
+		}
+	}
+	if writes != 1 {
+		t.Fatalf("invalid payload reached update: %d writes", writes)
+	}
+	if err := os.WriteFile(file, []byte(`{"impact_assessment":null,"outcome_source":null}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "epics", "update", "42", "--file", file); err != nil || writes != 2 || len(sent) != 2 {
+		t.Fatalf("null planning fields: %v writes=%d sent=%#v", err, writes, sent)
+	}
+	help, err := runRoot(t, "epics", "update", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"outcome_source", "impact_assessment", "shared_context", "PROPOSED"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("epics update --help does not name %q", want)
+		}
+	}
+}

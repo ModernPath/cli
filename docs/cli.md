@@ -732,13 +732,32 @@ modernpath epics specs push <epic-id> --file bundle.json
 
 `epics create` reads an Epic JSON object from `--file` or `--file -`; it
 returns a short identity receipt without selecting the Epic as active work. `epics update`
-updates authored planning metadata as well as narrative fields: owner/release IDs,
-start/target dates, outcome, severity/category, target profile, shared context,
-impact assessment, evidence, knowledge configuration and metadata. Server-managed
-lifecycle, approvals and generated summaries remain outside this command.
-
-Use `--file` or `--file -` with a partial JSON object; only supplied fields change. Epic content is
-read-only in `IN_PROGRESS` and `IN_REVIEW`; the server refuses these edits.
+accepts a partial JSON object using `--file` or `--file -` and forwards its
+fields after a JSON type check: the strings `title`, `description`, `scope`,
+`non_goals`, `outcome_source`, `start_date`, `target_date`, `severity`,
+`category` and `target_profile_id`, the native record IDs `assignee_id` and
+`release_id`, the objects `metadata`, `shared_context`, `impact_assessment`
+and `knowledge_config`, and `evidence`, an array of objects. The server
+decides what it writes: the client-writable fields are `title`,
+`description`, `scope`, `non_goals`, `outcome_source`, `start_date`,
+`target_date`, `severity`, `category`, `target_profile_id`, `assignee_id`,
+`release_id`, `impact_assessment` (object or null) and `shared_context`
+(object; the server refuses null); only supplied fields change, and every
+accepted edit is audited with the previous and new values (`epics plan
+history`). Epic content is read-only in `IN_PROGRESS` and `IN_REVIEW`; the
+server refuses these edits. The three planning fields are accepted only while
+the Epic is `PROPOSED` (409 otherwise). `impact_assessment` is written whole
+and stored normalized (ids, `disposition` and `severity` assigned); an empty
+`items` list is refused (send `null` to clear), and an item the value model
+rejects makes the server refuse the edit. `shared_context` is the whole
+version-1 object, the only accepted shape (the stored default `{}` cannot be
+written back); its `references` and `accepted_context_revision` must equal
+the stored values (a CLI-created Epic stores `[]` and `0`), so `decisions`,
+`assumptions` and `open_questions` are what an edit changes. A
+server-assigned field (`tenant_id`, `system_id`, `process_status`, `plan`,
+`metadata`, `evidence`, `knowledge_config`, …) is refused with 422
+`unsupported Epic fields`, a body whose `epic` is not a JSON object with 422
+`Epic must be a JSON object`, and nothing is written.
 `specs status` reports the artifact count and counts by stored status;
 `--fields artifacts` selects the artifact metadata.
 `specs list` summarizes the specification count; `--fields specs` or `--full`
@@ -791,6 +810,7 @@ modernpath epics plan approve-implementation <epic-id> --file reviewed-plan.json
 modernpath epics plan submit-review <epic-id> --reason "<reason>"
 modernpath epics gates presentation <epic-id> --json > completion-presentation.json
 modernpath epics plan approve-completion <epic-id> --file completion-presentation.json --reason "USER:<date>: <actual approval>"
+modernpath epics plan history <epic-id> [--limit 20] [--offset 0] [--full] [--json]
 ```
 
 Run approval commands only after the human approves the exact retained content.
@@ -803,6 +823,15 @@ the exact whole presentation shown to the human, including current evidence.
 
 `show` summarizes the current plan state; `show --full --json` reads the saved
 plan, human decisions and accepted requirement versions in full.
+`history` lists the Epic's retained plan revisions (`plan_saved`, with the
+saved plan and the one it replaced), both human approvals (the plan they
+approved) and every content edit (`updated`, with the changed fields and
+their previous and new values), newest first. The default view prints per
+item `{id, at, user_name, action, comment, saved_plan: {requirements,
+criteria, traces, body_chars}, delta}` where `delta` is `saved_plan` minus the
+same counts of the previous plan; an `updated` item prints `fields` instead.
+`--full` prints the served items unchanged, plan bodies included. `--limit`
+is 1..50.
 `save` and `approve-implementation` read one JSON plan from standard input
 or `--file plan.json`. The plan includes `body`, `requirements` (kind, ID,
 content and criteria), `traces` and `verification`. Declare every active
@@ -1100,6 +1129,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
 | Native requirements | `requirements create`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
+| Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/history` |
 | Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
 | Reverse engineering | `reverse-engineer schema/record/review/accept` |
