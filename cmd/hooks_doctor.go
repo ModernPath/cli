@@ -547,7 +547,7 @@ func reportHookFamily(agentName string, f familyState) {
 // The log is the only place a degraded hook shows up, so the doctor reads it
 // rather than asking the user to.
 func reportRecentOutcomes() {
-	raw, err := os.ReadFile(filepath.Join(".modernpath", "context-hook.log"))
+	raw, err := os.ReadFile(contextHookLogPath())
 	if err != nil {
 		printInfo("No context-hook log yet — run a prompt, then check again.\n")
 		return

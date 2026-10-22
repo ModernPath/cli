@@ -165,3 +165,120 @@ func TestBacklogReportsRefusalsAndRejectsUnscopedReceipts(t *testing.T) {
 		server.Close()
 	}
 }
+
+// Epic 288 (B1): `backlog list` lists what it can and names what it skipped.
+// One row the server sent with a foreign System, a non-UUID id or no object at
+// all aborted the whole listing, so one bad record hid every good one.
+func TestBacklogListSkipsAnInvalidRowAndNamesIt(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const foreign = "22222222-2222-4222-8222-222222222222"
+	rows := []any{
+		map[string]any{"id": id, "system_id": 4, "title": "Mock discovery", "kind": "backlog", "disposition": "OPEN"},
+		map[string]any{"id": foreign, "system_id": 99, "title": "other System"},
+		map[string]any{"id": "BL-1", "system_id": 4, "title": "legacy identity"},
+		"text",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"backlog": rows}})
+	}))
+	defer server.Close()
+
+	run := func(args ...string) (string, string, error) {
+		cmd := newBacklogCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		cmd.SetArgs(args)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		var stderr []byte
+		var err error
+		captureStderr(t, func() { err = cmd.Execute() }, &stderr)
+		return out.String(), string(stderr), err
+	}
+
+	out, stderr, err := run("list", "--json")
+	if err != nil {
+		t.Fatalf("list must keep going past an invalid row, got: %v", err)
+	}
+	var page struct {
+		Backlog []map[string]any `json:"backlog"`
+		Total   int              `json:"total"`
+		Skipped []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		} `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(out), &page); err != nil {
+		t.Fatalf("list --json must be JSON: %v\n%s", err, out)
+	}
+	if len(page.Backlog) != 1 || page.Backlog[0]["id"] != id || page.Total != 1 {
+		t.Fatalf("the valid row alone is listed and counted, got total %d:\n%s", page.Total, out)
+	}
+	if len(page.Skipped) != 3 {
+		t.Fatalf("every skipped row is named under skipped, got %d:\n%s", len(page.Skipped), out)
+	}
+	for i, want := range []struct{ id, reason string }{
+		{foreign, "different System"},
+		{"BL-1", "invalid native identity"},
+		{"?", "not an object"},
+	} {
+		if page.Skipped[i].ID != want.id || !strings.Contains(page.Skipped[i].Reason, want.reason) {
+			t.Errorf("skipped[%d] = %+v, want id %q with reason %q", i, page.Skipped[i], want.id, want.reason)
+		}
+	}
+	for _, want := range []string{foreign, "BL-1", "different System", "invalid native identity", "not an object"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("a skipped row is named on stderr; %q missing in:\n%s", want, stderr)
+		}
+	}
+
+	out, _, err = run("list")
+	if err != nil {
+		t.Fatalf("text list must keep going past an invalid row, got: %v", err)
+	}
+	if !strings.Contains(out, id) || strings.Contains(out, foreign) {
+		t.Fatalf("text list prints the valid row and not the skipped one:\n%s", out)
+	}
+
+	// Every row invalid: an empty page at exit 0, each row named on stderr.
+	rows = rows[1:]
+	out, stderr, err = run("list", "--json")
+	if err != nil {
+		t.Fatalf("a list of only invalid rows is an empty page, not a failure: %v", err)
+	}
+	page.Backlog, page.Skipped = nil, nil
+	if err := json.Unmarshal([]byte(out), &page); err != nil {
+		t.Fatalf("list --json must be JSON: %v\n%s", err, out)
+	}
+	if len(page.Backlog) != 0 || page.Total != 0 || len(page.Skipped) != 3 {
+		t.Errorf("want an empty page with three skipped rows, got:\n%s", out)
+	}
+	if !strings.Contains(stderr, foreign) || !strings.Contains(stderr, "BL-1") || !strings.Contains(stderr, "not an object") {
+		t.Errorf("every skipped row is named on stderr:\n%s", stderr)
+	}
+	if out, _, err := run("list"); err != nil || strings.Contains(out, foreign) {
+		t.Errorf("the text list of only invalid rows is empty at exit 0: %v\n%s", err, out)
+	}
+}
+
+// Epic 288 (B2): a text row with a null disposition printed `%!s(<nil>)`, and
+// a multi-line title broke the one-row-per-record shape.
+func TestBacklogListTextRendersAnEmptyDisposition(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		row := map[string]any{"id": id, "system_id": 4, "disposition": nil, "title": "a\n  b"}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"backlog": []any{row}}})
+	}))
+	defer server.Close()
+	cmd := newBacklogCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	cmd.SetArgs([]string{"list"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "%!") {
+		t.Fatalf("a null column must render as a dash, not a format error:\n%s", out.String())
+	}
+	if want := id + "  —  —  a b\n"; !strings.Contains(out.String(), want) {
+		t.Fatalf("want the row %q in:\n%s", want, out.String())
+	}
+}

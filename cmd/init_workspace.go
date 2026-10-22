@@ -42,12 +42,14 @@ type localGitRepo struct {
 }
 
 func runInitWorkspace(cmd *cobra.Command, args []string) error {
-	if config.IsInitialized() && !force {
-		cfg, err := config.ReadConfig()
-		if err != nil {
+	if !force {
+		if err := refuseNestedBinding(false); err != nil {
 			return err
 		}
-		return writeRecord(cmd, map[string]any{"operation": "unchanged", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL})
+	}
+	previous, handled, err := initEarlyReturn(cmd)
+	if handled || err != nil {
+		return err
 	}
 
 	if initJSON && systemIDFlag <= 0 && systemNameFlag == "" {
@@ -121,6 +123,7 @@ func runInitWorkspace(cmd *cobra.Command, args []string) error {
 		command:         cmd,
 		force:           force,
 		initMode:        "workspace",
+		previous:        previous,
 		localRepos:      localRepos,
 		platformMembers: selectedSystem.WorkspaceMembers,
 	})

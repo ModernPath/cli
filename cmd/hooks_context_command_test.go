@@ -84,7 +84,10 @@ func TestTheContextHookPassesTheCLIOutputAndTheEvent(t *testing.T) {
 	}
 
 	cmd := exec.Command("sh", "-c", contextHookCommand("UserPromptSubmit"))
-	cmd.Env = append(os.Environ(), "PATH="+dir)
+	// The project dir is pinned as in runContextHook: an inherited one would run
+	// that workspace's installed link from this package directory, and the real
+	// CLI would log into the developer's own .modernpath.
+	cmd.Env = append(os.Environ(), "PATH="+dir, "CLAUDE_PROJECT_DIR="+dir)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("hook failed: %v", err)
@@ -134,6 +137,10 @@ func TestEachAgentsEventReachesTheCLI(t *testing.T) {
 // asserted here rather than in the hook — a fourth guard in the hook string
 // would be unreachable defensive code.
 func TestHookModeAlwaysEmitsJSON(t *testing.T) {
+	// Every case logs its outcome beside the nearest .modernpath: from the
+	// package directory that is the developer's own workspace log.
+	chdirTemp(t)
+
 	for _, tc := range []struct {
 		name    string
 		prompt  string
@@ -162,5 +169,35 @@ func TestHookModeAlwaysEmitsJSON(t *testing.T) {
 				t.Fatalf("hook mode printed %q, which is not JSON: %v", out, err)
 			}
 		})
+	}
+}
+
+// Epic 288 (B8) put the hook log beside the binding: the nearest .modernpath
+// walking up from the working directory. A hook-mode test left in the package
+// directory walks up to the enclosing checkout and appends its fake outcomes
+// ("empty prompt", "no match", "deadline exceeded") to the developer's own
+// context-hook.log, which `hooks doctor` reads. Run the hook-mode test as
+// `go test` does and check that log did not grow.
+func TestHookModeTestsLeaveTheWorkspaceHookLogAlone(t *testing.T) {
+	workspaceLog, err := filepath.Abs(contextHookLogPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(workspaceLog)); err != nil {
+		t.Skip("no .modernpath above the package directory: no workspace hook log to protect")
+	}
+	size := func() int64 {
+		info, err := os.Stat(workspaceLog)
+		if err != nil {
+			return 0
+		}
+		return info.Size()
+	}
+	before := size()
+
+	TestHookModeAlwaysEmitsJSON(t)
+
+	if after := size(); after != before {
+		t.Fatalf("a hook-mode test wrote to the workspace's own hook log %s (%d → %d bytes)", workspaceLog, before, after)
 	}
 }

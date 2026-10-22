@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/modernpath/cli/internal/api"
+	"github.com/modernpath/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -126,6 +127,25 @@ func promptFromHookPayload(raw []byte) string {
 	return body.UserPrompt
 }
 
+// isHandBack reports Claude Code's subagent hand-back (Epic 288 B7). The
+// harness delivers a subagent's final report as a UserPromptSubmit whose
+// prompt is the report inside an `<agent-message from="…">` frame, the
+// frame's first line at column zero and the next line opening with
+// `[Subagent hand-back]` (one real payload captured 2026-10-21: the fixture
+// in context_hook_test.go). The harness indents the report itself, so the
+// pair at column zero is the harness's; a typed prompt carries no frame.
+// The frame says notes may precede it, so the pair is looked for on any
+// line, not only the first.
+func isHandBack(prompt string) bool {
+	lines := strings.Split(prompt, "\n")
+	for i := 0; i+1 < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "<agent-message ") && strings.HasPrefix(strings.TrimRight(lines[i+1], "\r"), "[Subagent hand-back]") {
+			return true
+		}
+	}
+	return false
+}
+
 // contextHookOutputWithin runs the fetch under a deadline and records what
 // happened. Past the deadline the in-flight request is abandoned: a context that
 // arrives after the agent should have started is worse than no context, because
@@ -133,6 +153,12 @@ func promptFromHookPayload(raw []byte) string {
 func contextHookOutputWithin(deadline time.Duration, event, prompt string, fetch func(string) contextOutcome) string {
 	if strings.TrimSpace(prompt) == "" {
 		logContextOutcome("empty", 0, "empty prompt")
+		return "{}"
+	}
+	// A subagent's report is not a question about the codebase: no request,
+	// nothing injected, one log line naming why.
+	if isHandBack(prompt) {
+		logContextOutcome("empty", 0, "hand-back")
 		return "{}"
 	}
 
@@ -145,6 +171,13 @@ func contextHookOutputWithin(deadline time.Duration, event, prompt string, fetch
 		out := contextHookOutput(event, prompt, func(string) string { return found.text })
 		if out == "{}" {
 			logContextOutcome(outcomeClass(found.reason), time.Since(started), found.reason)
+			// Epic 288 (B8): a server failure is said to the person waiting,
+			// through the agents' universal systemMessage field, keyed on the
+			// status and not on the reason text. A 401, a failed 200, a
+			// transport error and the deadline stay `{}`: the log has them.
+			if found.status >= 500 {
+				return contextHookSystemMessage(found.reason)
+			}
 		} else {
 			logContextOutcome("delivered", time.Since(started),
 				fmt.Sprintf("%d bytes", len(found.text)))
@@ -163,6 +196,9 @@ func contextHookOutputWithin(deadline time.Duration, event, prompt string, fetch
 type contextOutcome struct {
 	text   string
 	reason string
+	// status is the HTTP status the server answered with, when it answered
+	// (Epic 288 B8): the hook keys its systemMessage on it, not on the text.
+	status int
 	// REQ-CROSS-405: err is the same failure as a value the manual path can
 	// exit on; hook mode ignores it and logs the reason (BACKLOG-TOOL-31).
 	err error
@@ -172,11 +208,45 @@ type contextOutcome struct {
 // is filed as one, so a degraded hook is visible in a glance down the log.
 func outcomeClass(reason string) string {
 	switch reason {
-	case "not relevant", "empty prompt":
+	case "not relevant", "empty prompt", "hand-back":
 		return "empty"
 	default:
 		return "failed"
 	}
+}
+
+// contextHookSystemMessage is the one-line notice an agent shows the user
+// (`systemMessage`, a universal hook output field). HTML in a server body
+// stays as it is: the field is JSON, not markup.
+func contextHookSystemMessage(reason string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(map[string]string{"systemMessage": "ModernPath context: " + reason}); err != nil {
+		return "{}"
+	}
+	return strings.TrimSpace(buf.String())
+}
+
+// collapseDetail folds a server body onto one line and cuts it at max runes:
+// a 500 page's HTML must not become a multi-line log entry or notice.
+func collapseDetail(body string, max int) string {
+	detail := strings.Join(strings.Fields(body), " ")
+	if runes := []rune(detail); len(runes) > max {
+		detail = string(runes[:max-1]) + "…"
+	}
+	return detail
+}
+
+// contextHookLogPath is `.modernpath/context-hook.log` beside the workspace:
+// the nearest .modernpath walking up (FindConfigDir, so a linked worktree logs
+// into its own, where its process files are), or the cwd's when none exists.
+// A hook fires from whatever directory the agent runs in (Epic 288 B8).
+func contextHookLogPath() string {
+	if dir, err := config.FindConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "context-hook.log")
+	}
+	return filepath.Join(".modernpath", "context-hook.log")
 }
 
 // logContextOutcome appends one line per run, mirroring the sync family's
@@ -186,8 +256,7 @@ func logContextOutcome(outcome string, took time.Duration, detail string) {
 	line := fmt.Sprintf("%s · %s · %.1fs · %s\n",
 		time.Now().UTC().Format(time.RFC3339), outcome, took.Seconds(), detail)
 
-	f, err := os.OpenFile(filepath.Join(".modernpath", "context-hook.log"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(contextHookLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
@@ -285,14 +354,15 @@ func fetchContextOutcomeWith(load func() (*cliEnv, error), prompt string) contex
 		// fail-closed platform host; that is a statement about the credential,
 		// not about the request.
 		rejected := env.credentialRejected()
-		return contextOutcome{reason: rejected.Error(), err: rejected}
+		return contextOutcome{reason: rejected.Error(), status: resp.StatusCode, err: rejected}
 	}
 	if resp.StatusCode != http.StatusOK {
-		// The server's own message, trimmed. A bare status code sends the reader
-		// to the server logs for something the response already said.
+		// The server's own message, on one line and cut short. A bare status
+		// code sends the reader to the server logs for something the response
+		// already said; a whole error page says nothing more.
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
-		reason := strings.TrimSpace(fmt.Sprintf("server error %d %s", resp.StatusCode, detail))
-		return contextOutcome{reason: reason, err: errors.New(reason)}
+		reason := strings.TrimSpace(fmt.Sprintf("server error %d %s", resp.StatusCode, collapseDetail(string(detail), 160)))
+		return contextOutcome{reason: reason, status: resp.StatusCode, err: errors.New(reason)}
 	}
 
 	// REQ-CROSS-433: a 200 the CLI cannot use is still a failure, and carries an

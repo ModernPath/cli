@@ -52,6 +52,24 @@ func validateSystemExportSlug(slug string) error {
 	return nil
 }
 
+// boundSystemRootDir also recognizes markerless exports named by the binding.
+func boundSystemRootDir(modernpathRoot, slug string) (string, bool) {
+	if validateSystemExportSlug(slug) != nil {
+		return "", false
+	}
+	if dir, ok := resolveSystemRootDir(modernpathRoot, slug); ok {
+		return dir, true
+	}
+	if !modernpathReservedTopDir(slug) {
+		for _, dir := range []string{filepath.Join(modernpathRoot, slug), filepath.Join(modernpathRoot, "docs", slug)} {
+			if info, err := os.Stat(dir); err == nil && info.IsDir() && countFiles(dir) > 0 {
+				return dir, true
+			}
+		}
+	}
+	return "", false
+}
+
 // systemExportRootDir chooses an existing meaningful export when safe. A
 // reserved flat root is never selected for replacement because it may contain
 // CLI state mixed with an old export.

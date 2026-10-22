@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,19 +16,28 @@ import (
 )
 
 // REQ-CROSS-387 (EPIC-CLI-019): a local, redacted history of user-run
-// invocations for local troubleshooting of the previous
-// command and its output. Hook-mode invocations are never recorded (they
-// precede every user command in an agent session and would drain the log);
-// `auth` is never recorded (its --token argument is a bearer); commands that
-// hand the terminal to an interactive child (dev) record argv and exit
-// only, so the child keeps the real fds. Nothing from the log reaches the
-// store without --last.
+// invocations for local troubleshooting of a previous command and its
+// output. Hook-mode invocations are never recorded (they precede every user
+// command in an agent session and would drain the log); `auth` is never
+// recorded (its --token argument is a bearer); commands that hand the
+// terminal to an interactive child (dev) record argv and exit only, so the
+// child keeps the real fds. Nothing from the log reaches the store.
+//
+// Epic 288 (B6): the log holds a whole delivery loop. It is capped by size,
+// not by a count of entries — the previous 32-entry cap held less than one
+// loop, so the command that went wrong was gone by the time anyone looked.
 
 const (
-	historyFileName   = "cli-history.log"
-	historyMaxEntries = 32
-	historyTailBytes  = 8 * 1024
+	historyFileName  = "cli-history.log"
+	historyTailBytes = 8 * 1024
+	// historyMaxBytes is the size at which cli-history.log is rotated aside.
+	historyMaxBytes = 1 << 20
+	// historyKeepRotated is how long a rotated file is kept.
+	historyKeepRotated = 30 * 24 * time.Hour
 )
+
+// historyClock stamps a rotated history file; tests pin it.
+var historyClock = time.Now
 
 // historyEntry is one recorded invocation.
 type historyEntry struct {
@@ -167,7 +177,7 @@ func sensitiveFlag(flag string) bool {
 }
 
 // appendHistory writes one entry with O_APPEND and keeps the file ignored;
-// rotation to the last historyMaxEntries is best-effort (F-CLI019-R1-11).
+// a full file is rotated aside first, best-effort (F-CLI019-R1-11).
 func appendHistory(root string, entry historyEntry) {
 	cfgDir := filepath.Join(root, config.ConfigDir)
 	_ = config.EnsureLocalIgnores(cfgDir)
@@ -175,23 +185,56 @@ func appendHistory(root string, entry historyEntry) {
 	if err != nil {
 		return
 	}
+	rotateHistory(cfgDir)
 	f, err := os.OpenFile(historyPath(root), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
 	_, _ = f.Write(append(blob, '\n'))
 	_ = f.Close()
+}
 
-	if entries := historyEntries(root); len(entries) > historyMaxEntries {
-		keep := entries[len(entries)-historyMaxEntries:]
-		var b strings.Builder
-		for _, e := range keep {
-			if line, err := json.Marshal(e); err == nil {
-				b.Write(line)
-				b.WriteByte('\n')
-			}
+// rotateHistory moves a log of historyMaxBytes or more aside as
+// cli-history.<UTC second stamp>.log and prunes rotated files older than
+// historyKeepRotated. The target name is never one that exists (a numeric
+// suffix is added), so no rename ever lands on a file: on POSIX it would
+// replace it, on Windows it would fail. The rotated name matches `*.log` in
+// the directory's own ignore file and `/.modernpath/*` at the repository root.
+func rotateHistory(cfgDir string) {
+	path := filepath.Join(cfgDir, historyFileName)
+	info, err := os.Stat(path)
+	if err != nil || info.Size() < historyMaxBytes {
+		return
+	}
+	now := historyClock().UTC()
+	stamp := now.Format("20060102T150405Z")
+	target := filepath.Join(cfgDir, "cli-history."+stamp+".log")
+	for n := 1; n < 1000; n++ {
+		if _, err := os.Lstat(target); os.IsNotExist(err) {
+			break
 		}
-		_ = os.WriteFile(historyPath(root), []byte(b.String()), 0o600)
+		target = filepath.Join(cfgDir, fmt.Sprintf("cli-history.%s-%d.log", stamp, n))
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		return
+	}
+	_ = os.Rename(path, target)
+	pruneRotatedHistory(cfgDir, now)
+}
+
+// pruneRotatedHistory removes rotated files older than historyKeepRotated;
+// cli-history.log itself is never removed.
+func pruneRotatedHistory(cfgDir string, now time.Time) {
+	matches, _ := filepath.Glob(filepath.Join(cfgDir, "cli-history.*.log"))
+	for _, match := range matches {
+		if filepath.Base(match) == historyFileName {
+			continue
+		}
+		info, err := os.Stat(match)
+		if err != nil || now.Sub(info.ModTime()) <= historyKeepRotated {
+			continue
+		}
+		_ = os.Remove(match)
 	}
 }
 

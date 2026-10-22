@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/kit"
 	"github.com/spf13/cobra"
 )
@@ -103,6 +104,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return reportPlan(root, generated...)
 	}
 
+	// Epic 288 (B5): after --check and --dry-run, which write nothing, and
+	// before the preflight. A linked worktree's process files are its own.
+	if err := refuseNestedBinding(true); err != nil {
+		return err
+	}
 	if err := kit.ValidateInstall(root); err != nil {
 		return fmt.Errorf("install preflight failed: %w", err)
 	}
@@ -113,6 +119,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 	if err := addToGitignore(root); err != nil {
 		printWarning("Could not update .gitignore: %v\n", err)
+	}
+	if hint := docsSyncHint(); hint != "" {
+		printWarning("%s\n", hint)
 	}
 
 	sort.Strings(res.Written)
@@ -141,6 +150,33 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// docsSyncHint names the sync a bound workspace still needs (Epic 288 B9):
+// install is the moment a fresh checkout is set up, and without an export the
+// context hook and the local knowledge search have nothing to read. The
+// binding is read as every verb reads it (a worktree follows its main
+// checkout); an unreadable config is no hint.
+func docsSyncHint() string {
+	cfg, err := config.ReadConfig()
+	if err != nil || cfg == nil || cfg.SystemID <= 0 {
+		return ""
+	}
+	dir, err := config.BindingDir()
+	if err != nil || dir == "" {
+		return ""
+	}
+	rep := buildStatusReport(dir, cfg)
+	if rep.DocsSyncAt != "" && cfg.SystemSlug != "" {
+		boundExport := filepath.Join(".modernpath", cfg.SystemSlug)
+		legacyExport := filepath.Join(".modernpath", "docs", cfg.SystemSlug)
+		for _, export := range rep.Exports {
+			if export.Rel == boundExport || export.Rel == legacyExport {
+				return ""
+			}
+		}
+	}
+	return "Docs Sync: Never — run 'modernpath docs sync'"
 }
 
 func sortInstallStrings(values []string) []string {

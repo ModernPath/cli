@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -160,24 +161,38 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 		if !ok {
 			return fmt.Errorf("Backlog response is missing its list")
 		}
+		// Epic 288 (B1): a row the list cannot show is skipped and named, so
+		// one bad record no longer hides every good one. create and get keep
+		// their abort: a single record that fails its own check is no result.
 		records := make([]map[string]any, 0, len(rows))
+		skipped := make([]map[string]any, 0)
 		for _, value := range rows {
-			row, ok := value.(map[string]any)
-			if !ok {
-				return fmt.Errorf("invalid Backlog list record")
+			if problem := backlogRowProblem(value, env.SystemID); problem != "" {
+				id := "?"
+				if row, ok := value.(map[string]any); ok && str(row, "id") != "" {
+					id = str(row, "id")
+				}
+				printWarning("backlog list: skipped record %s: %s\n", id, problem)
+				skipped = append(skipped, map[string]any{"id": id, "reason": problem})
+				continue
 			}
-			if err = validateBacklogRecord(row, env.SystemID); err != nil {
-				return err
-			}
-			records = append(records, row)
+			records = append(records, value.(map[string]any))
 		}
 		machine, _ := cmd.Flags().GetBool("json")
 		start, end := page.window(len(records), machine)
 		if machine {
-			return emitPagedJSON(cmd.OutOrStdout(), "backlog", records[start:end], end, len(records))
+			blob, err := json.MarshalIndent(map[string]any{"backlog": records[start:end], "total": len(records), "has_more": end < len(records), "skipped": skipped}, "", "  ")
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(blob))
+			return err
 		}
 		for _, row := range records[start:end] {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", row["id"], row["kind"], row["disposition"], row["title"])
+			// Epic 288 (B2): every column through orDash — a null disposition
+			// printed `%!s(<nil>)` — and the title on one line.
+			title := strings.Join(strings.Fields(str(row, "title")), " ")
+			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", orDash(str(row, "id")), orDash(str(row, "kind")), orDash(str(row, "disposition")), orDash(title))
 		}
 		_, err = fmt.Fprint(cmd.OutOrStdout(), pageFooter(start, end, len(records)))
 		return err
@@ -209,6 +224,28 @@ func backlogResponse(status int, body map[string]any, err error) (any, error) {
 	}
 	return data["backlog"], nil
 }
+
+// backlogRowProblem says why a listed row cannot be shown, or "" when it can.
+// The list skips such a row where create and get abort on it.
+func backlogRowProblem(value any, system int) string {
+	row, ok := value.(map[string]any)
+	if !ok {
+		return "not an object"
+	}
+	id, _ := row["id"].(string)
+	if !requirementUUIDPattern.MatchString(id) {
+		return "invalid native identity"
+	}
+	sid, ok := numberAsInt(row["system_id"])
+	if !ok {
+		return "invalid native identity"
+	}
+	if sid != int64(system) {
+		return "different System"
+	}
+	return ""
+}
+
 func validateBacklogRecord(row map[string]any, system int) error {
 	id, _ := row["id"].(string)
 	sid, ok := numberAsInt(row["system_id"])

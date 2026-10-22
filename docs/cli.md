@@ -1028,8 +1028,25 @@ URL without a known provider keeps the active credential and reports that fact.
 
 `modernpath init` checks server health, lists systems visible to the signed-in
 workspace, resolves a selected system, downloads its Knowledge Core export and
-writes the local binding and ignore rules. Re-running `init` deliberately
-selects and binds the current directory to a system.
+writes the local binding and ignore rules. Re-running `init` in a bound
+workspace reports the binding `unchanged` and sends nothing, unless
+`--system-id` or `--system` names a different system: then it rebinds the
+current directory, keeps the previous export folder and reports `rebound` with
+`previous_system_id` (and `previous_export` when that folder exists). The
+same system named by id, or by name case-insensitively, is `unchanged`.
+`--force` replaces the selected system's export folder and the binding in the
+current directory.
+
+`init`, `init workspace` and `install` refuse to run in a directory below an
+already bound workspace (one under a root that holds `.modernpath/config.json`)
+and name that root, so a nested workspace is never created by accident.
+`init --force` is the deliberate nested binding. `install` is exempt in a
+directory that holds a `.git` file (a linked worktree or submodule root),
+whose process files are its own while a linked worktree's binding and
+credential are the main checkout's; `init` there is refused without `--force`
+as well, and a subdirectory of a linked worktree is refused for both.
+`install --check` and `install --dry-run` write nothing and are never
+refused.
 
 ### Knowledge Core synchronization
 

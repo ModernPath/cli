@@ -3,6 +3,7 @@ package cmd
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,9 +19,13 @@ import (
 )
 
 type initFinalizeOptions struct {
-	command         *cobra.Command
-	force           bool
-	initMode        string
+	command  *cobra.Command
+	force    bool
+	initMode string
+	// previous is the binding the directory resolved to before this init
+	// (nil when none): a different selected System is a rebind and the
+	// receipt names what it replaced (Epic 288 B3).
+	previous        *config.Config
 	localRepos      []localGitRepo
 	platformMembers []api.WorkspaceMember
 }
@@ -57,18 +62,22 @@ Example:
 func init() {
 	initCmd.PersistentFlags().IntVar(&systemIDFlag, "system-id", 0, "System ID to initialize")
 	initCmd.PersistentFlags().StringVar(&systemNameFlag, "system", "", "System name to initialize")
-	initCmd.PersistentFlags().BoolVarP(&force, "force", "f", false, "Overwrite existing .modernpath directory")
+	initCmd.PersistentFlags().BoolVarP(&force, "force", "f", false, "Replace the selected System's export folder and the binding in this directory, also below an already bound workspace or at a linked worktree root (a deliberate nested binding)")
 	initCmd.PersistentFlags().BoolVar(&initLocal, "local", false, "Use local server (localhost:4000) instead of cloud production")
 	initCmd.PersistentFlags().BoolVar(&initJSON, "json", false, "Emit the binding receipt as JSON")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	if config.IsInitialized() && !force {
-		cfg, err := config.ReadConfig()
-		if err != nil {
+	// Epic 288 (B5): below an already bound workspace, init without --force
+	// is refused and names the root; --force is the deliberate nested binding.
+	if !force {
+		if err := refuseNestedBinding(false); err != nil {
 			return err
 		}
-		return writeRecord(cmd, map[string]any{"operation": "unchanged", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL})
+	}
+	previous, handled, err := initEarlyReturn(cmd)
+	if handled || err != nil {
+		return err
 	}
 
 	if initJSON && systemIDFlag <= 0 && systemNameFlag == "" {
@@ -91,7 +100,81 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{command: cmd, force: force, initMode: "repo"})
+	return finalizeSystemInit(client, baseURL, selectedSystem, initFinalizeOptions{command: cmd, force: force, initMode: "repo", previous: previous})
+}
+
+// initEarlyReturn is the S6 early return: a bound directory that is not told
+// a different System answers `unchanged` and sends nothing. Epic 288 (B3):
+// `--system-id` equal to the bound id, or `--system` equal to the bound name
+// case-insensitively, is the same System; any other explicit selection goes
+// on to rebind. `--force` always goes on. The binding returned is the one the
+// directory resolved to (config.ReadConfig through BindingDir), nil when none.
+func initEarlyReturn(cmd *cobra.Command) (*config.Config, bool, error) {
+	if !config.IsInitialized() {
+		return nil, false, nil
+	}
+	cfg, err := config.ReadConfig()
+	if err != nil {
+		return nil, false, err
+	}
+	if force {
+		return cfg, false, nil
+	}
+	noFlag := systemIDFlag <= 0 && systemNameFlag == ""
+	sameID := systemIDFlag > 0 && systemIDFlag == cfg.SystemID
+	sameName := systemIDFlag <= 0 && systemNameFlag != "" && strings.EqualFold(systemNameFlag, cfg.SystemName)
+	if noFlag || sameID || sameName {
+		return cfg, true, writeUnchanged(cmd, cfg)
+	}
+	return cfg, false, nil
+}
+
+func writeUnchanged(cmd *cobra.Command, cfg *config.Config) error {
+	return writeRecord(cmd, map[string]any{"operation": "unchanged", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL})
+}
+
+// environmentsInDir carries `environments` (the per-environment bindings
+// `env --set` stashes) from the config.json in dir and nothing else: the
+// other per-System fields belong to the binding being replaced.
+func environmentsInDir(dir string) map[string]config.EnvBinding {
+	raw, err := os.ReadFile(filepath.Join(dir, config.ConfigDir, config.ConfigFile))
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Environments map[string]config.EnvBinding `json:"environments"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil
+	}
+	return cfg.Environments
+}
+
+// sameDir reports two paths naming one directory, symlinks resolved.
+func sameDir(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
+}
+
+// previousExportRel is the workspace-relative export folder of the previous
+// binding when one is on disk under cwd, else "".
+func previousExportRel(cwd string, previous *config.Config) string {
+	if previous == nil || strings.TrimSpace(previous.SystemSlug) == "" || validateSystemExportSlug(previous.SystemSlug) != nil {
+		return ""
+	}
+	dir, ok := boundSystemRootDir(filepath.Join(cwd, config.ConfigDir), previous.SystemSlug)
+	if !ok {
+		return ""
+	}
+	rel, err := filepath.Rel(cwd, dir)
+	if err != nil {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 func connectInitClient() (*api.Client, string, error) {
@@ -177,6 +260,15 @@ func resolveSingleRepoSystemSelection(client *api.Client, systems []api.System) 
 }
 
 func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.System, opts initFinalizeOptions) error {
+	// A selection that resolves to the bound System is the early return
+	// again: no download, no rewrite (Epic 288 B3).
+	if !opts.force && opts.previous != nil && opts.previous.SystemID == selectedSystem.ID {
+		output := opts.command
+		if output == nil {
+			output = &cobra.Command{}
+		}
+		return writeUnchanged(output, opts.previous)
+	}
 	printInfo("Selected: %s", selectedSystem.Name)
 	if verbose && selectedSystem.Description != "" {
 		fmt.Fprintln(os.Stderr, selectedSystem.Description)
@@ -204,6 +296,11 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	if err != nil {
 		return err
 	}
+	// Captured before InitConfig writes: whether the directory being bound
+	// already held a config.json of its own (a worktree's tracked .modernpath
+	// has none; its binding is the main checkout's).
+	_, statErr := os.Stat(filepath.Join(cwd, config.ConfigDir, config.ConfigFile))
+	priorBindingHeldConfig := statErr == nil
 	syncedAt, err := exportGeneratedAt(zipData, selectedSystem.Slug)
 	if err != nil {
 		return fmt.Errorf("read export timestamp: %w", err)
@@ -230,13 +327,18 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 		printError("Failed to extract: %v\n", err)
 		return err
 	}
+	// A fresh binding: repository_id, current_release and the epic fields
+	// belong to the System being replaced and are not carried. environments
+	// is the one field that outlives a rebind, and only from a config.json in
+	// this directory (Epic 288 B3).
 	cfg := &config.Config{
-		APIURL:     baseURL,
-		SystemID:   selectedSystem.ID,
-		SystemName: selectedSystem.Name,
-		SystemSlug: selectedSystem.Slug,
-		LastSyncAt: syncedAt,
-		InitMode:   opts.initMode,
+		APIURL:       baseURL,
+		SystemID:     selectedSystem.ID,
+		SystemName:   selectedSystem.Name,
+		SystemSlug:   selectedSystem.Slug,
+		LastSyncAt:   syncedAt,
+		InitMode:     opts.initMode,
+		Environments: environmentsInDir(cwd),
 	}
 
 	if opts.initMode == "workspace" {
@@ -251,6 +353,11 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	}
 
 	newBindingDir := filepath.Join(cwd, config.ConfigDir)
+	// A rebind replaces the binding that lived in this directory. Below a
+	// bound ancestor, or at a worktree root bound through its main checkout,
+	// that binding stays where it is and this is a new one.
+	replacedBinding := opts.previous != nil && priorBindingDir != "" && sameDir(priorBindingDir, newBindingDir) && opts.previous.SystemID > 0 &&
+		opts.previous.SystemID != cfg.SystemID && priorBindingHeldConfig
 
 	carried, err := carryCredentialFromShadowedBinding(priorBindingDir, newBindingDir)
 	if err != nil {
@@ -273,6 +380,13 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 	}
 
 	receipt := map[string]any{"operation": "initialized", "system_id": cfg.SystemID, "name": cfg.SystemName, "api_url": cfg.APIURL, "path": cwd, "mode": opts.initMode}
+	if replacedBinding {
+		receipt["operation"] = "rebound"
+		receipt["previous_system_id"] = opts.previous.SystemID
+		if rel := previousExportRel(cwd, opts.previous); rel != "" {
+			receipt["previous_export"] = rel
+		}
+	}
 	output := opts.command
 	if output == nil {
 		output = &cobra.Command{}

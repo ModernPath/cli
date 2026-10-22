@@ -152,6 +152,7 @@ change is a human decision and new work, never an edit of the approval.
 | Refusal (substring) | Origin | Cause | Clears it |
 |---|---|---|---|
 | `connect this workspace to a system` / `no system_id` | cli | no binding, or a nested `.modernpath/config.json` | run from the workspace root; `modernpath init` binds |
+| `below an already bound workspace` / `linked git worktree` | cli | `install`, `init` or `init workspace` run in a directory under a bound workspace root, or `init` at a linked worktree root | run it from the workspace root the refusal names (the main checkout for a worktree); `modernpath init --force` binds a nested workspace deliberately |
 | `does not belong to the bound System` | cli | an Epic or review bundle of another System | check `modernpath status`; use an id of this System |
 | `unknown input field` / `input must include` / `must be an array` | cli | a file key outside the documented shape; nothing was sent | correct the key (see the command's section) |
 | `invalid lifecycle state` | server 409 | a plan write in the wrong Epic state: `save` and `approve-implementation` need PROPOSED, `submit-review` IN_PROGRESS, `approve-completion` IN_REVIEW | read `epics plan show`; run the command that state allows |

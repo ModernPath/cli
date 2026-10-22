@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fatih/color"
 )
@@ -165,5 +167,98 @@ func TestHistorySkipsHookInvocations(t *testing.T) {
 	entries := historyEntries(root)
 	if len(entries) != 2 || strings.Join(entries[0].Argv, " ") != "process next" || strings.Join(entries[1].Argv, " ") != "focus --infer REQ-X --source prompt" {
 		t.Fatalf("hook commands must be skipped and explicit commands recorded, got %+v", entries)
+	}
+}
+
+// Epic 288 (B6): the history kept the last 32 entries, fewer than one
+// delivery loop runs, so the command that went wrong was gone by the time
+// anyone looked. The cap is now a size, with the full file rotated aside.
+func TestHistoryKeepsAWholeLoop(t *testing.T) {
+	root := historyWorkspace(t)
+	captureOutput(t, func() {
+		for i := 0; i < 40; i++ {
+			runWithHistory([]string{"status"}, func() int { return 0 })
+		}
+	})
+	if n := len(historyEntries(root)); n != 40 {
+		t.Fatalf("every entry of a loop is kept: want 40, got %d", n)
+	}
+}
+
+func TestHistoryRollsOverAtTheSizeCap(t *testing.T) {
+	root := historyWorkspace(t)
+	dir := filepath.Join(root, ".modernpath")
+	fixed := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	savedClock := historyClock
+	historyClock = func() time.Time { return fixed }
+	t.Cleanup(func() { historyClock = savedClock })
+
+	seedFull := func() {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "cli-history.log"), append(bytes.Repeat([]byte("x"), 1<<20), '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aged := func(name string, age time.Duration) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, fixed.Add(-age), fixed.Add(-age)); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	stale := aged("cli-history.20260901T000000Z.log", 31*24*time.Hour)
+	recent := aged("cli-history.20261015T000000Z.log", 6*24*time.Hour)
+
+	seedFull()
+	captureOutput(t, func() { runWithHistory([]string{"status"}, func() int { return 0 }) })
+
+	entries := historyEntries(root)
+	if len(entries) != 1 || strings.Join(entries[0].Argv, " ") != "status" {
+		t.Fatalf("after a rollover the log holds only the new entry, got %d: %+v", len(entries), entries)
+	}
+	rotated := filepath.Join(dir, "cli-history.20261021T120000Z.log")
+	if info, err := os.Stat(rotated); err != nil || info.Size() < 1<<20 {
+		t.Fatalf("the full file is rotated to the UTC second stamp: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("a rotated file older than 30 days is pruned: %v", err)
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Fatalf("a rotated file within 30 days is kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cli-history.log")); err != nil {
+		t.Fatalf("cli-history.log itself is never pruned: %v", err)
+	}
+	// Both files stay private, and the rotated name is ignored by the
+	// directory's own `*.log` rule.
+	for _, name := range []string{"cli-history.log", filepath.Base(rotated)} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s mode = %o, want 600", name, perm)
+		}
+	}
+	ignore, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if !strings.Contains(string(ignore), "*.log\n") {
+		t.Errorf(".modernpath/.gitignore must carry *.log:\n%s", ignore)
+	}
+	if ok, _ := filepath.Match("*.log", filepath.Base(rotated)); !ok {
+		t.Errorf("the rotated name %s must match *.log", filepath.Base(rotated))
+	}
+
+	// A second rollover in the same second never renames over the first.
+	seedFull()
+	captureOutput(t, func() { runWithHistory([]string{"status"}, func() int { return 1 }) })
+	if _, err := os.Stat(filepath.Join(dir, "cli-history.20261021T120000Z-1.log")); err != nil {
+		t.Fatalf("a same-second rollover gets a numeric suffix: %v", err)
+	}
+	if info, err := os.Stat(rotated); err != nil || info.Size() < 1<<20 {
+		t.Fatalf("the first rotated file is untouched: %v", err)
 	}
 }

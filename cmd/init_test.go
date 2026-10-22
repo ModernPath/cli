@@ -19,6 +19,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/modernpath/cli/internal/api"
+	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/platform"
 	"github.com/modernpath/cli/internal/zitadel"
 )
@@ -180,7 +181,22 @@ func (f *initFakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		if authorized() {
 			var buf bytes.Buffer
 			zw := zip.NewWriter(&buf)
-			slug, _ := f.systems[0]["slug"].(string)
+			var systemID int
+			if _, err := fmt.Sscanf(initCorePath(p), "/api/systems/%d/export/jobs/job1/file", &systemID); err != nil {
+				reply(http.StatusBadRequest, map[string]string{"error": "missing export System"})
+				return
+			}
+			slug := ""
+			for _, system := range f.systems {
+				if fmt.Sprint(system["id"]) == fmt.Sprint(systemID) {
+					slug, _ = system["slug"].(string)
+					break
+				}
+			}
+			if slug == "" {
+				reply(http.StatusNotFound, map[string]string{"error": "unknown export System"})
+				return
+			}
 			entry, _ := zw.Create(".modernpath/" + slug + "/README.md")
 			_, _ = entry.Write([]byte("# demo\n"))
 			manifest, _ := zw.Create(".modernpath/" + slug + "/docs_push_manifest.json")
@@ -736,5 +752,133 @@ func TestInitPlatformHealthRejectedCredentialRendersStatement(t *testing.T) {
 	}
 	if got := boundSystemID(t, root); got != 0 {
 		t.Fatalf("init left a binding (system %d) after a rejected credential", got)
+	}
+}
+
+// Epic 288 (B3) — S6 with a second System: `init` told a different System by
+// an explicit flag rebinds and says so; the same System, by id or by name
+// case-insensitively, is still the early return and sends nothing. The old
+// export folder is kept and named; `environments` is carried from the config
+// in the current directory; the per-System fields are cleared.
+func TestInitWithAnExplicitDifferentSystemRebinds(t *testing.T) {
+	two := []map[string]any{
+		{"id": 1, "name": "Demo System", "slug": "demo-system"},
+		{"id": 2, "name": "Beta", "slug": "beta"},
+	}
+	srv := newInitFakeServer(t, two...)
+	root := initTestSetup(t, srv)
+	writeTestFile(t, root, ".modernpath/config.json", fmt.Sprintf(
+		`{"api_url":%q,"system_id":1,"system_name":"Demo System","system_slug":"demo-system","repository_id":5,"current_release":"r1","epic_id":3,"epic_name":"old","environments":{"test":{"system_id":77,"system_slug":"seventy-seven"}}}`, srv.URL))
+	writeInitAuth(t, root, initGoodToken, time.Now().Add(time.Hour))
+	writeTestFile(t, root, ".modernpath/demo-system/docs_push_manifest.json", `{"version":1}`)
+	writeTestFile(t, root, ".modernpath/demo-system/README.md", "# old export\n")
+
+	for name, set := range map[string]func(){
+		"same id":   func() { systemIDFlag, systemNameFlag = 1, "" },
+		"same name": func() { systemIDFlag, systemNameFlag = 0, "demo system" },
+	} {
+		set()
+		out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		if !strings.Contains(out, "unchanged") || !strings.Contains(out, "system_id: 1") {
+			t.Fatalf("%s is the early return, got:\n%s", name, out)
+		}
+		if n := srv.requestCount(); n != 0 {
+			t.Fatalf("%s sent %d request(s), want none", name, n)
+		}
+	}
+
+	systemIDFlag, systemNameFlag = 2, ""
+	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("init --system-id 2 on a checkout bound to 1: %v\n%s", err, out)
+	}
+	if got := boundSystemID(t, root); got != 2 {
+		t.Fatalf("bound system = %d, want 2: an explicit different System rebinds\n%s", got, out)
+	}
+	for _, want := range []string{"operation: rebound", "previous_system_id: 1", "previous_export: .modernpath/demo-system", "system_id: 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the receipt must carry %q:\n%s", want, out)
+		}
+	}
+	for path, want := range map[string]string{
+		".modernpath/demo-system/README.md": "# old export\n",
+		".modernpath/beta/README.md":        "# demo\n",
+	} {
+		raw, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil || string(raw) != want {
+			t.Errorf("export %s = %q, error %v; want %q", path, raw, err, want)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".modernpath", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["api_url"] != srv.URL || cfg["system_name"] != "Beta" || cfg["system_slug"] != "beta" {
+		t.Errorf("the new binding names the selected System and the connected server, got %v", cfg)
+	}
+	envs, _ := cfg["environments"].(map[string]any)
+	test, _ := envs["test"].(map[string]any)
+	if test["system_id"] != float64(77) {
+		t.Errorf("environments must be carried from the config in the current directory, got %v", cfg["environments"])
+	}
+	for _, cleared := range []string{"repository_id", "current_release", "epic_id", "epic_name"} {
+		if _, present := cfg[cleared]; present {
+			t.Errorf("%s belongs to the previous System and must be cleared, got %v", cleared, cfg[cleared])
+		}
+	}
+
+	// A selection that resolves to the bound System after the listing is
+	// `unchanged` too: no download, no rewrite.
+	before := srv.matchingRequests("POST")
+	systemIDFlag, systemNameFlag = 0, "bet"
+	out, err = runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("init --system bet on a checkout bound to Beta: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "unchanged") || srv.matchingRequests("POST") != before {
+		t.Fatalf("a selection equal to the bound System is unchanged with no download:\n%s", out)
+	}
+}
+
+// Epic 288 (B4): the `--force` help said "Overwrite existing .modernpath
+// directory", which is not what it does.
+func TestInitForceHelpSaysWhatItReplaces(t *testing.T) {
+	usage := initCmd.PersistentFlags().Lookup("force").Usage
+	for _, want := range []string{"export folder", "binding", "below an already bound workspace"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("--force help must say %q, got %q", want, usage)
+		}
+	}
+}
+
+func TestPreviousExportRelMarkerless(t *testing.T) {
+	for _, layout := range []string{"demo-system", "docs/demo-system"} {
+		t.Run(layout, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, ".modernpath/"+layout+"/README.md", "# old export\n")
+			got := previousExportRel(root, &config.Config{SystemSlug: "demo-system"})
+			if want := ".modernpath/" + layout; got != want {
+				t.Errorf("previous export = %q, want %q", got, want)
+			}
+		})
+	}
+	for _, slug := range []string{"rdd", "../outside", "empty", "missing", ""} {
+		t.Run("reject "+slug, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, ".modernpath/rdd/README.md", "# process\n")
+			if err := os.MkdirAll(filepath.Join(root, ".modernpath/empty"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if got := previousExportRel(root, &config.Config{SystemSlug: slug}); got != "" {
+				t.Errorf("previous export = %q for unsupported slug %q", got, slug)
+			}
+		})
 	}
 }

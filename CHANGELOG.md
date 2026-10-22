@@ -24,6 +24,40 @@
   GET requests accepted by the gateway. Read callers use a payload-free GET
   interface; writes use a separate POST/PUT/PATCH/DELETE interface.
 
+### Workspace binding, local history and the context hook
+
+- `backlog list` lists every valid record and names each row it skipped on
+  stderr (`not an object`, `invalid native identity`, `different System`);
+  `--json` carries them under `skipped` and `total` counts the listed rows.
+  One bad row used to abort the whole listing. A null column renders as `—`
+  and a multi-line title on one line.
+- `init` with `--system-id` or `--system` naming a different System rebinds the
+  current directory and reports `rebound` with `previous_system_id` and the
+  kept `previous_export` folder; the same System, by id or by name
+  case-insensitively, is still `unchanged` with no download. `environments`
+  is carried from the directory's own config; `repository_id`,
+  `current_release` and the epic fields are cleared. The `--force` help says
+  what it replaces.
+- `install`, `init` and `init workspace` run below an already bound workspace
+  are refused and name its root, where `init` used to answer `unchanged` for
+  the ancestor's binding and `install` wrote a second process package.
+  `init --force` is the deliberate nested binding; `install` stays allowed at
+  a linked git worktree root, `init` there is refused without `--force`.
+  `--check` and `--dry-run` are never refused.
+- `.modernpath/cli-history.log` keeps every invocation up to 1 MiB, then is
+  rotated to `cli-history.<UTC second stamp>.log` (a numeric suffix when that
+  name exists, never a rename over a file); rotated files older than 30 days
+  are pruned. The 32-entry cap, which held less than one delivery loop, is
+  gone.
+- The context hook skips a Claude Code subagent hand-back (logged
+  `empty · hand-back`), answers a server 5xx with a one-line `systemMessage`
+  so the failure is visible to the person waiting, and writes
+  `context-hook.log` beside the binding (a linked worktree's own
+  `.modernpath`) whatever the current directory; `hooks doctor` reads it
+  there. A 401, a failed 200, a transport error and the deadline stay `{}`.
+- `install` on a bound System that was never synced hints
+  `modernpath docs sync`.
+
 ### Upgrade and command changes
 
 - `epics gates review-bundle --phase` reads the Epic, exact review snapshot,

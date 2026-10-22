@@ -97,7 +97,8 @@ func run(args []string) int {
 	applyGroupUnknownArgGuard(rootCmd)
 	rootCmd.SetArgs(args)
 	// REQ-CROSS-387: every user-run invocation is recorded (argv, exit, an
-	// output tail) for `feedback --last`; the recorder drains before exit.
+	// output tail) in .modernpath/cli-history.log for local troubleshooting;
+	// the recorder drains before exit.
 	return runWithHistory(args, func() int {
 		beginCommandRun(args)
 		_, err := rootCmd.ExecuteC()

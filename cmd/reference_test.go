@@ -144,6 +144,8 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 		"`rdd-reverse-engineer-accept`", "`rdd-triage`",
 		"One store command per shell call",
 		"tooling gap",
+		// Epic 288 (B5): the nested-workspace refusal is in the glossary.
+		"below an already bound workspace",
 	} {
 		if !strings.Contains(loop, want) {
 			t.Errorf("the loop section before the command tree is missing %q", want)

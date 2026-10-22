@@ -63,20 +63,13 @@ func buildStatusReport(configDir string, cfg *config.Config) statusReport {
 	// see it. The config's own slug vouches for exactly one such directory;
 	// anything the config does not name stays invisible, which is what keeps
 	// CLI-owned directories out of the list.
-	if slug := cfg.SystemSlug; slug != "" && !found[slug] && !modernpathReservedTopDir(slug) {
-		for _, dir := range []string{filepath.Join(configDir, slug), filepath.Join(configDir, "docs", slug)} {
-			info, err := os.Stat(dir)
-			if err != nil || !info.IsDir() {
-				continue
+	if slug := cfg.SystemSlug; !found[slug] {
+		if dir, ok := boundSystemRootDir(configDir, slug); ok {
+			rel, err := filepath.Rel(root, dir)
+			if err != nil {
+				rel = dir
 			}
-			if n := countFiles(dir); n > 0 {
-				rel, err := filepath.Rel(root, dir)
-				if err != nil {
-					rel = dir
-				}
-				rep.Exports = append(rep.Exports, exportRoot{Rel: rel, Files: n})
-				break
-			}
+			rep.Exports = append(rep.Exports, exportRoot{Rel: rel, Files: countFiles(dir)})
 		}
 	}
 	return rep
