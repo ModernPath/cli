@@ -38,6 +38,10 @@ starting product work:
    skills say what a pass records; this says how. Look a command or a file
    format up there rather than guessing it.
 
+The project's session preparation command is `modernpath prepare`, run from
+the connected repository root. Its checks and output are documented in
+`.modernpath/cli-reference.md`.
+
 The CLI ships `mp-knowledge-search` for reading local analysis and live
 knowledge documents. The delegated cold review runs in
 the agent definition the CLI installs at `.claude/agents/rdd-cold-reviewer.md`

@@ -22,6 +22,36 @@ func TestEpicNamedGateCommandExists(t *testing.T) {
 	}
 }
 
+func TestEpicReviewBundlePhaseReadsOneContext(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != "GET" || r.URL.Path != "/api/work/epics/287/review-bundle" || r.URL.Query().Get("phase") != "completion-review" {
+			t.Errorf("unexpected read: %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"data":{"epic":{"id":287},"review":{"plan":{}},"reviews":[],"readiness":{"phase":"completion-review","ready":false,"blockers":[]}}}`))
+	}))
+	defer server.Close()
+	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"review-bundle", "287", "--phase", "completion-review", "--json"})
+	var out bytes.Buffer
+	command.SetOut(&out)
+	if err := command.Execute(); err != nil || requests != 1 || !strings.Contains(out.String(), `"readiness"`) {
+		t.Fatalf("phase read: err=%v requests=%d output=%s", err, requests, out.String())
+	}
+
+	invalid := newEpicGatesCommand(func() (*cliEnv, error) {
+		t.Fatal("invalid phase must be rejected before loading the CLI environment")
+		return nil, nil
+	})
+	invalid.SetArgs([]string{"review-bundle", "287", "--phase", "invalid", "--json"})
+	invalid.SetOut(&bytes.Buffer{})
+	invalid.SetErr(&bytes.Buffer{})
+	if err := invalid.Execute(); err == nil || requests != 1 {
+		t.Fatalf("invalid phase made a request: err=%v requests=%d", err, requests)
+	}
+}
+
 func TestEpicRecoveryAndDecisionCommandsRetainInput(t *testing.T) {
 	for _, op := range []struct {
 		name  string

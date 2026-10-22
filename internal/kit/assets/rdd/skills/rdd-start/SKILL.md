@@ -8,6 +8,10 @@ description: Enter a product-delivery session, confirm Epic scope or an explicit
 Read the consuming project's root instructions and `.modernpath/rdd/PROCESS.md`
 (or this repository's `PROCESS.md`). Use the project's CLI for all process reads.
 
+Before starting delivery work, follow the project's session preparation
+instructions. If they provide a preparation command, run it from the connected
+repository.
+
 1. Determine whether the user explicitly requests changed behavior/tests or a
    pass limited to existing behavior. Do not infer this from the branch or
    worktree. For a small change, follow `PROCESS.md` §Small changes: state

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `modernpath prepare` for a read-only session check before `rdd-start`,
+  covering authentication, System access, installed instructions, documentation
+  metadata and analysis status, with actionable next steps and JSON output.
+
 - Update the process snapshot to allow small changes without an Epic while
   retaining the existing RED/GREEN TDD loop and verification evidence. A change
   may relate to one system requirement; that relationship is optional.
@@ -21,6 +25,9 @@
   interface; writes use a separate POST/PUT/PATCH/DELETE interface.
 
 ### Upgrade and command changes
+
+- `epics gates review-bundle --phase` reads the Epic, exact review snapshot,
+  phase reviews and readiness in one request without recording a gate check.
 
 - `reverse-engineer schema` reads the recording input JSON Schema from the bound
   server. Recording instructions now query it instead of duplicating fields.

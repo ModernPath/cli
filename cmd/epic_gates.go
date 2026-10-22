@@ -74,6 +74,9 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		op := op
 		c := &cobra.Command{Use: op.name + " <epic-id>", Short: op.help, Args: cobra.ExactArgs(1)}
 		c.Flags().Bool("json", false, "Emit JSON")
+		if op.name == "review-bundle" {
+			c.Flags().String("phase", "", "Include Epic context, reviews and readiness for this phase")
+		}
 		if op.write {
 			c.Flags().String("file", "-", "JSON input file, or - for standard input")
 		}
@@ -89,7 +92,19 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 				}
 				payload = object
 			}
-			data, err := epicGateCall(cmd, load, args[0], method, op.suffix, payload)
+			suffix := op.suffix
+			if op.name == "review-bundle" {
+				phase, _ := cmd.Flags().GetString("phase")
+				if phase != "" {
+					switch phase {
+					case "plan-ready", "implementation", "completion-review", "completion":
+						suffix += "?phase=" + phase
+					default:
+						return fmt.Errorf("invalid phase %q", phase)
+					}
+				}
+			}
+			data, err := epicGateCall(cmd, load, args[0], method, suffix, payload)
 			if err != nil {
 				return err
 			}
@@ -201,6 +216,11 @@ blocks an older pass. Registered outcomes/applicability are immutable; exact ret
 are allowed, corrections need a new execution. GREEN uses the declared candidate.
 
 review-bundle <id> emits the exact snapshot to pass as review.presentation.
+review-bundle <id> --phase <phase> reads that unchanged snapshot with the Epic
+title, status and approvals, phase reviews and findings, and the same readiness
+report as gates check. This read does not write a gate audit event. Use the
+review field as the exact review.presentation; an approval requiring the raw
+snapshot still takes the no-phase output.
   review: {"phase":"plan|implementation","presentation":{...},
            "reviewer_context":"independent-session","criteria":["uuid"],
            "obligations":["uuid"],"reason":"review conclusion","findings":[],

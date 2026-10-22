@@ -194,6 +194,22 @@ instructions. `modernpath hooks install` configures the ModernPath integration
 for supported coding agents. Use `modernpath install --check` to inspect drift
 and `modernpath hooks status` to inspect hook configuration.
 
+`modernpath prepare` reports the signed-in actor, bound System access, CLI
+version, process-kit drift, local documentation export, live document edits and
+analysis status, then lists useful next commands. `--json` emits the same
+bounded report. The
+command exits non-zero when authentication, System access, kit compatibility
+or the bounded document check needs attention; JSON still contains the report.
+It checks the stored credential locally and verifies it with one System read.
+It does not automatically refresh an expiring credential. The latest released
+CLI version is unknown to this command; use your installation
+channel to check for a newer release. A live document edit newer than the
+export generation time means `modernpath docs sync` is useful. No observed
+newer edit cannot prove that the export is current: documents may have been
+deleted or other exported data may have changed. `prepare` does not sign in,
+change the System binding, sync, install, upgrade or start analysis. It does
+not select an Epic or grant delivery approval.
+
 Hook installation and removal clean up obsolete ModernPath entries while
 preserving project hooks. `modernpath hooks doctor` reports any remaining
 obsolete entries; JSON output includes `retired_hooks` for each agent.
@@ -748,6 +764,14 @@ The SHA is caller-supplied trace information; the server does not verify it
 against a repository. Both passing and blocked checks are recorded; blocked
 checks exit nonzero, and audit failure returns an error. Reading a preview or
 review bundle records no check. A passing check grants no human approval.
+
+For a read of all gate information in one request, run
+`modernpath epics gates review-bundle <epic-id> --phase <phase> --json`.
+It returns `epic` (title, status and approvals), `review` (the unchanged exact
+review snapshot), `reviews` (including findings), and `readiness` (the same
+phase report as the gate preview). This read does not create an Audit Trail
+event. The no-phase command below still returns the raw snapshot required by
+review and implementation approval inputs.
 
 ```sh
 modernpath epics plan show <epic-id> --full --json
