@@ -10,7 +10,10 @@ Read the consuming project's root instructions and `.modernpath/rdd/PROCESS.md`
 
 1. Determine whether the user explicitly requests changed behavior/tests or a
    pass limited to existing behavior. Do not infer this from the branch or
-   worktree. Changed behavior or tests require the normal Epic path. Explicit
+   worktree. For a small change, follow `PROCESS.md` §Small changes: state
+   its scope and expected observation, then execute and retain RED/GREEN
+   evidence without requiring an Epic or its approval steps below. Other
+   changed behavior or tests use the Epic path. Explicit
    recording, verification or acceptance of existing behavior needs no
    implementation Epic.
 2. For the Epic path, confirm the user-selected Epic by its ID. If none
@@ -32,7 +35,7 @@ Read the consuming project's root instructions and `.modernpath/rdd/PROCESS.md`
    verification to `rdd-reverse-engineer-verify`, or requested human
    acceptance to `rdd-reverse-engineer-accept`. Active Epic-owned requirements
    remain on the Epic path. If behavior or tests need to change, stop this
-   route and use the normal Epic path.
+   route and classify the change under step 1.
 4. If Epic implementation is not approved for the current saved content, route to
    `rdd-plan`, `rdd-cold-review` or `rdd-entry-review`, whichever is first
    incomplete. Do not start implementation or test changes before approval.

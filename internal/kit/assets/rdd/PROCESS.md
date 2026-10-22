@@ -24,8 +24,8 @@ cover its in-scope behavior, with explicit acceptance criteria and planned
 code/test traces before implementation approval. Use URs for user outcomes
 and SRs for system behavior as applicable; both kinds are not required for
 every Epic. Acceptance checks written only in a saved plan do not substitute
-for requirements. Small changes have no exemption. During delivery,
-connect those requirements to actual implementation and criterion-level test
+for requirements. Small changes may use the exception in
+[Small changes](#small-changes). During Epic delivery, connect those requirements to actual implementation and criterion-level test
 evidence before completion review. Meta-work remains outside the product
 loop under `AGENTS.md` §Product work and meta-work.
 
@@ -35,7 +35,7 @@ Epic's saved plan or human approvals. Upper evidence exercises a user outcome;
 lower evidence exercises a system behavior. Reverse engineering records
 requirements and source traces directly. An explicit request to verify and
 accept behavior already present may use the separate PROPOSED-to-DONE path
-below; any requested implementation or test change uses the normal Epic path.
+below; requested implementation or test changes follow [Work scope](#work-scope).
 
 ## Authority and sources
 
@@ -168,8 +168,9 @@ prerequisite for the separate `rdd-reverse-engineer-accept` pass, not a
 prerequisite for recording. Acceptance presents exact targets and evidence to
 the human and applies only an explicit attributable decision through the
 supported atomic operation above. If behavior or tests need to change, return
-to the normal Epic path. Verification does not alter lifecycle state, and
-neither recording nor passing evidence implies human acceptance.
+to [Work scope](#work-scope) to choose small-change or Epic delivery.
+Verification does not alter lifecycle state, and neither recording nor passing
+evidence implies human acceptance.
 
 Local working-set files may hold store projections and development inputs.
 They are not a second authority and need no fingerprint or synchronization
@@ -211,8 +212,9 @@ branch as merged or deployed without inspecting that external state.
 
 ## Work scope
 
-For changed behavior or tests, work on the Epic scope the user selected. If
-scope is missing, ask which Epic to use or whether to prepare a sourced
+For changed behavior or tests outside the small-change exception below, work
+on the Epic scope the user selected. If scope is missing, ask which Epic to use
+or whether to prepare a sourced
 proposal. Read its ID, saved plan, approved proposal, human decisions
 and affected requirements from the CLI. Choosing work
 creates no separate selection record or Epic lock. Requirement ownership is
@@ -221,12 +223,35 @@ acquired by implementation approval, not session entry.
 For an explicit request limited to recording, verifying or accepting existing
 behavior, an Epic is not required. Read the System and requirement IDs,
 current content, evidence and implementation ownership from the CLI, then route to the corresponding reverse-engineering pass. If the
-request entails a behavior or test change, use the Epic path above.
+request entails a behavior or test change, choose small-change or Epic delivery
+under this section.
 
 Keep work within the approved outcome and exclusions. Disclose changed intent,
 acceptance or scope and obtain fresh human approval before implementing it.
 Do not infer scope from a branch, latest activity, changed files or a search
 result.
+
+### Small changes
+
+Small changes do not require an Epic. A small change has a clear requested
+outcome, a narrow code and test boundary, and focused tests plus proportional
+regression checks that can verify it. It may relate to a single system
+requirement; that relationship is optional and does not by itself require an
+Epic. When present, cite the requirement in the PR or handoff. Judge the
+behavior and dependencies, not the number of changed lines. State the scope
+and expected observation briefly in the session; the user's request authorizes work within that scope.
+No separate Epic plan or implementation-approval ceremony is required.
+
+Small changes follow the [AI TDD inner loop](#ai-tdd-inner-loop), including
+RED/GREEN execution, regression checks and retained evidence.
+
+Do not create Epic, requirement or execution-registration records solely to
+use this exception. PR and test evidence suffice for this path; they do not
+publish or complete governed requirements. Existing Epic-owned work stays
+within its approved Epic and evidence obligations. If investigation expands
+the change beyond a narrow, verifiable scope, return to the Epic path before
+implementing the expanded scope. Security, tenant isolation, data integrity,
+project checks and human merge, deployment and release authority still apply.
 
 ## Autopilot
 
@@ -358,6 +383,9 @@ If that operation is unavailable, report the gap and leave the work incomplete.
 
 ## Development loop
 
+Small changes use the [AI TDD inner loop](#ai-tdd-inner-loop) directly.
+The Epic delivery loop is:
+
 ```text
 CHOOSE EPIC -> SAVE PLAN AND PROPOSED CONTENT -> ANSWER DECLARED DECISIONS
 -> RETAIN REVIEW BUNDLE -> INDEPENDENT REVIEW + RECORDED RESOLUTIONS
@@ -376,7 +404,7 @@ gap.
 
 | Phase | Skill | Exit |
 |---|---|---|
-| Session entry and scope | `rdd-start` | Epic plan read for changed behavior, or System/requirements/evidence read for an explicit existing-behavior pass; next phase identified |
+| Session entry and scope | `rdd-start` | Small-change scope and RED/GREEN checks identified, Epic plan read, or System/requirements/evidence read for an explicit existing-behavior pass; next phase identified |
 | Discover and classify | `rdd-discover` | Sources and proposed scope/decisions recorded for the selected Epic |
 | Plan | `rdd-plan` | Saved plan and exact proposed content ready for independent review |
 | Cold review | `rdd-cold-review` | Findings resolved or clearly disclosed; reviewed content identified |
@@ -393,8 +421,11 @@ reached and report what remains.
 
 ### AI TDD inner loop
 
-After implementation approval, establish each changed clause's expected
-failure before implementing it. For each clause:
+Establish each changed clause's expected failure before implementing it.
+For Epic work, begin after implementation approval. Small changes use the
+same test sequence, omitting Epic candidate declaration, execution registration
+and store finalization/read-back; retain the evidence in the PR or handoff
+instead. For each clause:
 
 1. Write or select a focused assertion that expresses the approved behavior.
 2. Register the RED execution through the CLI before running

@@ -22,6 +22,11 @@ records audit and releases ownership. Reverse engineering records requirements
 and file traces directly; it has no hash, source capture or as-built proof
 prerequisite.
 
+Small changes need no Epic or separate implementation-approval ceremony.
+They still require an observed failing test before implementation, a passing
+run after the change, proportional regression checks and retained RED/GREEN
+evidence. See [Small changes](PROCESS.md#small-changes).
+
 ## Read first
 
 1. [`AGENTS.md`](AGENTS.md) — shared agent rules and session entry.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update the process snapshot to allow small changes without an Epic while
+  retaining the existing RED/GREEN TDD loop and verification evidence. A change
+  may relate to one system requirement; that relationship is optional.
+  Run `modernpath install` to refresh the installed instructions.
+
 - Restore native `releases list/activate` and compliance PIN setup/status, with thin `factory release activate` and `factory pin` compatibility. Activation uses the compliance API, validates System and target receipts, and binds incumbent close consent to an exact release ID; PINs use hidden prompts/stdin. Requires the restored server activation endpoint.
 
 

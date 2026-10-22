@@ -5,8 +5,12 @@ description: Verify implementation under an approved Epic plan, including curren
 
 # Verify approved work
 
-Read `PROCESS.md`, the approved plan and proposed content and its requirement,
-code and test links. Confirm the tested content is the current candidate
+For a small change, verify the actual RED/GREEN evidence and regression checks
+under `PROCESS.md` §Small changes, then report results in the PR or handoff.
+The Epic candidate, registration and completion steps below do not apply.
+
+For Epic work, read `PROCESS.md`, the approved plan and proposed content and
+its requirement, code and test links. Confirm the tested content is the current candidate
 revision and the work remains within approved scope.
 
 1. Confirm each changed behavior has a recorded expected RED and passing
