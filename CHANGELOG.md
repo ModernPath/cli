@@ -5,6 +5,11 @@
 - Add `modernpath prepare` for a read-only session check before `rdd-start`,
   covering authentication, System access, installed instructions, documentation
   metadata and analysis status, with actionable next steps and JSON output.
+- `prepare` checks the public latest CLI release in one bounded read. When a
+  newer release exists, it names the Homebrew or Scoop upgrade before
+  `modernpath install`, with official install-script alternatives. An
+  unavailable lookup stays unknown; local builds retain source-build advice.
+  `hooks doctor` names the release install route when no CLI is on PATH.
 
 - Update the process snapshot to allow small changes without an Epic while
   retaining the existing RED/GREEN TDD loop and verification evidence. A change

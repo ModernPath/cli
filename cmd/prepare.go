@@ -60,6 +60,7 @@ func init() {
 
 func runPrepare(cmd *cobra.Command, _ []string) error {
 	report := prepareReport{Session: "unknown", Access: "unknown", CLIVersion: Version, LatestCLI: "unknown", Kit: "unknown", DocsState: "unknown", DocsMetadata: "not_checked", Analysis: "unknown", NextSteps: []string{}}
+	needsUpgrade := false
 	cfgDir, err := config.FindConfigDir()
 	if err != nil || cfgDir == "" {
 		report.Session = "unbound"
@@ -79,6 +80,15 @@ func runPrepare(cmd *cobra.Command, _ []string) error {
 		report.Server = config.DefaultAPIURL
 	}
 	report.SystemID, report.SystemName, report.DocsSyncAt = cfg.SystemID, cfg.SystemName, cfg.LastSyncAt
+	if releasedBuild(Version) {
+		if latest := latestPublishedRelease(); latest != "" {
+			report.LatestCLI = latest
+			if newerRelease(Version, latest) {
+				needsUpgrade = true
+				report.NextSteps = append(report.NextSteps, upgradeAdviceForCurrentBuild(root)...)
+			}
+		}
+	}
 	if cfg.SystemID == 0 {
 		report.Access = "unbound"
 		report.NextSteps = append(report.NextSteps, "modernpath init")
@@ -93,10 +103,18 @@ func runPrepare(cmd *cobra.Command, _ []string) error {
 				drift = drift[:5]
 			}
 			report.KitDifferences = drift
-			report.NextSteps = append(report.NextSteps, "modernpath install --check", "modernpath install")
+			if report.LatestCLI == "unknown" && releasedBuild(Version) {
+				report.NextSteps = append(report.NextSteps, "Check your CLI release channel for a newer version before modernpath install (latest release could not be verified)")
+			} else if !releasedBuild(Version) {
+				report.NextSteps = append(report.NextSteps, upgradeAdviceForCurrentBuild(root)...)
+			}
+			report.NextSteps = append(report.NextSteps, "modernpath install", "modernpath install --check")
 		}
 	} else {
 		report.NextSteps = append(report.NextSteps, "modernpath install --check")
+	}
+	if needsUpgrade && report.Kit == "matches" {
+		report.NextSteps = append(report.NextSteps, "modernpath install", "modernpath install --check")
 	}
 
 	auth, authErr := config.ReadAuth()
@@ -158,7 +176,7 @@ func finishPrepare(cmd *cobra.Command, report prepareReport) error {
 	if err := writePrepare(cmd, report); err != nil {
 		return err
 	}
-	if report.Session != "authenticated" || report.Access != "reachable" || report.Kit != "matches" || report.DocsState == "missing" || report.DocsState == "newer_edits" || report.DocsMetadata != "checked" {
+	if report.Session != "authenticated" || report.Access != "reachable" || report.Kit != "matches" || report.DocsState == "missing" || report.DocsState == "newer_edits" || report.DocsMetadata != "checked" || newerRelease(report.CLIVersion, report.LatestCLI) {
 		return reportedError{fmt.Errorf("preparation needs attention; see the report and next steps")}
 	}
 	return nil
@@ -316,7 +334,11 @@ func writePrepare(cmd *cobra.Command, report prepareReport) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Session: %s (%s)\n", report.Session, report.Actor)
 	fmt.Fprintf(out, "Server: %s\nSystem: %d %s (%s)\n", report.Server, report.SystemID, report.SystemName, report.Access)
-	fmt.Fprintf(out, "CLI: %s (latest release unknown)\nKit: %s\n", report.CLIVersion, report.Kit)
+	latest := report.LatestCLI
+	if latest == "" {
+		latest = "unknown"
+	}
+	fmt.Fprintf(out, "CLI: %s (latest release: %s)\nKit: %s\n", report.CLIVersion, latest, report.Kit)
 	fmt.Fprintf(out, "Docs: %s (local sync: %s; export: %s)\n", report.DocsState, orDash(report.DocsSyncAt), orDash(report.ExportGeneratedAt))
 	if report.DocsDetail != "" {
 		fmt.Fprintln(out, report.DocsDetail)

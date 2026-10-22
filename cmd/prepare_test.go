@@ -14,11 +14,16 @@ import (
 )
 
 func TestPrepareReportsReadOnlySessionAndNextSteps(t *testing.T) {
+	oldVersion := Version
+	Version = "0.20.0"
+	defer func() { Version = oldVersion }()
 	var methods []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/releases/latest":
+			_, _ = w.Write([]byte(`{"tag_name":"v0.21.0"}`))
 		case "/api/systems":
 			_, _ = w.Write([]byte(`[{"id":17,"name":"Example"}]`))
 		case "/api/systems/17/documents":
@@ -28,6 +33,9 @@ func TestPrepareReportsReadOnlySessionAndNextSteps(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	oldLookupURL := releaseLookupURL
+	releaseLookupURL = srv.URL + "/releases/latest"
+	defer func() { releaseLookupURL = oldLookupURL }()
 	root := t.TempDir()
 	t.Chdir(root)
 	if err := os.MkdirAll(filepath.Join(root, ".modernpath", "example"), 0o755); err != nil {
@@ -68,11 +76,18 @@ func TestPrepareReportsReadOnlySessionAndNextSteps(t *testing.T) {
 	if report["actor"] != "alice@example.test" || report["system_id"] != float64(17) {
 		t.Fatalf("identity missing: %v", report)
 	}
+	if report["latest_cli"] != "0.21.0" {
+		t.Fatalf("released build must read latest release: %v", report["latest_cli"])
+	}
 	if report["session_detail"] != "credential accepted by the server" {
 		t.Fatalf("online verification must replace the local-only detail: %v", report["session_detail"])
 	}
 	if !strings.Contains(out.String(), "modernpath docs sync") {
 		t.Fatalf("missing next step: %s", out.String())
+	}
+	steps := report["next_steps"].([]any)
+	if steps[0] != "brew update && brew upgrade modernpath" || steps[2] != "modernpath install" {
+		t.Fatalf("released build must upgrade before install: %v", steps)
 	}
 	for _, method := range methods {
 		if !strings.HasPrefix(method, "GET ") {

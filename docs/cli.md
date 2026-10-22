@@ -201,14 +201,23 @@ bounded report. The
 command exits non-zero when authentication, System access, kit compatibility
 or the bounded document check needs attention; JSON still contains the report.
 It checks the stored credential locally and verifies it with one System read.
-It does not automatically refresh an expiring credential. The latest released
-CLI version is unknown to this command; use your installation
-channel to check for a newer release. A live document edit newer than the
+It does not automatically refresh an expiring credential. On a released build,
+it checks the latest published CLI release through a public GitHub GET bounded
+at one second. An unavailable lookup leaves the latest version unknown; local
+builds do not compare themselves with releases. A live document edit newer than the
 export generation time means `modernpath docs sync` is useful. No observed
 newer edit cannot prove that the export is current: documents may have been
 deleted or other exported data may have changed. `prepare` does not sign in,
 change the System binding, sync, install, upgrade or start analysis. It does
 not select an Epic or grant delivery approval.
+
+If a newer release is confirmed, `prepare` lists the platform's upgrade
+command before `modernpath install` and `modernpath install --check`, even when
+the installed kit matches the running binary. When kit drift exists but the
+release lookup is unavailable, it asks you to check the release channel first.
+A local build points to the source build script when the checkout is present.
+The advice follows the operating system, not the selected server environment;
+it does not guess whether Homebrew, Scoop or an install script was used.
 
 Hook installation and removal clean up obsolete ModernPath entries while
 preserving project hooks. `modernpath hooks doctor` reports any remaining
@@ -241,7 +250,8 @@ scoop update modernpath
 #### After upgrading
 
 If you used an install script, run it again to get the current release.
-Re-run `modernpath install` in each connected repository after any CLI upgrade.
+Upgrade the CLI before running `modernpath install` in each connected
+repository; install writes the running build's embedded kit.
 Use `modernpath install --check` to check for drift, or
 `modernpath hooks doctor` if a different CLI version appears on your PATH.
 

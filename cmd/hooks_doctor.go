@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/modernpath/cli/internal/config"
@@ -422,7 +423,7 @@ func runHooksDoctor(cmd *cobra.Command, args []string) error {
 			break
 		}
 		printWarning("No modernpath found on PATH — the hooks are silent no-ops.\n")
-		printInfo("Install with scripts/install-local.sh, then re-run 'modernpath hooks install'.\n")
+		printInfo("Install with %s, then re-run 'modernpath hooks install'.\n", installAdvice(Version, runtime.GOOS))
 		return nil
 	case 1:
 		printSuccess("modernpath: %s%s%s\n", copies[0], versionSuffix(copies[0]), winnerRole)
@@ -439,7 +440,11 @@ func runHooksDoctor(cmd *cobra.Command, args []string) error {
 			for _, other := range differing {
 				fmt.Printf("    %s\n", other)
 			}
-			printInfo("Shadowed copies go stale silently. scripts/install-local.sh writes all of them.\n")
+			advice := "scripts/install-local.sh writes all of them."
+			if releasedBuild(Version) {
+				advice = "Upgrade or remove the copies you do not use, each with the tool that installed it."
+			}
+			printInfo("Shadowed copies go stale silently. %s\n", advice)
 		}
 		if len(unverifiable) > 0 {
 			printWarning("%s could not be read, so staleness cannot be ruled out:\n", copyCount(len(unverifiable)))
