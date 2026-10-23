@@ -326,7 +326,7 @@ func TestAgentEpicUpdateSendsPlanningFields(t *testing.T) {
 	defer server.Close()
 	cobraWorkspace(t, server)
 	file := filepath.Join(t.TempDir(), "epic-planning.json")
-	impact := map[string]any{"version": 1, "items": []any{map[string]any{"target_type": "code", "target_id": "lib/a.ex", "description": "Touches a", "proposed_action": "Edit", "disposition": "dismissed"}}, "secondary_impacts": []any{}}
+	impact := map[string]any{"version": 1, "items": []any{map[string]any{"target_type": "code", "target_id": "lib/a.ex", "description": "Touches a", "proposed_action": "Edit"}}}
 	shared := map[string]any{"version": 1, "accepted_context_revision": 0, "decisions": []any{map[string]any{"statement": "Native IDs"}}, "assumptions": []any{}, "open_questions": []any{}, "references": []any{}}
 	input, _ := json.Marshal(map[string]any{"outcome_source": "USER:2026-10-20", "impact_assessment": impact, "shared_context": shared})
 	if err := os.WriteFile(file, input, 0600); err != nil {

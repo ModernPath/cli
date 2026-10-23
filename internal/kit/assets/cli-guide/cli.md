@@ -747,9 +747,10 @@ accepted edit is audited with the previous and new values (`epics plan
 history`). Epic content is read-only in `IN_PROGRESS` and `IN_REVIEW`; the
 server refuses these edits. The three planning fields are accepted only while
 the Epic is `PROPOSED` (409 otherwise). `impact_assessment` is written whole
-and stored normalized (ids, `disposition` and `severity` assigned); an empty
-`items` list is refused (send `null` to clear), and an item the value model
-rejects makes the server refuse the edit. `shared_context` is the whole
+and stored with finding ids assigned where missing. Findings contain only
+target references, description and proposed action. An empty `items` list or
+`null` clears it; unsupported fields or invalid findings make the server refuse
+the edit. `shared_context` is the whole
 version-1 object, the only accepted shape (the stored default `{}` cannot be
 written back); its `references` and `accepted_context_revision` must equal
 the stored values (a CLI-created Epic stores `[]` and `0`), so `decisions`,

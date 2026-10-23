@@ -188,10 +188,10 @@ edit is audited with the previous and new values (epics plan history).
 Existing server validation and release/lifecycle rules apply. The server
 rejects content edits while the Epic is IN_PROGRESS or IN_REVIEW, and accepts
 outcome_source, impact_assessment and shared_context only while the Epic is
-PROPOSED. impact_assessment is written whole: its items are normalized (ids,
-disposition and severity assigned), an empty items list is refused (send
-null to clear) and an item the value model rejects makes the server refuse
-the edit. shared_context is the whole version-1 object, the only accepted
+PROPOSED. impact_assessment is written whole: findings receive ids when
+missing and contain only target references, description and proposed_action.
+An empty items list or null clears it; unsupported fields or invalid findings
+make the server refuse the edit. shared_context is the whole version-1 object, the only accepted
 shape (the stored default {} cannot be written back); its references and
 accepted_context_revision must equal the stored values (an Epic created by
 the CLI stores [] and 0), so decisions, assumptions and open_questions are
