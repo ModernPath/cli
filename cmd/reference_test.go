@@ -444,26 +444,31 @@ func TestSR1638_3TheReturnShowsItsBundleWhereverItIsDocumented(t *testing.T) {
 	}
 }
 
-// SR-1638.4: the CHANGELOG's Unreleased section lists the return with --file,
-// names its refusals by their printed messages and names the server change.
+// SR-1638.4: the CHANGELOG section that lists the return with --file names its
+// refusals by their printed messages and the server change. A release cut
+// renames Unreleased to the release, so the section is found by the entry.
 func TestSR1638_4ChangelogListsTheReturnWithItsBundle(t *testing.T) {
 	data, err := os.ReadFile("../CHANGELOG.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	unreleased := string(data)
-	unreleased = unreleased[strings.Index(unreleased, "## Unreleased"):]
-	if end := strings.Index(unreleased[1:], "\n## "); end >= 0 {
-		unreleased = unreleased[:end+1]
+	entry := "`epics plan return-to-implementation <id> --file <presentation.json>"
+	var text string
+	for _, section := range strings.Split(string(data), "\n## ") {
+		if section = strings.Join(strings.Fields(section), " "); strings.Contains(section, entry) {
+			text = section
+			break
+		}
 	}
-	text := strings.Join(strings.Fields(unreleased), " ")
+	if text == "" {
+		t.Fatalf("no CHANGELOG section says %q", entry)
+	}
 	for _, want := range []string{
-		"`epics plan return-to-implementation <id> --file <presentation.json>",
 		reasonRequiredMessage, invalidActorMessage, presentationRequiredPrefix, presentationChangedPrefix,
 		"Requires the matching server changes",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("the CHANGELOG's Unreleased section does not say %q", want)
+			t.Errorf("the CHANGELOG section listing the return does not say %q", want)
 		}
 	}
 }

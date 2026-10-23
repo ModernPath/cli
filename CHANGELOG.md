@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.22.0 — native Epics, requirements and evidence replace the legacy process commands
 
 - `epics plan return-to-planning` lets the current implementation approver return
   IN_PROGRESS or IN_REVIEW work to PROPOSED with the exact plan and explicit human
