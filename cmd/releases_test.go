@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -256,11 +257,22 @@ func TestReleasePINHiddenTerminal(t *testing.T) {
 	if os.Getenv("MP_RELEASE_PIN_PTY_CHILD") == "1" {
 		c := &cobra.Command{Use: "pin"}
 		c.Flags().Bool("pin-stdin", false, "")
-		pin, err := readReleasePIN(c, true)
-		if err != nil || pin != "482913" {
-			t.Fatalf("hidden PIN confirmation failed: %v", err)
+		ackFD, err := strconv.Atoi(os.Getenv("MP_RELEASE_PIN_PTY_ACK"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		fmt.Println("PIN accepted")
+		ack := os.NewFile(uintptr(ackFD), "prompt-ack")
+		defer ack.Close()
+		c.SetErr(releasePINPromptWriter{Writer: c.ErrOrStderr(), ack: ack})
+		pin, err := readReleasePIN(c, os.Getenv("MP_RELEASE_PIN_CONFIRM") == "true")
+		if expected := os.Getenv("MP_RELEASE_PIN_ERROR"); expected != "" {
+			if err == nil || err.Error() != expected || pin != "" {
+				t.Fatalf("expected PIN refusal %q, got %v", expected, err)
+			}
+		} else if err != nil || pin != "482913" {
+			t.Fatalf("hidden PIN read failed: %v", err)
+		}
+		fmt.Println("PIN read finished")
 		return
 	}
 	if runtime.GOOS == "windows" {
@@ -270,11 +282,15 @@ func TestReleasePINHiddenTerminal(t *testing.T) {
 	if err != nil {
 		t.Skip("python3 required for POSIX pseudo-terminal test")
 	}
-	script := `import os,pty,select,subprocess,sys,time
+	script := `import json,os,pty,select,subprocess,sys,termios,time
 master,slave=pty.openpty()
-env=dict(os.environ,MP_RELEASE_PIN_PTY_CHILD="1")
-p=subprocess.Popen([sys.argv[1],"-test.run=^TestReleasePINHiddenTerminal$"],stdin=slave,stdout=slave,stderr=slave,env=env)
-os.close(slave)
+original=termios.tcgetattr(slave)
+ack_read,ack_write=os.pipe()
+inputs=json.loads(sys.argv[2])
+prompts=[b"Compliance PIN: ",b"Confirm PIN: "]
+env=dict(os.environ,MP_RELEASE_PIN_PTY_CHILD="1",MP_RELEASE_PIN_PTY_ACK=str(ack_read),MP_RELEASE_PIN_CONFIRM=sys.argv[3],MP_RELEASE_PIN_ERROR=sys.argv[4])
+p=subprocess.Popen([sys.argv[1],"-test.run=^TestReleasePINHiddenTerminal$"],stdin=slave,stdout=slave,stderr=slave,env=env,pass_fds=(ack_read,))
+os.close(ack_read)
 seen=b"";sent=0;deadline=time.monotonic()+10
 try:
  while time.monotonic()<deadline:
@@ -284,21 +300,60 @@ try:
    except OSError: break
    if not chunk: break
    seen+=chunk
-   if sent==0 and b"Compliance PIN: " in seen:
-    os.write(master,b"482913\n");sent=1
-   elif sent==1 and b"Confirm PIN: " in seen:
-    os.write(master,b"482913\n");sent=2
-  if p.poll() is not None: break
+   if sent<len(inputs) and prompts[sent] in seen:
+    assert not termios.tcgetattr(slave)[3] & termios.ECHO, "terminal echo enabled at PIN prompt"
+    os.write(master,inputs[sent].encode());os.write(ack_write,b"1");sent+=1
+  if p.poll() is not None and not select.select([master],[],[],0)[0]: break
  if p.poll() is None: p.kill()
  assert p.wait()==0, "hidden prompt child failed"
- assert b"482913" not in seen, "terminal echoed the PIN"
- assert sent==2 and b"PIN accepted" in seen, "PIN confirmation did not complete"
+ assert all(secret not in seen for secret in [b"482913",b"123456",b"abcd"]), "terminal echoed the PIN"
+ assert sent==len(inputs) and b"PIN read finished" in seen, "PIN read did not complete"
+ assert termios.tcgetattr(slave)==original, "terminal settings were not restored"
 finally:
  os.close(master)
+ os.close(slave)
+ os.close(ack_write)
  if p.poll() is None: p.kill();p.wait()
 `
-	command := exec.Command(python, "-c", script, os.Args[0])
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("pseudo-terminal check failed: %s", out)
+	for _, tc := range []struct {
+		name, expectedError string
+		inputs              []string
+		confirm             bool
+	}{
+		{name: "single", inputs: []string{"482913\r"}},
+		{name: "confirmation", inputs: []string{"482913\r", "482913\r"}, confirm: true},
+		{name: "mismatch", inputs: []string{"482913\r", "123456\r"}, confirm: true, expectedError: "PINs do not match"},
+		{name: "invalid", inputs: []string{"abcd\r"}, expectedError: "PIN must be 4–6 digits"},
+		{name: "interrupt", inputs: []string{"\x03"}, expectedError: "cannot read PIN"},
+		{name: "EOF", inputs: []string{"\x04"}, expectedError: "cannot read PIN"},
+		{name: "confirmation interrupt", inputs: []string{"482913\r", "\x03"}, confirm: true, expectedError: "PINs do not match"},
+		{name: "editing", inputs: []string{"48291x\x7f3\r"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs, err := json.Marshal(tc.inputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command(python, "-c", script, os.Args[0], string(inputs), strconv.FormatBool(tc.confirm), tc.expectedError)
+			if out, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("pseudo-terminal check failed: %s", out)
+			}
+		})
 	}
+}
+
+// Hold each prompt write until the PTY has checked echo and sent input. This
+// reproduces fast input before the prompt writer returns without a timing race.
+type releasePINPromptWriter struct {
+	io.Writer
+	ack io.Reader
+}
+
+func (w releasePINPromptWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if err == nil && bytes.Contains(p, []byte("PIN: ")) {
+		var ack [1]byte
+		_, err = io.ReadFull(w.ack, ack[:])
+	}
+	return n, err
 }

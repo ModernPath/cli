@@ -100,7 +100,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return fmt.Errorf("Epic plan response is missing its data object")
 				}
 				if op.name == "show" {
-					allowed := []string{"id", "system_id", "process_status", "plan", "implementation_approval", "completion_approval", "versions", "suggested_plan"}
+					allowed := []string{"id", "system_id", "process_status", "plan", "implementation_approval", "completion_approval", "versions", "suggested_plan", "source_files"}
 					selected, err := selectRecordFields(cmd, data, []string{"id", "process_status", "implementation_approval", "completion_approval"}, allowed, nil)
 					if err != nil {
 						return err
@@ -252,7 +252,9 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
                                    "position", "statement" | "given", "when", "then",
                                    "status": "active"}]}],
    "traces": [{"id"?, "source_type", "source_id", "target_type", "target_id",
-               "link_kind": "implements" | "verifies" | "derives" | "relates"}],
+               "link_kind": "implements" | "verifies" | "derives" | "relates"}
+              | {"source_type": "user_requirement" | "system_requirement", "source_id",
+                 "link_kind": "planned"}],
    "verification": {"author_context": "<authoring context>", "decisions": ["<issued decision UUID>"],
                     "criteria": [{"id": "<criterion UUID>", "changed": true,
                                   "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
@@ -267,13 +269,23 @@ requirement. A requirement must already exist in the System (requirements
 create, or reverse-engineer record); the plan proposes what its published
 content, criteria and traces become at completion. A trace must touch one of
 the plan's requirements or criteria; its other endpoint must exist in the
-System; a document trace is relates. Criteria left out of the plan are retired
+System. When the source file does not exist yet, declare a plan-only trace:
+  {"source_type":"system_requirement","source_id":"<requirement UUID>","link_kind":"planned"}
+It has no target, path or trace ID and creates no file record. Real implements
+traces and planned declarations may coexist for different requirements in the
+same plan. Use real traces for code that already exists. Completion requires a
+real implements trace to source_file or file_analysis for every requirement;
+planned declarations never become native traces. After implementing new code,
+record its real links with reverse-engineer record without changing the approved
+plan. Read reverse-engineer schema before constructing that input. New links
+are covered by the implementation review and retained at completion.
+A document trace is relates. Criteria left out of the plan are retired
 at completion; traces left out that existed at approval are removed at
 completion, while code and test links added during implementation survive.
 
 save (the Epic PROPOSED) accepts a draft: content may name only the fields
 that change, criteria default to the current active ones, traces default to
-the current ones, and missing criterion and trace ids are assigned. The saved
+the current ones, and missing criterion and real trace ids are assigned. The saved
 plan is read back complete by show. Before approval, verification must declare
 every active criterion and required project check, with retained test-case IDs.
 Use decisions: [] when no human questions are declared. Omit a new project-check
@@ -298,9 +310,11 @@ is released and the Epic is DONE. A refusal leaves everything unchanged; a
 repeated completion publishes nothing twice.
 
 show prints id, process_status, implementation_approval and
-completion_approval; --fields plan, versions or suggested_plan, or --full,
+completion_approval; --fields plan, versions, suggested_plan or source_files, or --full,
 add the plan, the accepted versions and, for an Epic with members but no
-saved plan, the draft the server suggests. Read back after every write.
+saved plan, the draft the server suggests. source_files maps the plan's file IDs
+to repository_key and path for review; it stays outside the canonical plan.
+Read back after every write.
 
 Named transition preconditions are checked by epics gates check. See epics gates
 --help for verification obligations, execution registration and independent reviews.
@@ -325,7 +339,9 @@ memory.`
 var epicPlanOperationHelp = map[string]string{
 	"show": `Read the saved plan, the two human approvals and the accepted versions.
 --fields plan --json prints the complete saved plan, which is the input
-approve-implementation expects. See epics plan --help for the plan shape.`,
+approve-implementation expects. --fields plan,source_files --json also resolves
+the real source-file IDs to repository/path pairs for review. See epics plan --help
+for the plan shape.`,
 	"save": `Save the plan and proposed requirement content while the Epic is PROPOSED.
 A draft may be partial; the server completes it from the current records and
 show reads it back complete. Repeat to revise. See epics plan --help for the

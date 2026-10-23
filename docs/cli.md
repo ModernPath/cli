@@ -19,7 +19,8 @@ modernpath releases pin set
 modernpath releases activate modernpath-v1-09
 ```
 
-PIN setup prompts twice without echo (4–6 digits). Activation prompts once;
+PIN setup prompts twice without echo (4–6 digits). Input is hidden before
+either prompt appears; Ctrl-C cancels and restores terminal settings. Activation prompts once;
 `--pin-stdin` accepts a PIN from a secret store or protected file for either
 command. Do not put a PIN on the command line. `releases pin status` reports
 whether a PIN exists.
@@ -799,7 +800,9 @@ For a read of all gate information in one request, run
 `modernpath epics gates review-bundle <epic-id> --phase <phase> --json`.
 It returns `epic` (title, status and approvals), `review` (the unchanged exact
 review snapshot), `reviews` (including findings), and `readiness` (the same
-phase report as the gate preview). This read does not create an Audit Trail
+phase report as the gate preview), plus `source_files` mapping the plan's file
+IDs to repository/path pairs for independent review. This metadata stays outside
+the exact `review` snapshot. This read does not create an Audit Trail
 event. The no-phase command below still returns the raw snapshot required by
 review and implementation approval inputs.
 
@@ -835,7 +838,34 @@ same counts of the previous plan; an `updated` item prints `fields` instead.
 is 1..50.
 `save` and `approve-implementation` read one JSON plan from standard input
 or `--file plan.json`. The plan includes `body`, `requirements` (kind, ID,
-content and criteria), `traces` and `verification`. Declare every active
+content and criteria), `traces` and `verification`. Use real `implements` traces for existing code.
+When a requirement's source file does not exist yet, use a plan-only declaration:
+
+```json
+{"source_type":"system_requirement","source_id":"<requirement-uuid>","link_kind":"planned"}
+```
+
+A plan can mix real code traces and planned declarations. A planned declaration
+has no target, path or trace ID; saving it creates no file identity. Both
+`plan-ready` and implementation approval accept it. Completion review and
+completion approval require a real `implements` trace to a scoped `source_file`
+or `file_analysis` for every requirement, even when all test evidence passes.
+
+After implementing the code, read `reverse-engineer schema` and record its real
+trace with `reverse-engineer record --file <file>`, using `requirements: []` to
+leave approved requirement content unchanged. Record real source-file repository,
+path and optional revision only once implementation exists; the recorder does
+not inspect the filesystem. New traces change the review baseline and need a
+fresh implementation review. The approved planned declaration remains in the
+plan's history; it never becomes a published trace. Actual links survive
+completion and appear in accepted requirement versions.
+
+`epics plan show <id> --fields plan,source_files --json` and phase review bundles
+expose repository/path mappings for real traces, including links added during
+implementation. Chat supports planned declarations and reads the same mapping.
+This descriptive data stays outside the canonical approval snapshot.
+
+Declare every active
 criterion and required project check, retained test-case IDs, applicable
 boundaries, author context and issued decision IDs in `verification` before
 approval. `save` accepts a partial draft the server completes; implementation

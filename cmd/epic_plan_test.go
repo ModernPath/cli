@@ -27,6 +27,33 @@ func TestEpicReviewedPlanPreservesNativeBigintEndpoints(t *testing.T) {
 	}
 }
 
+func TestEpicPlanShowExposesSourceFilePaths(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"id":42,"source_files":[{"id":"file-id","repository_key":"new-service","path":"src/api.ex"}]}}`))
+	}))
+	defer server.Close()
+	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 7), nil })
+	command.SetArgs([]string{"show", "42", "--fields", "source_files", "--json"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var read struct {
+		SourceFiles []struct {
+			ID         string `json:"id"`
+			Repository string `json:"repository_key"`
+			Path       string `json:"path"`
+		} `json:"source_files"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &read); err != nil {
+		t.Fatal(err)
+	}
+	if len(read.SourceFiles) != 1 || read.SourceFiles[0].ID != "file-id" || read.SourceFiles[0].Repository != "new-service" || read.SourceFiles[0].Path != "src/api.ex" {
+		t.Fatalf("missing source-file identity: %s", output.String())
+	}
+}
+
 func TestEpicPlanSaveForwardsEmptyDraftAndKeepsSuccessfulJSON(t *testing.T) {
 	input := `{"body":"Draft before requirements", "requirements":[]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

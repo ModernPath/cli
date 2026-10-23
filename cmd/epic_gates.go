@@ -215,10 +215,17 @@ RED must finish before GREEN starts. A newer running, failing or skipped executi
 blocks an older pass. Registered outcomes/applicability are immutable; exact retries
 are allowed, corrections need a new execution. GREEN uses the declared candidate.
 
+Planning accepts a real implements trace for existing code or a plan-only
+planned declaration when the source file does not exist yet. Completion-review
+and completion require a real implements trace for every requirement. A planned
+declaration has no file endpoint or trace ID and is never published as a trace.
+
 review-bundle <id> emits the exact snapshot to pass as review.presentation.
 review-bundle <id> --phase <phase> reads that unchanged snapshot with the Epic
 title, status and approvals, phase reviews and findings, and the same readiness
-report as gates check. This read does not write a gate audit event. Use the
+report as gates check. Its source_files field maps real source-file IDs to their
+repository_key and path for independent review. This descriptive metadata sits
+outside the unchanged review snapshot. This read does not write a gate audit event. Use the
 review field as the exact review.presentation; an approval requiring the raw
 snapshot still takes the no-phase output.
   review: {"phase":"plan|implementation","presentation":{...},

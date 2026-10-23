@@ -211,9 +211,8 @@ func newReleasePin(load func() (*cliEnv, error)) *cobra.Command {
 	return root
 }
 
-func readReleasePIN(c *cobra.Command, confirm bool) (string, error) {
+func readReleasePIN(c *cobra.Command, confirm bool) (pin string, err error) {
 	fromStdin, _ := c.Flags().GetBool("pin-stdin")
-	var pin string
 	if fromStdin {
 		b, err := io.ReadAll(io.LimitReader(c.InOrStdin(), 64))
 		if err != nil {
@@ -224,18 +223,29 @@ func readReleasePIN(c *cobra.Command, confirm bool) (string, error) {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			return "", fmt.Errorf("PIN requires a terminal or --pin-stdin")
 		}
-		fmt.Fprint(c.ErrOrStderr(), "Compliance PIN: ")
-		b, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(c.ErrOrStderr())
+		// Disable terminal echo before displaying either prompt, including when
+		// input arrives immediately. Terminal handles editing and cancellation.
+		fd := int(os.Stdin.Fd())
+		state, rawErr := term.MakeRaw(fd)
+		if rawErr != nil {
+			return "", fmt.Errorf("cannot read PIN")
+		}
+		defer func() {
+			if restoreErr := term.Restore(fd, state); restoreErr != nil {
+				pin, err = "", fmt.Errorf("cannot restore terminal")
+			}
+		}()
+		terminal := term.NewTerminal(struct {
+			io.Reader
+			io.Writer
+		}{os.Stdin, c.ErrOrStderr()}, "")
+		pin, err = terminal.ReadPassword("Compliance PIN: ")
 		if err != nil {
 			return "", fmt.Errorf("cannot read PIN")
 		}
-		pin = string(b)
 		if confirm {
-			fmt.Fprint(c.ErrOrStderr(), "Confirm PIN: ")
-			b, err = term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(c.ErrOrStderr())
-			if err != nil || string(b) != pin {
+			confirmation, err := terminal.ReadPassword("Confirm PIN: ")
+			if err != nil || confirmation != pin {
 				return "", fmt.Errorf("PINs do not match")
 			}
 		}
