@@ -27,6 +27,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"analysis", "start"}, {"analysis", "reanalyze"}, {"analysis", "reset"}, {"analysis", "status"},
 		{"epics", "search"}, {"epics", "plan", "show"}, {"epics", "plan", "save"}, {"epics", "plan", "history"},
 		{"epics", "plan", "approve-implementation"}, {"epics", "plan", "submit-review"}, {"epics", "plan", "approve-completion"},
+		{"epics", "plan", "return-to-implementation"},
 		{"focus"},
 		{"github"},
 		{"hooks", "install"}, {"hooks", "uninstall"}, {"hooks", "status"}, {"hooks", "doctor"},
@@ -469,6 +470,12 @@ var leafDispositions = map[string]disposition{
 	"evidence record":                   {kind: dispNoCall, reason: "needs-precondition"},
 	"evidence latest":                   {kind: dispExecute},
 	"evidence runs":                     {kind: dispExecute},
+
+	// Epic 292: the human's "not yet" at completion review. Like
+	// approve-completion it stops before the call without the completion
+	// bundle. Its own block keeps gofmt from re-aligning the whole map around
+	// the longer key.
+	"epics plan return-to-implementation": {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "plan", "return-to-implementation", "42", "--reason", "smoke"}},
 }
 
 func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {

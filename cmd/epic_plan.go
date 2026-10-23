@@ -23,6 +23,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 		{"save", "Save proposed content from JSON on standard input", "PUT", "/plan", true},
 		{"approve-implementation", "Approve the exact reviewed plan from standard input and acquire requirement ownership", "POST", "/approve-implementation", true},
 		{"submit-review", "Mark implementation complete for human completion review", "POST", "/submit-review", false},
+		{"return-to-implementation", "Record the human's not-yet at completion review and resume implementation", "POST", "/return-to-implementation", false},
 		{"approve-completion", "Approve completion and publish the approved requirement content", "POST", "/approve-completion", false},
 	} {
 		op := operation
@@ -38,6 +39,12 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					payload = map[string]any{}
 					reason, _ := cmd.Flags().GetString("reason")
 					payload["reason"] = reason
+					// SR-1641: --agent names the agent that ran the command;
+					// without it the server attributes the write to the signed-in
+					// person, so the payload carries no actor at all.
+					if agent, _ := cmd.Flags().GetString("agent"); agent != "" {
+						payload["actor"] = map[string]any{"kind": "agent", "agent_slug": agent}
+					}
 				}
 				if op.input {
 					file, _ := cmd.Flags().GetString("file")
@@ -60,10 +67,13 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 						payload["presentation"] = presentation
 					}
 				}
-				if op.name == "approve-completion" {
+				if op.name == "approve-completion" || op.name == "return-to-implementation" {
 					file, _ := cmd.Flags().GetString("file")
-					if file == "" {
+					if file == "" && op.name == "approve-completion" {
 						return fmt.Errorf("approve-completion requires --file with the exact reviewed presentation (use --file - to read standard input)")
+					}
+					if file == "" {
+						return fmt.Errorf("return-to-implementation requires --file with the exact completion bundle the human answered (use --file - to read standard input)")
 					}
 					presentation, err := commandObject(cmd, file)
 					if err != nil {
@@ -109,7 +119,8 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 				}
 				operation := map[string]string{
 					"save": "saved", "approve-implementation": "implementation-approved",
-					"submit-review": "review-submitted", "approve-completion": "completion-approved",
+					"submit-review": "review-submitted", "return-to-implementation": "implementation-returned",
+					"approve-completion": "completion-approved",
 				}[op.name]
 				return writeRecord(cmd, map[string]any{"operation": operation, "id": id, "process_status": data["process_status"]})
 			},
@@ -127,8 +138,16 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 		if op.name == "approve-implementation" {
 			command.Flags().String("presentation-file", "", "Exact review-bundle JSON shown to the human; required for declared decisions")
 		}
+		if op.name == "return-to-implementation" {
+			command.Flags().String("file", "", "Exact completion bundle (epics gates presentation) the human answered; use - for standard input")
+		}
 		if op.method != "GET" {
-			command.Flags().String("reason", "", "Optional comment on the change or decision")
+			reasonHelp := "Optional comment on the change or decision"
+			if op.name == "return-to-implementation" {
+				reasonHelp = "The human's answer (USER:<date>: ...); required, must not be blank"
+			}
+			command.Flags().String("reason", "", reasonHelp)
+			command.Flags().String("agent", "", "Slug of the agent that ran this command; the signed-in person is the human behind it")
 		}
 		plan.AddCommand(command)
 	}
@@ -279,9 +298,13 @@ planned declarations never become native traces. After implementing new code,
 record its real links with reverse-engineer record without changing the approved
 plan. Read reverse-engineer schema before constructing that input. New links
 are covered by the implementation review and retained at completion.
-A document trace is relates. Criteria left out of the plan are retired
-at completion; traces left out that existed at approval are removed at
-completion, while code and test links added during implementation survive.
+A document trace is relates. Adding, changing or removing a trace
+needs every touched requirement in the plan, or save refuses the edit as
+trace requirement outside plan (trace criterion has other epic for a
+criterion another Epic owns). A reactivated stale trace counts as a change.
+Criteria left out of the plan are retired at completion; traces left out
+that existed at approval are removed at completion, while code and test
+links added during implementation survive.
 
 save (the Epic PROPOSED) accepts a draft: content may name only the fields
 that change, criteria default to the current active ones, traces default to
@@ -303,11 +326,20 @@ another Epic owns refuses the whole approval. From then on the plan, the Epic
 content and the owned requirement content are read-only: a changed scope is
 a human decision and new work. submit-review (the approver, Epic
 IN_PROGRESS) moves the Epic and its requirements to IN_REVIEW.
+return-to-implementation (Epic IN_REVIEW) records the human's "not yet"
+with the completion bundle they declined (--file, from epics gates
+presentation): the Epic and its requirements move back to IN_PROGRESS with
+the plan, the implementation approval and the ownership kept; --reason is
+required.
 approve-completion (Epic IN_REVIEW) publishes the approved content: each
 requirement's revision rises by one, an immutable version with criteria and
 traces is retained, the audit names actor, time, reason and Epic, ownership
 is released and the Epic is DONE. A refusal leaves everything unchanged; a
 repeated completion publishes nothing twice.
+
+Every write takes --agent <slug>: the slug names the agent that ran the
+command and the signed-in person is the human behind it; both are written on
+the transition audit. Without it the person is the actor.
 
 show prints id, process_status, implementation_approval and
 completion_approval; --fields plan, versions, suggested_plan or source_files, or --full,
@@ -358,7 +390,22 @@ to attach to an earlier approval. Decision answers are frozen at implementation
 approval; changed intent becomes separately approved work.`,
 	"submit-review": `Mark the implementation complete: the Epic and its owned requirements move to
 IN_REVIEW with their published content unchanged. Only the approver may run
-it. The human's completion decision follows separately.`,
+it. The human's completion decision follows separately. --agent <slug> names
+the agent that ran it; the signed-in person is the human behind it.`,
+	"return-to-implementation": `Record the human's "not yet" at completion review: the Epic and its owned
+requirements move from IN_REVIEW back to IN_PROGRESS. The plan, the
+implementation approval and the requirement ownership are kept, so the work
+continues under the same approval and submit-review runs again when it is
+done. --file takes the exact bundle returned by epics gates presentation that
+the human answered; the Epic's audit keeps it. --reason carries the human's
+answer as a USER: source. Any workspace member may run it. Run only after the
+human answered in the session.
+
+Refusals, as printed:
+  Give the human's answer as a non-empty reason, such as a USER: source.
+  Present the exact completion bundle the human answered.
+  The completion bundle changed after the human saw it. Present the current
+  bundle and record the human's answer to it.`,
 	"approve-completion": `Record the human's completion approval and publish the approved content in one
 transaction: revision +1 per requirement, an immutable accepted version,
 audit, released ownership, Epic DONE. --reason carries their answer as a

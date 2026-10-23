@@ -114,6 +114,28 @@
 - Implementation approval records the exact reviewed plan and locks requirement
   ownership. Completion approval publishes the approved requirement content,
   advances its revision and records immutable accepted versions.
+- `epics plan return-to-implementation <id> --file <presentation.json> --reason "USER:<date>: <answer>"`
+  records the human's "not yet" at completion review with the completion
+  bundle they declined, as `epics gates presentation` returned it: the Epic
+  and its owned requirements move from `IN_REVIEW` back to `IN_PROGRESS` with
+  the plan, the implementation approval and the ownership kept, and the
+  Epic's audit keeps the bundle. A blank reason is refused with "Give the
+  human's answer as a non-empty reason, such as a USER: source."; a missing
+  bundle with "Present the exact completion bundle the human answered."; a
+  bundle that is no longer current with "The completion bundle changed after
+  the human saw it. Present the current bundle and record the human's answer
+  to it." Every plan write takes `--agent <slug>`, the agent that ran it; the
+  signed-in person is the human behind it and both are written on the
+  transition audit. A malformed actor is refused with "Name an agent with a
+  non-empty agent slug, or send no actor so the signed-in person is the
+  actor." A slug is trimmed before attribution, so a padded CLI slug is
+  still the person. `epics plan save` now refuses a trace edit that adds,
+  changes or drops a link to a requirement outside the plan
+  (`trace requirement outside plan`, `trace criterion has other epic`)
+  instead of leaving it to approval. Requires the matching server changes
+  (the return-to-implementation route with the completion bundle, the
+  structured refusals, the save-time trace check and the actor on plan
+  transitions); publish this CLI only after supported servers include them.
 - `requirements create --file` creates native requirements in the connected
   System with server-assigned identity and an initial `PROPOSED` state.
 - `reverse-engineer record --file` records requirements and typed traces

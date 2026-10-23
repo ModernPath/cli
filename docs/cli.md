@@ -814,6 +814,7 @@ modernpath epics plan approve-implementation <epic-id> --file reviewed-plan.json
 modernpath epics plan submit-review <epic-id> --reason "<reason>"
 modernpath epics gates presentation <epic-id> --json > completion-presentation.json
 modernpath epics plan approve-completion <epic-id> --file completion-presentation.json --reason "USER:<date>: <actual approval>"
+modernpath epics plan return-to-implementation <epic-id> --file completion-presentation.json --reason "USER:<date>: <answer>"
 modernpath epics plan history <epic-id> [--limit 20] [--offset 0] [--full] [--json]
 ```
 
@@ -877,9 +878,36 @@ actual RED/GREEN finalization. Register before running every required execution.
 Writes accept an optional `--reason` comment. `submit-review` submits the
 implementation for human completion review. `approve-completion` records the
 separate human completion decision and publishes the approved requirement
-content. The approved plan and owned requirement content remain read-only
-through IN_PROGRESS and IN_REVIEW. Capture changed scope separately; it does not
-revise the active approval. The server remains authoritative.
+content. `return-to-implementation` records the human's "not yet" instead,
+with the same retained `completion-presentation.json` they declined: the Epic
+and its owned requirements move back to IN_PROGRESS under the same approval,
+plan and ownership, and `submit-review` runs again when the work is done.
+Without `--file` the CLI stops before sending anything, printing
+`return-to-implementation requires --file with the exact completion bundle the
+human answered (use --file - to read standard input)`. The server refuses a
+return with these messages:
+
+- `Return to implementation requires IN_REVIEW; the Epic is <state>.` when
+  the Epic is not in review;
+- `Give the human's answer as a non-empty reason, such as a USER: source.`
+  when `--reason` is missing or blank;
+- `Present the exact completion bundle the human answered.` when the request
+  carries no completion bundle;
+- `The completion bundle changed after the human saw it. Present the current
+  bundle and record the human's answer to it.` when the file is not the
+  current output of `epics gates presentation`, for example because evidence,
+  a review or content changed after the human saw it.
+
+`save` refuses a trace edit that adds, changes or drops a link to a
+requirement outside the plan. Every `epics plan` write takes
+`--agent <slug>`, the agent that ran it; the signed-in person is the human
+behind it and both are written on the transition audit. A slug that is blank
+once trimmed is refused with `Name an agent with a non-empty agent slug, or
+send no actor so the signed-in person is the actor.` Leave `--agent` out to
+act as the signed-in person. The approved plan and owned requirement content
+remain read-only through IN_PROGRESS and IN_REVIEW. Capture changed scope
+separately; it does not revise the active approval. The server remains
+authoritative.
 
 Saving a `PROPOSED` Epic plan replaces that Epic's selected requirement
 membership with the complete proposal set. Omitting a selected requirement
@@ -1160,7 +1188,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
 | Native requirements | `requirements create`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
-| Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/history` |
+| Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
 | Reverse engineering | `reverse-engineer schema/record/review/accept` |

@@ -43,6 +43,11 @@ still-published requirements, ownership, implementation, traces and evidence.
    per requirement, immutable accepted versions with criteria and trace meaning,
    attributable Epic/requirement audit and released ownership. A failed action
    must leave all effects unchanged; a repeated completion must not republish.
+   If the human answers not yet, record that answer with the unchanged
+   retained presentation as a return to implementation through the CLI. Read
+   back the Epic and its owned requirements IN_PROGRESS with the plan, the
+   implementation approval and the ownership unchanged, continue the build,
+   and renew whatever changed before submitting for review again.
 6. After that publication is read back, use the CLI to mark each backlog, gap
    or tooling record routed to the Epic as closed by the Epic, and read each
    record back. If the human wants a record left open, leave it open and add

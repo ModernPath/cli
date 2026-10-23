@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -237,6 +239,231 @@ func TestCLIReferencePhaseMapNamesTheBacklogDispositionWrite(t *testing.T) {
 	} {
 		if row := phaseRow(t, loop, want.row); !strings.Contains(row, want.text) {
 			t.Errorf("the %s row does not carry %q: %s", want.row, want.text, row)
+		}
+	}
+}
+
+// renderedLoop is the loop section the reference renders before the
+// command tree.
+func renderedLoop() string {
+	ref := renderCLIReference(rootCmd)
+	return ref[:strings.Index(ref, "## Global flags")]
+}
+
+// lifecycleEntry returns the lifecycle block's line that starts with prefix and
+// the indented lines that continue it.
+func lifecycleEntry(loop, prefix string) string {
+	var entry []string
+	for _, line := range strings.Split(loop, "\n") {
+		if len(entry) == 0 && !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		if len(entry) > 0 && !strings.HasPrefix(line, " ") {
+			break
+		}
+		entry = append(entry, line)
+	}
+	return strings.Join(entry, "\n")
+}
+
+// glossaryRow returns the refusal glossary row keyed on the given text.
+func glossaryRow(t *testing.T, loop, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(loop, "\n") {
+		if strings.HasPrefix(line, "| `"+key+"`") {
+			return line
+		}
+	}
+	t.Fatalf("the refusal glossary has no row keyed %q", key)
+	return ""
+}
+
+// UR-270.3: the glossary names both trace refusals, each with its cause and
+// what clears it.
+func TestUR270_3GlossaryNamesTheTraceRefusals(t *testing.T) {
+	loop := renderedLoop()
+	for _, key := range []string{"trace requirement outside plan", "trace criterion has other epic"} {
+		cells := strings.Split(strings.Trim(glossaryRow(t, loop, key), "| "), " | ")
+		if len(cells) != 4 || cells[1] != "server 422" || cells[2] == "" || cells[3] == "" {
+			t.Errorf("the %q row must give origin server 422, the cause and what clears it: %q", key, cells)
+		}
+	}
+}
+
+// UR-271.5: the lifecycle block and the rdd-completion-review row name the
+// return as the recorded not-yet step out of IN_REVIEW.
+func TestUR271_5LifecycleAndCompletionRowNameTheReturn(t *testing.T) {
+	loop := renderedLoop()
+	var lifecycle string
+	for _, line := range strings.Split(loop, "\n") {
+		if strings.HasPrefix(line, "plan return-to-implementation ") {
+			lifecycle = line
+		}
+	}
+	if !strings.Contains(lifecycle, "IN_PROGRESS") || !strings.Contains(lifecycle, "not yet") {
+		t.Errorf("the lifecycle block has no plan return-to-implementation line for the not-yet: %q", lifecycle)
+	}
+	row := phaseRow(t, loop, "| Review, publish and complete |")
+	if !strings.Contains(row, "`epics plan return-to-implementation") || !strings.Contains(row, "not yet") {
+		t.Errorf("the rdd-completion-review row does not name the return as the not-yet step: %s", row)
+	}
+}
+
+// SR-1636.2: epics plan --help states the trace rule and that a reactivated
+// stale trace counts as a change.
+func TestSR1636_2PlanHelpStatesTheTraceRule(t *testing.T) {
+	out, err := runRoot(t, "epics", "plan", "--help")
+	help := strings.Join(strings.Fields(out), " ")
+	if err != nil || !strings.Contains(help, "An Epic's plan is one JSON object") {
+		t.Fatalf("epics plan --help printed no plan help (err %v): %q", err, out)
+	}
+	for _, want := range []string{
+		"Adding, changing or removing a trace needs every touched requirement in the plan",
+		"A reactivated stale trace counts as a change",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("epics plan --help does not state %q", want)
+		}
+	}
+}
+
+// The messages the CLI prints for the structured plan refusals (the server's
+// error.message), which their glossary rows are keyed on.
+const (
+	reasonRequiredMessage      = "Give the human's answer as a non-empty reason, such as a USER: source."
+	invalidActorMessage        = "Name an agent with a non-empty agent slug, or send no actor so the signed-in person is the actor."
+	presentationRequiredPrefix = "Present the exact completion bundle the human answered"
+	presentationChangedPrefix  = "The completion bundle changed after the human saw it"
+)
+
+// SR-1636.1: the glossary names the two trace refusals by their bare text and
+// the reason, actor and return-bundle refusals by the message the CLI prints,
+// each with its origin, error code, cause and what clears it.
+func TestSR1636_1GlossaryKeysTheRefusalsOnTheirPrintedText(t *testing.T) {
+	loop := renderedLoop()
+	for _, want := range []struct{ key, origin, code string }{
+		{"trace requirement outside plan", "server 422", ""},
+		{"trace criterion has other epic", "server 422", ""},
+		{reasonRequiredMessage, "server 422", "`reason_required`"},
+		{invalidActorMessage, "server 422", "`invalid_actor`"},
+		{presentationRequiredPrefix, "server 422", "`return_presentation_required`"},
+		{presentationChangedPrefix, "server 409", "`return_presentation_changed`"},
+	} {
+		cells := strings.Split(strings.Trim(glossaryRow(t, loop, want.key), "| "), " | ")
+		if len(cells) != 4 || !strings.HasPrefix(cells[1], want.origin) || !strings.Contains(cells[1], want.code) || cells[2] == "" || cells[3] == "" {
+			t.Errorf("the %q row must give origin %s, error code %s, the cause and what clears it: %q", want.key, want.origin, want.code, cells)
+		}
+	}
+}
+
+// SR-1636.3: the wrong-state row is keyed on the stable part of every printed
+// lifecycle message and lists each plan write with the state it needs.
+func TestSR1636_3WrongStateRowIsKeyedOnThePrintedLifecycleMessage(t *testing.T) {
+	row := glossaryRow(t, renderedLoop(), "; the Epic is")
+	for _, want := range []string{
+		"`invalid_lifecycle_state`", "server 409",
+		"`save` and `approve-implementation` need PROPOSED", "`submit-review` IN_PROGRESS",
+		"`return-to-implementation` and `approve-completion` IN_REVIEW",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the wrong-state row does not say %q: %s", want, row)
+		}
+	}
+}
+
+// SR-1638.3: the reference, both CLI guides and the return help show the return
+// with its completion bundle, after epics gates presentation, and name its
+// refusals by their printed messages.
+func TestSR1638_3TheReturnShowsItsBundleWhereverItIsDocumented(t *testing.T) {
+	loop := renderedLoop()
+	presentation, ret := -1, -1
+	for i, line := range strings.Split(loop, "\n") {
+		if strings.HasPrefix(line, "epics gates presentation ") {
+			presentation = i
+		}
+		if strings.HasPrefix(line, "plan return-to-implementation --file <presentation.json> ") {
+			ret = i
+		}
+	}
+	if presentation < 0 || ret < 0 || presentation > ret {
+		t.Errorf("the lifecycle block must show epics gates presentation (line %d) before plan return-to-implementation --file <presentation.json> (line %d)", presentation, ret)
+	}
+	row := phaseRow(t, loop, "| Review, publish and complete |")
+	at, retAt := strings.Index(row, "`epics gates presentation <id> --json`"), strings.Index(row, "`epics plan return-to-implementation <id> --file <presentation.json>")
+	if at < 0 || retAt < 0 || at > retAt {
+		t.Errorf("the rdd-completion-review row must show the return with --file <presentation.json> after epics gates presentation: %s", row)
+	}
+	if !strings.Contains(glossaryRow(t, loop, "; the Epic is"), "`return-to-implementation`") {
+		t.Error("the wrong-state row does not name return-to-implementation")
+	}
+	kit, err := os.ReadFile("../internal/kit/assets/cli-guide/cli.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The image's Go test stage copies only tools/modernpath, so docs/cli.md is
+	// compared wherever the workspace has it.
+	if guide, err := os.ReadFile("../../../docs/cli.md"); err == nil {
+		if !bytes.Equal(guide, kit) {
+			t.Error("the kit's CLI guide differs from docs/cli.md")
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(kit), "modernpath epics plan return-to-implementation <epic-id> --file ") {
+		t.Error("the CLI guide does not show the return with --file")
+	}
+	guide := strings.Join(strings.Fields(string(kit)), " ")
+	for _, place := range []struct{ name, text string }{
+		{"the lifecycle block's return entry", lifecycleEntry(loop, "plan return-to-implementation --file <presentation.json> ")},
+		{"the rdd-completion-review row", row},
+		{"the CLI guide", guide},
+	} {
+		for _, message := range []string{reasonRequiredMessage, presentationRequiredPrefix, presentationChangedPrefix} {
+			if !strings.Contains(place.text, message) {
+				t.Errorf("%s does not name the refusal %q", place.name, message)
+			}
+		}
+	}
+	for name, text := range map[string]string{"the CLI guide": guide, "the rdd-completion-review row": row} {
+		if !strings.Contains(text, invalidActorMessage) {
+			t.Errorf("%s does not name the refusal of a blank --agent slug %q", name, invalidActorMessage)
+		}
+	}
+	help, err := runRoot(t, "epics", "plan", "return-to-implementation", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(help), " ")
+	for _, want := range []string{"--file string", "--reason string", reasonRequiredMessage, presentationRequiredPrefix, presentationChangedPrefix} {
+		if !strings.Contains(text, want) {
+			t.Errorf("epics plan return-to-implementation --help does not show %q", want)
+		}
+	}
+	if c, _, err := rootCmd.Find([]string{"epics", "plan", "return-to-implementation"}); err != nil || c.Name() != "return-to-implementation" {
+		t.Error("the binary has no epics plan return-to-implementation")
+	}
+}
+
+// SR-1638.4: the CHANGELOG's Unreleased section lists the return with --file,
+// names its refusals by their printed messages and names the server change.
+func TestSR1638_4ChangelogListsTheReturnWithItsBundle(t *testing.T) {
+	data, err := os.ReadFile("../CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreleased := string(data)
+	unreleased = unreleased[strings.Index(unreleased, "## Unreleased"):]
+	if end := strings.Index(unreleased[1:], "\n## "); end >= 0 {
+		unreleased = unreleased[:end+1]
+	}
+	text := strings.Join(strings.Fields(unreleased), " ")
+	for _, want := range []string{
+		"`epics plan return-to-implementation <id> --file <presentation.json>",
+		reasonRequiredMessage, invalidActorMessage, presentationRequiredPrefix, presentationChangedPrefix,
+		"Requires the matching server changes",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the CHANGELOG's Unreleased section does not say %q", want)
 		}
 	}
 }

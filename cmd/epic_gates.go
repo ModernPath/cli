@@ -254,7 +254,8 @@ epics plan approve-implementation --presentation-file with that exact file and
 Implementation approval freezes decision answers; changes become new approved work.
 
 presentation <id> emits the exact human completion bundle. Show it to the human;
-then pass it unchanged to epics plan approve-completion <id> --file <bundle.json>.
+then pass it unchanged to epics plan approve-completion <id> --file <bundle.json>,
+or, for a "not yet", to epics plan return-to-implementation <id> --file <bundle.json>.
 New candidate/evidence/review invalidates the presentation. Human implementation and
 completion approvals remain separate; these commands do not merge or deploy.
 

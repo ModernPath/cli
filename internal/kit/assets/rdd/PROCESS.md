@@ -11,7 +11,9 @@ UR acceptance scenario -- may require --> SR
 SR -> CODE -> TEST_CASE -> TEST_RESULT
 
 EPIC: PROPOSED -> IN_PROGRESS -> IN_REVIEW -> DONE
+      IN_REVIEW -> IN_PROGRESS (a human's not-yet at completion review)
 UR/SR: PROPOSED -> IN_PROGRESS -> IN_REVIEW -> DONE
+      IN_REVIEW -> IN_PROGRESS (returned with their Epic)
       PROPOSED -> DONE (verified existing behavior, explicit acceptance)
         BLOCKED | DEFERRED | OBSOLETE when applicable
 
@@ -106,7 +108,11 @@ than revising it in place.
 
 `IN_REVIEW` means implementation is complete and awaits human completion
 approval. The ownership lock, approved proposal and prior published requirement
-content remain unchanged. `DONE` follows human completion approval: atomically
+content remain unchanged. A human's not-yet at completion review returns the
+Epic and its owned requirements to `IN_PROGRESS` with the plan, the
+implementation approval and the ownership kept; record it with the
+presentation the human declined, continue the build and submit for review
+again. `DONE` follows human completion approval: atomically
 publish the approved content, increment each requirement revision once, retain
 an immutable accepted version with criteria and trace meaning, record the
 actor, time, reason and originating Epic, and release ownership. A failed write

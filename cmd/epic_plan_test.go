@@ -8,9 +8,155 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// planServer binds a workspace to a test server that records each Epic plan
+// request body and answers with an Epic in the given state.
+func planServer(t *testing.T, state string) *[]map[string]any {
+	t.Helper()
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1,"process_status":"` + state + `"}}`))
+	}))
+	t.Cleanup(server.Close)
+	cobraWorkspace(t, server)
+	return &bodies
+}
+
+// presentationBundle stands in for the completion bundle that epics gates
+// presentation returns; presentationFile saves it as the human saw it.
+const presentationBundle = `{"review":{"plan":{"body":"Reviewed plan"}},"reviews":[{"phase":"implementation"}],"readiness":{"ready":true,"blockers":[]}}`
+
+func presentationFile(t *testing.T) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "presentation.json")
+	if err := os.WriteFile(file, []byte(presentationBundle), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+// SR-1638.1: the return posts the human's reason and the completion bundle read
+// from --file, and reports the operation it performed.
+func TestSR1638_1ReturnPostsTheReasonAndTheBundle(t *testing.T) {
+	var method, path string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		method, path = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1,"process_status":"IN_PROGRESS"}}`))
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+
+	out, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--file", presentationFile(t), "--reason", "USER:2026-10-20: not yet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "POST" || path != "/api/work/epics/42/return-to-implementation" {
+		t.Fatalf("return sent %s %s, want POST /api/work/epics/42/return-to-implementation", method, path)
+	}
+	var want map[string]any
+	if err := json.Unmarshal([]byte(presentationBundle), &want); err != nil {
+		t.Fatal(err)
+	}
+	presentation, _ := body["presentation"].(map[string]any)
+	if body["reason"] != "USER:2026-10-20: not yet" || !reflect.DeepEqual(presentation, want) {
+		t.Fatalf("return must send the reason and the file's bundle as presentation, got %#v", body)
+	}
+	for _, want := range []string{"operation: implementation-returned", "id: 42", "process_status: IN_PROGRESS"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("return output lacks %q: %q", want, out)
+		}
+	}
+}
+
+// SR-1638.5: without --file the return fails before any request and names the
+// completion bundle it needs.
+func TestSR1638_5ReturnWithoutFileFailsBeforeAnyRequest(t *testing.T) {
+	bodies := planServer(t, "IN_PROGRESS")
+	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--reason", "USER:2026-10-20: not yet")
+	if err == nil || !strings.Contains(err.Error(), "completion bundle") {
+		t.Fatalf("return-to-implementation without --file must fail naming the completion bundle, got %v", err)
+	}
+	if len(*bodies) != 0 {
+		t.Fatalf("return-to-implementation without --file sent %d requests, want none", len(*bodies))
+	}
+}
+
+// SR-1638.2: a non-positive Epic ID is refused before any request.
+func TestSR1638_2ReturnRefusesANonPositiveEpicID(t *testing.T) {
+	bodies := planServer(t, "IN_PROGRESS")
+	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "0", "--file", presentationFile(t), "--reason", "r")
+	if err == nil || !strings.Contains(err.Error(), "epic ID must be a positive integer") {
+		t.Fatalf("return-to-implementation 0 must fail with the Epic ID message, got %v", err)
+	}
+	if len(*bodies) != 0 {
+		t.Fatalf("return-to-implementation 0 sent %d requests, want none", len(*bodies))
+	}
+}
+
+// SR-1641.1: --agent <slug> sends the agent as the payload actor beside the reason.
+func TestSR1641_1AgentFlagSendsTheActor(t *testing.T) {
+	bodies := planServer(t, "IN_REVIEW")
+	if _, err := runRoot(t, "epics", "plan", "submit-review", "42", "--agent", "claude-code", "--reason", "Ready"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*bodies) != 1 {
+		t.Fatalf("submit-review made %d calls, want 1", len(*bodies))
+	}
+	body := (*bodies)[0]
+	actor, _ := body["actor"].(map[string]any)
+	if body["reason"] != "Ready" || actor["kind"] != "agent" || actor["agent_slug"] != "claude-code" || len(actor) != 2 {
+		t.Fatalf("--agent claude-code must send actor {kind: agent, agent_slug: claude-code} beside the reason, got %#v", body)
+	}
+}
+
+// SR-1641.2: every plan write lists --agent in its help; show, a read, does not.
+func TestSR1641_2EveryPlanWriteListsAgentInItsHelp(t *testing.T) {
+	for _, verb := range []string{"save", "approve-implementation", "submit-review", "return-to-implementation", "approve-completion", "show"} {
+		if c, _, err := rootCmd.Find([]string{"epics", "plan", verb}); err != nil || c.Name() != verb {
+			t.Errorf("epics plan %s is not a command", verb)
+			continue
+		}
+		help, err := runRoot(t, "epics", "plan", verb, "--help")
+		if err != nil || !strings.Contains(help, "--json") {
+			t.Fatalf("epics plan %s --help printed no flags (err %v): %q", verb, err, help)
+		}
+		if listed, write := strings.Contains(help, "--agent string"), verb != "show"; listed != write {
+			t.Errorf("epics plan %s --help lists --agent: %v, want %v", verb, listed, write)
+		}
+	}
+}
+
+// Retained behaviour (Epic 292): without --agent the payload carries no actor,
+// so the server attributes the write to the signed-in person.
+func TestEpicPlanWriteWithoutAgentSendsNoActor(t *testing.T) {
+	bodies := planServer(t, "IN_REVIEW")
+	if _, err := runRoot(t, "epics", "plan", "submit-review", "42", "--reason", "Ready"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*bodies) != 1 {
+		t.Fatalf("submit-review made %d calls, want 1", len(*bodies))
+	}
+	if _, has := (*bodies)[0]["actor"]; has || (*bodies)[0]["reason"] != "Ready" {
+		t.Fatalf("without --agent the payload must carry the reason and no actor key: %#v", (*bodies)[0])
+	}
+}
 
 func TestEpicReviewedPlanPreservesNativeBigintEndpoints(t *testing.T) {
 	const input = `{"body":"Reviewed plan","requirements":[],"traces":[{"target_type":"epic","target_id":9223372036854775807}]}`
