@@ -21,9 +21,9 @@ CLI for process state and preserve IDs.
 5. Route sourced scope into the selected Epic's saved plan through
    `rdd-plan` only while it is `PROPOSED`; implementation requires human
    approval. Once implementation is approved, keep the active plan and owned
-   requirements read-only, surface changed scope as a human decision and
-   record new work separately for its own plan and human implementation
-   approval. Unaffected work within the active approved scope may continue.
+   requirements read-only until an explicit human return to planning under
+   `PROCESS.md` is applied. Revised scope then needs fresh review and human
+   implementation approval. DONE stays closed; use a follow-up Epic.
 
 Do not implement in this pass. Report sources inspected, confirmed intent,
 open questions and the next needed phase. The dedicated reverse-engineering

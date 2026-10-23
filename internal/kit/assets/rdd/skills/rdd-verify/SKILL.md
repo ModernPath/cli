@@ -32,10 +32,10 @@ revision and the work remains within approved scope.
    reconstruct evidence or mark a skipped test as passing.
 5. Report failures within approved behavior as implementation work. For a
    material scope or acceptance change, keep the active approved plan and
-   owned requirements read-only, surface the change as a human decision and
-   record new work separately for its own plan and human implementation
-   approval. Continue unaffected implementation and verification within the
-   active approved scope.
+   owned requirements read-only until an explicit human return to planning
+   under `PROCESS.md` is applied. Revised scope needs fresh review, human
+   implementation approval and registered verification. Earlier executions
+   remain history; returning to planning waives no RED or GREEN requirement.
 
 Finish evidence collection before independent implementation review. A rerun
 that changes reviewed evidence requires renewing that review.

@@ -15,13 +15,13 @@ source, code and test evidence. Preserve IDs.
 3. For a material change in user outcome, acceptance, architecture or scope,
    revise the saved plan through `rdd-plan` only while the Epic is `PROPOSED`;
    implementation waits for human approval. Once implementation is approved,
-   keep the active plan and owned requirements read-only, surface the change
-   as a human decision and record new work separately for its own plan and
-   human implementation approval. Continue unaffected work within the active
-   approved scope. When a saved plan delivers a backlog, gap or tooling
-   record, use the CLI to mark the record as routed to that Epic, with a
-   reference to the plan save, and read it back. Listing the record in the
-   plan body does not route it.
+   keep the active plan and owned requirements read-only until an explicit
+   human return to planning under `PROCESS.md` is applied. Then route the
+   PROPOSED revision through planning, fresh review and implementation approval.
+   DONE stays closed; changed work uses a follow-up Epic. When a saved plan
+   delivers a backlog, gap or tooling record, use the CLI to mark the record as
+   routed to that Epic, with a reference to the plan save, and read it back.
+   Listing the record in the plan body does not route it.
 4. Ask the human to resolve intent that sources cannot establish. Record the
    decision through the CLI before relying on it.
 5. Disclose blockers, assumptions and deferred work. Do not silently add

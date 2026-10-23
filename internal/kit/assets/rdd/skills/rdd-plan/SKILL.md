@@ -17,10 +17,10 @@ process authority.
 1. Confirm the exact Epic, its lifecycle and intended outcome. Preserve
    IDs and identify included requirements and explicit exclusions.
    Create or revise its plan only while it is `PROPOSED`. Once implementation
-   is approved, keep the active plan and owned requirements read-only; surface
-   changed scope as a human decision and record new work separately for its
-   own plan and human implementation approval. Continue unaffected work
-   within the active approved scope.
+   is approved, use `PROCESS.md` §Returning to planning with an explicit human
+   decision before changing the plan. Read back PROPOSED and withdrawn approval,
+   then prepare the revision for fresh independent review and implementation
+   approval. DONE stays closed; changed work needs a follow-up Epic.
    Include one or more UR/SR requirements covering all in-scope
    behavior, with explicit criteria and planned code/test traces. Use each
    kind as applicable; small changes have no exemption, and plan-only

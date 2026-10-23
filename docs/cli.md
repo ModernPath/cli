@@ -836,7 +836,10 @@ item `{id, at, user_name, action, comment, saved_plan: {requirements,
 criteria, traces, body_chars}, delta}` where `delta` is `saved_plan` minus the
 same counts of the previous plan; an `updated` item prints `fields` instead.
 `--full` prints the served items unchanged, plan bodies included. `--limit`
-is 1..50.
+is 1..50. A `returned_to_planning` item retains the approved plan and withdrawn
+approval; its summary includes plan counts without a content delta. `--full`
+includes its complete audit details and phase-record positions.
+
 `save` and `approve-implementation` read one JSON plan from standard input
 or `--file plan.json`. The plan includes `body`, `requirements` (kind, ID,
 content and criteria), `traces` and `verification`. Use real `implements` traces for existing code.
@@ -875,10 +878,42 @@ approval takes the exact complete plan. The installed CLI reference and
 documents independent review, candidate declaration, execution registration and
 actual RED/GREEN finalization. Register before running every required execution.
 
-Writes accept an optional `--reason` comment. `submit-review` submits the
+Most plan writes accept an optional `--reason` comment. `submit-review` submits the
 implementation for human completion review. `approve-completion` records the
 separate human completion decision and publishes the approved requirement
-content. `return-to-implementation` records the human's "not yet" instead,
+content. The approved plan and owned requirement content remain read-only
+through IN_PROGRESS and IN_REVIEW. To revise an active plan, the current
+implementation approver first applies the human's explicit return decision:
+
+```sh
+modernpath epics plan return-to-planning <epic-id> --file approved-plan.json --reason "USER:<actual decision and reason>"
+```
+
+With `--agent <slug>`, both Epic and requirement audit events also name the agent
+running the command. Without it the signed-in person is recorded as the actor.
+The server derives the human identity from authentication, not the payload.
+
+The file contains the exact current approved plan object. The operation atomically
+withdraws approval, releases requirement ownership and returns the Epic and
+selected requirements to PROPOSED. It retains the proposal, published content,
+revisions, accepted versions and all prior history. Its Audit Trail events record
+the actor, time, reason, prior state, exact plan and withdrawn approval. Stale
+content, another approver, ownership conflicts or rolled-back writes leave all
+effects unchanged. If the connection is lost before the result is confirmed,
+`planning_return_outcome_unknown` means the return may already have completed.
+Read `epics plan show <id> --full --json` and
+`epics plan history <id> --full --json` before deciding whether to retry.
+DONE stays closed; changed work needs a follow-up Epic.
+
+Read back the return before editing. Obtain fresh independent plan review and
+human implementation approval, then collect fresh registered RED/GREEN executions
+and implementation review. Earlier decisions, reviews, candidates and executions
+remain history and cannot satisfy the new planning cycle, even if the plan or
+candidate revision is unchanged. Returning to planning waives no gate obligation.
+The server must support `/api/work/epics/:id/return-to-planning`; an older server
+cannot perform this transition. The server remains authoritative.
+
+`return-to-implementation` records the human's "not yet" instead,
 with the same retained `completion-presentation.json` they declined: the Epic
 and its owned requirements move back to IN_PROGRESS under the same approval,
 plan and ownership, and `submit-review` runs again when the work is done.
@@ -904,10 +939,7 @@ requirement outside the plan. Every `epics plan` write takes
 behind it and both are written on the transition audit. A slug that is blank
 once trimmed is refused with `Name an agent with a non-empty agent slug, or
 send no actor so the signed-in person is the actor.` Leave `--agent` out to
-act as the signed-in person. The approved plan and owned requirement content
-remain read-only through IN_PROGRESS and IN_REVIEW. Capture changed scope
-separately; it does not revise the active approval. The server remains
-authoritative.
+act as the signed-in person.
 
 Saving a `PROPOSED` Epic plan replaces that Epic's selected requirement
 membership with the complete proposal set. Omitting a selected requirement

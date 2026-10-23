@@ -98,13 +98,11 @@ must leave the whole approval unchanged.
 
 The approved Epic plan, its scope and the owned requirement content are read-only
 through `IN_PROGRESS` and `IN_REVIEW`. Do not revise an active approval in place
-or treat a new request as permission to edit it. Surface a requested scope or
-acceptance change as a human decision and record the new work separately;
-implementation continues only within the approved scope. New work requires
-its own saved plan and human implementation approval; unaffected authorized
-implementation may continue. The narrowly scoped legacy recovery operation below
-is an explicit human-authorized exception that ends the active approval rather
-than revising it in place.
+or treat a new request as permission to edit it. A human may explicitly return
+either active state to planning when the scope, acceptance or plan needs to
+change. This ends the current approval before editing; it does not revise that
+approval in place. Unaffected work may continue within the approved scope until
+the return is applied. Separately authorized work may use another Epic.
 
 `IN_REVIEW` means implementation is complete and awaits human completion
 approval. The ownership lock, approved proposal and prior published requirement
@@ -144,6 +142,30 @@ ownership are direct containment, while links among requirements, code,
 documents and tests are traces. Requirement-to-document traces use `relates`.
 `BLOCKED`, `DEFERRED` and `OBSOLETE` retain their actual reason and history when
 applicable; none authorizes publication or erases an accepted version.
+
+### Returning to planning
+
+An `IN_PROGRESS` or `IN_REVIEW` Epic can return to `PROPOSED` through the
+supported CLI operation with the exact approved plan and the human's explicit
+decision and reason. The current implementation approver records the decision.
+This applies whether or not verification declarations already exist. `DONE`
+stays closed; changed work uses a follow-up Epic with its own plan and approvals.
+
+The operation atomically withdraws implementation approval, releases requirement
+ownership and returns the Epic and selected requirements to `PROPOSED`. Retain
+the draft proposal, published requirement content, revisions, accepted versions,
+and all prior approvals, reviews and execution history. Record the actor, time,
+reason, prior state, exact plan and withdrawn approval in the Audit Trail. A
+stale presentation, unauthorized actor, ownership conflict or failed write
+leaves all effects unchanged.
+
+Revise the draft, obtain a fresh independent plan review and human implementation
+approval, then collect fresh registered verification and implementation review.
+Earlier decisions, reviews, candidates and executions remain history and cannot
+satisfy the new planning cycle, even if the plan is saved unchanged. Returning
+to planning waives no RED or GREEN requirement. Completion still needs its
+separate human approval. If the CLI cannot perform the return, report the gap;
+never edit an active plan or process state through another channel.
 
 ### Reverse engineering
 
@@ -386,12 +408,9 @@ retain the presentation containing the approved proposal, published baseline,
 candidate, evidence, reviews and readiness before asking. Changed presented
 content requires a current presentation and a fresh human answer.
 
-A legacy active Epic whose approved plan lacks verification obligations needs
-explicit human-authorized recovery through a supported audited operation. Such
-recovery returns it to PROPOSED, releases implementation ownership, preserves
-published content and history, and requires a new saved plan, independent review
-and implementation approval. It is not permission to edit an active approval.
-If that operation is unavailable, report the gap and leave the work incomplete.
+For a human-requested revision of an active plan, use
+[Returning to planning](#returning-to-planning) before saving changes. Incomplete
+verification declarations are a reason to repair the plan, not to waive evidence.
 
 ## Development loop
 
@@ -473,9 +492,9 @@ If an upper/user-flow failure remains after lower-level requirements pass,
 diagnose it. Repeat the loop when it is within approved behavior. If fixing it
 requires changed scope, acceptance, architecture, priority or a material
 technical decision, keep the active approved plan and owned requirements
-read-only, surface the change as a human decision and record new work
-separately for its own plan and human implementation approval. Continue
-unaffected work within the active approved scope. Record an external impediment
+read-only until a human-authorized return to planning is applied. Revise the
+PROPOSED draft and obtain fresh review and implementation approval before
+resuming changed work. A separate Epic remains available for separate work. Record an external impediment
 as blocked. UI evidence requires the live stack, loaded assets and inspected
 browser output; never mutate production-like data to verify rendering.
 
@@ -549,7 +568,7 @@ tooling gap and leave the item explicitly incomplete.
 
 | Discovery | Route |
 |---|---|
-| New behavior or changed user outcome | Revise the saved plan only while the Epic is PROPOSED and obtain human implementation approval; after approval, preserve the active plan and owned requirements and record new work separately for its own plan and human approval, continuing unaffected authorized work |
+| New behavior or changed user outcome | Revise a PROPOSED plan and obtain human implementation approval; for an active Epic, obtain an explicit human return to planning first, then fresh review and approval. DONE uses a follow-up Epic |
 | Missing human decision or ambiguous intent | Ask the human and record the answer with its source before relying on it |
 | Technical failure inside approved behavior | Continue red-first implementation and verification |
 | External impediment | Report the blocker, its owner and the next action |

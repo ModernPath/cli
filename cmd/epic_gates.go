@@ -189,6 +189,10 @@ Before approval, plan.verification declares author_context, decisions (UUIDs), c
 and boundaries ({name, applicable, reason when false}). Criteria/checks need distinct IDs;
 check IDs are allocated on save when omitted. Obligations refer to test cases.
 Legacy active plans without obligations fail closed; preserve their approved scope.
+For any active approved plan, an explicit human decision lets the current approver
+run epics plan return-to-planning with the exact plan and --reason "USER:...".
+It withdraws approval, releases ownership and requires fresh review, approval and
+registered verification. DONE stays closed; changed work uses a follow-up Epic.
 For an explicit human recovery decision, the current approver can run recover-legacy
 with {"plan":<exact approved plan>,"source":"USER:...","reason":"..."}. This returns
 only a legacy active plan without verification to PROPOSED, releases requirement
@@ -251,7 +255,9 @@ review-bundle; replacing an answer requires renewed independent plan review.
 Present and retain that bundle before human implementation approval, then use
 epics plan approve-implementation --presentation-file with that exact file and
 --file with its plan. Do not attach a fresh bundle to an earlier human answer.
-Implementation approval freezes decision answers; changes become new approved work.
+Implementation approval freezes decision answers. To revise them, explicitly return
+the active Epic to planning first, then declare and answer fresh decisions and
+obtain fresh independent review and human approval.
 
 presentation <id> emits the exact human completion bundle. Show it to the human;
 then pass it unchanged to epics plan approve-completion <id> --file <bundle.json>,

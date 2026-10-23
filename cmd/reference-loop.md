@@ -55,8 +55,8 @@ exact JSON it accepts.
 | Implementation approval | `rdd-entry-review` | run `epics gates check <id> --phase implementation --json` and resolve blockers before asking; the human decides; the session records the answer: `epics plan approve-implementation <id> --file reviewed-plan.json --presentation-file reviewed-bundle.json --reason "USER:<date>: <answer>"`, where the files are the exact `epics gates review-bundle <id> --json` shown to the human and its `plan` object; retain them before asking and never refresh them to reuse an earlier answer; `--presentation-file` is required when the plan declares decisions; read back `process_status: IN_PROGRESS`, `implementation_approval`, and each named requirement `IN_PROGRESS` with `change_epic_id` set |
 | Implement | `rdd-build` | `epics gates start-execution <id> --file` before RED; run the declared command and finalize via `evidence record --file` with returned `run_id` as `id`, `status: complete`, actual assertion failure and `role: RED`; read back before registering GREEN. Declare the passing candidate using `epics gates candidate <id> --file`, register GREEN, run, finalize and read back; repeat registration for every rerun |
 | Verify | `rdd-verify` | `epics gates start-execution <id> --file` before every focused, boundary, user-flow or verification rerun; execute the declared command, then `evidence record --file` using the returned `run_id` as `id` and `status: complete`; read back `evidence latest`, `evidence runs --full --target-id <uuid>` |
-| Review, publish and complete | `rdd-completion-review` | finish and finalize all evidence, then obtain independent implementation code review of the retained `epics gates review-bundle <id> --json` supplied by the agent handling the task; the agent handling the task records it with `epics gates review <id> --file` (`phase: implementation`, `scope_implemented: true`) and records material-finding resolutions with `epics gates resolve <id> --file`; run `epics gates check <id> --phase completion-review --json`, then `epics plan submit-review <id> --reason` (to IN_REVIEW; the approver runs it); run `epics gates check <id> --phase completion --json` while IN_REVIEW and retain `epics gates presentation <id> --json` before presenting its exact content/evidence to the human; the human decides; `epics plan approve-completion <id> --file presentation.json --reason "USER:<date>: <answer>"`, or, for a "not yet", `epics plan return-to-implementation <id> --file <presentation.json> --reason "USER:<date>: <answer>"` with the same retained presentation (back to IN_PROGRESS under the same approval; build on, renew whatever changed, then pass the completion-review check and `submit-review` again); the server refuses that return, as printed, with `Give the human's answer as a non-empty reason, such as a USER: source.` without a reason, `Present the exact completion bundle the human answered.` without the bundle, and `The completion bundle changed after the human saw it. Present the current bundle and record the human's answer to it.` when the file is not the current presentation; read back `epics plan show --full --json` (`completion_approval`, `versions`) and `requirements get` (`DONE`, revision +1); then each record routed to the Epic (`epics get <id> --fields backlog --json`): `backlog update <uuid> --file` with `{"disposition":"CLOSED by <epic id>","disposition_ref":"USER:<date>:completion"}` after completion approval, read back with `backlog get <uuid> --json`; a record the human keeps open stays OPEN with a note. Every plan write takes `--agent <slug>`, the agent that ran it; the signed-in person is the human behind it, and a slug that is blank once trimmed is refused with `Name an agent with a non-empty agent slug, or send no actor so the signed-in person is the actor.` |
-| Discoveries and blockers | `rdd-triage` | `backlog create --file` (`kind`: `backlog` or `gap` for product discoveries; `tooling` for missing capabilities only under the System-name rule above); a record a plan delivers is routed in the store, not by naming it in a plan body: `backlog update <uuid> --file` with `{"disposition":"ROUTED to <epic id>","disposition_ref":"USER:<date>:plan-save"}`, read back with `backlog get <uuid> --json`; `requirements obsolete <uuid> --kind … --reason`; `requirements set-context`; new scope after approval: a new Epic and plan, never an edit of the approved one |
+| Review, publish and complete | `rdd-completion-review` | finish and finalize all evidence, then obtain independent implementation code review of the retained `epics gates review-bundle <id> --json` supplied by the agent handling the task; the agent handling the task records it with `epics gates review <id> --file` (`phase: implementation`, `scope_implemented: true`) and records material-finding resolutions with `epics gates resolve <id> --file`; run `epics gates check <id> --phase completion-review --json`, then `epics plan submit-review <id> --reason` (to IN_REVIEW; the approver runs it); run `epics gates check <id> --phase completion --json` while IN_REVIEW and retain `epics gates presentation <id> --json` before presenting its exact content/evidence to the human; the human decides; `epics plan approve-completion <id> --file presentation.json --reason "USER:<date>: <answer>"`, or, for a "not yet" on the unchanged scope, `epics plan return-to-implementation <id> --file <presentation.json> --reason "USER:<date>: <answer>"` with the same retained presentation (back to IN_PROGRESS under the same approval; build on, renew whatever changed, then pass the completion-review check and `submit-review` again); the server refuses that return, as printed, with `Give the human's answer as a non-empty reason, such as a USER: source.` without a reason, `Present the exact completion bundle the human answered.` without the bundle, and `The completion bundle changed after the human saw it. Present the current bundle and record the human's answer to it.` when the file is not the current presentation; changed scope requires `epics plan return-to-planning <id> --file approved-plan.json --reason "USER:..."`, fresh planning review and approval; read back `epics plan show --full --json` (`completion_approval`, `versions`) and `requirements get` (`DONE`, revision +1); then each record routed to the Epic (`epics get <id> --fields backlog --json`): `backlog update <uuid> --file` with `{"disposition":"CLOSED by <epic id>","disposition_ref":"USER:<date>:completion"}` after completion approval, read back with `backlog get <uuid> --json`; a record the human keeps open stays OPEN with a note. Every plan write takes `--agent <slug>`, the agent that ran it; the signed-in person is the human behind it, and a slug that is blank once trimmed is refused with `Name an agent with a non-empty agent slug, or send no actor so the signed-in person is the actor.` |
+| Discoveries and blockers | `rdd-triage` | `backlog create --file` (`kind`: `backlog` or `gap` for product discoveries; `tooling` for missing capabilities only under the System-name rule above); a record a plan delivers is routed in the store, not by naming it in a plan body: `backlog update <uuid> --file` with `{"disposition":"ROUTED to <epic id>","disposition_ref":"USER:<date>:plan-save"}`, read back with `backlog get <uuid> --json`; `requirements obsolete <uuid> --kind … --reason`; `requirements set-context`; changed active scope: explicit human `epics plan return-to-planning <id> --file approved-plan.json --reason "USER:..."`, then revise, review and re-approve; DONE needs a follow-up Epic |
 | Record existing behavior | `rdd-reverse-engineer` | `reverse-engineer schema`, then `reverse-engineer record --file group.json`; read back `requirements get --full`, `traces list` |
 | Verify existing behavior | `rdd-reverse-engineer-verify` | `evidence record --file` with `target_type: criterion` results (see `evidence record`); `reverse-engineer review --file selection.json --json > review.json` lists what still blocks acceptance under `problems` |
 | Accept existing behavior | `rdd-reverse-engineer-accept` | `reverse-engineer review … --json > review.json`; the human decides; `reverse-engineer accept --file acceptance.json`, wrapping that exact bundle with `source` and `reason` |
@@ -123,15 +123,36 @@ IDs, material/note findings, scope implementation confirmation and reason. Conte
 labels attest to separate review contexts, not different human reviewers. Never
 replace the supplied presentation with a newer bundle under an old verdict.
 
-For an active legacy Epic without verification obligations, obtain explicit human
-authorization for recovery, retaining the exact currently approved plan. The
-current implementation approver may run `epics gates recover-legacy <id> --file`
-with `{"plan":<exact current approved plan>,"source":"USER:...","reason":"..."}`.
-This audited operation returns the Epic and owned requirements to PROPOSED and
-releases ownership, preserving published content and history. Read back the
-result, save a complete verification plan, answer required decisions, renew the
-independent review and obtain fresh implementation approval. Never run recovery
-merely because a gate failed; it needs the human's actual recovery decision.
+To revise an IN_PROGRESS or IN_REVIEW Epic, obtain the human's explicit return
+to planning decision. The current implementation approver runs:
+
+```sh
+modernpath epics plan return-to-planning <id> --file approved-plan.json --reason "USER:<actual decision and reason>"
+```
+
+The optional `--agent <slug>` names the agent on the Epic and requirement audit
+events; without it the signed-in person is recorded as the actor. The payload
+actor is separate from the approved plan and return decision.
+
+The file is the exact currently approved plan object. The operation atomically
+returns the Epic and its selected requirements to PROPOSED, withdraws approval
+and releases ownership. The Audit Trail retains the actor, time, reason, prior
+state, exact plan and withdrawn approval. Published content, revisions, accepted
+versions and all prior history remain unchanged. Stale content, another approver,
+ownership conflicts and failed writes leave everything unchanged. DONE stays
+closed; create a follow-up Epic.
+
+Read back the return, revise the draft, answer newly declared decisions, obtain
+fresh independent plan review and human implementation approval, then collect
+fresh registered RED/GREEN executions and implementation review. Earlier decisions,
+reviews, candidates and executions remain history and cannot satisfy the new
+planning cycle, even with an unchanged plan or candidate revision. No gate or
+RED/GREEN obligation is waived. A failing gate alone is not a human return decision.
+
+`epics gates recover-legacy` remains a compatibility command limited to active
+plans without verification obligations. It takes
+`{"plan":<exact current approved plan>,"source":"USER:...","reason":"..."}`;
+normal replanning uses `epics plan return-to-planning`.
 
 ### Lifecycle, as the commands see it
 
@@ -139,6 +160,7 @@ merely because a gate failed; it needs the human's actual recovery decision.
 epics create             -> Epic PROPOSED
 epics plan save          -> saved plan (PROPOSED only; repeat to revise; `epics plan history` lists every revision)
 plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic and the approver
+plan return-to-planning  -> active Epic and selected requirements PROPOSED; approval withdrawn; ownership released; fresh review and verification
 plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver runs it)
 epics gates presentation -> the completion bundle the human answers (read-only, Epic IN_REVIEW)
 plan return-to-implementation --file <presentation.json> -> Epic and owned requirements IN_PROGRESS again (the human's "not yet" with the declined bundle; plan, approval and ownership kept; --reason required)
@@ -151,9 +173,9 @@ reverse-engineer accept  -> unowned PROPOSED requirements DONE: revision +1, an 
 ```
 
 A requirement owned by an Epic (`change_epic_id` set) is not accepted,
-obsoleted, regrouped or planned elsewhere until that Epic completes. Epic
-content and the plan are read-only in `IN_PROGRESS` and `IN_REVIEW`: a scope
-change is a human decision and new work, never an edit of the approval.
+obsoleted, regrouped or planned elsewhere until that Epic completes or explicitly
+returns to planning. Epic content and the plan are read-only in `IN_PROGRESS`
+and `IN_REVIEW`; the human-authorized return ends approval before edits.
 
 ### Refusals and what clears them
 
@@ -163,12 +185,16 @@ change is a human decision and new work, never an edit of the approval.
 | `below an already bound workspace` / `linked git worktree` | cli | `install`, `init` or `init workspace` run in a directory under a bound workspace root, or `init` at a linked worktree root | run it from the workspace root the refusal names (the main checkout for a worktree); `modernpath init --force` binds a nested workspace deliberately |
 | `does not belong to the bound System` | cli | an Epic or review bundle of another System | check `modernpath status`; use an id of this System |
 | `unknown input field` / `input must include` / `must be an array` | cli | a file key outside the documented shape; nothing was sent | correct the key (see the command's section) |
-| `; the Epic is` | server 409, `invalid_lifecycle_state` | a plan write in the wrong Epic state, printed as `<operation> requires <state>; the Epic is <state>.`: `save` and `approve-implementation` need PROPOSED, `submit-review` IN_PROGRESS, `return-to-implementation` and `approve-completion` IN_REVIEW | read `epics plan show`; run the command that state allows |
-| `Epic planning fields are editable only while the Epic is PROPOSED` | server 409 | `epics update` with outcome_source, impact_assessment or shared_context on an Epic that is not PROPOSED | a planning correction after approval is a human decision and new work |
+| `; the Epic is` | server 409, `invalid_lifecycle_state` | a plan write in the wrong Epic state, printed as `<operation> requires <state>; the Epic is <state>.`: `save` and `approve-implementation` need PROPOSED, `submit-review` IN_PROGRESS, `return-to-implementation` and `approve-completion` IN_REVIEW, `return-to-planning` IN_PROGRESS or IN_REVIEW | read `epics plan show`; run the command that state allows |
+| `Epic planning fields are editable only while the Epic is PROPOSED` | server 409 | `epics update` with outcome_source, impact_assessment or shared_context on an Epic that is not PROPOSED | return the active Epic to planning with the human's explicit decision before editing; DONE uses a follow-up Epic |
 | `unsupported Epic fields` | server 422 | `epics update` naming a server-assigned field (tenant_id, system_id, process_status, plan, metadata, …); nothing was written | send only title, description, scope, non_goals, outcome_source, impact_assessment, shared_context or the date, severity, category, profile, assignee and release fields |
 | `references and accepted_context_revision are server-owned` | server 422 | `epics update` shared_context whose references or accepted_context_revision differ from the stored values | read `epics get <id> --fields shared_context --json`; send those values unchanged and edit decisions, assumptions, open_questions |
 | `requirement owned` | server 409 | the approval names a requirement another Epic owns, or acceptance names an owned one | finish or release the owning Epic; plan without it |
-| `not change owner` | server 409 | candidate declaration, execution registration or `submit-review` by someone other than the implementation approver | use the implementation approver's signed-in account; runner attribution does not confer permission |
+| `not change owner` | server 409 | candidate declaration, execution registration, `submit-review` or `return-to-planning` by someone other than the implementation approver | use the implementation approver's signed-in account; runner attribution does not confer permission |
+| `invalid_planning_return` | server 422 | missing exact plan, an unknown field or no explicit `USER:` decision in `--reason` | supply the approved plan object and the human's actual return decision |
+| `planning_return_changed` | server 409 | the supplied plan differs from the currently approved plan | read the current plan and obtain the human's decision on it |
+| `planning_return_write_failed` | server 500 | the atomic return could not be written; approval and ownership are unchanged | retry after the write failure is resolved |
+| `planning_return_outcome_unknown` / `return may already have completed` | server 500 | the connection was lost before the result could be confirmed; the return may have committed | read `epics plan show <id> --full --json` and `epics plan history <id> --full --json` before deciding whether to retry |
 | `requirement not owned` / `no plan` | server | completion on an Epic whose requirements are not owned by it, or that has no saved plan | re-plan and re-approve |
 | `implementation_presentation_required` | gate blocker | declared decisions need the exact bundle shown to the human | capture `epics gates review-bundle`, show its plan and answers, then supply it with `--presentation-file` after approval |
 | `implementation_presentation_changed` | gate blocker | content or decision answers differ from the approved presentation | obtain a current bundle, renewed independent review and new human approval; never reuse the old answer |
@@ -196,8 +222,7 @@ Named Epic gate refusals return HTTP 409 with `error.code: epic_gate_blocked`
 and `error.gate`: phase, ready=false, skills and all blockers. The CLI preserves
 this report. `completion_presentation_changed` requires presenting the current
 bundle again; `epic_execution_registration_required` requires `epics gates start-execution` before running tests and recording the returned run ID; `epic_execution_immutable` requires a new registered run rather
-than editing proof; `approved_membership_immutable` requires separately approved
-work instead of changing active scope. A blocked explicit check still records its audit event; a preview records no event. Neither changes Epic lifecycle.
+than editing proof; `approved_membership_immutable` requires an explicit human return to planning before scope edits, or separately approved work. A blocked explicit check still records its audit event; a preview records no event. Neither changes Epic lifecycle.
 
 For an `implementation_review_required` blocker, use `rdd-completion-review` step 2
 to obtain independent code review, then record that exact `review-bundle` with

@@ -27,12 +27,11 @@ repository.
    behavior coverage, criteria or planned code/test traces, route to
    `rdd-plan` before approval. If already approved with these gaps, surface
    the conflict for a human decision; do not silently edit approved content
-   or treat plan-only checks as sufficient. For a legacy active plan missing
-   verification obligations, explain the supported audited recovery: explicit
-   human authorization returns it to PROPOSED and releases ownership while
-   preserving published content and history. Read back recovery, then route to
-   planning, independent review and fresh implementation approval. If unsupported,
-   report the tooling gap; do not perform recovery by editing active records.
+   or treat plan-only checks as sufficient. If the human requests an active Epic
+   return to planning, follow `PROCESS.md` §Returning to planning through the
+   CLI with the exact approved plan and decision. Read back PROPOSED, withdrawn
+   approval and released ownership before revising the draft. If unsupported,
+   report the tooling gap; do not edit active records through another channel.
 3. For an explicit existing-behavior pass, read the System and
    requirement IDs, current content, criteria, traces, evidence and ownership
    from the CLI. Route recording to `rdd-reverse-engineer`,
@@ -48,8 +47,9 @@ repository.
    `rdd-completion-review`.
 6. If scope or acceptance changes while the Epic is PROPOSED, route back to
    planning and obtain human approval before implementation. Once implementation
-   is approved, keep the active plan and owned requirements read-only, surface
-   the new request as a human decision and record new work separately.
+   is approved, keep the active plan and owned requirements read-only until
+   an explicit human return to planning is applied. Then require fresh review,
+   implementation approval and verification. DONE uses a follow-up Epic.
 
 If the CLI cannot read the current state, report the missing capability
 through the project's tooling-gap channel. Do not recreate state from notes,

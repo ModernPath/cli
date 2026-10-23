@@ -234,6 +234,58 @@ func TestEpicPlanSaveForwardsEmptyDraftAndKeepsSuccessfulJSON(t *testing.T) {
 	}
 }
 
+func TestEpicReturnToPlanningRetainsHumanDecisionAndExactPlan(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/return-to-planning" ||
+			input["reason"] != "USER: correct verification scope" || input["plan"].(map[string]any)["body"] != "Exact approved scope" {
+			t.Errorf("changed return decision: %s %s %#v", r.Method, r.URL.Path, input)
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":287,"process_status":"PROPOSED"}}`))
+	}))
+	defer server.Close()
+	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"return-to-planning", "287", "--file", "-", "--reason", "USER: correct verification scope"})
+	command.SetIn(strings.NewReader(`{"body":"Exact approved scope"}`))
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&bytes.Buffer{})
+	if err := command.Execute(); err != nil || requests != 1 || !strings.Contains(output.String(), "PROPOSED") {
+		t.Fatalf("return to planning: err=%v requests=%d output=%s", err, requests, output.String())
+	}
+}
+
+func TestEpicReturnToPlanningRetainsAgentAttribution(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/return-to-planning" ||
+			input["actor"].(map[string]any)["agent_slug"] != "planning-builder" || input["reason"] != "USER: correct verification scope" || input["plan"].(map[string]any)["body"] != "Exact approved scope" {
+			t.Errorf("changed return decision: %s %s %#v", r.Method, r.URL.Path, input)
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":287,"process_status":"PROPOSED"}}`))
+	}))
+	defer server.Close()
+	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"return-to-planning", "287", "--file", "-", "--reason", "USER: correct verification scope", "--agent", "planning-builder"})
+	command.SetIn(strings.NewReader(`{"body":"Exact approved scope"}`))
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&bytes.Buffer{})
+	if err := command.Execute(); err != nil || requests != 1 || !strings.Contains(output.String(), "PROPOSED") {
+		t.Fatalf("return to planning: err=%v requests=%d output=%s", err, requests, output.String())
+	}
+}
+
 func TestEpicPlanCoverageRefusalIsReadableAndNonzero(t *testing.T) {
 	const message = "A selected requirement is already covered by another initiative."
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -423,5 +475,15 @@ func TestEpicPlanHistorySummarizesRevisionsAndForwardsPaging(t *testing.T) {
 	status = 404
 	if _, err := runRoot(t, "epics", "plan", "history", "42"); err == nil || !strings.Contains(err.Error(), "epic plan history (server 404)") {
 		t.Fatalf("404 is not a named server refusal: %v", err)
+	}
+}
+
+func TestPlanningReturnHistoryDoesNotClaimPlanContentChanged(t *testing.T) {
+	summary := planHistorySummary(map[string]any{
+		"id": "return-event", "action": "returned_to_planning",
+		"details": map[string]any{"plan": map[string]any{"body": "Retained approved plan"}},
+	})
+	if summary["action"] != "returned_to_planning" || summary["delta"] != nil {
+		t.Fatalf("planning return must retain its action without a content delta: %#v", summary)
 	}
 }

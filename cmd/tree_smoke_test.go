@@ -418,6 +418,7 @@ var leafDispositions = map[string]disposition{
 	"epics plan show":                   {kind: dispExecute, args: []string{"epics", "plan", "show", "42"}},
 	"epics plan history":                {kind: dispExecute, args: []string{"epics", "plan", "history", "42"}},
 	"epics plan save":                   {kind: dispNoCall, args: []string{"epics", "plan", "save", "42", "--reason", "smoke"}, reason: "needs-precondition"},
+	"epics plan return-to-planning":     {kind: dispNoCall, args: []string{"epics", "plan", "return-to-planning", "42", "--reason", "USER: smoke"}, reason: "needs-precondition"},
 	"epics plan approve-implementation": {kind: dispNoCall, args: []string{"epics", "plan", "approve-implementation", "42", "--reason", "smoke"}, reason: "needs-precondition"},
 	"epics plan submit-review":          {kind: dispExecute, args: []string{"epics", "plan", "submit-review", "42", "--reason", "smoke"}},
 	"epics plan approve-completion":     {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "plan", "approve-completion", "42", "--reason", "smoke"}},

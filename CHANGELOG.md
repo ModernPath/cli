@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `epics plan return-to-planning` lets the current implementation approver return
+  IN_PROGRESS or IN_REVIEW work to PROPOSED with the exact plan and explicit human
+  decision. It withdraws approval, releases ownership and records the return in
+  the Audit Trail. Optional `--agent` retains agent attribution on the Epic and
+  requirement events. Previous reviews and executions remain history; fresh review,
+  approval and registered RED/GREEN evidence are required. DONE needs a follow-up
+  Epic. Requires a server serving `/api/work/epics/:id/return-to-planning`.
+
 - Add `modernpath prepare` for a read-only session check before `rdd-start`,
   covering authentication, System access, installed instructions, documentation
   metadata and analysis status, with actionable next steps and JSON output.

@@ -12,8 +12,10 @@ For Epic work, read `PROCESS.md` and verify through the CLI that the current
 saved plan and proposed content has human implementation approval. Confirm the Epic and
 requirement IDs and remain inside approved scope. The active approved plan and
 owned requirement content are read-only during implementation and completion
-review. Surface a requested scope or acceptance change as a human decision and
-record the new work separately; do not revise the active approval in place.
+review. For a requested scope or acceptance change, follow `PROCESS.md`
+§Returning to planning with the human's explicit decision before revising the
+draft. Fresh review and implementation approval are required before resuming;
+returning to planning waives no RED or GREEN requirement.
 
 For each behavior:
 

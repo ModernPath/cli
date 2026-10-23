@@ -21,6 +21,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 	}{
 		{"show", "Read the saved plan, human approvals and accepted versions", "GET", "/plan", false},
 		{"save", "Save proposed content from JSON on standard input", "PUT", "/plan", true},
+		{"return-to-planning", "Withdraw active approval and return the Epic to planning", "POST", "/return-to-planning", true},
 		{"approve-implementation", "Approve the exact reviewed plan from standard input and acquire requirement ownership", "POST", "/approve-implementation", true},
 		{"submit-review", "Mark implementation complete for human completion review", "POST", "/submit-review", false},
 		{"return-to-implementation", "Record the human's not-yet at completion review and resume implementation", "POST", "/return-to-implementation", false},
@@ -119,7 +120,8 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 				}
 				operation := map[string]string{
 					"save": "saved", "approve-implementation": "implementation-approved",
-					"submit-review": "review-submitted", "return-to-implementation": "implementation-returned",
+					"return-to-planning": "returned-to-planning",
+					"submit-review":      "review-submitted", "return-to-implementation": "implementation-returned",
 					"approve-completion": "completion-approved",
 				}[op.name]
 				return writeRecord(cmd, map[string]any{"operation": operation, "id": id, "process_status": data["process_status"]})
@@ -148,6 +150,11 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 			}
 			command.Flags().String("reason", "", reasonHelp)
 			command.Flags().String("agent", "", "Slug of the agent that ran this command; the signed-in person is the human behind it")
+		}
+		if op.name == "return-to-planning" {
+			command.Flags().Lookup("file").Usage = "Exact currently approved plan JSON file, or - for standard input"
+			command.Flags().Lookup("reason").Usage = "Required human return decision and reason beginning USER:"
+			_ = command.MarkFlagRequired("reason")
 		}
 		plan.AddCommand(command)
 	}
@@ -222,6 +229,10 @@ func planHistorySummary(raw any) map[string]any {
 	}
 	if item["action"] == "updated" {
 		summary["fields"] = details["fields"]
+		return summary
+	}
+	if item["action"] == "returned_to_planning" {
+		summary["saved_plan"] = planCounts(details["plan"])
 		return summary
 	}
 	saved := planCounts(details["plan"])
@@ -323,8 +334,11 @@ incomplete reviewed content; send the plan object show returned. Both take
 Approval moves the Epic and the named requirements to IN_PROGRESS and locks
 each requirement to this Epic and the approver (change_epic_id); a requirement
 another Epic owns refuses the whole approval. From then on the plan, the Epic
-content and the owned requirement content are read-only: a changed scope is
-a human decision and new work. submit-review (the approver, Epic
+content and the owned requirement content are read-only. To revise active scope,
+the approver runs return-to-planning with the exact plan and explicit human
+decision. It withdraws approval, releases ownership and returns work to PROPOSED;
+fresh review, human approval and registered verification are required. DONE
+stays closed and changed work uses a follow-up Epic. submit-review (the approver, Epic
 IN_PROGRESS) moves the Epic and its requirements to IN_REVIEW.
 return-to-implementation (Epic IN_REVIEW) records the human's "not yet"
 with the completion bundle they declined (--file, from epics gates
@@ -362,13 +376,25 @@ whole transition. A preview is advisory; no Epic gate check grants human approva
 
 history lists what the store retained about the plan, newest first: every
 save (the saved plan and the one it replaced), both human approvals (the
-plan they approved) and every content edit of the Epic (the changed fields
+plan they approved), returns to planning and every content edit of the Epic (the changed fields
 with their previous and new values). The default view summarizes each item
-by counts; --full prints the stored bodies. Use it to answer "what changed
+by counts; a return retains the plan counts without a content delta.
+--full prints the stored bodies. Use it to answer "what changed
 between two revisions" and "who edited the Epic" from the record, not from
 memory.`
 
 var epicPlanOperationHelp = map[string]string{
+	"return-to-planning": `Return an IN_PROGRESS or IN_REVIEW Epic to PROPOSED with the exact currently
+approved plan via --file. --reason must retain the human's explicit decision as
+USER:<source and reason>. Only the implementation approver can run it. The
+optional --agent names the agent running the command in both Epic and requirement
+audits; without it the signed-in person is recorded as the actor. The
+operation withdraws approval and releases requirement ownership atomically,
+preserving the proposal, published content, accepted versions and audit history.
+Retained reviews, decisions, candidates and executions cannot satisfy the new
+planning cycle. Revise the draft, obtain fresh independent plan review and human
+implementation approval, then collect fresh RED/GREEN evidence and completion
+review. DONE stays closed; changed work needs a follow-up Epic.`,
 	"show": `Read the saved plan, the two human approvals and the accepted versions.
 --fields plan --json prints the complete saved plan, which is the input
 approve-implementation expects. --fields plan,source_files --json also resolves
@@ -416,12 +442,14 @@ nothing twice; a different presentation refuses.`,
 	"history": `List the Epic's plan revisions, approvals and content edits, newest first.
 Each item is one retained audit record: plan_saved (the saved plan and the
 previous one), implementation_approved and completion_approved (the plan
-the human approved) and updated (an epics update: the changed fields with
+the human approved), returned_to_planning (the retained plan and withdrawn
+approval) and updated (an epics update: the changed fields with
 their previous and new values). The default view prints per item
 {id, at, user_name, action, comment, saved_plan: {requirements, criteria,
 traces, body_chars}, delta} where delta is saved_plan minus the same counts
 of the previous plan (zeros when none); an updated item prints fields
-instead. --full prints the served items unchanged, details.plan and
+instead. A returned_to_planning item retains saved_plan without delta because
+the plan content is unchanged. --full prints the served items unchanged, details.plan and
 details.previous_plan included. --limit 1..50 (default 20) and --offset
 page the list; a 404 means the Epic is not in your workspace or System.`,
 }

@@ -31,9 +31,9 @@ human-selected Epic and its latest saved plan before acting.
 
 Keep all work inside the approved Epic. A material scope or acceptance change
 may revise its saved plan only while the Epic is `PROPOSED`. Once implementation
-is approved, keep the active plan and owned requirements read-only, surface the
-change as a human decision and record new work separately for its own plan and
-human implementation approval. Continue unaffected work within the active
-approved scope. Report blockers, assumptions, excluded work and evidence
+is approved, keep the active plan and owned requirements read-only until an
+explicit human return to planning under `PROCESS.md` is applied. Resume the
+loop with the revised draft, fresh independent review, human implementation
+approval and registered verification. DONE stays closed; use a follow-up Epic. Report blockers, assumptions, excluded work and evidence
 honestly. A focused skill exit is a handoff, not completion. Never infer
 completion from code, tests, review or publication alone.
