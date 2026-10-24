@@ -490,7 +490,9 @@ const modernpathGitignoreBlock = `# ModernPath CLI local data (process package i
 
 // addToGitignore ignores ModernPath credentials and machine state while
 // leaving the installed process package versioned. It also upgrades the broad
-// .modernpath/ rule written by older CLI releases.
+// .modernpath/ rule written by older CLI releases. An existing block is
+// rewritten where its first line sits, so the entries around it keep their
+// order and a current file is left unchanged.
 func addToGitignore(projectDir string) error {
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
 
@@ -517,10 +519,23 @@ func addToGitignore(projectDir string) error {
 		"!/.modernpath/cli-reference.md": true,
 	}
 	kept := make([]string, 0)
+	at := -1
 	for _, line := range strings.Split(existingContent, "\n") {
 		if !controlled[strings.TrimSpace(line)] {
 			kept = append(kept, line)
+		} else if at < 0 {
+			at = len(kept)
 		}
+	}
+
+	if at >= 0 {
+		block := strings.Split(strings.TrimSuffix(modernpathGitignoreBlock, "\n"), "\n")
+		lines := append(append(append([]string{}, kept[:at]...), block...), kept[at:]...)
+		content := strings.Join(lines, "\n")
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		return os.WriteFile(gitignorePath, []byte(content), 0o644)
 	}
 
 	content := strings.TrimRight(strings.Join(kept, "\n"), "\n")

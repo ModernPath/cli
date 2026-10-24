@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `modernpath install` keeps the ModernPath block in `.gitignore` where it is
+  and rewrites it in place when it is outdated. It used to move the block to the
+  end of the file on every run, which left `.gitignore` modified whenever other
+  entries followed the block.
+
 ## v0.22.0 — native Epics, requirements and evidence replace the legacy process commands
 
 - `epics plan return-to-planning` lets the current implementation approver return

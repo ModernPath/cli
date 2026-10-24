@@ -50,3 +50,35 @@ func TestAddToGitignoreKeepsProcessPackageVersioned(t *testing.T) {
 		t.Fatal("normalizing .gitignore must be idempotent")
 	}
 }
+
+func TestAddToGitignoreLeavesTheBlockWhereItIs(t *testing.T) {
+	const airlock = "\n# Airlock\n/airlock.local.toml\n/.airlock/\n"
+	for name, tc := range map[string]struct{ before, want string }{
+		"current block stays": {
+			before: "node_modules/\n\n" + modernpathGitignoreBlock + airlock,
+			want:   "node_modules/\n\n" + modernpathGitignoreBlock + airlock,
+		},
+		"outdated block is replaced in place": {
+			before: "node_modules/\n\n# ModernPath CLI local data (process package is versioned)\n/.modernpath/*\n!/.modernpath/rdd/\n!/.modernpath/rdd/**\n" + airlock,
+			want:   "node_modules/\n\n" + modernpathGitignoreBlock + airlock,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			gitignore := filepath.Join(root, ".gitignore")
+			if err := os.WriteFile(gitignore, []byte(tc.before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := addToGitignore(root); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(gitignore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("install moved the ModernPath block:\nwant %q\n got %q", tc.want, got)
+			}
+		})
+	}
+}
