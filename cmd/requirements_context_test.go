@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,6 +49,23 @@ func TestRequirementSetContextRejectsInvalidInputBeforeLoadingWorkspace(t *testi
 		if err := command.Execute(); err == nil {
 			t.Fatalf("accepted invalid args %v", args)
 		}
+	}
+}
+
+func TestRequirementSetContextRejectsExplicitBlankName(t *testing.T) {
+	for _, name := range []string{"", "  "} {
+		t.Run(fmt.Sprintf("name=%q", name), func(t *testing.T) {
+			loaded := false
+			command := newRequirementSetContextCommand(func() (*cliEnv, error) {
+				loaded = true
+				return nil, fmt.Errorf("workspace must not load")
+			})
+			command.SetArgs([]string{obsoleteRequirementID, "--kind", "system", "--context", "Billing", "--context-name", name})
+			err := command.Execute()
+			if loaded || err == nil || err.Error() != "context_name must contain 1 to 255 bytes of nonblank text" {
+				t.Fatalf("loaded=%v error=%v", loaded, err)
+			}
+		})
 	}
 }
 

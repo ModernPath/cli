@@ -11,6 +11,30 @@ import (
 	"testing"
 )
 
+func TestDecodeObjectValidatesShapeAndRetainsNumbers(t *testing.T) {
+	for _, input := range []string{`[]`, `[{}]`, `null`, `false`, `42`, `"text"`} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := decodeObject(strings.NewReader(input)); err == nil || err.Error() != "input must be a JSON object" {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+	for _, input := range []string{`{"title":`, `{} {}`, `{} trailing`} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := decodeObject(strings.NewReader(input)); err == nil {
+				t.Fatal("accepted malformed or multiple JSON values")
+			}
+		})
+	}
+	object, err := decodeObject(strings.NewReader(`{"id":9007199254740993,"steps":[{"number":1}]} `))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object["id"] != json.Number("9007199254740993") || len(object["steps"].([]any)) != 1 {
+		t.Fatalf("object = %#v", object)
+	}
+}
+
 func TestRequirementGetUsesNativeKindAndSystemScopedDetail(t *testing.T) {
 	const requirementID = "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

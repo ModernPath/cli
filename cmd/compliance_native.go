@@ -731,7 +731,7 @@ func decodeObject(input io.Reader) (map[string]any, error) {
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.UseNumber()
-	var v map[string]any
+	var v any
 	if err := d.Decode(&v); err != nil {
 		return nil, fmt.Errorf("invalid JSON object: %w", err)
 	}
@@ -739,8 +739,9 @@ func decodeObject(input io.Reader) (map[string]any, error) {
 	if err := d.Decode(&trailing); err != io.EOF {
 		return nil, fmt.Errorf("input must contain exactly one JSON object")
 	}
-	if v == nil {
+	object, ok := v.(map[string]any)
+	if !ok || object == nil {
 		return nil, fmt.Errorf("input must be a JSON object")
 	}
-	return v, nil
+	return object, nil
 }

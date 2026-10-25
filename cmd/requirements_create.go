@@ -77,6 +77,13 @@ criteria and requirement changes. Example: {"title":"Rotate signing keys","descr
 }
 
 func validateRequirementCreate(payload map[string]any, kind string) error {
+	return validateRequirementContent(payload, kind, true)
+}
+
+func validateRequirementContent(payload map[string]any, kind string, requireTitle bool) error {
+	if len(payload) == 0 && !requireTitle {
+		return fmt.Errorf("requirement content must contain at least one editable field")
+	}
 	allowed := map[string]bool{}
 	for _, field := range strings.Fields("title description context context_name release_note detail_md") {
 		allowed[field] = true
@@ -98,9 +105,30 @@ func validateRequirementCreate(payload map[string]any, kind string) error {
 			}
 		}
 	}
-	title, _ := payload["title"].(string)
-	if strings.TrimSpace(title) == "" {
+	title, hasTitle := payload["title"]
+	titleText, _ := title.(string)
+	if (requireTitle || hasTitle) && strings.TrimSpace(titleText) == "" {
 		return fmt.Errorf("requirement title is required")
+	}
+	return nil
+}
+
+func validateRequirementGrouping(payload map[string]any) error {
+	context, hasContext := payload["context"]
+	name, hasName := payload["context_name"]
+	if !hasContext && !hasName {
+		return nil
+	}
+	contextText, ok := context.(string)
+	if !ok || strings.TrimSpace(contextText) == "" || len(contextText) > 255 {
+		return fmt.Errorf("context must contain 1 to 255 bytes of nonblank text")
+	}
+	if !hasName {
+		name = context
+	}
+	nameText, ok := name.(string)
+	if !ok || strings.TrimSpace(nameText) == "" || len(nameText) > 255 {
+		return fmt.Errorf("context_name must contain 1 to 255 bytes of nonblank text")
 	}
 	return nil
 }

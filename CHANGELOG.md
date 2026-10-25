@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add `requirements update <uuid|display-ref> --file [--reason]` for every
+  draft content field and current grouping context. Any workspace member may
+  edit unowned, unpublished drafts, including those in planning Epics; edits
+  require fresh plan reviews and acceptance evidence. Grouping-only edits use
+  the same service as `set-context` and preserve evidence and accepted content.
+  Unchanged values write nothing; changed fields and an optional reason are
+  audited. Requires the matching System-scoped PATCH endpoint.
+
+- Preserve draft evidence when a grouping update also supplies unchanged
+  content fields. Both grouping commands reject explicitly blank context names;
+  only omitted names default to the context. Non-object JSON input now reports
+  `input must be a JSON object` without Go type details.
+
 - `modernpath install` keeps the ModernPath block in `.gitignore` where it is
   and rewrites it in place when it is outdated. It used to move the block to the
   end of the file on every run, which left `.gitignore` modified whenever other

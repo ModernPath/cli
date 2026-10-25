@@ -158,7 +158,7 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 	for _, path := range []string{
 		"epics plan save", "epics plan show", "epics plan approve-implementation",
 		"epics plan submit-review", "epics plan approve-completion", "epics plan history",
-		"requirements create", "requirements get", "requirements obsolete", "requirements set-context",
+		"requirements create", "requirements update", "requirements get", "requirements obsolete", "requirements set-context",
 		"reverse-engineer record", "reverse-engineer review", "reverse-engineer accept",
 		"evidence record", "evidence latest", "evidence runs", "traces list",
 		"test-cases create", "backlog create", "backlog update", "epics create", "epics update",

@@ -39,7 +39,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"env", "list"}, {"env", "test"},
 		{"dev", "review"}, {"epics", "list"}, {"epics", "get"}, {"epics", "create"},
 		{"epics", "specs", "generate"}, {"epics", "specs", "status"}, {"epics", "specs", "list"}, {"epics", "specs", "pull"}, {"epics", "specs", "push"},
-		{"requirements", "get"}, {"requirements", "create"}, {"requirements", "obsolete"}, {"requirements", "set-context"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
+		{"requirements", "get"}, {"requirements", "create"}, {"requirements", "update"}, {"requirements", "obsolete"}, {"requirements", "set-context"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
 		{"evidence", "record"}, {"evidence", "runs"}, {"evidence", "latest"},
 	}
 
@@ -466,6 +466,7 @@ var leafDispositions = map[string]disposition{
 	"test-cases list":                   {kind: dispExecute},
 	"test-cases get":                    {kind: dispExecute, args: []string{"test-cases", "get", "10000000-0000-4000-8000-000000000001"}},
 	"requirements create":               {kind: dispNoCall, reason: "needs-precondition"},
+	"requirements update":               {kind: dispNoCall, reason: "needs-precondition"},
 	"test-cases create":                 {kind: dispNoCall, reason: "needs-precondition"},
 	"test-cases update":                 {kind: dispNoCall, reason: "needs-precondition"},
 	"evidence record":                   {kind: dispNoCall, reason: "needs-precondition"},

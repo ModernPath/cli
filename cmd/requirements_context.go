@@ -16,7 +16,7 @@ func newRequirementSetContextCommand(load func() (*cliEnv, error)) *cobra.Comman
 	cmd := &cobra.Command{
 		Use:   "set-context <uuid>",
 		Short: "Set the current grouping context for a native requirement",
-		Long:  "Update current organizing metadata without changing requirement status, revision, accepted versions, criteria, or traces. --context-name defaults to --context.",
+		Long:  "Compatibility shortcut for requirements update with context fields. Uses the same update service without changing requirement status, revision, accepted versions, criteria, traces or evidence freshness. Omitted --context-name defaults to --context; explicitly blank names are refused.",
 		Args:  cobra.ExactArgs(1),
 	}
 	kind, context, contextName := "", "", ""
@@ -34,14 +34,11 @@ func newRequirementSetContextCommand(load func() (*cliEnv, error)) *cobra.Comman
 			return fmt.Errorf("requirement id must be a native UUID")
 		}
 		id := strings.ToLower(args[0])
-		if strings.TrimSpace(context) == "" || len(context) > 255 {
-			return fmt.Errorf("--context must contain 1 to 255 characters")
-		}
-		if contextName == "" {
+		if !cmd.Flags().Changed("context-name") {
 			contextName = context
 		}
-		if strings.TrimSpace(contextName) == "" || len(contextName) > 255 {
-			return fmt.Errorf("--context-name must contain 1 to 255 characters")
+		if err := validateRequirementGrouping(map[string]any{"context": context, "context_name": contextName}); err != nil {
+			return err
 		}
 		env, err := load()
 		if err != nil {

@@ -612,6 +612,53 @@ The receipt includes `id`, `requirement_kind`, `display_ref`, `title`,
 `epics plan save`; propose acceptance criteria and further content there.
 Creating a requirement does not approve implementation or completion.
 
+### Update requirement content or grouping
+
+Any workspace member can edit every content field supported by
+`requirements create`, including `context` and `context_name`:
+
+```sh
+modernpath requirements update SR-12-0 --file correction.json --json
+modernpath requirements update <uuid> --kind user --file correction.json --reason "Clarify the agreed behavior"
+```
+
+For example, `{"description":"Clarified behavior"}` changes only the
+description. Omitted fields are preserved; optional content fields can be cleared
+with `null`. A supplied title must not be blank. Criteria, traces, ownership,
+release membership and lifecycle fields cannot be edited with this command.
+The server resolves an exact display reference under the mutation locks in one
+request; UUIDs require `--kind user` or `--kind system`.
+
+Content edits require unowned `PROPOSED`, `BLOCKED` or `DEFERRED` requirements
+with revision 0 and no accepted version. Drafts in planning Epics can be edited;
+the changed content makes their plan reviews outdated, requiring a fresh review
+before implementation approval. Content edits also make previous acceptance
+evidence stale, including edits within the same second.
+
+Approved requirements return a refusal asking the Epic's approver to return it
+to planning. Published or `DONE` content requires a follow-up Epic; `OBSOLETE`
+content stays closed. The server checks these conditions under the planning,
+System and requirement locks.
+
+For grouping-only changes, send `{"context":"Billing"}` or include
+`context_name`. Both use the same rules as `set-context`: context is required,
+both values must be nonblank strings of at most 255 bytes, and omitted
+context_name defaults to context. These edits preserve content timestamps and
+evidence, even on unowned `DONE` or `OBSOLETE` requirements. Active Epic-owned
+work remains read-only. A request mixing grouping and content fields must meet
+the content-edit rules above and commits atomically. If the supplied content
+values are unchanged and only grouping values change, content timestamps and
+evidence remain current. Explicitly blank context names are rejected by both
+commands; only an omitted context name defaults to context.
+
+The Audit Trail records the authenticated actor and changed fields. Optional
+`--reason` records why; if supplied it must contain nonblank text of at most
+2,000 bytes. Sending unchanged values returns `result: "unchanged"` without
+writing an audit entry, updating timestamps or notifying subscribers. Changed
+values return `result: "updated"`, with notifications sent after commit.
+Use `requirements get` to read back the changed content. This requires a
+server serving `PATCH /api/v1/systems/:system_id/requirements/:kind/:id`.
+
 ### Obsolete an unpublished requirement
 
 Use the explicit lifecycle operation when an unowned requirement is no longer
@@ -627,7 +674,8 @@ modernpath requirements obsolete <uuid> --kind system --reason "The interface wa
 
 ### Set a requirement's grouping context
 
-`context` and `context_name` are current grouping metadata. They can change on
+`set-context` is a compatibility shortcut to the same update service used by
+`requirements update`. `context` and `context_name` are current grouping metadata. They can change on
 `DONE` requirements without changing status, revision, criteria, traces or
 immutable accepted versions. Existing accepted versions retain the context
 values they recorded; newly accepted versions omit grouping metadata. The
@@ -1177,7 +1225,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Current work visibility | `focus` |
 | Knowledge | `search`, `ask`, `context`, `read-doc`, `read-file`, `docs`, `system-docs`, `datamodel` |
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
-| Native requirements | `requirements create`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
+| Native requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |

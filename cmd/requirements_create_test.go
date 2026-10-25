@@ -107,3 +107,10 @@ func TestRequirementCreateReportsRefusalsAndRejectsUnscopedReceipts(t *testing.T
 		})
 	}
 }
+
+func TestRequirementCreateEmptyObjectExplainsMissingTitle(t *testing.T) {
+	err := validateRequirementCreate(map[string]any{}, "system")
+	if err == nil || err.Error() != "requirement title is required" {
+		t.Fatalf("error = %v", err)
+	}
+}
