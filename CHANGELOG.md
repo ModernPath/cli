@@ -32,6 +32,16 @@
   `<code> — item <index> (<identity>)`, with the server message after it. The
   single-object forms are unchanged. Requires the matching server routes (Epic 323).
 
+- Add `modernpath acceptance` for release acceptance of an initiative:
+  `specs list/create/update/retire`, `report open/get/record/sign-off/reject`
+  and `release <id>`, each with `--json` and, where it writes content, `--file`
+  (or `-` for stdin). `report sign-off` and `report reject` exit before any
+  request unless `--source USER:...` names the human decision; the source is
+  kept on the audit event. Server-set fields in `--file` are refused before the
+  workspace loads, and 404 and 409 refusals name the server code (`not_found`,
+  `report_closed`). Release acceptance is not RDD evidence and is not part of
+  the delivery loop. Requires a server with the acceptance routes (Epic 318).
+
 - Add `requirements update <uuid|display-ref> --file [--reason]` for every
   draft content field and current grouping context. Any workspace member may
   edit unowned, unpublished drafts, including those in planning Epics; edits

@@ -1182,6 +1182,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Requirement traces and native test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
 | Reverse engineering | `reverse-engineer schema/check/record/review/accept` |
+| Release acceptance (not RDD evidence) | `acceptance specs list/create/update/retire`, `acceptance report open/get/record/sign-off/reject`, `acceptance release` |
 | Agent integration | `install`, `hooks` |
 | Development | `dev run`, `dev setup`, `dev list`, `dev review` |
 
@@ -1334,6 +1335,57 @@ The server preserves the original raiser and records the authenticated update
 actor and time in metadata. Read back with `backlog get <uuid> --full --json`.
 This changes the backlog disposition, not an Epic approval or completion.
 Requires a server with the Backlog PATCH endpoint; older servers refuse the write.
+
+### Release acceptance
+
+Release acceptance records what a human tester checked in a release. **It is
+not RDD evidence**: it records no test case, evidence run or result, and it
+does not accept a requirement. Specs are test steps for a tester, not
+acceptance criteria. The commands are not part of the delivery loop.
+
+An initiative (roadmap line) has acceptance specs. A tester opens one
+acceptance report for the initiative and a release, records one result per
+live spec, and the report is signed off or rejected. Every command works on the
+bound System and sends it as `system_id`; another System's initiative, spec,
+report or release answers `not_found`.
+
+- `modernpath acceptance specs list --line <uuid> --json` lists the live specs
+  in order.
+- `modernpath acceptance specs create --line <uuid> --file spec.json --json`
+  adds a spec at revision 1. The object takes `title` (required), `steps_md`
+  and `expected_md`.
+- `modernpath acceptance specs update <spec-uuid> --file spec.json --json`
+  changes those fields; a change bumps the spec's revision.
+- `modernpath acceptance specs retire <spec-uuid> --json` retires a spec. It is
+  kept with its results and is no longer required.
+- `modernpath acceptance report open --line <uuid> [--file report.json] --json`
+  opens the report. The object may name `release_id`, `environment` and
+  `build_ref`; without `release_id` the initiative's effective release is used.
+  When a live (draft or signed-off) report exists for the initiative and
+  release, that report is returned.
+- `modernpath acceptance report get <report-uuid> --json` reads a report with
+  its results, `tester_name` and `signed_off_by_name`.
+- `modernpath acceptance report record <report-uuid> --spec <spec-uuid> --file result.json --json`
+  records `outcome` (`pass`, `fail`, `blocked` or `not_run`) and `notes_md`.
+  The result stores the spec's current revision.
+- `modernpath acceptance report sign-off <report-uuid> --source USER:<ref> [--note <text>] --json`
+  signs the report off as the signed-in person. Every live spec needs a result
+  for its current revision, and a `fail` or `blocked` result needs `--note`.
+- `modernpath acceptance report reject <report-uuid> --note <text> --source USER:<ref> --json`
+  rejects the report. Opening the report again creates a new draft.
+- `modernpath acceptance release <release-id> --json` lists every initiative
+  in the release with its report id and status (`none`, `draft`, `signed_off`
+  or `rejected`).
+
+Only a person signs off or rejects. `sign-off` and `reject` exit non-zero
+before any request unless `--source USER:...` names the human decision; the
+source is stored on the audit event. An agent may write specs, open reports and
+record results. Fields the server sets (tester, status, sign-off, revision,
+scope) are refused in `--file` before the workspace loads. A signed-off or
+rejected report is closed: further results, sign-off or reject answer
+`report_closed` (409). Rule refusals name their code: `results_missing`,
+`sign_off_note_required`, `no_specs`, `invalid_order`, `release_required` and
+`release_not_open` (422). Requires a server with the acceptance routes.
 
 ## Native verification evidence
 

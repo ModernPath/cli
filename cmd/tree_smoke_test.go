@@ -385,6 +385,16 @@ var leafDispositions = map[string]disposition{
 	"backlog update":                    {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"backlog list":                      {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
 	"backlog get":                       {kind: dispExecute, args: []string{"backlog", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"acceptance specs list":             {kind: dispExecute, args: []string{"acceptance", "specs", "list", "--line", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"acceptance specs create":           {kind: dispExecute, args: []string{"acceptance", "specs", "create", "--line", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
+	"acceptance specs update":           {kind: dispExecute, args: []string{"acceptance", "specs", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
+	"acceptance specs retire":           {kind: dispExecute, args: []string{"acceptance", "specs", "retire", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"acceptance report open":            {kind: dispExecute, args: []string{"acceptance", "report", "open", "--line", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"acceptance report get":             {kind: dispExecute, args: []string{"acceptance", "report", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"acceptance report record":          {kind: dispExecute, args: []string{"acceptance", "report", "record", "10000000-0000-4000-8000-000000000001", "--spec", "10000000-0000-4000-8000-000000000002", "--file", "-", "--json"}},
+	"acceptance report sign-off":        {kind: dispExecute, args: []string{"acceptance", "report", "sign-off", "10000000-0000-4000-8000-000000000001", "--source", "USER:smoke", "--json"}},
+	"acceptance report reject":          {kind: dispExecute, args: []string{"acceptance", "report", "reject", "10000000-0000-4000-8000-000000000001", "--note", "smoke", "--source", "USER:smoke", "--json"}},
+	"acceptance release":                {kind: dispExecute, args: []string{"acceptance", "release", "2", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
 	"auth status":                       {kind: dispExecute},
 	"context":                           {kind: dispExecute, args: []string{"context", "smoke query"}},
@@ -571,6 +581,12 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		}
 		if name == "backlog update" {
 			rootCmd.SetIn(strings.NewReader(`{"notes_md":"Smoke update"}`))
+		}
+		if name == "acceptance specs create" || name == "acceptance specs update" {
+			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke spec"}`))
+		}
+		if name == "acceptance report record" {
+			rootCmd.SetIn(strings.NewReader(`{"outcome":"pass"}`))
 		}
 		if name == "reverse-engineer record" {
 			rootCmd.SetIn(strings.NewReader(`{"requirements":[],"traces":[]}`))
