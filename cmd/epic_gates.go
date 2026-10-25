@@ -83,6 +83,7 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		c.RunE = func(cmd *cobra.Command, args []string) error {
 			var payload any
 			method := "GET"
+			suffix := op.suffix
 			if op.write {
 				method = "POST"
 				file, _ := cmd.Flags().GetString("file")
@@ -91,8 +92,19 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return err
 				}
 				payload = object
+				// {"items":[...]} declares or answers a batch in one call (Epic 321).
+				if _, batch := object["items"]; batch && (op.name == "decision" || op.name == "declare-decision") {
+					suffix += "s"
+				}
 			}
-			suffix := op.suffix
+			if op.name == "start-execution" {
+				// Epic 323: {"items":[...]} registers several executions in one call.
+				if object, ok := payload.(map[string]any); ok {
+					if _, batch := object["items"]; batch {
+						suffix += "/batch"
+					}
+				}
+			}
 			if op.name == "review-bundle" {
 				phase, _ := cmd.Flags().GetString("phase")
 				if phase != "" {
@@ -202,7 +214,11 @@ planning, review and fresh human implementation approval must follow.
 All record commands take --file <JSON>, or standard input by default:
   candidate: {"revision":"tested-code-revision"}
   start-execution: {"revision":"tested-code-revision","obligation_ids":["uuid"]}
-Register before executing. Finalize the returned run_id through evidence record --file:
+  or several at once: {"items":[{"revision":"...","obligation_ids":["uuid"]}]}
+Register before executing. With several obligations, register the batch, run
+the tests, finalize the batch. A batch holds at most 50 items, is all-or-nothing,
+and its items cannot share an obligation or a test case; never register RED and
+GREEN for the same obligation in one batch. Finalize the returned run_id through evidence record --file:
   {"id":"<returned run_id>","status":"complete","native_verification":{
     "tests":[{"test_case_id":"<TestCase UUID>","result":"pass",
       "detail":{"executed_test_case":{"revision":0}}}],
@@ -231,6 +247,10 @@ material|note and description; the server assigns identities.
   resolve: {"review_id":"uuid","finding_id":"uuid","reason":"resolution"}
   declare-decision: {"question":"Question requiring a human decision"}
   decision: {"decision_id":"declared UUID","answer":"human decision","source":"USER:..."}
+declare-decision and decision also take a batch, {"items":[<object>, ...]}: 1 to 200
+distinct items written in input order in one call, all or nothing. A batch declare
+prints {"items":[{"index","id","question"}]}. A refused batch writes nothing and
+names the failing item: <code> — item <index> (<identity>) — <message>.
 
 Review context attests to a separately performed review. Comparing context
 strings cannot prove independent work. The candidate has no author context.

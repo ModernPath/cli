@@ -58,7 +58,7 @@ exact JSON it accepts.
 | Implement | `rdd-build` | register `epics gates start-execution <id> --file` before executing. Finalize one actual native TestCase outcome/revision through `evidence record --file`; read back the failed execution before registering the passing execution. Declare the candidate before the passing execution. No role, command, output, environment or copied definition is uploaded. |
 | Verify | `rdd-verify` | `epics gates start-execution <id> --file` before every focused, boundary, user-flow or verification rerun; execute the declared command, then `evidence record --file` using the returned `run_id` as `id` and `status: complete`; read back `evidence latest`, `evidence runs --full --target-id <uuid>` |
 | Review, publish and complete | `rdd-completion-review` | finish evidence before independent code review; `epics gates review-bundle <id> --json` supplies current facts; record the actual verdict with `epics gates review <id> --file` (phase implementation, scope_implemented true). Resolve findings with `epics gates resolve`; `epics gates check <id> --phase completion-review --json`; `epics plan submit-review <id> --reason`; `epics gates check <id> --phase completion --json`; `epics gates presentation <id> --json` presents current facts. The human separately decides: `epics plan approve-completion <id> --reason "USER:..."`, or, for "not yet", `epics plan return-to-implementation <id> --reason "USER:..."`. Both send only a decision, recheck current state and preserve ownership rules. A return can succeed when readiness fails. Read back DONE, versions and released ownership, or IN_PROGRESS with the same approval. Then use `backlog update <uuid> --file` to record {"disposition":"CLOSED by <epic id>","disposition_ref":"USER:<date>:completion"} and read it back. Changed scope requires an explicit `epics plan return-to-planning <id> --reason "USER:..."`, renewed planning/review/approval. Every plan write supports optional --agent attribution. |
-| Discoveries and blockers | `rdd-triage` | `backlog create --file` (`kind`: `backlog` or `gap` for product discoveries; `tooling` for missing capabilities only under the System-name rule above); a record a plan delivers is routed in the store, not by naming it in a plan body: `backlog update <uuid> --file` with `{"disposition":"ROUTED to <epic id>","disposition_ref":"USER:<date>:plan-save"}`, read back with `backlog get <uuid> --json`; `requirements obsolete <uuid> --kind … --reason`; `requirements set-context`; changed active scope: explicit human `epics plan return-to-planning <id> --reason "USER:..."`, then revise, review and re-approve; DONE needs a follow-up Epic |
+| Discoveries and blockers | `rdd-triage` | `backlog create --file` (`kind`: `backlog` or `gap` for product discoveries; `tooling` for missing capabilities only under the System-name rule above); a record a plan delivers is routed in the store, not by naming it in a plan body: `backlog update <uuid> --file` with `{"disposition":"ROUTED to <epic id>","disposition_ref":"USER:<date>:plan-save"}`, read back with `backlog get <uuid> --json`; `requirements obsolete <uuid> --kind … --reason`, or `requirements obsolete --file` for an all-or-nothing batch of up to 200; `requirements set-context`; changed active scope: explicit human `epics plan return-to-planning <id> --reason "USER:..."`, then revise, review and re-approve; DONE needs a follow-up Epic |
 | Record existing behavior | `rdd-reverse-engineer` | `reverse-engineer schema`, then `reverse-engineer check --dir groups` (offline), then `reverse-engineer record --file group.json` or `reverse-engineer record --dir groups` for a folder; read back `requirements get --full`, `traces list` |
 | Verify existing behavior | `rdd-reverse-engineer-verify` | `reverse-engineer review --file selection.json --json` first: skip DONE and reuse applicable recorded results. For unexecuted requirements only, reserve one run with `evidence record --file`, execute each shared test once, finalize actual outcomes and links, then read current status again. Retry finalization with the same run ID. |
 | Accept existing behavior | `rdd-reverse-engineer-accept` | `reverse-engineer review --file selection.json --json`; present current facts; the human decides; `reverse-engineer accept --file acceptance.json` sends requirements (kind/id), source and reason only. The server checks current eligible facts under locks. |
@@ -67,6 +67,9 @@ Declare each required question with `epics gates declare-decision <id> --file`
 using `{"question":"..."}` while PROPOSED. Read back the retained definition's
 `content.id`, add that issued UUID to `plan.verification.decisions` with
 `epics plan save`, then record the actual human answer. Never invent decision IDs.
+Several questions or answers go in one call as `{"items":[...]}` of the same
+objects (at most 200, no duplicates); the batch writes all or nothing, returns
+the ids in input order, and a refusal names `item <index>`.
 The review bundle retains the question definition beside its effective answer.
 
 A human answer is recorded as the `--reason` (`USER:<date>: …`) of the
@@ -108,6 +111,15 @@ registration through that authorized account before execution. Unregistered
 results for any criterion or project check declared by an active Epic are refused,
 including CI feeds and existing-behavior verification; unrelated evidence is not
 subject to that registration rule. Active Epic-owned work stays on the Epic path.
+
+For several obligations, register the batch, run the tests, finalize the
+batch: `epics gates start-execution <id> --file` and `evidence record --file`
+also accept `{"items":[...]}` (at most 50 items) and answer one result per item
+in input order. Each batch is all-or-nothing; a refusal names the failing item
+as `<code> — item <index> (<identity>)`. Items of one register batch cannot share
+an obligation or a test case. Never register RED and GREEN for the same
+obligation in one batch. Finalize batches carry run ids only; reservations stay
+single calls.
 
 RED must be finalized before GREEN registration. If GREEN was registered too
 early, finalize the valid original RED and register and execute a new GREEN;
@@ -184,6 +196,7 @@ and `IN_REVIEW`; the human-authorized return ends approval before edits.
 | `requirement_in_progress` / `requirement_owned` | server 409 | `update`, `set-context` or `obsolete` targets approved or Epic-owned work; existing-behavior acceptance also refuses owned work | finish through the owning Epic, or ask its implementation approver to return it to planning; then apply the requested operation's lifecycle rules |
 | `requirement_already_published` | server 409 | a content `update` or `obsolete` targets DONE, a nonzero revision or an accepted version | use a follow-up Epic for published content; grouping-only updates may still be allowed |
 | `invalid_requirement_status` | server 409 | a content edit or obsoletion targets an ineligible state | content edits and new obsoletions require unowned, unpublished PROPOSED, BLOCKED or DEFERRED requirements; repeated obsoletion is unchanged |
+| `items_required` / `too_many_items` / `duplicate_items` / `invalid_item` | server 422 | a `requirements obsolete --file` batch is empty, holds more than 200 items, repeats an item or names an item without kind `user`/`system` and a native UUID; nothing was written | fix the file; a refusal naming `item <index> (<kind> <id>)` points at the failing entry, and the whole batch is retried after the fix |
 | `stale_reference` | server 409 | an exact requirement reference names an older or incorrect revision | read the current requirement and retry with its exact reference |
 | `does not belong to the bound System` | cli | an Epic or review bundle of another System | check `modernpath status`; use an id of this System |
 | `unknown input field` / `input must include` / `must be an array` | cli | a file key outside the documented shape; nothing was sent | correct the key (see the command's section) |

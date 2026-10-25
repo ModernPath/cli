@@ -534,6 +534,13 @@ account with current tenant/System access and Epic ownership. A
 candidate is required before GREEN, not before RED. If GREEN was registered too
 early, finalize the valid original RED and register and execute a new GREEN;
 do not manufacture a replacement RED. Every rerun needs a new registration.
+
+With several obligations in one pass, register the batch, run the tests, finalize
+the batch: one `epics gates start-execution` call with `{"items":[...]}`
+registers every execution before any of them runs, and one `evidence record`
+call with `{"items":[...]}` finalizes them all. Each batch is all-or-nothing.
+Never register RED and GREEN for the same obligation in one batch: RED is
+finalized before GREEN is registered, so they are always separate batches.
 Finish evidence collection before the implementation review; a change to reviewed
 evidence requires renewed review before submission.
 

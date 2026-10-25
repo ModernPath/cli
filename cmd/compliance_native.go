@@ -379,7 +379,12 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return err
 		}
 		payload["system_id"] = env.SystemID
-		status, body, err := env.write("POST", "/api/v1/sync/evidence", payload)
+		route := "/api/v1/sync/evidence"
+		if _, batch := payload["items"]; batch {
+			// Epic 323: {"items":[...]} finalizes several runs in one all-or-nothing call.
+			route += "/batch"
+		}
+		status, body, err := env.write("POST", route, payload)
 		if err != nil {
 			return err
 		}
@@ -486,6 +491,9 @@ Finalize with the returned run identity:
     "tests":[{"test_case_id":"<TestCase UUID>","result":"pass",
       "detail":{"executed_test_case":{"revision":0}}}],
     "criteria":[{"criterion_id":"<criterion UUID>","test_keys":["<TestCase UUID>"]}]}}
+Finalize several registered runs at once with {"items":[<finalize object>, ...]}:
+at most 50 items with distinct ids, all-or-nothing, one result per item in input
+order. A refusal names the failing item and its run. Reservations are not batched.
 
 Select existing native tests explicitly. Their title/revision identify the test;
 requirements and executable code define expected behavior. Code relationships

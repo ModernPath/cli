@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -50,6 +52,9 @@ func refusalBodyText(body map[string]any) string {
 	case string:
 		return errVal
 	case map[string]any:
+		if text, ok := batchRefusalText(body, errVal); ok {
+			return text
+		}
 		if details, ok := errVal["details"].(map[string]any); ok && len(details) > 0 {
 			return detailLines(details)
 		}
@@ -75,6 +80,9 @@ func refusalBodyText(body map[string]any) string {
 		if len(parts) > 0 {
 			return strings.Join(parts, " — ")
 		}
+		if code := str(errVal, "code"); code != "" {
+			return code
+		}
 		return fmt.Sprint(errVal)
 	case nil:
 		// PR445-07: a non-store body (a gateway's {"message": …}) still has a
@@ -93,6 +101,60 @@ func refusalBodyText(body map[string]any) string {
 	default:
 		return fmt.Sprint(errVal)
 	}
+}
+
+// batchRefusalText renders a refused batch item (Epics 321-323): the body
+// carries {error:{code,message}, index, item} and reads
+// "<code> — item <index> (<identity>) — <message>".
+func batchRefusalText(body, errVal map[string]any) (string, bool) {
+	code := str(errVal, "code")
+	var index string
+	switch v := body["index"].(type) {
+	case json.Number:
+		index = v.String()
+	case float64:
+		index = strconv.FormatInt(int64(v), 10)
+	}
+	if code == "" || index == "" {
+		return "", false
+	}
+	text := code + " — item " + index
+	if identity := batchItemIdentity(body["item"]); identity != "" {
+		text += " (" + identity + ")"
+	}
+	if message := str(errVal, "message"); message != "" {
+		text += " — " + message
+	}
+	return text, true
+}
+
+func batchItemIdentity(value any) string {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if item["kind"] != nil && item["id"] != nil {
+		return fmt.Sprint(item["kind"]) + " " + fmt.Sprint(item["id"])
+	}
+	if item["run_id"] != nil {
+		return "run " + fmt.Sprint(item["run_id"])
+	}
+	for _, key := range []string{"obligation_ids", "obligations"} {
+		if ids, ok := item[key].([]any); ok {
+			parts := make([]string, 0, len(ids))
+			for _, id := range ids {
+				parts = append(parts, fmt.Sprint(id))
+			}
+			return "obligations " + strings.Join(parts, ",")
+		}
+	}
+	if item["decision_id"] != nil {
+		return "decision " + fmt.Sprint(item["decision_id"])
+	}
+	if _, ok := item["question"]; ok {
+		return "question"
+	}
+	return ""
 }
 
 func openReleaseRefusal(errBody map[string]any) string {

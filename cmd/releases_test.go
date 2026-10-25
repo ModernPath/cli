@@ -308,7 +308,9 @@ try:
  assert p.wait()==0, "hidden prompt child failed"
  assert all(secret not in seen for secret in [b"482913",b"123456",b"abcd"]), "terminal echoed the PIN"
  assert sent==len(inputs) and b"PIN read finished" in seen, "PIN read did not complete"
- assert termios.tcgetattr(slave)==original, "terminal settings were not restored"
+ # macOS sets PENDIN itself when a terminal leaves raw mode; it is not a setting the CLI changed.
+ settled=lambda a: a[:3]+[a[3]&~getattr(termios,"PENDIN",0)]+a[4:]
+ assert settled(termios.tcgetattr(slave))==settled(original), "terminal settings were not restored"
 finally:
  os.close(master)
  os.close(slave)

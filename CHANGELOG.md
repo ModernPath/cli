@@ -8,6 +8,30 @@
   rebase is not a return to planning (PROCESS.md, rdd-plan, rdd-verify,
   rdd-build).
 
+- `epics gates declare-decision <id> --file` and `epics gates decision <id> --file`
+  accept `{"items":[...]}` and post it to the new `declare-decisions` or
+  `answer-decisions` endpoint: 1 to 200 distinct items, written in input order
+  in one Epic transaction, all or nothing. A batch declare prints the issued ids
+  in input order. A refused batch writes nothing, and the error names the item:
+  `<code> — item <index> (<identity>) — <message>`. The single-object forms are
+  unchanged. Requires the matching server endpoints (Epic 321).
+
+- Add `requirements obsolete --file <path|->` to obsolete up to 200 unowned,
+  unpublished requirements in one all-or-nothing request. An item's own reason
+  overrides the batch reason. A refusal changes nothing and names the failing
+  item's index and identity. Batch refusals of the shape
+  `{"error": {"code", "message"}, "index", "item"}` now print
+  `<code> — item <index> (<identity>) — <message>`. Requires
+  `POST /api/v1/systems/:system_id/requirements/obsolete`.
+
+- `epics gates start-execution <id> --file` and `evidence record --file` accept
+  `{"items":[...]}` (at most 50 items) and post to the new batch routes, so a pass
+  over N obligations takes two store calls instead of 2N: register the batch, run
+  the tests, finalize the batch. Each batch is all-or-nothing; register items
+  cannot share an obligation or a test case. A batch refusal prints
+  `<code> — item <index> (<identity>)`, with the server message after it. The
+  single-object forms are unchanged. Requires the matching server routes (Epic 323).
+
 - Add `requirements update <uuid|display-ref> --file [--reason]` for every
   draft content field and current grouping context. Any workspace member may
   edit unowned, unpublished drafts, including those in planning Epics; edits

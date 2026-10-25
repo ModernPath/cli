@@ -675,6 +675,29 @@ traces.
 modernpath requirements obsolete <uuid> --kind system --reason "The interface was removed"
 ```
 
+To retire many requirements at once, for example the PROPOSED records a
+reverse-engineering pass replaced, pass a batch file with `--file <path|->`.
+The request is all-or-nothing: either every listed requirement is obsoleted
+(or reported `already_obsolete`), or nothing changes and the refusal names the
+failing item's zero-based index and identity. A batch holds at most 200 items,
+each a native UUID listed once. An item's own `reason` overrides the batch
+`reason`; one of them is required. `--file` cannot be combined with a
+positional id, `--kind` or `--reason`. This requires a server serving
+`POST /api/v1/systems/:system_id/requirements/obsolete`.
+
+```sh
+cat > obsolete.json <<'JSON'
+{"reason": "Replaced by the reverse-engineered set",
+ "items": [{"kind": "system", "id": "<uuid>"},
+           {"kind": "user", "id": "<uuid>", "reason": "Merged into another requirement"}]}
+JSON
+modernpath requirements obsolete --file obsolete.json
+```
+
+The output prints one line per item in input order with its index, kind, id
+and result; `--json` prints the same items as a JSON array. A refusal reads
+`requirement obsoletion refused (server 409): requirement_owned — item 1 (system <uuid>) — <message>`.
+
 ### Set a requirement's grouping context
 
 `set-context` is a compatibility shortcut to the same update service used by
@@ -879,7 +902,12 @@ Candidate input is `{"revision":"<tested code revision>"}`. Execution registrati
 is `{"revision":"<tested code revision>","obligation_ids":["<UUID>"]}`. Register
 before running tests. Actual failed assertions establish RED; errors, skips and
 inconclusive outcomes do not. Finalize the failed run before registering the
-passing run. Passing evidence must bind to the current candidate identity and
+passing run. With several obligations, register the batch, run the tests,
+finalize the batch: both `start-execution` and `evidence record` accept
+`{"items":[...]}` (at most 50 items) and post to their batch routes. Each batch is
+all-or-nothing and a refusal prints `<code> — item <index> (<identity>)`. Items
+of one register batch cannot share an obligation or a test case, so never register
+RED and GREEN for the same obligation in one batch. Passing evidence must bind to the current candidate identity and
 revision; same-SHA redeclaration requires fresh passing evidence.
 
 A separate review records `phase`, `reviewer_context`, all criterion and obligation
@@ -888,6 +916,11 @@ scope with `scope_implemented: true`. Findings have `severity` and `description`
 the server assigns IDs. Resolutions reference `review_id` and `finding_id` with a
 reason. A decision definition stores its question once; answers reference its
 existing decision ID and retain answer/source. No review uploads a presentation.
+`epics gates declare-decision` and `epics gates decision` also take a batch,
+`{"items":[...]}` of the single objects: 1 to 200 distinct items, written in
+input order in one call, all or nothing. A batch declare returns
+`{"items":[{"index","id","question"}]}`. A refused batch writes nothing and
+names the item: `<code> — item <index> (<identity>) — <message>`.
 
 Approval and return requests contain reason and optional actor attribution.
 The server checks eligible current database state under its existing locks.

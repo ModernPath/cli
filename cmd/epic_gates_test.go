@@ -216,3 +216,120 @@ func TestEpicCheckGitProvenance(t *testing.T) {
 		})
 	}
 }
+
+// Epic 321: batched decisions. A file holding {"items":[...]} routes to the
+// plural endpoint; the single-object form keeps its route and input.
+func TestEpicBatchDecisionCommandsPostItemsToThePluralRouteAndPrintIdsInInputOrder(t *testing.T) {
+	input := map[string]any{"items": []any{
+		map[string]any{"question": "Q1"},
+		map[string]any{"question": "Q2"},
+	}}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/declare-decisions" || !reflect.DeepEqual(got, input) {
+			t.Errorf("batch declare must post the unchanged items to /declare-decisions: %s %s %#v", r.Method, r.URL.Path, got)
+		}
+		_, _ = w.Write([]byte(`{"data":{"items":[{"index":0,"id":"11111111-1111-4111-8111-111111111111","question":"Q1"},{"index":1,"id":"22222222-2222-4222-8222-222222222222","question":"Q2"}]}}`))
+	}))
+	defer server.Close()
+	body, _ := json.Marshal(input)
+	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"declare-decision", "287", "--file", "-", "--json"})
+	command.SetIn(bytes.NewReader(body))
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	if err := command.Execute(); err != nil {
+		t.Fatalf("batch declare failed: %v %s", err, out.String())
+	}
+	if requests != 1 {
+		t.Fatalf("batch declare must send exactly one request, sent %d", requests)
+	}
+	first := strings.Index(out.String(), "11111111-1111-4111-8111-111111111111")
+	second := strings.Index(out.String(), "22222222-2222-4222-8222-222222222222")
+	if first < 0 || second < 0 || first > second {
+		t.Fatalf("batch declare must print the returned ids in input order: %s", out.String())
+	}
+}
+
+func TestEpicBatchDecisionRefusalPrintsTheFailingItemIndex(t *testing.T) {
+	const second = "33333333-3333-4333-8333-333333333333"
+	input := map[string]any{"items": []any{
+		map[string]any{"decision_id": "44444444-4444-4444-8444-444444444444", "answer": "Keep", "source": "USER: first"},
+		map[string]any{"decision_id": second, "answer": "Drop", "source": "agent"},
+	}}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/answer-decisions" || !reflect.DeepEqual(got, input) {
+			t.Errorf("batch answer must post the unchanged items to /answer-decisions: %s %s %#v", r.Method, r.URL.Path, got)
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "invalid_human_decision", "message": "Use a declared decision ID, the human answer and its USER: source."},
+			"index": 1,
+			"item":  map[string]any{"decision_id": second},
+		})
+	}))
+	defer server.Close()
+	body, _ := json.Marshal(input)
+	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"decision", "287", "--file", "-", "--json"})
+	command.SetIn(bytes.NewReader(body))
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	err := command.Execute()
+	if err == nil {
+		t.Fatalf("a refused batch must exit nonzero: %s", out.String())
+	}
+	if requests != 1 {
+		t.Fatalf("batch answer must send exactly one request, sent %d", requests)
+	}
+	want := "invalid_human_decision — item 1 (decision " + second + ") — Use a declared decision ID"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal must name the code and the failing item:\nwant substring: %s\ngot: %v", want, err)
+	}
+}
+
+func TestEpicSingleObjectDecisionCommandsRetainTheirInputAndRoute(t *testing.T) {
+	for _, op := range []struct {
+		name, suffix string
+		input        map[string]any
+	}{
+		{"declare-decision", "/declare-decision", map[string]any{"question": "Which boundary?"}},
+		{"decision", "/answer-decision", map[string]any{"decision_id": "55555555-5555-4555-8555-555555555555", "answer": "Keep", "source": "USER: keep"}},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var got map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Error(err)
+				}
+				if r.Method != "POST" || r.URL.Path != "/api/work/epics/287"+op.suffix || !reflect.DeepEqual(got, op.input) {
+					t.Errorf("single-object decision input or route changed: %s %s %#v", r.Method, r.URL.Path, got)
+				}
+				_, _ = w.Write([]byte(`{"data":{"id":"server-record"}}`))
+			}))
+			defer server.Close()
+			body, _ := json.Marshal(op.input)
+			command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+			command.SetArgs([]string{op.name, "287", "--file", "-", "--json"})
+			command.SetIn(bytes.NewReader(body))
+			var out bytes.Buffer
+			command.SetOut(&out)
+			if err := command.Execute(); err != nil || !strings.Contains(out.String(), "server-record") {
+				t.Fatalf("single-object command failed: %v %s", err, out.String())
+			}
+		})
+	}
+}
