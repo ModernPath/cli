@@ -222,3 +222,24 @@ func TestEpicGetServesTheBacklogRecordsRoutedToTheEpic(t *testing.T) {
 		t.Fatalf("text output must print backlog as a JSON array field: %q err=%v", out, err)
 	}
 }
+
+func TestEpicUpdateHelpNamesSharedContextEntryShapes(t *testing.T) {
+	out, err := runRoot(t, "epics", "update", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := referenceSection(t, renderCLIReference(rootCmd), "modernpath epics update")
+	for name, text := range map[string]string{"help": out, "reference": ref} {
+		flat := strings.Join(strings.Fields(text), " ")
+		for _, want := range []string{
+			`"decisions":[{"statement":`,
+			`"assumptions":[{"statement":`,
+			`"open_questions":[{"question":`,
+			"each decision needs a non-empty statement",
+		} {
+			if !strings.Contains(flat, want) {
+				t.Errorf("epics update %s does not name %q", name, want)
+			}
+		}
+	}
+}

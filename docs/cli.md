@@ -792,7 +792,11 @@ the edit. `shared_context` is the whole
 version-1 object, the only accepted shape (the stored default `{}` cannot be
 written back); its `references` and `accepted_context_revision` must equal
 the stored values (a CLI-created Epic stores `[]` and `0`), so `decisions`,
-`assumptions` and `open_questions` are what an edit changes. A
+`assumptions` and `open_questions` are what an edit changes. Each decision and
+assumption is an object with a non-empty `statement`, and each open question
+an object with a non-empty `question`, for example
+`{"decisions":[{"statement":"…"}]}`; other keys in an entry are kept as sent,
+and a plain string is refused (`each decision needs a non-empty statement`). A
 server-assigned field (`tenant_id`, `system_id`, `process_status`, `plan`,
 `metadata`, `evidence`, `knowledge_config`, …) is refused with 422
 `unsupported Epic fields`, a body whose `epic` is not a JSON object with 422

@@ -195,8 +195,13 @@ make the server refuse the edit. shared_context is the whole version-1 object, t
 shape (the stored default {} cannot be written back); its references and
 accepted_context_revision must equal the stored values (an Epic created by
 the CLI stores [] and 0), so decisions, assumptions and open_questions are
-what an edit changes. Pass --file=- to read standard input. Input example:
-{"description":"Updated scope and review findings"}.`}
+what an edit changes. Each decision and assumption is an object with a
+non-empty statement, and each open question an object with a non-empty
+question; other keys in an entry are kept as sent, and a plain string is
+refused (each decision needs a non-empty statement). Pass --file=- to read
+standard input. Input examples:
+{"description":"Updated scope and review findings"}
+{"shared_context":{"version":1,"accepted_context_revision":0,"references":[],"decisions":[{"statement":"<decision and its source>"}],"assumptions":[{"statement":"<assumption>"}],"open_questions":[{"question":"<question>"}]}}`}
 	update.Flags().String("file", "", "Epic field changes as JSON, or - for standard input (required)")
 	_ = update.MarkFlagRequired("file")
 	update.RunE = func(cmd *cobra.Command, args []string) error {

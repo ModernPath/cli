@@ -19,6 +19,11 @@
   and rewrites it in place when it is outdated. It used to move the block to the
   end of the file on every run, which left `.gitignore` modified whenever other
   entries followed the block.
+- `epics update --help`, the CLI reference and the CLI guide give the entry
+  format for an Epic's decisions, assumptions and open questions: an object with
+  a non-empty `statement`, or `question` for an open question, with a
+  `shared_context` input example. A plain string entry is refused
+  (`each decision needs a non-empty statement`).
 
 - Bundle the delivery process and skills with the CLI. `modernpath install`
   removes retired provenance files while retaining process installation,
