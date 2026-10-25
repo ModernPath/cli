@@ -63,9 +63,9 @@ modernpath releases members delivery-1 --all --json
 
 The default preview is read-only. Each requirement row includes its title and
 `work_status`, so review these alongside its UUID and source before applying.
-Requirements recorded through reverse engineering start with no release; assigning
-them to a delivery release includes them in its normal release notes and close
-planning, subject to their status. Preview JSON includes a reusable `apply` object
+New requirements recorded through reverse engineering start in their System's
+Base release; moving them to a delivery release includes them in its normal
+release notes and close planning, subject to their status. Preview JSON includes a reusable `apply` object
 with the System, target ID and expected source per item, explicitly null for
 records with no release. `--apply` requires the full preview output; a raw selection
 cannot apply. `--file -` reads stdin. Use `--by id` or `--by slug` when a numeric
@@ -1200,9 +1200,11 @@ Use that schema for requirement content, criteria and trace endpoints. The
 command reads the authenticated bound System and prints the schema directly;
 failed reads report an error rather than falling back to a copied model. This
 requires a server version that exposes recording schema discovery.
-New requirements are recorded as `PROPOSED`. The command reads the supplied JSON and
-posts it directly; it does not inspect a repository checkout or require a run,
-content digest or proof report.
+New requirements are recorded as `PROPOSED` in the bound System's Base release.
+The server creates Base if needed within the recording transaction. Reused
+requirements retain their existing release assignments. The command reads the
+supplied JSON and posts it directly; it does not inspect a repository checkout
+or require a run, content digest or proof report.
 
 A sweep stages one JSON file per group of requirements. Check the staged files
 offline, then record the folder in one call:
