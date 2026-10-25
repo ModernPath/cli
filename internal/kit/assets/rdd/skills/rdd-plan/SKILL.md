@@ -44,6 +44,9 @@ process authority.
    context, and required human decisions using IDs issued through the CLI.
    Retain each declared question beside its effective human answer.
    This creates test definitions, not executable tests before approval.
+   Write criteria as observable behavior, with kit or prompt wording checked
+   by phrase tests. Gate only on deterministic tests; plan a model-dependent
+   run as a measurement reported at the end.
 6. Record open questions, conflicts, assumptions, deferred scope and risk in
    plain language. Do not invent a CLI command or local plan format.
 7. Save the plan through the CLI and read back the exact

@@ -166,6 +166,13 @@ to planning waives no RED or GREEN requirement. Completion still needs its
 separate human approval. If the CLI cannot perform the return, report the gap;
 never edit an active plan or process state through another channel.
 
+Pin the base: build an Epic on the main revision it started from, and do not
+stack an Epic on an open pull request. Rebase once, before the implementation
+review. A rebase with no conflict in the Epic's files is not a return to planning:
+declare the rebased candidate and rerun its deterministic checks, while the
+approved plan, decisions and RED evidence stand. A conflict that changes the
+Epic's behavior or scope follows this section.
+
 ### Reverse engineering
 
 Reverse engineering records requirements and their typed Traces to source files
@@ -363,6 +370,19 @@ source. A source inventory is not an implementation plan. For persisted or
 shared state, inspect the actual writers, readers, existing data shapes,
 partial-failure behavior and recovery; document the risks and mitigation in
 the saved plan. Do not replace reconnaissance with a list of source links.
+
+A criterion states observable behavior: what the system does, refuses, saves
+or shows. Text that an agent follows (kit, prompt or instruction wording) is
+checked by phrase tests under the criterion it serves; a wording change that
+keeps the behavior stays under the same criterion and needs no return to planning.
+
+Gating evidence comes from deterministic tests: unit, integration, phrase and
+scripted user-flow tests with fixed inputs. A run whose outcome depends on a
+language model, such as a live reverse-engineering sweep, an agent-driven user
+flow or a quality sample read, is a measurement, never a RED or GREEN obligation.
+Run it once near the end and report its result in the completion review or PR.
+Prompt and model tuning is research outside an Epic's gates; an Epic delivers
+the chosen text with deterministic tests.
 
 A plan with no requirements, uncovered in-scope behavior, missing
 criteria or missing planned code/test traces is not ready for implementation

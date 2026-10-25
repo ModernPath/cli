@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Process: gating evidence comes from deterministic tests, and a model-dependent
+  run is a measurement; a criterion states observable behavior and wording is
+  checked by phrase tests; pin an Epic's base and rebase once, where a clean
+  rebase is not a return to planning (PROCESS.md, rdd-plan, rdd-verify,
+  rdd-build).
+
 - Add `requirements update <uuid|display-ref> --file [--reason]` for every
   draft content field and current grouping context. Any workspace member may
   edit unowned, unpublished drafts, including those in planning Epics; edits

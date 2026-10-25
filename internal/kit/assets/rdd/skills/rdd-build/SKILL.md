@@ -36,7 +36,9 @@ For each behavior:
    PR check notes; upload no procedure, role, runner, environment or raw report.
    Keep actual failures separate from passing executions.
 
-Never disable or weaken tests to get past a project check. Keep security,
+Build on the main revision the Epic started from and rebase once, before the
+implementation review (`PROCESS.md` §Returning to planning). Never disable or
+weaken tests to get past a project check. Keep security,
 authorization, tenant isolation and atomic data integrity in the first
 functioning slice. Do not claim a change is verified from code inspection
 alone. Hand complete evidence to `rdd-verify` or, when explicitly requested,

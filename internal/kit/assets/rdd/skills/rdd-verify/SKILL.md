@@ -27,8 +27,9 @@ revision and the work remains within approved scope.
 3. Rerun affected user acceptance scenarios and report runtime/browser
    observations. UI evidence requires the live stack, loaded assets and
    inspected output.
-4. Link each result to its requirement, test identity and exact code
-   revision. Broad suite output proves only exercised assertions. Do not
+4. A run whose outcome depends on a language model is a measurement: report
+   its result, never record it as RED or GREEN evidence. Link each result to
+   its requirement, test identity and exact code revision. Broad suite output proves only exercised assertions. Do not
    reconstruct evidence or mark a skipped test as passing.
 5. Report failures within approved behavior as implementation work. For a
    material scope or acceptance change, keep the active approved plan and
