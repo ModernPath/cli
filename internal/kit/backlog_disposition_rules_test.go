@@ -74,3 +74,19 @@ func installedKitFile(t *testing.T, root string, parts ...string) []byte {
 func kitWhitespaceNormalised(body []byte) string {
 	return strings.Join(strings.Fields(string(body)), " ")
 }
+
+// Planning applies to Epic work; it must not override PROCESS.md's separate
+// small-change route when the installed skills are read together.
+func TestInstalledPlanningSkillPreservesSmallChangeRoute(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	plan := kitWhitespaceNormalised(installedKitFile(t, root, ".modernpath", "rdd", "skills", "rdd-plan", "SKILL.md"))
+	if strings.Contains(plan, "small changes have no exemption") {
+		t.Fatal("planning skill contradicts the small-change route in PROCESS.md")
+	}
+	if !strings.Contains(plan, "PROCESS.md` §Small changes") {
+		t.Fatal("planning skill must route small changes to the canonical exception")
+	}
+}

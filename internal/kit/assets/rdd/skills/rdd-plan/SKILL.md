@@ -10,6 +10,9 @@ why it is needed, and its expected impact on users and affected parts of the
 product. Put this before the detailed scope, requirements and implementation
 approach so the human can quickly understand the proposed change.
 
+For a small change, follow `PROCESS.md` §Small changes; this Epic planning
+procedure does not apply.
+
 Read `PROCESS.md`, the selected Epic and its requirement links. Inspect
 relevant product documents, code and tests; do not treat repository state as
 process authority.
@@ -23,8 +26,8 @@ process authority.
    approval. DONE stays closed; changed work needs a follow-up Epic.
    Include one or more UR/SR requirements covering all in-scope
    behavior, with explicit criteria and planned code/test traces. Use each
-   kind as applicable; small changes have no exemption, and plan-only
-   acceptance checks do not substitute for requirements.
+   kind as applicable for Epic work; plan-only acceptance checks do not
+   substitute for requirements.
 2. Ground claims in source passages, code, tests or observed runs. Verify
    important source references by reading the source; a path alone is insufficient.
 3. Inspect affected control/data flow, persistence, interfaces, integrations,
