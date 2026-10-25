@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.23.0 — native evidence, batch commands and release acceptance
 
 - Process: gating evidence comes from deterministic tests, and a model-dependent
   run is a measurement; a criterion states observable behavior and wording is
