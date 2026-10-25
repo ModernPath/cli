@@ -26,9 +26,7 @@ import (
 // a workspace cannot make them disagree, only a release can.
 // unnamedSkills returns the installed skills that no document mentions, and how
 // many were read. Separated so the detector can be exercised against a planted
-// fixture: assets/rdd/** must never be edited, not even temporarily, so a
-// mutation run cannot show this test going red — and a green light never seen to
-// go red is not evidence.
+// fixture without changing the packaged instructions.
 func unnamedSkills(t *testing.T, skillsDir string, docs map[string]string) (unnamed []string, checked int) {
 	t.Helper()
 	entries, err := os.ReadDir(skillsDir)

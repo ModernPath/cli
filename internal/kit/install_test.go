@@ -27,7 +27,6 @@ func TestInstallWritesTheKitAndLeavesClientContentAlone(t *testing.T) {
 
 	for _, want := range []string{
 		"CLAUDE.md",
-		".modernpath/rdd/.source",
 		".modernpath/rdd/AGENTS.md",
 		".modernpath/rdd/PROCESS.md",
 		".modernpath/rdd/skills/rdd-start/SKILL.md",
@@ -321,16 +320,67 @@ func TestInstallPreservesAnExistingClaudeMdAndCopilotInstructions(t *testing.T) 
 	}
 }
 
-func TestInstallDoesNotRequireCanonicalSourceCheckout(t *testing.T) {
+func TestInstallUsesBundledProcessWithoutSourcePins(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Install(root); err != nil {
-		t.Fatalf("embedded process installation must not require req-driven-dev: %v", err)
+		t.Fatalf("bundled process installation failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".modernpath/rdd/PROCESS.md")); err != nil {
 		t.Fatalf("embedded canonical process was not installed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "req-driven-dev")); !os.IsNotExist(err) {
-		t.Fatal("install must not create or require a vendored req-driven-dev directory")
+	for _, pin := range []string{".modernpath/rdd/.source", ".claude/rdd/.source"} {
+		if _, err := os.Stat(filepath.Join(root, pin)); !os.IsNotExist(err) {
+			t.Errorf("fresh installation must not create a source pin: %s (%v)", pin, err)
+		}
+	}
+}
+
+func TestInstallRetiresProcessSourcePinsAndPreservesLocalFiles(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	pins := []string{".modernpath/rdd/.source", ".claude/rdd/.source"}
+	custom := []string{".modernpath/rdd/local-notes.md", ".claude/rdd/local-notes.md"}
+	for _, target := range append(append([]string{}, pins...), custom...) {
+		name := filepath.Join(root, target)
+		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte("retained client notes\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	drift, err := Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pin := range pins {
+		if !slices.Contains(drift, pin+" (retired managed target)") {
+			t.Errorf("source pin must be reported as retired: %s; drift=%v", pin, drift)
+		}
+	}
+
+	result, err := Install(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pin := range pins {
+		if _, err := os.Stat(filepath.Join(root, pin)); !os.IsNotExist(err) {
+			t.Errorf("source pin must be removed: %s (%v)", pin, err)
+		}
+		if !slices.Contains(result.Removed, pin) {
+			t.Errorf("removed source pin must appear in the receipt: %s", pin)
+		}
+	}
+	for _, target := range custom {
+		if body, err := os.ReadFile(filepath.Join(root, target)); err != nil || string(body) != "retained client notes\n" {
+			t.Errorf("client notes must survive: %s (%v)", target, err)
+		}
+	}
+	if drift, err := Check(root); err != nil || len(drift) != 0 {
+		t.Fatalf("process and skills must remain current after removing pins: %v (%v)", drift, err)
 	}
 }
 
@@ -470,22 +520,6 @@ func TestInstallRetiresRemovedPackageAdapters(t *testing.T) {
 	}
 	if body, err := os.ReadFile(filepath.Join(root, custom)); err != nil || string(body) != "existing\n" {
 		t.Fatalf("custom adapter must be preserved: %q (%v)", body, err)
-	}
-}
-
-func TestEmbeddedProcessSnapshotRecordsItsSourceRevision(t *testing.T) {
-	body, err := assets.ReadFile("assets/rdd-source.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(body)
-	if !strings.Contains(text, "repository=https://github.com/ModernPath/req-driven-dev\n") {
-		t.Fatal("embedded process snapshot must identify its canonical source")
-	}
-	const revisionPrefix = "revision="
-	start := strings.Index(text, revisionPrefix)
-	if start < 0 || len(strings.TrimSpace(text[start+len(revisionPrefix):])) != 40 {
-		t.Fatal("embedded process snapshot must record a full git revision")
 	}
 }
 

@@ -23,8 +23,7 @@ var installCmd = &cobra.Command{
 	Short: "Install the requirement-driven process and agent adapters",
 	Long: `Install the requirement-driven process and agent adapters.
 
-The CLI embeds a versioned snapshot of the canonical req-driven-dev repository.
-No source checkout or vendored process repository is required. This command
+The CLI bundles the delivery process and agent instructions. This command
 writes the process package and the adapter files each agent channel loads:
 
   .modernpath/rdd/PROCESS.md       the canonical process
@@ -41,8 +40,8 @@ and merges one managed block into AGENTS.md, which is how Codex finds the
 installed files — it reads AGENTS.md and does not read CLAUDE.md.
 
 The installed process and adapters are tool-owned and replaced on upgrade.
-Change shared process instructions in the req-driven-dev source repository and
-ship a new CLI. Project instructions live in the rest of AGENTS.md and
+Update the CLI and rerun 'modernpath install' to refresh them.
+Project instructions live in the rest of AGENTS.md and
 .claude/rules/.
 
 The process store is server-only. Connect the repository with 'modernpath init',

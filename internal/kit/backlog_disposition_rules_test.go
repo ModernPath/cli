@@ -11,8 +11,8 @@ import (
 // Epic 298 (SR-3815, TC-1400): the installed kit says how a delivered backlog,
 // gap or tooling record is routed at plan save and closed after completion
 // approval, and PROCESS.md says the records are created, routed and closed on
-// the server. The sentences are pinned by distinctive fragments of the upstream
-// req-driven-dev text, read after whitespace normalisation from the installed
+// the server. The sentences are pinned by distinctive fragments of the process
+// text, read after whitespace normalisation from the installed
 // copy under .modernpath/rdd, whose .claude/skills copy must be byte-identical.
 func TestInstalledKitRoutesAndClosesBacklogRecords(t *testing.T) {
 	root := t.TempDir()

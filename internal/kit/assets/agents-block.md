@@ -1,8 +1,7 @@
 ## Read this first (binding, all agents)
 
-The shared delivery process is installed by the `modernpath` CLI from a
-versioned `req-driven-dev` release snapshot. Read and follow these before
-starting product work:
+The `modernpath` CLI installs the delivery process and agent instructions.
+Read and follow these before starting product work:
 
 1. `.modernpath/rdd/AGENTS.md` — binding shared agent rules;
 2. `.modernpath/rdd/PROCESS.md` — the canonical process: authority, items,
@@ -53,9 +52,9 @@ now package skills; `rdd-audit` inspects Traces, endpoints and evidence.
 
 Project instructions may add stack, commands, architecture, domain, and safety
 rules. On conflict the process wins (see "Instruction ownership" in
-`.modernpath/rdd/AGENTS.md`); a genuine conflict is a defect to report — fix the
-canonical `req-driven-dev` source and publish a new CLI rather than creating a
-local variant.
+`.modernpath/rdd/AGENTS.md`); report genuine conflicts rather than editing
+installed copies. Update the CLI and run
+`modernpath install` to refresh the managed process.
 
 ## Codebase knowledge (binding, all agents)
 

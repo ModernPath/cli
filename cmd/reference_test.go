@@ -210,6 +210,18 @@ func TestCLIReferenceIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestCLIReferenceOmitsRepositoryInternals(t *testing.T) {
+	reference := renderCLIReference(rootCmd)
+	for _, internal := range []string{
+		"ModernPath/modernpath-v1", "req-driven-dev", "modernpath-core/",
+		"tools/modernpath/", "internal/kit/",
+	} {
+		if strings.Contains(reference, internal) {
+			t.Errorf("customer command reference exposes repository internals: %q", internal)
+		}
+	}
+}
+
 // phaseRow returns the one phase-map row that starts with the given cell, so a
 // command can be asserted in the phase an agent reads it under.
 func phaseRow(t *testing.T, loop, prefix string) string {

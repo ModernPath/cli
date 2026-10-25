@@ -223,11 +223,6 @@ func TestEveryInstallTargetAssetExists(t *testing.T) {
 			t.Errorf("installTargets maps %s, which is not in the embedded tree: %v — the mapping is silently dead", asset, err)
 		}
 	}
-	for asset := range legacyInstallTargets {
-		if _, err := assets.ReadFile(asset); err != nil {
-			t.Errorf("legacyInstallTargets maps %s, which is not in the embedded tree: %v", asset, err)
-		}
-	}
 	for _, m := range mergeTargets {
 		if _, err := assets.ReadFile(m.asset); err != nil {
 			t.Errorf("mergeTargets maps %s, which is not in the embedded tree: %v", m.asset, err)
@@ -248,8 +243,7 @@ func TestEveryInstallTargetAssetExists(t *testing.T) {
 // judge thinness in general, and does not claim to.
 // scanForStubs returns every SKILL.md under dirs that carries the stub marker,
 // and how many it read. Separated so the detector can be exercised against a
-// planted fixture: the embedded assets must never be edited, not even
-// temporarily, so a mutation run cannot prove this test by breaking them.
+// planted fixture without changing the packaged instructions.
 func scanForStubs(t *testing.T, dirs []string) (found []string, checked int) {
 	t.Helper()
 	stub := regexp.MustCompile(`(?i)canonical process pointer`)

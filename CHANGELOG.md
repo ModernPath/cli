@@ -7,6 +7,10 @@
   end of the file on every run, which left `.gitignore` modified whenever other
   entries followed the block.
 
+- Bundle the delivery process and skills with the CLI. `modernpath install`
+  removes retired provenance files while retaining process installation,
+  drift checks and custom workspace files.
+
 ## v0.22.0 — native Epics, requirements and evidence replace the legacy process commands
 
 - `epics plan return-to-planning` lets the current implementation approver return
@@ -28,9 +32,9 @@
 - Keep backlog routing truthful (Epic 298). The CLI reference's phase map names
   `backlog update` in the Plan and Discoveries rows (`ROUTED to <epic id>` at
   plan save) and in the Completion row (`CLOSED by <epic id>` after completion
-  approval); the installed process is re-pinned to the req-driven-dev revision
-  whose rdd-plan, rdd-triage, rdd-completion-review, rdd-deliver and PROCESS.md
-  carry the routing and closing steps. `epics get <id> --fields backlog --json`
+  approval); rdd-plan, rdd-triage, rdd-completion-review, rdd-deliver and
+  PROCESS.md carry the routing and closing steps.
+  `epics get <id> --fields backlog --json`
   (also under `--full`) serves the records routed to or closed by the Epic.
   Backlog links carry `title`, `display_ref` and `available`; `backlog list`,
   `get` and `update` text print the target's title as `ROUTED to 288 — <title>`.

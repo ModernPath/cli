@@ -54,20 +54,19 @@ repository has no file-backed process ledger.
 
 ## Distribution
 
-Consuming repositories do not vendor this repository. A distribution tool
-embeds a versioned snapshot of these instructions and installs it into the
-workspace. Platform-specific metadata, compatibility files, registration and
-hooks belong to that distribution tool; this repository supplies shared
-instructions and skills.
+The `modernpath` CLI bundles these instructions and installs them into each
+connected workspace. `modernpath install` manages `.modernpath/rdd/` and the
+agent-discovery copies under `.claude/skills/rdd-*`.
 
 Product documents remain ordinary repository sources and use the consuming
 project's documented documentation workflow. They are not process state.
 
 ## Process maintenance
 
-Changes to item identity, traces, lifecycle, human approvals, evidence or
-completion belong in `PROCESS.md`. Check internal links and search skills for
-competing authority statements. Keep reverse-engineering skills and their
-shared audit utility aligned with the process sections they consume.
+Update the CLI and run `modernpath install` to refresh the managed process and
+skills. `modernpath install --check` reports missing or changed managed files.
+Keep project-specific instructions outside managed blocks in `AGENTS.md` and
+under `.claude/rules/`. Report process defects rather than editing installed
+copies, which are replaced on upgrade.
 
 License: MIT.

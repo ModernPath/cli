@@ -1,5 +1,5 @@
-The shared process is installed by the `modernpath` CLI. These files are a
-versioned snapshot of the canonical `req-driven-dev` source repository.
+The `modernpath` CLI installs the delivery process and agent instructions.
+Update the CLI and run `modernpath install` to refresh these managed files.
 
 @.modernpath/rdd/AGENTS.md
 

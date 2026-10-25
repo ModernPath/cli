@@ -15,7 +15,7 @@ import (
 
 const managedSkillReferencesFile = ".modernpath/skill-references.json"
 
-// The kit ships a released req-driven-dev snapshot and the agent-channel
+// The kit ships the process maintained in this repository and the agent-channel
 // adapters that load it. Installation never fetches instructions at runtime.
 //
 //go:embed assets
@@ -25,7 +25,6 @@ var assets embed.FS
 // repository. The process snapshot under assets/rdd is mapped recursively by
 // TargetForAsset so adding a source document cannot be omitted from install.
 var installTargets = map[string]string{
-	"assets/rdd-source.txt": ".modernpath/rdd/.source",
 	// The consolidated package's skills replaced the workspace-authored
 	// rdd-build-loop/rdd-planning/rdd-ledger/rdd-discovery/rdd-reverse-engineer/
 	// rdd-verify set; those live under assets/rdd/skills and reach
@@ -43,18 +42,13 @@ var installTargets = map[string]string{
 	"assets/agents-codex/rdd-cold-reviewer.toml": ".codex/agents/rdd-cold-reviewer.toml",
 }
 
-// legacyInstallTargets records the old Claude-specific location of assets
-// that are not part of the recursive process tree. Install removes only files
-// it previously owned; client-created files under .claude/rdd are preserved.
-var legacyInstallTargets = map[string]string{
-	"assets/rdd-source.txt": ".claude/rdd/.source",
-}
-
 // retiredInstallTargets are tool-owned files from released package layouts
 // that cannot be derived from the current embedded tree. Keep this list
 // explicit so an upgrade removes stale manuals without deleting unknown client
 // files from either namespace.
 var retiredInstallTargets = []string{
+	".modernpath/rdd/.source",
+	".claude/rdd/.source",
 	".claude/agents/rdd-context-deriver.md",
 	".codex/agents/rdd-context-deriver.toml",
 	".modernpath/rdd/file-state/BACKLOG.md",
@@ -70,7 +64,7 @@ var retiredInstallTargets = []string{
 	".claude/skills/mp-process-cli/SKILL.md",
 	".claude/hooks/rdd-gate.sh",
 	".claude/skills/rdd-ledger/SKILL.md",
-	// req-driven-dev PR #30 retired its provider adapter and agent metadata.
+	// Retired provider adapter and agent metadata.
 	".modernpath/rdd/CLAUDE.md",
 	".modernpath/rdd/skills/rdd-audit/agents/openai.yaml",
 	".modernpath/rdd/skills/rdd-build/agents/openai.yaml",
@@ -617,8 +611,7 @@ func LegacyTargetForAsset(asset string) (string, bool) {
 	if relative, ok := strings.CutPrefix(clean, "assets/rdd/"); ok && relative != "" {
 		return path.Join(".claude/rdd", relative), true
 	}
-	target, ok := legacyInstallTargets[clean]
-	return target, ok
+	return "", false
 }
 
 // RetiredTargets lists process files an upgrade may remove. Sorted and
@@ -688,9 +681,9 @@ func ListAssets() ([]string, error) {
 }
 
 // Check reports which kit-owned files differ from what this binary would
-// install — edited, or missing entirely. The installed process is a released
-// snapshot, so process changes belong in req-driven-dev and arrive through a
-// new CLI build rather than edits to generated files.
+// install — edited, or missing entirely. Process changes belong in this
+// repository's assets/rdd sources and arrive through a new CLI build rather
+// than edits to generated files.
 //
 // Check compares only the kit-namespaced files. Files a client co-owns are
 // deliberately excluded: their content is supposed to differ.

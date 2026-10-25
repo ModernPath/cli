@@ -1,13 +1,9 @@
 # ModernPath CLI
 
-This is the canonical guide for the `modernpath` command-line interface. The
-Getting Started section is written for users and may be reused by product help
-surfaces. The Technical Description records how the CLI actually works and
-links every behavioral claim to the implementation.
-
-Other READMEs and UI surfaces should link here instead of maintaining a second
-command guide. When this document and `modernpath --help` disagree, the current
-binary and the source files cited below win.
+This guide covers installation, connection and use of the `modernpath`
+command-line interface. Run `modernpath <command> --help` for the options
+supported by your installed version. `modernpath install` refreshes the local
+command reference at `.modernpath/cli-reference.md`.
 
 ## Delivery release activation
 
@@ -16,7 +12,7 @@ From a workspace bound to the intended System:
 ```sh
 modernpath releases list
 modernpath releases pin set
-modernpath releases activate modernpath-v1-09
+modernpath releases activate delivery-1
 ```
 
 PIN setup prompts twice without echo (4–6 digits). Input is hidden before
@@ -37,11 +33,8 @@ activated, creation remains planned, and repeating activation is idempotent
 but still requires the PIN.
 
 `factory release activate` and `factory pin set/status` are compatibility
-entry points for these native operations. They no longer call the retired
-Author API or create process-store gates. A compatible server must expose
+entry points for these native operations. A compatible server must expose
 `POST /api/compliance/releases/:id/activate`; UI and CLI share this endpoint.
-Source: `tools/modernpath/cmd/releases.go` and
-`apps/core/lib/core/compliance/release_lifecycle.ex`.
 
 ## Move requirements between releases
 
@@ -63,9 +56,9 @@ Preview, review the exact target/selection/source memberships, then apply the
 saved preview without editing it:
 
 ```sh
-modernpath releases move-requirements modernpath-v1-09 --file selection.json --json > preview.json
-modernpath releases move-requirements modernpath-v1-09 --file preview.json --apply --json
-modernpath releases members modernpath-v1-09 --all --json
+modernpath releases move-requirements delivery-1 --file selection.json --json > preview.json
+modernpath releases move-requirements delivery-1 --file preview.json --apply --json
+modernpath releases members delivery-1 --all --json
 ```
 
 The default preview is read-only. Each requirement row includes its title and
@@ -87,14 +80,13 @@ unchanged. Only selected membership changes; Epics, linked requirements and
 Roadmap records are not moved. Content, lifecycle, accepted versions and evidence
 freshness stay intact; audit owns the movement time. This preservation applies
 to `releases move-requirements`. Older Epic/member moves, release-close carry-forward
-and the maintenance ReleaseRestamp operation still update content timestamps and
+and older maintenance operations still update content timestamps and
 can make reverse-engineering evidence require verification again.
 
 Mutation requests are never retried or split automatically. After a network
 failure or invalid receipt, inspect membership before retrying the reviewed
 request. An unchanged retry creates no mutation event; a later real move records
-a fresh event. Compatible server membership endpoints are required; there is no
-fallback to ReleaseRestamp or direct store access.
+a fresh event. Compatible server membership endpoints are required.
 
 `releases members` reads up to 100 requirements; `--all` reads every page. Output
 includes typed UUIDs, `total_count`, `complete` and `next_offset`. Pages are
@@ -102,9 +94,6 @@ separate snapshots: quiesce concurrent changes for an exact inventory, compare
 complete typed-ID sets rather than totals alone, and retry if totals change or
 a page is incomplete. This reads requirement membership, not Epic membership
 or deployment status.
-
-Implementation: `tools/modernpath/cmd/release_membership.go` and
-`apps/core/lib/core/compliance/requirement_release_membership.ex`.
 
 ## Getting Started
 
@@ -1087,28 +1076,6 @@ Use `modernpath <command> --help` for current flags and subcommands.
 
 ## Technical Description
 
-### Source authority
-
-Paths in this section are relative to `modernpath-core`.
-
-| Concern | Authoritative source |
-|---|---|
-| Command registration and global flags | `CODE:tools/modernpath/cmd/root.go:rootCmd` and each command file's `init` function |
-| Authentication and credential writes | `CODE:tools/modernpath/cmd/auth.go:runAuth`, `CODE:tools/modernpath/internal/config/config.go:WriteAuth` |
-| ZITADEL login and device flow | `CODE:tools/modernpath/internal/zitadel/login.go:Login`, `CODE:tools/modernpath/internal/zitadel/authcode.go:AuthCodeLogin`, `CODE:tools/modernpath/internal/zitadel/deviceflow.go:DeviceLogin` |
-| Repository initialization and Knowledge Core export | `CODE:tools/modernpath/cmd/init.go:runInit`, `CODE:tools/modernpath/cmd/init.go:finalizeSystemInit` |
-| Binding discovery and persistence | `CODE:tools/modernpath/internal/config/config.go:FindConfigDir`, `CODE:tools/modernpath/internal/config/config.go:WriteConfig` |
-| Knowledge Core synchronization | `CODE:tools/modernpath/cmd/docs.go:runDocsSync` |
-| Source upload | `CODE:tools/modernpath/cmd/source.go` |
-| Requirements and native procedure/evidence commands | `CODE:tools/modernpath/cmd/requirements_list.go`, `CODE:tools/modernpath/cmd/requirements_search.go`, `CODE:tools/modernpath/cmd/compliance_native.go` |
-| Epic records, specifications and saved plan commands | `CODE:tools/modernpath/cmd/epics.go`, `CODE:tools/modernpath/cmd/epic_records.go`, `CODE:tools/modernpath/cmd/epic_plan.go` |
-| Agent hooks | `CODE:tools/modernpath/cmd/hooks.go:runHooksInstall`, `CODE:tools/modernpath/cmd/hooks_doctor.go:runHooksDoctor` |
-| Development review | `CODE:tools/modernpath/cmd/review.go` |
-| Installers and release archives | `CODE:tools/modernpath/scripts/install.sh`, `CODE:tools/modernpath/scripts/install.ps1`, `CODE:tools/modernpath/scripts/build-all.sh` |
-
-Generated `.modernpath` documents are caches, not evidence for CLI behavior
-when they disagree with the sources above.
-
 ### Connection model
 
 The CLI and browser UI are separate clients of the same server. A repository
@@ -1192,18 +1159,10 @@ available for API-backed discovery.
 
 ### Coding-agent and MCP setup
 
-`modernpath dev setup <tool>` configures ModernPath's MCP endpoint for OpenCode,
-Cursor, Claude Code, or Codex. The registered setup path is implemented by
-`CODE:tools/modernpath/cmd/dev.go:runDevSetup`; tool-specific writers live in
-the same file under `setupOpenCodeMCP`, `setupCursorMCP`, `setupClaudeMCP`, and
-`setupGenericMCP`.
-
-The current writers put `<api_url>/api/mcp` into the client configuration.
-Phoenix separately exposes REST tool execution under `/api/mcp/tools*` and MCP
-transport under `/mcp/sse` plus `/mcp/message`. Treat this as a known contract
-area and verify an actual client connection before changing or documenting a
-different endpoint. The endpoint inventory is grounded in the monorepo source
-`modernpath-core/docs/mcp-and-slack.md`, section “CLI integration”.
+`modernpath dev setup <tool>` configures the connected server's MCP endpoint
+for OpenCode, Cursor, Claude Code, or Codex. Run the command's `--help` for
+supported options, then verify the connection in your coding agent before
+using its tools.
 
 ### Command surface
 
@@ -1243,7 +1202,7 @@ failed reads report an error rather than falling back to a copied model. This
 requires a server version that exposes recording schema discovery.
 New requirements are recorded as `PROPOSED`. The command reads the supplied JSON and
 posts it directly; it does not inspect a repository checkout or require a run,
-content digest or proof report. Implementation: `CODE:tools/modernpath/cmd/reverse_engineer.go`.
+content digest or proof report.
 
 Select recorded requirements by native kind and UUID to review their current
 content, traces, criteria and evidence:
@@ -1284,28 +1243,13 @@ review bundle to the server for a complete recheck and atomic publication as
 requirement's resulting revision, accepted version, actor, time, reason, and
 whether the request accepted it now or returned an existing acceptance.
 
-### Build, test, and release
-
-Contributor commands:
-
-| Task | Command | Source |
-|---|---|---|
-| Build local binary | `cd tools/modernpath && go build -o modernpath .` | `CODE:tools/modernpath/go.mod` |
-| Run the CLI suite | `cd tools/modernpath && go test ./...` | `CODE:Dockerfile` (`go-builder`) |
-| Build release archives | `cd tools/modernpath && bash scripts/build-all.sh [version]` | `CODE:tools/modernpath/scripts/build-all.sh` |
-| Install the working tree for local testing | `cd tools/modernpath && bash scripts/install-local.sh` | `CODE:tools/modernpath/scripts/install-local.sh` |
-| Refresh embedded process assets | `tools/modernpath/scripts/sync-rdd-assets.sh /path/to/req-driven-dev` | `CODE:tools/modernpath/scripts/sync-rdd-assets.sh` |
-
-The release build targets Darwin amd64/arm64, Linux amd64/arm64, and Windows
-amd64 when the required archive tools are available.
-
 ### Backlog discoveries
 
 `modernpath backlog create --file discovery.json --json` adds an attributed
 `OPEN` record to the bound System. Use `--file -` for stdin. Input requires
 `title`; optional `kind` is `backlog` (default), `gap` or `tooling`. Gaps require
-`gap_kind` of `capability` or `specification`. See
-[Backlog](../../docs/features/backlog.md) for content fields and mock-data examples.
+`gap_kind` of `capability` or `specification`. Use
+`modernpath backlog create --help` for content fields and examples.
 Read back with `modernpath backlog list --json` and
 `modernpath backlog get <uuid> --full --json`. List output supports `--limit`
 and `--offset`; detail output supports `--fields` or `--full`. Each served
