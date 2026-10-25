@@ -39,6 +39,10 @@ var limitSleep = time.Sleep
 // so a test can shrink it.
 var defaultCallTimeout = 120 * time.Second
 
+// storeRevisionHeader names the revision the server runs on every Core
+// response; a gateway's own refusal does not carry it.
+const storeRevisionHeader = "x-modernpath-store-revision"
+
 // get performs a read; GET requests cannot carry a payload.
 func (e *cliEnv) get(apiPath string) (int, map[string]any, error) {
 	return e.request(http.MethodGet, apiPath, nil)
@@ -123,6 +127,9 @@ func (e *cliEnv) sendOnce(method, apiPath string, payload any) (int, map[string]
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
+	if rev := resp.Header.Get(storeRevisionHeader); rev != "" {
+		e.storeRevision = rev
+	}
 
 	// REQ-CROSS-372: keep an undecodable body (a proxy or gateway error page)
 	// as the refusal text instead of dropping it — every `server %d` formatter

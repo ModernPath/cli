@@ -265,3 +265,52 @@ func TestStatusStaysSilentWhenTheReachabilityCallFails(t *testing.T) {
 		t.Fatalf("a check that itself errors must fail open — no warning, got %q", warning)
 	}
 }
+
+// Status names the revision the bound server runs, from the header every Core
+// response carries, and says why when it cannot.
+func TestStatusNamesTheRevisionTheServerRuns(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	for name, tc := range map[string]struct {
+		header, apiURL, want string
+		signedOut            bool
+	}{
+		"served":        {header: "abc123", want: "Serving:       revision abc123"},
+		"not served":    {want: "Serving:       unknown (the server does not send its revision)"},
+		"not reached":   {apiURL: closed.URL, want: "Serving:       unknown (the server did not answer)"},
+		"not signed in": {header: "abc123", signedOut: true, want: "Serving:       unknown (no valid sign-in)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetTreeFlags(statusCmd)
+			t.Chdir(seedStatusWorkspace(t))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.header != "" {
+					w.Header().Set("x-modernpath-store-revision", tc.header)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/systems" {
+					_, _ = w.Write([]byte(`[{"id":7}]`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"status":"ok"}`))
+			}))
+			t.Cleanup(srv.Close)
+			apiURL := srv.URL
+			if tc.apiURL != "" {
+				apiURL = tc.apiURL
+			}
+			if err := config.WriteConfig(&config.Config{APIURL: apiURL, SystemID: 7}); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.signedOut {
+				if err := config.WriteAuth(&config.Auth{Token: "good-bearer"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := runCapturing(t, func() error { return runStatus(statusCmd, nil) })
+			if err != nil || !strings.Contains(out, tc.want) {
+				t.Fatalf("status must print %q; err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}

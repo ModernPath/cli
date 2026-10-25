@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,14 +10,17 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current ModernPath status",
-	Long: `Display the current ModernPath project status: the binding, local
-documentation exports, and documentation sync time.`,
+	Long: `Display the current ModernPath project status: the binding, the revision
+the bound server runs, local documentation exports, and documentation sync
+time. The Serving line prints unknown, with the reason, when the server does
+not answer or does not send its revision.`,
 	RunE: runStatus,
 }
 
@@ -152,6 +156,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.SystemID > 0 {
 		fmt.Printf("Slug:          %s\n", cfg.SystemSlug)
+		fmt.Printf("Serving:       %s\n", servingLine())
 		if warning := statusReachabilityWarning(apiURL, cfg.SystemID); warning != "" {
 			printWarning("%s\n", warning)
 		}
@@ -176,6 +181,30 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	return nil
+}
+
+// servingReadTimeout bounds the health read behind the Serving line, so an
+// unreachable server delays status by seconds at most.
+const servingReadTimeout = 2 * time.Second
+
+// servingLine names the revision the bound server runs, from the header Core
+// puts on every response, read with one health request and the stored token.
+// It never fails status: what it cannot learn it prints as unknown.
+func servingLine() string {
+	env, err := credentialLoad(false)
+	if err != nil {
+		return "unknown (no valid sign-in)"
+	}
+	env.callTimeout = servingReadTimeout
+	status, _, _ := env.sendOnce(http.MethodGet, platform.HealthPath(env.APIURL), nil)
+	switch {
+	case env.storeRevision != "":
+		return "revision " + env.storeRevision
+	case status == 0:
+		return "unknown (the server did not answer)"
+	default:
+		return "unknown (the server does not send its revision)"
+	}
 }
 
 // statusReachabilityWarning returns a warning line when a bearer exists and

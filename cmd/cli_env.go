@@ -30,6 +30,9 @@ type cliEnv struct {
 	// known, so a 401 can say whether the token had already expired
 	// (REQ-CROSS-389).
 	tokenExpiry time.Time
+	// storeRevision is the revision the server named on its latest response
+	// (storeRevisionHeader), empty while none has named one.
+	storeRevision string
 }
 
 // credentialError marks a failure that re-running the failing command cannot

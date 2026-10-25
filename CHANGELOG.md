@@ -24,6 +24,11 @@
   a non-empty `statement`, or `question` for an open question, with a
   `shared_context` input example. A plain string entry is refused
   (`each decision needs a non-empty statement`).
+- `modernpath status` shows the revision the bound server runs again, as
+  `Serving:       revision <sha>`, read from the `x-modernpath-store-revision`
+  header Core puts on every response. It prints `unknown` with the reason when
+  the workspace has no valid sign-in, the server does not answer, or the server
+  does not send the header. Requires a server that sends the header.
 
 - Bundle the delivery process and skills with the CLI. `modernpath install`
   removes retired provenance files while retaining process installation,
