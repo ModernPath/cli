@@ -1,0 +1,18 @@
+{
+  "requirements": [
+    {
+      "id": "b0000000-0000-4000-8000-000000000010",
+      "kind": "system_requirement",
+      "title": "Close a charging session",
+      "description": "The charging API closes a session when the cable is unplugged.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000510",
+          "kind": "criterion",
+          "statement": "the session closes within 10 seconds"
+        }
+      ]
+    }
+  ],
+  "traces": []
+}

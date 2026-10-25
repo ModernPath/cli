@@ -28,6 +28,16 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path, _ := cmd.Flags().GetString("file")
+			dir, _ := cmd.Flags().GetString("dir")
+			switch {
+			case path != "" && dir != "":
+				return fmt.Errorf("give --file or --dir, not both")
+			case dir != "":
+				retry, _ := cmd.Flags().GetBool("retry-refused")
+				return reverseRecordDir(cmd, load, dir, retry)
+			case path == "":
+				return fmt.Errorf("give --file with one JSON input, or --dir with a folder of them")
+			}
 			input, err := readReverseRecord(cmd, path)
 			if err != nil {
 				return err
@@ -40,24 +50,19 @@ func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, _ := body["data"].(map[string]any)
-			requirements, _ := data["requirements"].([]any)
-			traces, _ := data["traces"].([]any)
-			items := make([]any, 0, len(requirements))
-			for _, raw := range requirements {
-				row, ok := raw.(map[string]any)
-				if !ok {
-					return fmt.Errorf("reverse-engineering response contains an invalid requirement")
-				}
-				items = append(items, selectKeys(row, []string{"id", "kind", "display_number", "title", "work_status"}))
+			receipt, err := reverseRecordReceipt(body)
+			if err != nil {
+				return err
 			}
-			return writeRecord(cmd, map[string]any{"requirements": items, "trace_count": len(traces)})
+			return writeRecord(cmd, receipt)
 		},
 	}
-	command.Flags().String("file", "", "JSON input file; - reads stdin (required)")
+	command.Flags().String("file", "", "JSON input file; - reads stdin")
+	command.Flags().String("dir", "", "folder of JSON input files, recorded one request per file in lexical order")
+	command.Flags().Bool("retry-refused", false, "with --dir, also resend files refused before and unchanged since")
 	command.Flags().Bool("json", false, "emit the compact receipt as JSON")
-	_ = command.MarkFlagRequired("file")
 	root.AddCommand(command)
+	root.AddCommand(reverseCheckCommand())
 	root.AddCommand(&cobra.Command{
 		Use: "schema", Short: "Read the server JSON Schema for record input", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -141,6 +146,11 @@ func readReverseRecord(cmd *cobra.Command, path string) (reverseRecordPayload, e
 	if len(contents) > maxBytes {
 		return reverseRecordPayload{}, fmt.Errorf("JSON input exceeds 48 MB limit")
 	}
+	return parseReverseRecord(contents)
+}
+
+// parseReverseRecord validates one record input already read into memory.
+func parseReverseRecord(contents []byte) (reverseRecordPayload, error) {
 	var fields map[string]json.RawMessage
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	if err := decoder.Decode(&fields); err != nil {
@@ -174,6 +184,22 @@ func readReverseRecord(cmd *cobra.Command, path string) (reverseRecordPayload, e
 		return reverseRecordPayload{}, fmt.Errorf("invalid native input: %w", err)
 	}
 	return payload, nil
+}
+
+// reverseRecordReceipt is the compact receipt record prints and record --dir keeps.
+func reverseRecordReceipt(body map[string]any) (map[string]any, error) {
+	data, _ := body["data"].(map[string]any)
+	requirements, _ := data["requirements"].([]any)
+	traces, _ := data["traces"].([]any)
+	items := make([]any, 0, len(requirements))
+	for _, raw := range requirements {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("reverse-engineering response contains an invalid requirement")
+		}
+		items = append(items, selectKeys(row, []string{"id", "kind", "display_number", "title", "work_status"}))
+	}
+	return map[string]any{"requirements": items, "trace_count": len(traces)}, nil
 }
 
 func reverseRecordCall(env *cliEnv, payload reverseRecordPayload) (map[string]any, error) {

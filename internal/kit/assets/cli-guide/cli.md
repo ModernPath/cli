@@ -1148,7 +1148,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and native test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
-| Reverse engineering | `reverse-engineer schema/record/review/accept` |
+| Reverse engineering | `reverse-engineer schema/check/record/review/accept` |
 | Agent integration | `install`, `hooks` |
 | Development | `dev run`, `dev setup`, `dev list`, `dev review` |
 
@@ -1169,6 +1169,34 @@ requires a server version that exposes recording schema discovery.
 New requirements are recorded as `PROPOSED`. The command reads the supplied JSON and
 posts it directly; it does not inspect a repository checkout or require a run,
 content digest or proof report.
+
+A sweep stages one JSON file per group of requirements. Check the staged files
+offline, then record the folder in one call:
+
+```sh
+modernpath reverse-engineer check --dir groups --repo app=services/app
+modernpath reverse-engineer record --dir groups
+```
+
+`check` needs no sign-in. It fails on missing or conflicting UUIDs, repeated
+statements, shared criterion templates, missing or catch-all actors and fields
+the server refuses, and warns on user requirements no system requirement
+serves. With `--repo key=dir` it counts the tracked files below `dir` as
+linked, excluded (`--exclude`) or unresolved; coverage never changes the exit
+code. `--self-test` proves every check on an embedded known-bad set. The store
+does not enforce the check.
+
+`record --dir` sends one request per file in lexical order. After a success it
+keeps the file's copy and receipt in `groups/recorded/`; a content refusal
+(422, 409 or a local input error) is noted in `recorded/<name>.refused` and the
+next file is sent. Any other failure stops the run before the next file with a
+`stopped_reason`: `sign-in`, `permission`, `server-request` (another 4xx),
+`server` (5xx), `unknown-outcome` (a reply with no data), `rate-limit` (exit
+75), `connection`, `binding`, `local-write` or `local-read`; rerun to resume. A
+rerun skips recorded and unchanged refused files (`--retry-refused` resends
+those) and counts the refusals that still stand, and reports a recorded file
+that changed. The folder is not
+atomic, only each file's request, and the store stays the authority.
 
 Check current verification before running tests:
 

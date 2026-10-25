@@ -1,0 +1,18 @@
+{
+  "requirements": [
+    {
+      "id": "b0000000-0000-4000-8000-000000000012",
+      "kind": "system_requirement",
+      "title": "Resume a session",
+      "description": "The charging API resumes a paused session on request.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000512",
+          "kind": "criterion",
+          "statement": "a resumed session draws power again"
+        }
+      ]
+    }
+  ],
+  "traces": []
+}

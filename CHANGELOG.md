@@ -47,6 +47,20 @@
   comparing execution timestamps to content timestamps. Epic RED/GREEN checks
   retain their explicitly registered execution identities.
 
+- Add `reverse-engineer check`, an offline check of staged record files: it
+  fails on missing or conflicting UUIDs, repeated statements, shared criterion
+  templates, missing or catch-all actors and over-long fields, warns on user
+  requirements no system requirement serves, reports file and test coverage
+  with `--repo`, and proves itself with `--self-test` (Epic 315). An id must be
+  a UUID; a repository key no trace uses still gets its linked, excluded and
+  unresolved counts; the self-test prints each seeded finding.
+- Add `reverse-engineer record --dir`, which records a folder of staged files
+  with one request per file, keeps a copy and receipt of each recorded file,
+  notes content refusals and goes on, stops on run-wide failures with a
+  `stopped_reason`, and resumes on rerun, counting refusals that still stand
+  (Epic 315).
+- The reverse-engineering kit gains requirement-quality and batch-sweep
+  references (Epic 315).
 - Reduce Epic verification to native TestCase identities/revisions, scoped
   executions, actual outcomes and criterion/code Traces. Remove procedures,
   runners, output, copied definitions, candidate author context and saved

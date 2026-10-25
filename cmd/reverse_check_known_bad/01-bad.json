@@ -1,0 +1,144 @@
+{
+  "requirements": [
+    {
+      "kind": "system_requirement",
+      "title": "Station list without an id",
+      "description": "The station API lists stations near a position.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000501",
+          "kind": "criterion",
+          "statement": "stations within 5 km are returned"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000002",
+      "kind": "system_requirement",
+      "title": "Receipt mail",
+      "description": "The receipt service mails the receipt after a payment.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000502",
+          "kind": "criterion",
+          "statement": "a receipt mail is sent within 1 minute"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000003",
+      "kind": "system_requirement",
+      "title": "Receipt mailer",
+      "description": "The receipt service mails the receipt after a payment.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000503",
+          "kind": "criterion",
+          "statement": "the mail carries the station name"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000004",
+      "kind": "system_requirement",
+      "title": "List invoices",
+      "description": "The API lists invoices of account 4.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000504",
+          "kind": "criterion",
+          "statement": "the invoices list is returned in pages of 50"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000005",
+      "kind": "system_requirement",
+      "title": "List receipts",
+      "description": "The API lists receipts of account 5.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000505",
+          "kind": "criterion",
+          "statement": "the receipts list is returned in pages of 50"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000006",
+      "kind": "system_requirement",
+      "title": "List orders",
+      "description": "The API lists orders of account 6.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000506",
+          "kind": "criterion",
+          "statement": "the orders list is returned in pages of 50"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000007",
+      "kind": "system_requirement",
+      "title": "List refunds",
+      "description": "The API lists refunds of account 7.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000507",
+          "kind": "criterion",
+          "statement": "the refunds list is returned in pages of 50"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000008",
+      "kind": "user_requirement",
+      "title": "See past payments",
+      "description": "A person sees the payments of the last year.",
+      "actor": "the user",
+      "intended_use": "Check what was paid",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000508",
+          "kind": "scenario",
+          "given": "a signed-in account with payments",
+          "when": "they open the history",
+          "then": "payments of the last 12 months are listed"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000009",
+      "kind": "user_requirement",
+      "title": "Start charging",
+      "description": "A driver starts a charging session at a charger.",
+      "actor": "Driver xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "intended_use": "Charge the car",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000509",
+          "kind": "scenario",
+          "given": "a free charger",
+          "when": "the driver starts a session",
+          "then": "charging starts within 30 seconds"
+        }
+      ]
+    }
+  ],
+  "traces": [
+    {
+      "source_type": "user_requirement",
+      "source_id": "b0000000-0000-4000-8000-000000000009",
+      "target_type": "system_requirement",
+      "target_id": "b0000000-0000-4000-8000-000000000002",
+      "link_kind": "derives"
+    },
+    {
+      "source_type": "user_requirement",
+      "source_id": "b0000000-0000-4000-8000-000000000009",
+      "target_type": "system_requirement",
+      "target_id": "b0000000-0000-4000-8000-000000000099",
+      "link_kind": "relates"
+    }
+  ]
+}

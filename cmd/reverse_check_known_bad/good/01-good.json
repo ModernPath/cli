@@ -1,0 +1,62 @@
+{
+  "requirements": [
+    {
+      "id": "b0000000-0000-4000-8000-000000000100",
+      "kind": "user_requirement",
+      "title": "Add a payment card",
+      "description": "A signed-in customer saves a payment card and pays with it at the pump.",
+      "actor": "Signed-in mobile app customer",
+      "intended_use": "Pay at the pump with a saved card",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000600",
+          "kind": "scenario",
+          "given": "a signed-in customer with no saved card",
+          "when": "they add a valid Visa card",
+          "then": "the card is the default payment method"
+        }
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000101",
+      "kind": "system_requirement",
+      "title": "Card vault tokenizes cards",
+      "description": "The cards API exchanges the card number for a provider token and stores only the token.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000601",
+          "kind": "criterion",
+          "statement": "POST /cards returns 201 with a token and never stores the card number"
+        }
+      ]
+    },
+    {
+      "kind": "system_requirement",
+      "id": "b0000000-0000-4000-8000-000000000102"
+    }
+  ],
+  "traces": [
+    {
+      "source_type": "user_requirement",
+      "source_id": "b0000000-0000-4000-8000-000000000100",
+      "target_type": "system_requirement",
+      "target_id": "b0000000-0000-4000-8000-000000000101",
+      "link_kind": "derives"
+    },
+    {
+      "source_type": "user_requirement",
+      "source_id": "b0000000-0000-4000-8000-000000000100",
+      "target_type": "system_requirement",
+      "target_id": "b0000000-0000-4000-8000-000000000102",
+      "link_kind": "derives"
+    },
+    {
+      "source_type": "system_requirement",
+      "source_id": "b0000000-0000-4000-8000-000000000101",
+      "target_type": "source_file",
+      "repository_key": "app",
+      "path": "cards/vault.go",
+      "link_kind": "implements"
+    }
+  ]
+}

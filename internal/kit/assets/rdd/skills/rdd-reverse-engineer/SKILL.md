@@ -37,6 +37,10 @@ complete applicable passing evidence, explicit human acceptance may use
 publish unowned PROPOSED requirements as DONE. If behavior or tests need
 changes, use the ordinary Epic lifecycle instead.
 
+Write each requirement by the rules in
+[requirement quality](references/requirement-quality.md). A sweep of several
+bounded contexts runs as a [batch](references/batch.md).
+
 For a requested coverage report, report the scope inspected and the remaining
 files or behavior honestly; see [coverage reporting](references/coverage.md).
 For requested design-document output, use

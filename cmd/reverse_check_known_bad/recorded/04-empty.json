@@ -1,0 +1,18 @@
+{
+  "requirements": [
+    {
+      "id": "b0000000-0000-4000-8000-000000000011",
+      "kind": "system_requirement",
+      "title": "Pause a session",
+      "description": "The charging API pauses a session on request.",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000511",
+          "kind": "criterion",
+          "statement": "a paused session draws no power"
+        }
+      ]
+    }
+  ],
+  "traces": []
+}

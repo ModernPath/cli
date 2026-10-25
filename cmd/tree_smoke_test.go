@@ -439,6 +439,7 @@ var leafDispositions = map[string]disposition{
 	"requirements obsolete":             {kind: dispExecute, args: []string{"requirements", "obsolete", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--reason", "smoke"}},
 	"requirements set-context":          {kind: dispExecute, args: []string{"requirements", "set-context", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--context", "snake-game"}},
 	"reverse-engineer schema":           {kind: dispExecute, args: []string{"reverse-engineer", "schema"}},
+	"reverse-engineer check":            {kind: dispNoCall, args: []string{"reverse-engineer", "check", "--self-test"}, reason: "local-only"},
 	"reverse-engineer record":           {kind: dispExecute, args: []string{"reverse-engineer", "record", "--file", "-"}},
 	"reverse-engineer review":           {kind: dispExecute, args: []string{"reverse-engineer", "review", "--file", "-", "--json"}},
 	"reverse-engineer accept":           {kind: dispExecute, args: []string{"reverse-engineer", "accept", "--file", "-", "--json"}},
