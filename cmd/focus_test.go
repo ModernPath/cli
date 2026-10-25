@@ -257,3 +257,61 @@ func TestFocusLabelsUseDisplayRefWhileKeepingUUIDTarget(t *testing.T) {
 		t.Fatalf("formatFocusListLine = %q; want display reference without UUID", got)
 	}
 }
+
+func TestFocusBacklogDeclareAndDropUseExplicitNativeKind(t *testing.T) {
+	id := "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001"
+	var methods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		if r.Method == http.MethodPost {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["ref_id"] != id || body["ref_kind"] != "backlog_record" || body["requirement_kind"] != nil {
+				t.Errorf("invalid Backlog declaration: %v", body)
+			}
+			_, _ = io.WriteString(w, `{"data":{"focus":{"ref_id":"`+id+`","ref_kind":"backlog_record","title":"Prepare pagination","resolved":true}}}`)
+		} else {
+			if r.Method != http.MethodDelete || r.URL.Query().Get("ref_id") != id || r.URL.Query().Get("ref_kind") != "backlog_record" || r.URL.Query().Has("requirement_kind") {
+				t.Errorf("invalid scoped drop: %s %s", r.Method, r.URL)
+			}
+			_, _ = io.WriteString(w, `{"data":{"ended":[]}}`)
+		}
+	}))
+	defer srv.Close()
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	out, err := focusDeclare(env, strings.ToUpper(id), "backlog_record")
+	if err != nil || out.status != 200 {
+		t.Fatalf("Backlog declaration refused: %+v %v", out, err)
+	}
+	if focusDisplayRef(out.focus) != id {
+		t.Fatalf("Backlog label=%q, want native UUID", focusDisplayRef(out.focus))
+	}
+	if _, err := focusDrop(env, id, "backlog_record"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(methods, ",") != "POST,DELETE" {
+		t.Fatalf("requests=%v", methods)
+	}
+}
+
+func TestFocusBacklogRefusesInferenceBeforePosting(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	defer srv.Close()
+	env := &cliEnv{APIURL: srv.URL, token: "t", SystemID: 42, Root: "."}
+	if _, err := focusInfer(env, "8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001", "cli", "backlog_record"); err == nil {
+		t.Fatal("inferred Backlog focus accepted")
+	}
+	if called {
+		t.Fatal("refused inference posted to server")
+	}
+}
+
+func TestFocusBacklogMixedSelectorsAreRefusedBeforeLoadingSession(t *testing.T) {
+	oldRef, oldRequirement := focusRefKind, focusRequirementKind
+	defer func() { focusRefKind, focusRequirementKind = oldRef, oldRequirement }()
+	focusRefKind, focusRequirementKind = "backlog_record", "system_requirement"
+	if err := focusCmd.RunE(focusCmd, []string{"8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001"}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("mixed selection error=%v", err)
+	}
+}

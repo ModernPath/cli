@@ -941,7 +941,10 @@ meaning, criterion coverage and the actual test observation. A valid Trace is
 not proof that a document supports intent, code implements it or a test passed.
 Handle unsupported endpoint reads under the System-name rule in the delivery
 loop reference: tooling backlog items only when the bound System name contains
-`modernpath` (case-insensitive), no missing-capability reports or backlog items
+`modernpath` (case-insensitive). Create these reports with
+`modernpath backlog create --file <report.json> --focus` so they enter the
+signed-in reporter's focus atomically. Preserve other lanes; do not claim a
+report was created if its focus failed. Create no missing-capability reports or backlog items
 for other Systems. Never query private transport. During planning assess intended targets; during verification and
 completion assess executed results and their applicability to the tested revision.
 
@@ -1238,6 +1241,9 @@ Human acceptance remains separate from verification; no review body is uploaded.
 `title`; optional `kind` is `backlog` (default), `gap` or `tooling`. Gaps require
 `gap_kind` of `capability` or `specification`. Use
 `modernpath backlog create --help` for content fields and examples.
+Add `--focus` to atomically append a declared lane for the signed-in reporter.
+Existing focus remains intact; a focus failure rolls back creation. Automatic
+issue reports in ModernPath Systems must use `--focus`.
 Read back with `modernpath backlog list --json` and
 `modernpath backlog get <uuid> --full --json`. List output supports `--limit`
 and `--offset`; detail output supports `--fields` or `--full`. Each served
@@ -1321,3 +1327,19 @@ never filled from current content. Full traceability distinguishes linked test
 files, actual test outcomes and complete criterion verification. Verification
 changes no requirement lifecycle; explicit existing-behavior acceptance remains
 separate and submits requirement identities, source and reason, not a review body.
+
+## Personal focus on Backlog records
+
+Use a native Backlog UUID with an explicit discriminator:
+
+```sh
+modernpath focus <uuid> --ref-kind backlog_record
+modernpath focus
+modernpath focus --drop <uuid> --ref-kind backlog_record
+```
+
+The declaration and scoped drop use the bound System. The list shows the native
+record ID and title. `--requirement-kind` remains for requirement UUIDs and cannot
+be combined with `--ref-kind`. Backlog focus is explicit only and remains until
+dropped, including after the record disposition changes. These operations do
+not assign ownership or change the record's disposition.

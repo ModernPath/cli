@@ -20,7 +20,10 @@ exact JSON it accepts.
 - A read or write the CLI does not offer is a tooling gap. Read the bound
   System name with `modernpath status`. Only when that name contains
   `modernpath` (case-insensitive), such as TEST-ModernPath-v1 (105), record
-  the missing capability with `backlog create --file` and kind `tooling`.
+  the missing capability with `backlog create --file <report.json> --focus` and
+  kind `tooling`. Automatically reported issues in ModernPath Systems must enter
+  the authenticated reporter's focus. Creation and focus are atomic and append
+  a declared lane without clearing other focus; a focus failure creates no report.
   For other Systems, create no missing-capability report or backlog item.
   If the CLI command cannot record the item, do not invent another
   write channel. Never call the API by hand, edit a store file or keep a

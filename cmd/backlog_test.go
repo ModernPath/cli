@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -341,5 +342,71 @@ func TestBacklogListPrintsTheTargetTitle(t *testing.T) {
 		if strings.Contains(out, "—") || !strings.Contains(out, "ROUTED to 288") || !strings.Contains(out, "Keep backlog routing truthful") {
 			t.Fatalf("JSON output must serve the disposition and the link as stored: %q", out)
 		}
+	}
+}
+
+func TestBacklogListUsesServerDisplayReferenceAndKeepsNativeJSONIdentity(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"backlog": []any{map[string]any{"id": id, "system_id": 4, "kind": "gap", "title": "A discovery", "disposition": "OPEN", "display_number": 12, "display_ref": "Gap 12"}}}})
+	}))
+	defer server.Close()
+	for _, machine := range []bool{false, true} {
+		cmd := newBacklogCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		args := []string{"list"}
+		if machine {
+			args = append(args, "--json")
+		}
+		cmd.SetArgs(args)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "Gap 12") {
+			t.Fatalf("missing compact reference: %s", out.String())
+		}
+		if strings.Contains(out.String(), id) != machine {
+			t.Fatalf("native UUID display mismatch: %s", out.String())
+		}
+	}
+}
+
+func TestBacklogCreateFocusUsesOneAuthenticatedRequest(t *testing.T) {
+	for _, focus := range []bool{false, true} {
+		t.Run(fmt.Sprint(focus), func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				if r.Method != "POST" || r.URL.Path != "/api/v1/backlog" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				if focus {
+					if body["take_focus"] != true {
+						t.Errorf("missing focus intent: %#v", body)
+					}
+				} else if _, ok := body["take_focus"]; ok {
+					t.Errorf("ordinary create requested focus: %#v", body)
+				}
+				w.WriteHeader(201)
+				_, _ = w.Write([]byte(`{"data":{"backlog":{"id":"11111111-1111-4111-8111-111111111111","system_id":4,"disposition":"OPEN"}}}`))
+			}))
+			defer server.Close()
+			cmd := newBacklogCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+			args := []string{"create", "--file", "-"}
+			if focus {
+				args = append(args, "--focus")
+			}
+			cmd.SetArgs(args)
+			cmd.SetIn(strings.NewReader(`{"title":"Automatic report","kind":"tooling"}`))
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatalf("requests: %d", calls)
+			}
+		})
 	}
 }

@@ -23,22 +23,33 @@ var (
 	focusInferRef        string
 	focusInferSource     string
 	focusRequirementKind string
+	focusRefKind         string
 )
 
 var requirementUUIDFocusRef = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 var focusCmd = &cobra.Command{
-	Use:   "focus [<requirement-uuid>|<epic-id>] [--requirement-kind system_requirement|user_requirement]",
+	Use:   "focus [<uuid>|<epic-id>] [--requirement-kind system_requirement|user_requirement] [--ref-kind backlog_record]",
 	Short: "Declare what you're working on right now (visibility only — no assignment, no lock)",
 	Long: `Declare what you are on so teammates see it where they pick work.
 
 	  modernpath focus 8f3d6ca1-4dc2-4bc3-9f4a-1bc50e830001 --requirement-kind system_requirement
 	  modernpath focus 42  declare focus on an epic
 	  modernpath focus --drop <uuid-or-epic-id>  drop one focus lane
+  modernpath focus <uuid> --ref-kind backlog_record  declare focus on a Backlog record
   modernpath focus --clear       end all your focus lanes
   modernpath focus               list who is on what, on this system`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if focusRefKind != "" && (focusRefKind != "backlog_record" || focusRequirementKind != "") {
+			return fmt.Errorf("--ref-kind accepts backlog_record and cannot be combined with --requirement-kind")
+		}
+		if focusRequirementKind != "" && focusRequirementKind != "system_requirement" && focusRequirementKind != "user_requirement" {
+			return fmt.Errorf("--requirement-kind accepts system_requirement or user_requirement")
+		}
+		if focusRefKind != "" && (focusClearFlag || (len(args) == 0 && focusDropRef == "" && focusInferRef == "")) {
+			return fmt.Errorf("--ref-kind requires a Backlog UUID or --drop selection")
+		}
 		env, err := cliEnvLoad()
 		if err != nil {
 			return err
@@ -65,7 +76,8 @@ var focusCmd = &cobra.Command{
 func init() {
 	focusCmd.Flags().Bool("json", false, "Emit focus rows or the change receipt as JSON")
 	focusCmd.Flags().BoolVar(&focusClearFlag, "clear", false, "End all your focus lanes")
-	focusCmd.Flags().StringVar(&focusDropRef, "drop", "", "Drop your focus on one requirement UUID or Epic integer ID")
+	focusCmd.Flags().StringVar(&focusDropRef, "drop", "", "Drop your focus on one typed UUID or Epic integer ID")
+	focusCmd.Flags().StringVar(&focusRefKind, "ref-kind", "", "Use backlog_record with a Backlog UUID")
 	focusCmd.Flags().StringVar(&focusRequirementKind, "requirement-kind", "", "Requirement kind required with a requirement UUID")
 	// --infer posts a typed inferred focus conclusion.
 	focusCmd.Flags().StringVar(&focusInferRef, "infer", "", "Post an inferred conclusion for a ref (internal)")
@@ -82,16 +94,16 @@ func runFocusJSON(cmd *cobra.Command, env *cliEnv, args []string) error {
 	switch {
 	case focusInferRef != "":
 		operation = "inferred"
-		out, err = focusInfer(env, focusInferRef, focusInferSource, focusRequirementKind)
+		out, err = focusInfer(env, focusInferRef, focusInferSource, selectedFocusKind())
 	case focusDropRef != "":
 		operation = "dropped"
-		out, err = focusDrop(env, focusDropRef, focusRequirementKind)
+		out, err = focusDrop(env, focusDropRef, selectedFocusKind())
 	case focusClearFlag:
 		operation = "cleared"
 		out, err = focusClear(env)
 	case len(args) == 1:
 		operation = "declared"
-		out, err = focusDeclare(env, args[0], focusRequirementKind)
+		out, err = focusDeclare(env, args[0], selectedFocusKind())
 	default:
 		out, err = focusList(env)
 	}
@@ -105,7 +117,7 @@ func runFocusJSON(cmd *cobra.Command, env *cliEnv, args []string) error {
 		items := make([]map[string]any, 0, len(out.list))
 		for _, entry := range out.list {
 			row := map[string]any{}
-			for _, key := range []string{"ref_id", "ref_kind", "requirement_kind", "title", "user", "set_by", "source", "started_at"} {
+			for _, key := range []string{"ref_id", "ref_kind", "requirement_kind", "backlog_kind", "display_number", "title", "user", "set_by", "source", "started_at"} {
 				if value, exists := entry[key]; exists {
 					row[key] = value
 				}
@@ -146,7 +158,9 @@ func focusDeclare(env *cliEnv, id, requirementKind string) (focusOutcome, error)
 		"ref_id":    ref,
 		"source":    "cli",
 	}
-	if kind != "" {
+	if kind == "backlog_record" {
+		request["ref_kind"] = kind
+	} else if kind != "" {
 		request["requirement_kind"] = kind
 	}
 	status, body, err := env.write("POST", "/api/v1/focus", request)
@@ -178,7 +192,9 @@ func focusDrop(env *cliEnv, ref, requirementKind string) (focusOutcome, error) {
 		return focusOutcome{}, err
 	}
 	path := fmt.Sprintf("/api/v1/focus?system_id=%d&ref_id=%s", env.SystemID, url.QueryEscape(fmt.Sprint(nativeRef)))
-	if kind != "" {
+	if kind == "backlog_record" {
+		path += "&ref_kind=" + kind
+	} else if kind != "" {
 		path += "&requirement_kind=" + url.QueryEscape(kind)
 	}
 	status, body, err := env.write("DELETE", path, nil)
@@ -214,6 +230,9 @@ func focusList(env *cliEnv) (focusOutcome, error) {
 // focusInfer posts one inferred conclusion. Declared-wins is enforced server-side; the
 // response carries the resulting current focus.
 func focusInfer(env *cliEnv, ref, source, requirementKind string) (focusOutcome, error) {
+	if requirementKind == "backlog_record" {
+		return focusOutcome{}, fmt.Errorf("Backlog focus must be declared explicitly")
+	}
 	nativeRef, kind, err := focusReference(ref, requirementKind)
 	if err != nil {
 		return focusOutcome{}, err
@@ -304,17 +323,24 @@ func focusDisplayRef(entry map[string]any) string {
 	if ref := str(entry, "display_ref"); ref != "" {
 		return ref
 	}
-	if str(entry, "ref_kind") == "epic" {
+	if str(entry, "ref_kind") == "epic" || str(entry, "ref_kind") == "backlog_record" {
 		return fmt.Sprint(entry["ref_id"])
 	}
 	return "Requirement"
 }
 
+func selectedFocusKind() string {
+	if focusRefKind != "" {
+		return focusRefKind
+	}
+	return focusRequirementKind
+}
+
 func focusReference(value, requirementKind string) (any, string, error) {
 	ref := strings.TrimSpace(value)
 	if requirementUUIDFocusRef.MatchString(ref) {
-		if requirementKind != "system_requirement" && requirementKind != "user_requirement" {
-			return nil, "", fmt.Errorf("a requirement UUID requires --requirement-kind system_requirement or user_requirement")
+		if requirementKind != "system_requirement" && requirementKind != "user_requirement" && requirementKind != "backlog_record" {
+			return nil, "", fmt.Errorf("a UUID requires --requirement-kind system_requirement or user_requirement, or --ref-kind backlog_record")
 		}
 		return strings.ToLower(ref), requirementKind, nil
 	}
@@ -324,7 +350,7 @@ func focusReference(value, requirementKind string) (any, string, error) {
 		}
 		return id, "", nil
 	}
-	return nil, "", fmt.Errorf("focus requires a typed requirement UUID or native Epic integer ID")
+	return nil, "", fmt.Errorf("focus requires a typed requirement UUID, an explicit Backlog UUID or native Epic integer ID")
 }
 
 func focusAge(startedAt string) string {
@@ -350,7 +376,7 @@ func focusAge(startedAt string) string {
 }
 
 func runFocusDeclare(env *cliEnv, id string) error {
-	out, err := focusDeclare(env, id, focusRequirementKind)
+	out, err := focusDeclare(env, id, selectedFocusKind())
 	if err != nil {
 		return err
 	}
@@ -380,7 +406,7 @@ func runFocusClear(env *cliEnv) error {
 }
 
 func runFocusDrop(env *cliEnv, ref string) error {
-	out, err := focusDrop(env, ref, focusRequirementKind)
+	out, err := focusDrop(env, ref, selectedFocusKind())
 	if err != nil {
 		return err
 	}
@@ -403,7 +429,7 @@ func runFocusDrop(env *cliEnv, ref string) error {
 
 // runFocusInfer posts a typed inferred focus conclusion.
 func runFocusInfer(env *cliEnv) error {
-	out, err := focusInfer(env, focusInferRef, focusInferSource, focusRequirementKind)
+	out, err := focusInfer(env, focusInferRef, focusInferSource, selectedFocusKind())
 	if err != nil {
 		printWarning("inferred focus not recorded: %v", err)
 		return nil

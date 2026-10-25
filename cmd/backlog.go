@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var backlogFields = strings.Fields("id system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links gap_kind consequence metadata")
+var backlogFields = strings.Fields("id display_number display_ref system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links gap_kind consequence metadata")
 
 func init() { rootCmd.AddCommand(newBacklogCommand(cliEnvLoad)) }
 
@@ -74,7 +74,8 @@ Title is required; kind defaults to backlog (backlog, gap or tooling).
 Optional fields: notes_md, observation, why_unrouted, candidate_route,
 gap_kind, consequence, metadata. A gap requires gap_kind capability or
 specification. Identity, scope, attribution and OPEN disposition are assigned
-by the server. Example: {"title":"Keep cart after payment retry","metadata":{"synthetic":true}}.`,
+by the server. --focus atomically adds the record to the signed-in reporter’s
+focus, preserving other focus lanes. Example: {"title":"Keep cart after payment retry","metadata":{"synthetic":true}}.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path, _ := cmd.Flags().GetString("file")
 			payload, err := readObjectInput(cmd, path)
@@ -92,6 +93,9 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 				return fmt.Errorf("Backlog creation requires a bound System")
 			}
 			payload["system_id"] = env.SystemID
+			if focus, _ := cmd.Flags().GetBool("focus"); focus {
+				payload["take_focus"] = true
+			}
 			data, err := backlogWrite(env, "POST", "/api/v1/backlog", payload)
 			if err != nil {
 				return err
@@ -106,7 +110,7 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 			if row["disposition"] != "OPEN" {
 				return fmt.Errorf("created Backlog record has no initial OPEN disposition")
 			}
-			selected, err := selectRecordFields(cmd, row, []string{"id", "system_id", "kind", "title", "disposition"}, backlogFields, nil)
+			selected, err := selectRecordFields(cmd, row, []string{"id", "display_ref", "system_id", "kind", "title", "disposition"}, backlogFields, nil)
 			if err != nil {
 				return err
 			}
@@ -115,6 +119,7 @@ by the server. Example: {"title":"Keep cart after payment retry","metadata":{"sy
 	create.Flags().String("file", "", "Backlog JSON file, or - for stdin (required)")
 	_ = create.MarkFlagRequired("file")
 	create.Flags().Bool("json", false, "Emit JSON")
+	create.Flags().Bool("focus", false, "Add the new record to the signed-in reporter's focus")
 	parent.AddCommand(create)
 	get := &cobra.Command{Use: "get <uuid>", Short: "Read a native Backlog record", Args: cobra.ExactArgs(1),
 		Long: `Read one Backlog record of the bound System. Text output names a routing or closure
@@ -145,7 +150,7 @@ target's title, display_ref and available on each link.`,
 			if !strings.EqualFold(row["id"].(string), args[0]) {
 				return fmt.Errorf("Backlog response has a different record identity")
 			}
-			selected, err := selectRecordFields(cmd, row, []string{"id", "system_id", "kind", "title", "disposition"}, backlogFields, nil)
+			selected, err := selectRecordFields(cmd, row, []string{"id", "display_ref", "system_id", "kind", "title", "disposition"}, backlogFields, nil)
 			if err != nil {
 				return err
 			}
@@ -156,7 +161,7 @@ target's title, display_ref and available on each link.`,
 	parent.AddCommand(get)
 	page := listPage{}
 	list := &cobra.Command{Use: "list", Short: "List Backlog records in the bound System", Args: cobra.NoArgs,
-		Long: `List the Backlog records of the bound System, one row per record: <uuid>  <kind>  <disposition>  <title>.
+		Long: `List the Backlog records of the bound System, one row per record: <display_ref>  <kind>  <disposition>  <title>.
 A routing or closure target with a served title prints as ROUTED to 288 — <title>; --json serves
 the records as stored.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -207,7 +212,7 @@ the records as stored.`,
 				// printed `%!s(<nil>)` — and the title on one line. Epic 298
 				// (SR-3813): the disposition names its target by title.
 				title := strings.Join(strings.Fields(str(row, "title")), " ")
-				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", orDash(str(row, "id")), orDash(str(row, "kind")), orDash(backlogDispositionText(row)), orDash(title))
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", orDash(backlogDisplayRef(row)), orDash(str(row, "kind")), orDash(backlogDispositionText(row)), orDash(title))
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), pageFooter(start, end, len(records)))
 			return err
@@ -384,4 +389,11 @@ func withTextDisposition(cmd *cobra.Command, row, selected map[string]any) map[s
 	out := maps.Clone(selected)
 	out["disposition"] = backlogDispositionText(row)
 	return out
+}
+
+func backlogDisplayRef(row map[string]any) string {
+	if ref := str(row, "display_ref"); ref != "" {
+		return ref
+	}
+	return str(row, "id")
 }
