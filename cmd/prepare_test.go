@@ -3,10 +3,12 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -216,5 +218,74 @@ func TestPrepareDistinguishesRejectedCredentialFromServerFailure(t *testing.T) {
 				t.Fatalf("want one server probe, got %d", calls)
 			}
 		})
+	}
+}
+
+func TestPrepareTraversesDocumentMetadataPastFivePages(t *testing.T) {
+	for _, newer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("newer=%v", newer), func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				page := 1
+				if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+					page, _ = strconv.Atoi(cursor)
+				}
+				if r.Method != http.MethodGet || r.URL.Query().Get("limit") != "100" || r.URL.Query().Get("metadata") != "true" {
+					t.Errorf("unexpected metadata request: %s %s", r.Method, r.URL)
+				}
+				var next any
+				if page < 7 {
+					next = strconv.Itoa(page + 1)
+				}
+				edited := "2026-10-18T00:00:00Z"
+				if newer && page == 6 {
+					edited = "2026-10-20T00:00:00Z"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"documents": []map[string]string{{"updated_at": edited}}, "next_cursor": next}})
+			}))
+			defer srv.Close()
+			report := prepareReport{DocsState: "unknown", ExportGeneratedAt: "2026-10-19T00:00:00Z"}
+			checkLiveDocuments(&authenticatedClient{client: srv.Client(), baseURL: srv.URL, token: "test"}, 17, &report)
+			wantRequests, wantState := 7, "unknown"
+			if newer {
+				wantRequests, wantState = 6, "newer_edits"
+			}
+			if requests != wantRequests || report.DocsMetadata != "checked" || report.DocsState != wantState {
+				t.Fatalf("requests=%d, report=%+v; want %d requests, checked and %s", requests, report, wantRequests, wantState)
+			}
+		})
+	}
+}
+
+func TestPrepareStopsOnRepeatedDocumentCursor(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(`{"data":{"documents":[],"next_cursor":"same"}}`))
+	}))
+	defer srv.Close()
+	report := prepareReport{DocsState: "unknown", ExportGeneratedAt: "2026-10-19T00:00:00Z"}
+	checkLiveDocuments(&authenticatedClient{client: srv.Client(), baseURL: srv.URL, token: "test"}, 17, &report)
+	if requests != 2 || report.DocsMetadata != "unavailable" || report.DocsState != "unknown" {
+		t.Fatalf("requests=%d, report=%+v; want repeated cursor to stop without claiming freshness", requests, report)
+	}
+}
+
+func TestPrepareLaterDocumentPageFailureRemainsUnknown(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 6 {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"data":{"documents":[],"next_cursor":"%d"}}`, requests)
+	}))
+	defer srv.Close()
+	report := prepareReport{DocsState: "unknown", ExportGeneratedAt: "2026-10-19T00:00:00Z"}
+	checkLiveDocuments(&authenticatedClient{client: srv.Client(), baseURL: srv.URL, token: "test"}, 17, &report)
+	if requests != 6 || report.DocsMetadata != "unavailable" || report.DocsState != "unknown" {
+		t.Fatalf("requests=%d, report=%+v; want unavailable after late failure", requests, report)
 	}
 }

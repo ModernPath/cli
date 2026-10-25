@@ -189,13 +189,16 @@ version, process-kit drift, local documentation export, live document edits and
 analysis status, then lists useful next commands. `--json` emits the same
 bounded report. The
 command exits non-zero when authentication, System access, kit compatibility
-or the bounded document check needs attention; JSON still contains the report.
+or the document check needs attention; JSON still contains the report.
 It checks the stored credential locally and verifies it with one System read.
 It does not automatically refresh an expiring credential. On a released build,
 it checks the latest published CLI release through a public GitHub GET bounded
 at one second. An unavailable lookup leaves the latest version unknown; local
 builds do not compare themselves with releases. A live document edit newer than the
-export generation time means `modernpath docs sync` is useful. No observed
+export generation time means `modernpath docs sync` is useful. The check follows
+all metadata pages until a newer edit or the last page, with a two-second timeout
+per request. A failed request or repeated cursor leaves the check unavailable
+and export currency unknown. No observed
 newer edit cannot prove that the export is current: documents may have been
 deleted or other exported data may have changed. `prepare` does not sign in,
 change the System binding, sync, install, upgrade or start analysis. It does

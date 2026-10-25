@@ -213,7 +213,7 @@ func localDocsState(root string, cfg *config.Config, report *prepareReport) {
 }
 
 // The live discovery API orders by creation, not update time. Stop on the
-// first newer edit; after five metadata pages, absence remains unknown.
+// first newer edit or terminal page; a completed scan still cannot prove currency.
 func checkLiveDocuments(client *authenticatedClient, systemID int, report *prepareReport) {
 	if report.DocsState == "missing" {
 		return
@@ -227,7 +227,8 @@ func checkLiveDocuments(client *authenticatedClient, systemID int, report *prepa
 		return
 	}
 	cursor := ""
-	for page := 0; page < 5; page++ {
+	seen := make(map[string]bool)
+	for {
 		query := url.Values{"metadata": {"true"}, "limit": {"100"}}
 		if cursor != "" {
 			query.Set("cursor", cursor)
@@ -285,10 +286,14 @@ func checkLiveDocuments(client *authenticatedClient, systemID int, report *prepa
 			report.DocsDetail = "no newer document edit observed; export currency is still unknown"
 			return
 		}
+		if seen[nextCursor] {
+			report.DocsMetadata = "unavailable"
+			report.DocsDetail = "live document metadata repeated a cursor; export currency is unknown"
+			return
+		}
+		seen[nextCursor] = true
 		cursor = nextCursor
 	}
-	report.DocsMetadata = "incomplete"
-	report.DocsDetail = "document metadata check reached its five-page limit; export currency is unknown"
 }
 
 // Ecto's naive_datetime timestamps carry no offset. Core stores them in UTC;
