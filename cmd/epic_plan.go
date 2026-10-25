@@ -21,8 +21,8 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 	}{
 		{"show", "Read the saved plan, human approvals and accepted versions", "GET", "/plan", false},
 		{"save", "Save proposed content from JSON on standard input", "PUT", "/plan", true},
-		{"return-to-planning", "Withdraw active approval and return the Epic to planning", "POST", "/return-to-planning", true},
-		{"approve-implementation", "Approve the exact reviewed plan from standard input and acquire requirement ownership", "POST", "/approve-implementation", true},
+		{"return-to-planning", "Withdraw active approval and return the Epic to planning", "POST", "/return-to-planning", false},
+		{"approve-implementation", "Approve the current saved plan and acquire requirement ownership", "POST", "/approve-implementation", false},
 		{"submit-review", "Mark implementation complete for human completion review", "POST", "/submit-review", false},
 		{"return-to-implementation", "Record the human's not-yet at completion review and resume implementation", "POST", "/return-to-implementation", false},
 		{"approve-completion", "Approve completion and publish the approved requirement content", "POST", "/approve-completion", false},
@@ -54,33 +54,6 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 						return err
 					}
 					payload["plan"] = proposal
-				}
-				if op.name == "approve-implementation" {
-					file, _ := cmd.Flags().GetString("presentation-file")
-					if file != "" {
-						if file == "-" {
-							return fmt.Errorf("--presentation-file requires a saved file path")
-						}
-						presentation, err := commandObject(cmd, file)
-						if err != nil {
-							return err
-						}
-						payload["presentation"] = presentation
-					}
-				}
-				if op.name == "approve-completion" || op.name == "return-to-implementation" {
-					file, _ := cmd.Flags().GetString("file")
-					if file == "" && op.name == "approve-completion" {
-						return fmt.Errorf("approve-completion requires --file with the exact reviewed presentation (use --file - to read standard input)")
-					}
-					if file == "" {
-						return fmt.Errorf("return-to-implementation requires --file with the exact completion bundle the human answered (use --file - to read standard input)")
-					}
-					presentation, err := commandObject(cmd, file)
-					if err != nil {
-						return err
-					}
-					payload["presentation"] = presentation
 				}
 				env, err := load()
 				if err != nil {
@@ -132,16 +105,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 			addRecordReadFlags(command)
 		}
 		if op.input {
-			command.Flags().String("file", "-", "Plan or completion presentation JSON file, or - for standard input")
-		}
-		if op.name == "approve-completion" {
-			command.Flags().String("file", "", "Exact reviewed completion presentation JSON file; use - for standard input")
-		}
-		if op.name == "approve-implementation" {
-			command.Flags().String("presentation-file", "", "Exact review-bundle JSON shown to the human; required for declared decisions")
-		}
-		if op.name == "return-to-implementation" {
-			command.Flags().String("file", "", "Exact completion bundle (epics gates presentation) the human answered; use - for standard input")
+			command.Flags().String("file", "-", "Plan JSON file, or - for standard input")
 		}
 		if op.method != "GET" {
 			reasonHelp := "Optional comment on the change or decision"
@@ -152,7 +116,6 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 			command.Flags().String("agent", "", "Slug of the agent that ran this command; the signed-in person is the human behind it")
 		}
 		if op.name == "return-to-planning" {
-			command.Flags().Lookup("file").Usage = "Exact currently approved plan JSON file, or - for standard input"
 			command.Flags().Lookup("reason").Usage = "Required human return decision and reason beginning USER:"
 			_ = command.MarkFlagRequired("reason")
 		}
@@ -211,7 +174,7 @@ func epicPlanHistoryCommand() *cobra.Command {
 	}
 	history.Flags().Int("limit", 20, "Items per page, 1..50")
 	history.Flags().Int("offset", 0, "Items to skip, newest first")
-	history.Flags().Bool("full", false, "Print the stored details in full, plan bodies included")
+	history.Flags().Bool("full", false, "Print surviving audit details in full")
 	history.Flags().Bool("json", false, "Emit JSON")
 	return history
 }
@@ -223,47 +186,11 @@ func epicPlanHistoryCommand() *cobra.Command {
 func planHistorySummary(raw any) map[string]any {
 	item, _ := raw.(map[string]any)
 	details, _ := item["details"].(map[string]any)
-	summary := map[string]any{
-		"id": item["id"], "at": item["inserted_at"], "user_name": item["user_name"],
-		"action": item["action"], "comment": details["comment"],
-	}
+	summary := map[string]any{"id": item["id"], "at": item["inserted_at"], "user_name": item["user_name"], "action": item["action"], "comment": details["comment"]}
 	if item["action"] == "updated" {
 		summary["fields"] = details["fields"]
-		return summary
 	}
-	if item["action"] == "returned_to_planning" {
-		summary["saved_plan"] = planCounts(details["plan"])
-		return summary
-	}
-	saved := planCounts(details["plan"])
-	previous := planCounts(details["previous_plan"])
-	delta := map[string]any{}
-	for key, count := range saved {
-		delta[key] = count - previous[key]
-	}
-	summary["saved_plan"] = saved
-	summary["delta"] = delta
 	return summary
-}
-
-func planCounts(raw any) map[string]int {
-	counts := map[string]int{"requirements": 0, "criteria": 0, "traces": 0, "body_chars": 0}
-	plan, ok := raw.(map[string]any)
-	if !ok {
-		return counts
-	}
-	body, _ := plan["body"].(string)
-	counts["body_chars"] = len(body)
-	requirements, _ := plan["requirements"].([]any)
-	counts["requirements"] = len(requirements)
-	for _, raw := range requirements {
-		requirement, _ := raw.(map[string]any)
-		criteria, _ := requirement["criteria"].([]any)
-		counts["criteria"] += len(criteria)
-	}
-	traces, _ := plan["traces"].([]any)
-	counts["traces"] = len(traces)
-	return counts
 }
 
 // epicPlanHelp is the saved-plan contract as Core.Planning.EpicChanges
@@ -317,141 +244,47 @@ Criteria left out of the plan are retired at completion; traces left out
 that existed at approval are removed at completion, while code and test
 links added during implementation survive.
 
-save (the Epic PROPOSED) accepts a draft: content may name only the fields
-that change, criteria default to the current active ones, traces default to
-the current ones, and missing criterion and real trace ids are assigned. The saved
-plan is read back complete by show. Before approval, verification must declare
-every active criterion and required project check, with retained test-case IDs.
-Use decisions: [] when no human questions are declared. Omit a new project-check
-id on save to have it assigned; reuse the returned id on later saves. A boundary
-with applicable: false must include its reason. See epics gates --help for
-registration, RED/GREEN evidence and review details. approve-implementation (the Epic
-PROPOSED) takes that complete plan - every content field of the kind, every
-criterion field, and a traces key - and refuses a partial one as
-incomplete reviewed content; send the plan object show returned. Both take
---reason; the approval's reason carries the human's answer as a USER: source.
+save accepts proposed requirement content while the Epic is PROPOSED. The server
+completes omitted content from current records, assigns missing criterion/Trace
+identities, and reads the saved plan back through show. Verification declares every
+active criterion, project check, required test and boundary. Use decisions: [] when
+there are no declared human decisions.
 
-Approval moves the Epic and the named requirements to IN_PROGRESS and locks
-each requirement to this Epic and the approver (change_epic_id); a requirement
-another Epic owns refuses the whole approval. From then on the plan, the Epic
-content and the owned requirement content are read-only. To revise active scope,
-the approver runs return-to-planning with the exact plan and explicit human
-decision. It withdraws approval, releases ownership and returns work to PROPOSED;
-fresh review, human approval and registered verification are required. DONE
-stays closed and changed work uses a follow-up Epic. submit-review (the approver, Epic
-IN_PROGRESS) moves the Epic and its requirements to IN_REVIEW.
-return-to-implementation (Epic IN_REVIEW) records the human's "not yet"
-with the completion bundle they declined (--file, from epics gates
-presentation): the Epic and its requirements move back to IN_PROGRESS with
-the plan, the implementation approval and the ownership kept; --reason is
-required.
-approve-completion (Epic IN_REVIEW) publishes the approved content: each
-requirement's revision rises by one, an immutable version with criteria and
-traces is retained, the audit names actor, time, reason and Epic, ownership
-is released and the Epic is DONE. A refusal leaves everything unchanged; a
-repeated completion publishes nothing twice.
+approve-implementation reads the current saved plan and current separate review
+under server locks. It takes --reason and optional --agent; it uploads no plan or
+presentation. It moves the Epic and requirements to IN_PROGRESS and acquires
+requirement ownership atomically. The active approved plan and owned content stay
+read-only. return-to-planning takes the explicit USER: reason, withdraws approval,
+releases ownership and starts a new planning cycle. Earlier reviews and executions
+cannot satisfy that cycle.
 
-Every write takes --agent <slug>: the slug names the agent that ran the
-command and the signed-in person is the human behind it; both are written on
-the transition audit. Without it the person is the actor.
+submit-review checks current completion-review readiness and moves work to
+IN_REVIEW. approve-completion rechecks current native facts under locks, publishes
+one accepted requirement version and releases ownership. Repeating completion on
+DONE publishes nothing twice. return-to-implementation needs a non-empty human
+reason and the current IN_REVIEW lifecycle; it also works when completion readiness
+fails. It keeps the plan and implementation approval. Both use small decision
+requests, with no bundle upload. Human approval remains explicit and separate for
+implementation and completion. These commands do not merge or deploy.
 
-show prints id, process_status, implementation_approval and
-completion_approval; --fields plan, versions, suggested_plan or source_files, or --full,
-add the plan, the accepted versions and, for an Epic with members but no
-saved plan, the draft the server suggests. source_files maps the plan's file IDs
-to repository_key and path for review; it stays outside the canonical plan.
-Read back after every write.
-
-Named transition preconditions are checked by epics gates check. See epics gates
---help for verification obligations, execution registration and independent reviews.
-Implementation approval requires the exact current saved plan and its independent
-review. If verification.decisions is nonempty, also pass --presentation-file with
-the exact epics gates review-bundle JSON shown to the human. Capture and present
-it before requesting approval, and pass its plan via --file. Never refresh the
-bundle after the human answers. Changed answers require renewed independent
-review and human approval; answers are immutable after implementation approval.
-Completion requires --file with the exact bundle returned by epics gates
-presentation and reviewed by the human. Changed evidence or content refuses the
-whole transition. A preview is advisory; no Epic gate check grants human approval.
-
-history lists what the store retained about the plan, newest first: every
-save (the saved plan and the one it replaced), both human approvals (the
-plan they approved), returns to planning and every content edit of the Epic (the changed fields
-with their previous and new values). The default view summarizes each item
-by counts; a return retains the plan counts without a content delta.
---full prints the stored bodies. Use it to answer "what changed
-between two revisions" and "who edited the Epic" from the record, not from
-memory.`
+show reads current state; --fields plan,versions,suggested_plan,source_files selects
+additional surviving records. history reads attributable saves, approvals, returns
+and edits. Full historical presentations, outputs and copied plans are removed.
+--full shows surviving audit details; it cannot reconstruct deleted payloads.
+A preview is advisory. An action authorizes eligible current database state; it
+does not certify that a previously rendered screen stayed unchanged. Read state
+and audit after an uncertain nonterminal response.
+`
 
 var epicPlanOperationHelp = map[string]string{
-	"return-to-planning": `Return an IN_PROGRESS or IN_REVIEW Epic to PROPOSED with the exact currently
-approved plan via --file. --reason must retain the human's explicit decision as
-USER:<source and reason>. Only the implementation approver can run it. The
-optional --agent names the agent running the command in both Epic and requirement
-audits; without it the signed-in person is recorded as the actor. The
-operation withdraws approval and releases requirement ownership atomically,
-preserving the proposal, published content, accepted versions and audit history.
-Retained reviews, decisions, candidates and executions cannot satisfy the new
-planning cycle. Revise the draft, obtain fresh independent plan review and human
-implementation approval, then collect fresh RED/GREEN evidence and completion
-review. DONE stays closed; changed work needs a follow-up Epic.`,
-	"show": `Read the saved plan, the two human approvals and the accepted versions.
---fields plan --json prints the complete saved plan, which is the input
-approve-implementation expects. --fields plan,source_files --json also resolves
-the real source-file IDs to repository/path pairs for review. See epics plan --help
-for the plan shape.`,
-	"save": `Save the plan and proposed requirement content while the Epic is PROPOSED.
-A draft may be partial; the server completes it from the current records and
-show reads it back complete. Repeat to revise. See epics plan --help for the
-plan shape and the refusals.`,
-	"approve-implementation": `Record the human's implementation approval of the exact plan they reviewed.
-The file is the complete plan object show returned; a partial plan is refused
-as incomplete reviewed content. --reason carries their answer as a USER:
-source. Moves the Epic and its requirements to IN_PROGRESS and locks them to
-this Epic and approver. Run only after the human answered in the session.
-For declared decisions, --presentation-file must contain the exact review-bundle
-shown to the human before approval, and --file its plan. A changed decision
-requires renewed independent review and human approval. Do not fetch a new bundle
-to attach to an earlier approval. Decision answers are frozen at implementation
-approval; changed intent becomes separately approved work.`,
-	"submit-review": `Mark the implementation complete: the Epic and its owned requirements move to
-IN_REVIEW with their published content unchanged. Only the approver may run
-it. The human's completion decision follows separately. --agent <slug> names
-the agent that ran it; the signed-in person is the human behind it.`,
-	"return-to-implementation": `Record the human's "not yet" at completion review: the Epic and its owned
-requirements move from IN_REVIEW back to IN_PROGRESS. The plan, the
-implementation approval and the requirement ownership are kept, so the work
-continues under the same approval and submit-review runs again when it is
-done. --file takes the exact bundle returned by epics gates presentation that
-the human answered; the Epic's audit keeps it. --reason carries the human's
-answer as a USER: source. Any workspace member may run it. Run only after the
-human answered in the session.
-
-Refusals, as printed:
-  Give the human's answer as a non-empty reason, such as a USER: source.
-  Present the exact completion bundle the human answered.
-  The completion bundle changed after the human saw it. Present the current
-  bundle and record the human's answer to it.`,
-	"approve-completion": `Record the human's completion approval and publish the approved content in one
-transaction: revision +1 per requirement, an immutable accepted version,
-audit, released ownership, Epic DONE. --reason carries their answer as a
-USER: source. --file takes the exact bundle returned by epics gates presentation,
-which the human must have reviewed before approving. Changed content, evidence
-or ownership refuses the transaction. An identical retry on DONE publishes
-nothing twice; a different presentation refuses.`,
-	"history": `List the Epic's plan revisions, approvals and content edits, newest first.
-Each item is one retained audit record: plan_saved (the saved plan and the
-previous one), implementation_approved and completion_approved (the plan
-the human approved), returned_to_planning (the retained plan and withdrawn
-approval) and updated (an epics update: the changed fields with
-their previous and new values). The default view prints per item
-{id, at, user_name, action, comment, saved_plan: {requirements, criteria,
-traces, body_chars}, delta} where delta is saved_plan minus the same counts
-of the previous plan (zeros when none); an updated item prints fields
-instead. A returned_to_planning item retains saved_plan without delta because
-the plan content is unchanged. --full prints the served items unchanged, details.plan and
-details.previous_plan included. --limit 1..50 (default 20) and --offset
-page the list; a 404 means the Epic is not in your workspace or System.`,
+	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields with --fields or --full.",
+	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval.",
+	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
+	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. This starts a new planning cycle with fresh review, human approval and executions. DONE stays closed.",
+	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Only the implementation approver can submit.",
+	"return-to-implementation": "Apply the human's not-yet decision to an IN_REVIEW Epic. --reason is required. Current completion readiness may fail. The plan, approval and ownership remain in effect.",
+	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once.",
+	"history":                  "Read attributable saves, approvals, returns and content edits. --full includes surviving audit details. Removed presentations and copied plans cannot be reconstructed.",
 }
 
 func readEpicPlan(input io.Reader) (map[string]any, error) {

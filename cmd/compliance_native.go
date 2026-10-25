@@ -76,8 +76,8 @@ func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
 		for key, value := range entity {
 			record[key] = value
 		}
-		record["requirement_kind"] = map[string]string{"user": "user_requirement", "system": "system_requirement"}[effectiveKind]
 		record["display_ref"] = data["display_id"]
+		record["requirement_kind"] = map[string]string{"user": "user_requirement", "system": "system_requirement"}[effectiveKind]
 		for _, key := range []string{"created_by", "criteria", "traces_from", "traces_to", "audit_events"} {
 			if value, exists := data[key]; exists {
 				record[key] = value
@@ -131,7 +131,7 @@ criteria are entities of their own: list a criterion's traces with
 an Epic plan at implementation and completion approval; there is no direct
 trace write.`}
 	entityType, entityID := "", ""
-	cmd.Flags().StringVar(&entityType, "entity-type", "", "native entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion)")
+	cmd.Flags().StringVar(&entityType, "entity-type", "", "native entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, evidence_result)")
 	cmd.Flags().StringVar(&entityID, "entity-id", "", "native entity id")
 	cmd.Flags().Bool("json", false, "emit JSON")
 	cmd.Flags().Int("limit", 20, "page size (1–200)")
@@ -140,7 +140,7 @@ trace write.`}
 	cmd.MarkFlagRequired("entity-type")
 	cmd.MarkFlagRequired("entity-id")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		allowed := map[string]bool{"user_requirement": true, "system_requirement": true, "test_case": true, "system_document": true, "source_file": true, "file_analysis": true, "subsystem": true, "epic": true, "criterion": true}
+		allowed := map[string]bool{"user_requirement": true, "system_requirement": true, "test_case": true, "system_document": true, "source_file": true, "file_analysis": true, "subsystem": true, "epic": true, "criterion": true, "evidence_result": true}
 		if !allowed[entityType] {
 			return fmt.Errorf("unsupported --entity-type %q", entityType)
 		}
@@ -188,13 +188,13 @@ func newTraceCommands(load func() (*cliEnv, error)) *cobra.Command {
 }
 
 func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
-	root := &cobra.Command{Use: "test-cases", Short: "Read and update retained test-case procedures"}
-	create := &cobra.Command{Use: "create", Short: "Create a test-case procedure in the bound System", Args: cobra.NoArgs}
+	root := &cobra.Command{Use: "test-cases", Short: "Read and update native test identities"}
+	create := &cobra.Command{Use: "create", Short: "Create a native test identity in the bound System", Args: cobra.NoArgs}
 	createFile := ""
-	create.Flags().StringVar(&createFile, "file", "", "JSON object with title and optional description, preconditions, and steps (required)")
+	create.Flags().StringVar(&createFile, "file", "", "JSON object with title (required)")
 	_ = create.MarkFlagRequired("file")
 	create.Flags().Bool("json", false, "emit JSON")
-	create.Long = `Create retained test-case procedure metadata. Example: {"title":"Sign in","description":"Check account access","preconditions":"An account exists","steps":[{"number":1,"description":"Enter valid credentials","expected_result":"The account is signed in"}]}. The CLI supplies the bound system_id.`
+	create.Long = `Create a native TestCase: {"title":"Sign in"}. The CLI supplies system_id; the server owns identity, revision and approval attribution.`
 	create.RunE = func(cmd *cobra.Command, _ []string) error {
 		payload, err := readObjectInput(cmd, createFile)
 		if err != nil {
@@ -222,27 +222,23 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		if sid, ok := numberAsInt(data["system_id"]); !ok || sid != int64(env.SystemID) {
 			return fmt.Errorf("created test case belongs to a different System or has no System identity")
 		}
-		return writeRecord(cmd, map[string]any{"id": data["id"], "display_ref": data["display_ref"], "title": data["title"]})
+		return writeRecord(cmd, selectKeys(data, []string{"id", "title", "revision"}))
 	}
 	list := &cobra.Command{Use: "list", Short: "List test cases in the bound System", Args: cobra.NoArgs}
 	list.Flags().Int("limit", 20, "page size (1–200)")
 	list.Flags().String("cursor", "", "continue from a previous page")
-	list.Flags().String("query", "", "literal case-insensitive title or description match")
-	list.Flags().String("status", "", "filter by status: draft or approved")
+	list.Flags().String("query", "", "literal case-insensitive title or UUID match")
 	list.Flags().String("order", "id", "order by id or title")
 	list.Flags().Bool("json", false, "emit JSON")
 	list.RunE = func(cmd *cobra.Command, _ []string) error {
 		limit, _ := cmd.Flags().GetInt("limit")
 		cursor, _ := cmd.Flags().GetString("cursor")
 		query, _ := cmd.Flags().GetString("query")
-		status, _ := cmd.Flags().GetString("status")
 		order, _ := cmd.Flags().GetString("order")
 		if limit < 1 || limit > 200 {
 			return fmt.Errorf("--limit must be between 1 and 200")
 		}
-		if status != "" && status != "draft" && status != "approved" {
-			return fmt.Errorf("--status must be draft or approved")
-		}
+
 		if order != "id" && order != "title" {
 			return fmt.Errorf("--order must be id or title")
 		}
@@ -254,9 +250,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		if query != "" {
 			p.Set("query", query)
 		}
-		if status != "" {
-			p.Set("status", status)
-		}
+
 		if cursor != "" {
 			p.Set("cursor", cursor)
 		}
@@ -266,16 +260,19 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		}
 		data, _ := body["data"].(map[string]any)
 		return writeNativePage(cmd, data, "items", func(item map[string]any) (map[string]any, error) {
-			return map[string]any{"id": item["id"], "display_ref": item["display_ref"], "title": item["title"]}, nil
+			return selectKeys(item, []string{"id", "title", "revision"}), nil
 		})
 	}
-	get := &cobra.Command{Use: "get <uuid|display-ref>", Short: "Read one test case", Args: cobra.ExactArgs(1)}
+	get := &cobra.Command{Use: "get <uuid>", Short: "Read one test case", Args: cobra.ExactArgs(1)}
 	addRecordReadFlags(get)
 	get.Flags().Bool("json", false, "emit JSON")
 	get.RunE = func(cmd *cobra.Command, args []string) error {
-		allowed := []string{"id", "display_ref", "title", "description", "preconditions", "steps", "system_id", "inserted_at", "updated_at"}
+		allowed := []string{"id", "title", "revision", "approved_by_id", "approved_at", "system_id", "inserted_at", "updated_at"}
 		if err := validateRecordSelection(cmd, allowed); err != nil {
 			return err
+		}
+		if !requirementUUIDPattern.MatchString(args[0]) {
+			return fmt.Errorf("test case requires a native UUID")
 		}
 		env, err := load()
 		if err != nil {
@@ -292,19 +289,18 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		for key, value := range entity {
 			record[key] = value
 		}
-		record["display_ref"] = data["display_id"]
-		selected, err := selectRecordFields(cmd, record, []string{"id", "display_ref", "title"}, allowed, []string{"id", "display_ref"})
+		selected, err := selectRecordFields(cmd, record, []string{"id", "title", "revision"}, allowed, []string{"id"})
 		if err != nil {
 			return err
 		}
 		return writeRecord(cmd, selected)
 	}
-	update := &cobra.Command{Use: "update <uuid|display-ref>", Short: "Update retained test-case descriptive metadata from JSON", Args: cobra.ExactArgs(1)}
+	update := &cobra.Command{Use: "update <uuid>", Short: "Update a TestCase title", Args: cobra.ExactArgs(1)}
 	file := ""
-	update.Flags().StringVar(&file, "file", "", "JSON object with title, description, and/or preconditions (required)")
+	update.Flags().StringVar(&file, "file", "", "JSON object with title (required)")
 	update.MarkFlagRequired("file")
 	update.Flags().Bool("json", false, "emit JSON")
-	update.Long = `Update retained procedure metadata. Input example: {"title":"Login","description":"Verify sign-in","preconditions":"Account exists","steps":[{"number":1,"description":"Enter valid credentials","expected_result":"The account is signed in"}]}.`
+	update.Long = `Update a native TestCase: {"title":"Login"}. A changed title advances its existing revision and invalidates earlier proof.`
 	update.RunE = func(cmd *cobra.Command, args []string) error {
 		payload, err := readObjectInput(cmd, file)
 		if err != nil {
@@ -342,7 +338,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		if sid, ok := numberAsInt(data["system_id"]); !ok || sid != int64(env.SystemID) {
 			return fmt.Errorf("updated test case belongs to a different System or has no System identity")
 		}
-		return writeRecord(cmd, map[string]any{"id": data["id"], "display_ref": data["display_ref"], "title": data["title"]})
+		return writeRecord(cmd, selectKeys(data, []string{"id", "title", "revision"}))
 	}
 	root.AddCommand(create, list, get, update)
 	return root
@@ -350,9 +346,6 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 
 func testCaseDetailRoute(systemID int, identity string) string {
 	path := "/api/compliance/test-cases/"
-	if strings.HasPrefix(strings.ToUpper(identity), "TC-") {
-		path += "by-ref/"
-	}
 	return path + url.PathEscape(identity) + "?system_id=" + fmt.Sprint(systemID)
 }
 
@@ -361,7 +354,7 @@ func validateTestCaseWrite(payload map[string]any, creating bool) error {
 		return fmt.Errorf("input must include at least one editable field")
 	}
 	for k := range payload {
-		if k != "title" && k != "description" && k != "preconditions" && k != "steps" {
+		if k != "title" {
 			return fmt.Errorf("unsupported test-case field %q", k)
 		}
 	}
@@ -397,8 +390,7 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return fmt.Errorf("evidence response is missing its data object")
 		}
 		data, _ := body["data"].(map[string]any)
-		run, _ := data["run"].(map[string]any)
-		return writeRecord(cmd, map[string]any{"run_id": run["id"], "result": data["result"], "results": lenAny(data["results"])})
+		return writeRecord(cmd, data)
 	}})
 	root.Commands()[0].Flags().String("file", "", "evidence JSON file (required)")
 	root.Commands()[0].MarkFlagRequired("file")
@@ -408,7 +400,6 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 		c := &cobra.Command{Use: name, Short: "Read evidence " + name, Args: cobra.NoArgs}
 		c.Flags().Bool("json", false, "emit JSON")
 		if name == "runs" {
-			c.Flags().String("kind", "", "filter run kind: ci, local_test, browser_verification, manual, migration")
 			c.Flags().Bool("full", false, "include matching per-target result rows")
 		}
 		c.Flags().Int("limit", 20, "page size (1–200)")
@@ -439,10 +430,6 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 			}
 			fullRuns := false
 			if name == "runs" {
-				k, _ := cmd.Flags().GetString("kind")
-				if k != "" {
-					p.Set("kind", k)
-				}
 				fullRuns, _ = cmd.Flags().GetBool("full")
 				if fullRuns {
 					p.Set("include_results", "true")
@@ -455,13 +442,13 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 			data, _ := body["data"].(map[string]any)
 			if name == "latest" {
 				return writeNativePage(cmd, data, "targets", func(item map[string]any) (map[string]any, error) {
-					return selectKeys(item, []string{"target_type", "requirement_kind", "target_id", "result", "state", "sha", "ran_at"}), nil
+					return selectKeys(item, []string{"id", "target_id", "result", "validity", "state", "sha", "status", "run_id", "detail", "inserted_at"}), nil
 				})
 			}
 			return writeNativePage(cmd, data, "runs", func(item map[string]any) (map[string]any, error) {
-				selected := selectKeys(item, []string{"id", "kind", "sha", "branch", "ran_at", "status", "totals"})
+				selected := selectKeys(item, []string{"id", "sha", "status", "inserted_at"})
 				if fullRuns {
-					mergeSelectedKeys(selected, item, []string{"source_revision", "log_ref", "environment", "raw_evidence", "runner_kind", "runner_agent_slug", "runner_user_id"})
+					mergeSelectedKeys(selected, item, []string{"traces"})
 				}
 				if rawResults, exists := item["results"]; exists {
 					results, _ := rawResults.([]any)
@@ -471,9 +458,9 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 						if !ok {
 							return nil, fmt.Errorf("evidence run contains an invalid result")
 						}
-						result := selectKeys(row, []string{"target_type", "requirement_kind", "target_id", "target_clause", "test_case_ref", "role", "result", "validity", "revision", "detail"})
+						result := selectKeys(row, []string{"id", "run_id", "target_id", "result", "validity", "detail"})
 						if fullRuns {
-							mergeSelectedKeys(result, row, []string{"id", "run_id", "environment", "raw_evidence", "metadata"})
+							mergeSelectedKeys(result, row, []string{"id", "run_id"})
 						}
 						compact = append(compact, result)
 					}
@@ -490,73 +477,38 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 // evidenceRecordHelp is the run file as Core.Evidence and the evidence
 // schemas accept it, with the fields the acceptance review later requires,
 // so a verification pass records what the review will read.
-const evidenceRecordHelp = `Record one test, CI, browser or manual run and its per-target results. The
-CLI adds the bound system_id. Example:
+const evidenceRecordHelp = `Record actual native TestCase outcomes and their criterion relationships.
 
-  {"kind":"local_test","sha":"<commit>","branch":"<branch>","ran_at":"2026-10-18T10:00:00Z",
-   "runner":{"kind":"agent","agent_slug":"claude-code"},"status":"complete",
-   "totals":{"pass":1,"fail":0},"log_ref":"<command or CI run url>","environment":{"os":"darwin"},
-   "results":[{"target_type":"requirement","requirement_kind":"system_requirement",
-               "target_id":"<uuid>","result":"pass","role":"GREEN","revision":"<commit>",
-               "test_case_ref":"test/catalog_test.exs:12","detail":{"command":"mix test test/catalog_test.exs"}}]}
+Reserve: {"sha":"<tested code revision>","status":"running"}.
+For an active Epic, use epics gates start-execution first and reuse its run_id.
+Finalize with the returned run identity:
+  {"id":"<run UUID>","status":"complete","native_verification":{
+    "tests":[{"test_case_id":"<TestCase UUID>","result":"pass",
+      "detail":{"executed_test_case":{"revision":0}}}],
+    "criteria":[{"criterion_id":"<criterion UUID>","test_keys":["<TestCase UUID>"]}]}}
 
-The run:
+Select existing native tests explicitly. Their title/revision identify the test;
+requirements and executable code define expected behavior. Code relationships
+must resolve through scoped native Traces. Before executing, each TestCase must
+have an active Trace to a source_file or file_analysis in the same System.
+Use reverse-engineer record to establish missing code relationships first.
+Outcomes are pass, fail, error, skip
+or inconclusive. Only an actual assertion failure is fail; setup/build failures
+are error. All required tests must have applicable passing results to verify a
+criterion. The server derives completeness from current native links.
 
-  kind        ci | local_test | browser_verification | manual | migration (required for a new run)
-  ran_at      RFC 3339 time (required for a new run)
-  runner      optional: {"kind": "agent", "agent_slug": "<slug>"} names the
-              agent that ran it, with the signed-in person as the human
-              behind it; left out, the run is attributed to the signed-in
-              person
-  sha, branch, source_revision, status (running | complete | error; default
-  complete), totals, log_ref, environment, raw_evidence
-  id          an existing run to update: supplied results replace its result
-              set, and omitted fields keep their values. Ordinary runs allow
-              proof to be overwritten. Epic-registered runs and runs stored with
-              raw_payload.as_built_proof set to execution or delivery refuse
-              changed proof under the same id
+Runs retain only identity, scope, tested SHA, status and server timestamps.
+Results retain run/test identity, actual outcome, validity and the executed test
+revision. Registrations bind declared obligations to the current candidate when
+applicable. Failure finalization must precede registration of the passing run.
+No procedure, role, runner, command, environment or raw report is uploaded.
 
-For approved Epic obligations, register the run with epics gates start-execution
-before running tests, then finalize its returned run_id here. Registered runs
-retain their candidate, obligations, test definitions, role and observed outcomes.
-This requirement applies to every source, including CI and reverse-engineering
-verification: unregistered results for a criterion declared by an IN_PROGRESS or
-IN_REVIEW Epic in the same tenant/System, or an Epic target with a declared check
-clause, are refused with epic_execution_registration_required. Other targets keep
-their ordinary evidence behavior. The implementation approver's signed-in account
-must register the run; a different CI account cannot bypass that ownership rule.
-Omitted results cannot erase an outcome; exact retries are allowed, reruns use
-new registrations. The server records immutable finalization order. See epics
-gates --help for native criterion/check targeting and expected RED assertions.
-
-Each result:
-
-  target_type       requirement | criterion | test_case | backlog_record | epic
-  target_id         the target's UUID, or its integer ID for an epic
-  requirement_kind  user_requirement | system_requirement, required with a
-                    requirement target
-  result            pass | fail | skip | error | inconclusive
-  role              RED for the red-first failing run, GREEN (or none) for a
-                    passing run; a RED never shadows a later pass
-  revision, target_clause, test_case_ref, detail (a map; put the command
-  under "command"), environment, raw_evidence
-
-Record the RED run before the passing run, each at its tested commit. For an
-Epic-registered execution, use its returned run_id as id and status complete;
-keep the registration runner unchanged. Every rerun needs a new registration.
-For unregistered evidence outside approved Epic obligations, omit id to create
-a new run for each execution, including reruns. Requirement-level
-results drive evidence latest and the Epic's build state. For existing-behavior acceptance
-(reverse-engineer review), record one result per criterion with target_type
-criterion and target_id the criterion's id (requirements get <uuid> --kind …
---full lists them), result pass, a test_case_ref, a revision on the result or
-sha on the run, a report (raw_evidence, log_ref or detail.command) and an
-environment on the result or the run, in a complete run of a kind other than
-migration, after the requirement's content, criteria and traces last changed.
-
-The receipt is run_id, result (created | updated | replayed) and the number
-of results. Read back with evidence runs --full --target-id <uuid> and
-evidence latest.`
+Finalized outcomes and result mappings are immutable. An identical retry reuses
+stored identities; a conflict refuses atomically. Adding a Trace preserves
+recorded results. Meaningful test/criterion edits and changes to existing
+relationships can invalidate applicability without rewriting the outcome or revision.
+Historical reads expose surviving native facts, never reconstructed definitions.
+`
 
 func lenAny(value any) int { rows, _ := value.([]any); return len(rows) }
 

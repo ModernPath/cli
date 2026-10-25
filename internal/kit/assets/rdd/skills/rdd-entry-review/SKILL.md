@@ -18,8 +18,8 @@ If it reports blockers, resolve them through the appropriate pass and check
 again. A passing check does not record the human's approval.
 
 Resolve and record declared human decisions before the final independent review.
-Retain the authoritative review bundle and its exact saved plan before asking
-for implementation approval. A changed answer or reviewed content requires
+Read the authoritative current plan, decisions, traces and separate review
+before asking for implementation approval. A changed answer or reviewed content requires
 renewed review. Present only this retained content.
 
 Present the user outcome, included requirements and exclusions, material
@@ -28,8 +28,8 @@ plain language. Ask the human to approve or revise the plan for
 implementation. Do not imply that a passing review or autopilot grant is
 completion approval.
 
-If approved, submit the unchanged retained presentation with the human's actual
-answer and `USER:` attribution through
+If approved, apply the current-state approval with the human's actual answer
+and `USER:` attribution through
 the CLI and read back the resulting Epic state and plan
 content. Confirm the named requirements atomically acquired the human/Epic
 ownership and moved directly to IN_PROGRESS, with published content unchanged.

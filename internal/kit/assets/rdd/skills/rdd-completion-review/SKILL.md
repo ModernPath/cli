@@ -15,7 +15,7 @@ still-published requirements, ownership, implementation, traces and evidence.
    can leave affected paths broken; disclose those failures without restoring
    deleted machinery or claiming unproven behavior works.
 2. Fetch and retain the authoritative review bundle after evidence is finalized.
-   Supply it to a review context independent of the author. Record that exact
+   Supply its current facts to a review context independent of the author. Record the
    implementation review with coverage of every criterion and obligation and
    confirmation whether all approved scope is implemented. Context labels attest
    separation; they do not prove different people reviewed the work.
@@ -23,7 +23,7 @@ still-published requirements, ownership, implementation, traces and evidence.
    security, data-loss, contract, traceability and testability findings. Keep
    source, test, code-revision and PR links as evidence, not approval tokens.
    If reviewed content or evidence changes, renew the independent review before
-   submission. Do not silently replace the bundle attached to an earlier review.
+   submission. Keep the earlier review findings; do not attach a saved presentation.
 3. Run the `completion-review` Epic gate check and inspect its recorded result
    and blockers. Resolve blockers before submitting completed implementation
    for review. Read back
@@ -36,18 +36,18 @@ still-published requirements, ownership, implementation, traces and evidence.
    findings, risks, assumptions and any unfinished scope to the human. Obtain
    the separate explicit completion answer; never infer it from implementation
    approval, an autopilot grant, tests, code review or repository state.
-5. Apply only the human's actual approval with the unchanged retained
-   presentation through the CLI. If it changed, present current
-   content and obtain a new answer; never refresh it silently to reuse consent.
-   Read back the atomic publication of approved content, one revision increment
-   per requirement, immutable accepted versions with criteria and trace meaning,
-   attributable Epic/requirement audit and released ownership. A failed action
-   must leave all effects unchanged; a repeated completion must not republish.
-   If the human answers not yet, record that answer with the unchanged
-   retained presentation as a return to implementation through the CLI. Read
-   back the Epic and its owned requirements IN_PROGRESS with the plan, the
-   implementation approval and the ownership unchanged, continue the build,
-   and renew whatever changed before submitting for review again.
+5. Apply only the human's explicit current-state approval and reason through the
+   CLI. Upload no plan or presentation. The server rechecks current eligible
+   state under locks. Read back atomic publication, one revision increment per
+   requirement, immutable accepted content/criteria/trace meaning, attributable
+   approval and released ownership. A failed action leaves all effects unchanged;
+   a repeated terminal completion cannot republish. Resolve an uncertain
+   nonterminal response by reading current state and audit.
+   If the human answers not yet, record the reason as a return to implementation.
+   This needs the current authorization and IN_REVIEW lifecycle, even when
+   completion readiness fails. Read back IN_PROGRESS with the same plan,
+   implementation approval and ownership, continue the approved build, and renew
+   changed evidence and review before submitting again.
 6. After that publication is read back, use the CLI to mark each backlog, gap
    or tooling record routed to the Epic as closed by the Epic, and read each
    record back. If the human wants a record left open, leave it open and add

@@ -837,159 +837,76 @@ against a repository. Both passing and blocked checks are recorded; blocked
 checks exit nonzero, and audit failure returns an error. Reading a preview or
 review bundle records no check. A passing check grants no human approval.
 
-For a read of all gate information in one request, run
+Read current server facts for a separate review with
 `modernpath epics gates review-bundle <epic-id> --phase <phase> --json`.
-It returns `epic` (title, status and approvals), `review` (the unchanged exact
-review snapshot), `reviews` (including findings), and `readiness` (the same
-phase report as the gate preview), plus `source_files` mapping the plan's file
-IDs to repository/path pairs for independent review. This metadata stays outside
-the exact `review` snapshot. This read does not create an Audit Trail
-event. The no-phase command below still returns the raw snapshot required by
-review and implementation approval inputs.
+The response contains Epic context, current `review`, review findings and
+resolutions, `readiness`, and source-file identities. Within `review`, `test_cases`
+is keyed by TestCase UUID and `evidence` by run UUID. Each execution contains its
+registration, run, actual results and finalization once. Registrations name the
+criterion/check obligations. Results reference native TestCases; typed Traces
+supply criterion mappings. No full presentation is retained inside a review.
 
 ```sh
 modernpath epics plan show <epic-id> --full --json
 modernpath epics plan save <epic-id> --file plan.json --reason "<reason>"
-modernpath epics gates review-bundle <epic-id> --json > reviewed-bundle.json
-modernpath epics plan approve-implementation <epic-id> --file reviewed-plan.json --presentation-file reviewed-bundle.json --reason "USER:<date>: <actual approval>"
+modernpath epics gates review-bundle <epic-id> --json
+modernpath epics plan approve-implementation <epic-id> --reason "USER:<source>: approve"
+modernpath epics gates candidate <epic-id> --file candidate.json
+modernpath epics gates start-execution <epic-id> --file execution.json
+modernpath evidence record --file result.json
 modernpath epics plan submit-review <epic-id> --reason "<reason>"
-modernpath epics gates presentation <epic-id> --json > completion-presentation.json
-modernpath epics plan approve-completion <epic-id> --file completion-presentation.json --reason "USER:<date>: <actual approval>"
-modernpath epics plan return-to-implementation <epic-id> --file completion-presentation.json --reason "USER:<date>: <answer>"
-modernpath epics plan history <epic-id> [--limit 20] [--offset 0] [--full] [--json]
+modernpath epics gates presentation <epic-id> --json
+modernpath epics plan approve-completion <epic-id> --reason "USER:<source>: accept"
+modernpath epics plan return-to-implementation <epic-id> --reason "USER:<source>: continue work"
+modernpath epics plan return-to-planning <epic-id> --reason "USER:<source>: replan"
+modernpath epics plan history <epic-id> --full --json
 ```
 
-Run approval commands only after the human approves the exact retained content.
-`reviewed-plan.json` is the `plan` object inside the retained review bundle;
-`reviewed-bundle.json` is the whole bundle. Do not pass the enclosing response
-as the plan, or fetch a new bundle to reuse an earlier human answer. The
-implementation presentation is required when the plan declares human decisions.
-Record those answers before the final independent plan review. Completion uses
-the exact whole presentation shown to the human, including current evidence.
+The saved plan has `body`, `requirements`, `traces` and `verification`.
+Requirement proposals retain `kind`, native `id`, exact proposed `content` and
+ordered `criteria`. Traces retain typed native endpoints and relationship.
+`verification` declares the plan `author_context`, decision UUIDs, criterion
+obligations `{id, changed, test_case_id, boundary}`, project checks
+`{id, name, test_case_id, boundary}`, and boundaries `{name, applicable, reason}`.
+A new check ID is assigned on save. A nonapplicable boundary needs a reason.
+Source files that do not exist yet use the existing plan-only `planned` trace;
+completion requires real scoped code endpoints.
 
-`show` summarizes the current plan state; `show --full --json` reads the saved
-plan, human decisions and accepted requirement versions in full.
-`history` lists the Epic's retained plan revisions (`plan_saved`, with the
-saved plan and the one it replaced), both human approvals (the plan they
-approved) and every content edit (`updated`, with the changed fields and
-their previous and new values), newest first. The default view prints per
-item `{id, at, user_name, action, comment, saved_plan: {requirements,
-criteria, traces, body_chars}, delta}` where `delta` is `saved_plan` minus the
-same counts of the previous plan; an `updated` item prints `fields` instead.
-`--full` prints the served items unchanged, plan bodies included. `--limit`
-is 1..50. A `returned_to_planning` item retains the approved plan and withdrawn
-approval; its summary includes plan counts without a content delta. `--full`
-includes its complete audit details and phase-record positions.
+Candidate input is `{"revision":"<tested code revision>"}`. Execution registration
+is `{"revision":"<tested code revision>","obligation_ids":["<UUID>"]}`. Register
+before running tests. Actual failed assertions establish RED; errors, skips and
+inconclusive outcomes do not. Finalize the failed run before registering the
+passing run. Passing evidence must bind to the current candidate identity and
+revision; same-SHA redeclaration requires fresh passing evidence.
 
-`save` and `approve-implementation` read one JSON plan from standard input
-or `--file plan.json`. The plan includes `body`, `requirements` (kind, ID,
-content and criteria), `traces` and `verification`. Use real `implements` traces for existing code.
-When a requirement's source file does not exist yet, use a plan-only declaration:
+A separate review records `phase`, `reviewer_context`, all criterion and obligation
+IDs, `reason`, `findings` and `scope_implemented`. Implementation review confirms
+scope with `scope_implemented: true`. Findings have `severity` and `description`;
+the server assigns IDs. Resolutions reference `review_id` and `finding_id` with a
+reason. A decision definition stores its question once; answers reference its
+existing decision ID and retain answer/source. No review uploads a presentation.
 
-```json
-{"source_type":"system_requirement","source_id":"<requirement-uuid>","link_kind":"planned"}
-```
+Approval and return requests contain reason and optional actor attribution.
+The server checks eligible current database state under its existing locks.
+They upload no plan, presentation, hash or token. A preview does not certify that
+a previously rendered screen stayed unchanged. Independent review applicability
+comes from native changes, existing revisions and server ordering; formatting
+alone is not a semantic change. Unknown applicability blocks.
 
-A plan can mix real code traces and planned declarations. A planned declaration
-has no target, path or trace ID; saving it creates no file identity. Both
-`plan-ready` and implementation approval accept it. Completion review and
-completion approval require a real `implements` trace to a scoped `source_file`
-or `file_analysis` for every requirement, even when all test evidence passes.
+Implementation approval owns the selected requirements and freezes the active
+plan. Submission requires current completion-review readiness. Completion
+publishes accepted requirement content, criteria and trace meaning atomically,
+releases ownership and records approval attribution. Repeating terminal completion
+publishes once. Return to implementation uses current authorization/lifecycle and
+works when completion readiness fails. Return to planning withdraws approval and
+starts a new planning cycle; earlier candidate/execution/review records cannot
+satisfy it. Human implementation and completion decisions remain separate.
+No command merges or deploys. Read state and audit after an uncertain response.
 
-After implementing the code, read `reverse-engineer schema` and record its real
-trace with `reverse-engineer record --file <file>`, using `requirements: []` to
-leave approved requirement content unchanged. Record real source-file repository,
-path and optional revision only once implementation exists; the recorder does
-not inspect the filesystem. New traces change the review baseline and need a
-fresh implementation review. The approved planned declaration remains in the
-plan's history; it never becomes a published trace. Actual links survive
-completion and appear in accepted requirement versions.
-
-`epics plan show <id> --fields plan,source_files --json` and phase review bundles
-expose repository/path mappings for real traces, including links added during
-implementation. Chat supports planned declarations and reads the same mapping.
-This descriptive data stays outside the canonical approval snapshot.
-
-Declare every active
-criterion and required project check, retained test-case IDs, applicable
-boundaries, author context and issued decision IDs in `verification` before
-approval. `save` accepts a partial draft the server completes; implementation
-approval takes the exact complete plan. The installed CLI reference and
-`modernpath epics plan --help` document the shape; `modernpath epics gates --help`
-documents independent review, candidate declaration, execution registration and
-actual RED/GREEN finalization. Register before running every required execution.
-
-Most plan writes accept an optional `--reason` comment. `submit-review` submits the
-implementation for human completion review. `approve-completion` records the
-separate human completion decision and publishes the approved requirement
-content. The approved plan and owned requirement content remain read-only
-through IN_PROGRESS and IN_REVIEW. To revise an active plan, the current
-implementation approver first applies the human's explicit return decision:
-
-```sh
-modernpath epics plan return-to-planning <epic-id> --file approved-plan.json --reason "USER:<actual decision and reason>"
-```
-
-With `--agent <slug>`, both Epic and requirement audit events also name the agent
-running the command. Without it the signed-in person is recorded as the actor.
-The server derives the human identity from authentication, not the payload.
-
-The file contains the exact current approved plan object. The operation atomically
-withdraws approval, releases requirement ownership and returns the Epic and
-selected requirements to PROPOSED. It retains the proposal, published content,
-revisions, accepted versions and all prior history. Its Audit Trail events record
-the actor, time, reason, prior state, exact plan and withdrawn approval. Stale
-content, another approver, ownership conflicts or rolled-back writes leave all
-effects unchanged. If the connection is lost before the result is confirmed,
-`planning_return_outcome_unknown` means the return may already have completed.
-Read `epics plan show <id> --full --json` and
-`epics plan history <id> --full --json` before deciding whether to retry.
-DONE stays closed; changed work needs a follow-up Epic.
-
-Read back the return before editing. Obtain fresh independent plan review and
-human implementation approval, then collect fresh registered RED/GREEN executions
-and implementation review. Earlier decisions, reviews, candidates and executions
-remain history and cannot satisfy the new planning cycle, even if the plan or
-candidate revision is unchanged. Returning to planning waives no gate obligation.
-The server must support `/api/work/epics/:id/return-to-planning`; an older server
-cannot perform this transition. The server remains authoritative.
-
-`return-to-implementation` records the human's "not yet" instead,
-with the same retained `completion-presentation.json` they declined: the Epic
-and its owned requirements move back to IN_PROGRESS under the same approval,
-plan and ownership, and `submit-review` runs again when the work is done.
-Without `--file` the CLI stops before sending anything, printing
-`return-to-implementation requires --file with the exact completion bundle the
-human answered (use --file - to read standard input)`. The server refuses a
-return with these messages:
-
-- `Return to implementation requires IN_REVIEW; the Epic is <state>.` when
-  the Epic is not in review;
-- `Give the human's answer as a non-empty reason, such as a USER: source.`
-  when `--reason` is missing or blank;
-- `Present the exact completion bundle the human answered.` when the request
-  carries no completion bundle;
-- `The completion bundle changed after the human saw it. Present the current
-  bundle and record the human's answer to it.` when the file is not the
-  current output of `epics gates presentation`, for example because evidence,
-  a review or content changed after the human saw it.
-
-`save` refuses a trace edit that adds, changes or drops a link to a
-requirement outside the plan. Every `epics plan` write takes
-`--agent <slug>`, the agent that ran it; the signed-in person is the human
-behind it and both are written on the transition audit. A slug that is blank
-once trimmed is refused with `Name an agent with a non-empty agent slug, or
-send no actor so the signed-in person is the actor.` Leave `--agent` out to
-act as the signed-in person.
-
-Saving a `PROPOSED` Epic plan replaces that Epic's selected requirement
-membership with the complete proposal set. Omitting a selected requirement
-removes only that Epic's link; its record, other Epic links and Traces remain.
-A nonblank body may be saved with no requirements, but implementation approval
-requires at least one. Draft membership selects scope without acquiring
-ownership or publishing proposed content. Existing Roadmap coverage and release
-shared-work rules still apply. Legacy drafts reconcile on the next explicit
-save or approval; reads do not mutate membership.
+History exposes surviving decisions and accepted facts. Copied plans, raw output,
+executed procedure snapshots and nested historical presentations are removed.
+There is no archive or reconstruction from current TestCase content. See the
+[model and cutover contract](../../docs/data/minimal-rdd-evidence.md).
 
 ### Read requirements, test cases, traces and evidence
 
@@ -1025,33 +942,24 @@ loop reference: tooling backlog items only when the bound System name contains
 for other Systems. Never query private transport. During planning assess intended targets; during verification and
 completion assess executed results and their applicability to the tested revision.
 
-Test cases are procedure records with retained title, description,
-preconditions and ordered steps. Create or update that metadata with JSON:
+TestCases retain native UUID, tenant/System, title, existing revision, approval
+attribution, deletion and server timestamps. Create with `{"title":"Access check"}`;
+update with the same title-only shape. The CLI supplies the bound System. Reads
+use native UUIDs and title; lists search UUID/title and order by UUID or title.
+Procedure, preconditions, runner/selector, authority, embeddings, descriptive body,
+status and TC-number references are removed. A title change advances the existing
+revision and invalidates earlier applicable proof.
 
 ```sh
 modernpath test-cases create --file test-case.json
 modernpath test-cases update <uuid> --file test-case-update.json
+modernpath test-cases get <uuid> --full --json
+modernpath evidence runs --target-type criterion --target-id <criterion-uuid> --full --json
 ```
 
-The CLI supplies the bound `system_id`; JSON may contain `title`,
-`description`, `preconditions`, and `steps`. Each step needs `number` and
-`description`; `expected_result` can describe the expected observation. The
-CLI does not execute a TestCase. Record actual test or other verification
-observations as evidence:
-
-```sh
-modernpath evidence record --file evidence.json
-modernpath evidence latest
-modernpath evidence runs --kind local_test
-```
-
-Evidence input includes a run `kind`, `ran_at`, a `runner` attribution, and
-per-target `results`; each result uses the native target type and ID, outcome,
-and optional clause, role, revision and detail. The bound System ID is added
-by the CLI. `latest` is the derived current evidence view; `runs` reads the
-recorded run summaries. Result rows are fetched only when explicitly selected
-with `--full`. Use `--json` for the same selected data
-as JSON; text is the default.
+Native results, executed revisions and typed relationships remain inspectable
+through these existing identities. Historical definitions and raw output are not
+retained or reconstructed. See [Native verification evidence](#native-verification-evidence).
 
 ### Other lists, content reads and operational output
 
@@ -1059,7 +967,7 @@ The same terse output contract applies across the command surface:
 
 | Commands | Discovery and detail |
 |---|---|
-| `test-cases list`, `get` | Lists show `TC-<number>-<revision>` and title. JSON also retains native UUID. `get` and `update` accept either exact display reference or UUID; stale revisions fail. Lists filter with `--query`, `--status draft|approved`, and `--order id|title`. |
+| `test-cases list`, `get` | Native UUID, title and revision. `get` and `update` use UUIDs. Lists search UUID/title with `--query` and sort with `--order id|title`. |
 | `traces list` | Requires an entity type and ID; supports relation filtering and server continuation. Each row identifies the trace and its endpoints. |
 | `evidence latest`, `runs` | Bounded server queries support target, outcome and time filters. `runs` also supports kind. `latest` filters the newest observation per target, so filtering cannot resurrect an older pass. |
 | `read-doc` without `--id` | Paged metadata discovery with query, tier, angle and ordering. Select content through a direct ID read. |
@@ -1232,7 +1140,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Native requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
-| Requirement traces and test procedure records | `traces list`, `test-cases list/get/create/update` |
+| Requirement traces and native test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
 | Reverse engineering | `reverse-engineer schema/record/review/accept` |
 | Agent integration | `install`, `hooks` |
@@ -1256,44 +1164,69 @@ New requirements are recorded as `PROPOSED`. The command reads the supplied JSON
 posts it directly; it does not inspect a repository checkout or require a run,
 content digest or proof report.
 
-Select recorded requirements by native kind and UUID to review their current
-content, traces, criteria and evidence:
+Check current verification before running tests:
 
 ```sh
-modernpath reverse-engineer review --file selection.json --json > review.json
-modernpath reverse-engineer review --file - --json < selection.json
+modernpath reverse-engineer review --file selection.json --json
 ```
 
-The selection object contains only a `requirements` array, with each item
-`{"kind":"user_requirement|system_requirement","id":"<native-uuid>"}`.
-Review sends a read-only preview request to the bound System and prints the full
-review bundle. An ineligible review still returns its problems for inspection.
-Evidence is read from the existing `evidence` record, latest and runs commands;
-`evidence runs --full` returns criterion results and run provenance, including
-test-case reference, role, outcome, validity, tested revision, detail,
-environment, raw evidence, run source revision and report reference. Acceptance
-requires current complete-run criterion results, each PASS and valid, not RED,
-with a test-case reference and detail that identifies the command or report and
-environment. Use `evidence record` to preserve those observations and
-`evidence runs --full` to read them back.
+The selection is `{"requirements":[{"kind":"system_requirement","id":"<UUID>"}]}`;
+`user_requirement` is also supported. The read returns `system_id`, `eligible`,
+`problems`, `requirements`, `test_cases`, `runs` and `evidence`.
 
-To accept, wrap the exact JSON review bundle from `review.json` with the
-human's source and reason. Do not construct or edit the review object; the
-server rechecks that exact bundle:
+- Each requirement has `kind`, `id`, `revision`, `work_status` and `criteria`.
+  Each criterion check has `criterion_id`, `state`, `problem`, `test_keys`
+  (required TestCase IDs), `run_id` and `result_ids`.
+- `test_cases` contains each required `id` and current `revision` once.
+- `runs` contains each current `id`, `sha` and `status` once.
+- `evidence` contains each selected result's `id`, `run_id`, `target_id`
+  (TestCase ID), `result` and `validity` once.
 
-```sh
-jq '{review: ., source: "USER:2026-10-19", reason: "Observed behavior and evidence are accepted"}' review.json > acceptance.json
+DONE requirements have empty criterion checks and contribute no execution data.
+Reuse applicable passing results; execute an unexecuted shared test once for all
+criteria it covers. Each unresolved requirement needs one current run supporting
+all its criteria. A newer partial or failed run cannot borrow older passing
+results. Independent requirements can reuse different already-recorded runs.
+A shared test's current execution affects every requirement linked to that test,
+including when its tested code revision differs from an earlier passing run.
+The server checks current relationships, executed TestCase revision, outcome and
+validity. It does not infer applicability by comparing recording timestamps.
+The response contains no historical execution lists, version bodies, copied
+content or presentation bundles. Read requirement content separately when needed.
+
+Before executing, ensure each TestCase has an active Trace to a `source_file`
+or `file_analysis` in the same System. Use `reverse-engineer record` to establish
+missing code relationships. Missing code links cause `native_test_chain_required`
+at finalization; repair the link and reuse the retained run ID.
+
+Reserve once with `evidence record`, retain the returned run ID, execute and
+finalize actual test outcomes and criterion mappings. Retry finalization with
+that same ID; do not reserve again to retry submission. An empty reservation
+cannot be safely rediscovered from SHA alone. Missing, failing, stale or
+incomplete evidence blocks acceptance.
+
+After explicit human acceptance, send the selection and decision:
+
+```json
+{
+  "requirements": [{"kind": "system_requirement", "id": "<UUID>"}],
+  "source": "USER:2026-10-24",
+  "reason": "Observed behavior and passing results are accepted"
+}
 ```
 
 ```sh
 modernpath reverse-engineer accept --file acceptance.json --json
 ```
 
-The command requires non-empty `source` and `reason`, then sends the original
-review bundle to the server for a complete recheck and atomic publication as
-`DONE`. It does not prompt for approval. The receipt includes each accepted
-requirement's resulting revision, accepted version, actor, time, reason, and
-whether the request accepted it now or returned an existing acceptance.
+The server validates current database state under locks, marks requirements DONE
+and increments their versions atomically. Accepted versions retain content,
+criteria, structural traces and selected result IDs without copied executions or
+unrelated old result traces. The receipt includes resulting revisions, version
+IDs and approval attribution. Repeating acceptance returns the existing version.
+Already DONE requirements completed through an Epic or legacy path return
+`result: "skipped"` with their unchanged revision and no version body.
+Human acceptance remains separate from verification; no review body is uploaded.
 
 ### Backlog discoveries
 
@@ -1331,3 +1264,57 @@ The server preserves the original raiser and records the authenticated update
 actor and time in metadata. Read back with `backlog get <uuid> --full --json`.
 This changes the backlog disposition, not an Epic approval or completion.
 Requires a server with the Backlog PATCH endpoint; older servers refuse the write.
+
+## Native verification evidence
+
+Reserve an empty non-Epic run before execution with
+`{"sha":"<tested code revision>","status":"running"}`. Retain the returned `run.id`.
+Active Epic work uses `epics gates start-execution` and its returned `run_id`.
+Finalize under that identity:
+
+```json
+{
+  "id": "<reserved run UUID>",
+  "status": "complete",
+  "native_verification": {
+    "tests": [{
+      "test_case_id": "<existing native TestCase UUID>",
+      "result": "pass",
+      "detail": {"executed_test_case": {"revision": 0}}
+    }],
+    "criteria": [{
+      "criterion_id": "<native criterion UUID>",
+      "test_keys": ["<the same TestCase UUID>"]
+    }]
+  }
+}
+```
+
+Select existing tests explicitly. The server resolves scope, current test revision
+and actual code relationships. One result per executed TestCase records `pass`,
+`fail`, `error`, `skip` or `inconclusive`. FAIL means an actual failed assertion;
+setup/build failures are ERROR. The producer must classify real execution
+correctly; the server does not infer it from a report. Do not upload commands,
+runner data, procedures, assertion arrays, output or environment.
+
+Required tests come from TestCase-to-criterion links. Actual result-to-test and
+result-to-criterion Traces establish executed mappings. All required tests must
+pass at applicable revisions for complete coverage; no separate criterion result
+or stored full/partial flag is created. The same test supporting several criteria
+has one native identity and one result per run. Project checks use their approved
+plan's TestCase identity. Missing, stale, skipped, incomplete or changed-definition
+proof cannot establish pass; newer relevant failures cannot expose an older pass.
+
+Each request uses current tenant/System permission and Epic ownership. No
+per-run actor pinning or complete submission is stored. Finalized outcomes and
+result mappings are immutable. Identical retries return the same identities;
+conflicting outcomes, revisions or mappings refuse atomically. Later edits can
+invalidate applicability without rewriting historical outcomes or recorded test
+revisions. Raw output, full definitions and historical reconciliation are removed.
+
+`evidence runs --full` reads surviving run/result/Trace facts. Use existing
+TestCase and Trace identities for current detail. Historical definitions are
+never filled from current content. Full traceability distinguishes linked test
+files, actual test outcomes and complete criterion verification. Verification
+changes no requirement lifecycle; explicit existing-behavior acceptance remains
+separate and submits requirement identities, source and reason, not a review body.

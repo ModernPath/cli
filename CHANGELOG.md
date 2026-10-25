@@ -15,6 +15,11 @@
   only omitted names default to the context. Non-object JSON input now reports
   `input must be a JSON object` without Go type details.
 
+- Fix MCP/chat listing of TestCases after the schema reduction. Adding a Trace
+  preserves recorded results; removed structural links are hard-deleted so
+  replacements are not blocked. Add a scoped current-result lookup index and
+  document the test/code Trace prerequisite before execution.
+
 - `modernpath install` keeps the ModernPath block in `.gitignore` where it is
   and rewrites it in place when it is outdated. It used to move the block to the
   end of the file on every run, which left `.gitignore` modified whenever other
@@ -29,6 +34,22 @@
   header Core puts on every response. It prints `unknown` with the reason when
   the workspace has no valid sign-in, the server does not answer, or the server
   does not send the header. Requires a server that sends the header.
+
+- Bound current evidence reads to selected requirements, criteria and TestCases,
+  selecting one current result per test. Shared tests supersede earlier evidence
+  across tested code revisions. Acceptance checks current traced facts without
+  comparing execution timestamps to content timestamps. Epic RED/GREEN checks
+  retain their explicitly registered execution identities.
+
+- Reduce Epic verification to native TestCase identities/revisions, scoped
+  executions, actual outcomes and criterion/code Traces. Remove procedures,
+  runners, output, copied definitions, candidate author context and saved
+  presentations. Reviews retain findings and coverage. Approval and return
+  actions carry only the reason and existing attribution and check current
+  server state atomically. This is a coordinated breaking server/CLI/UI cut;
+  old evidence producers must stop before the destructive migration. Accepted
+  requirement content and approval facts survive. Unmappable legacy conclusion
+  rows require native re-verification. See `docs/data/minimal-rdd-evidence.md`.
 
 - Bundle the delivery process and skills with the CLI. `modernpath install`
   removes retired provenance files while retaining process installation,
@@ -55,9 +76,9 @@
 - Keep backlog routing truthful (Epic 298). The CLI reference's phase map names
   `backlog update` in the Plan and Discoveries rows (`ROUTED to <epic id>` at
   plan save) and in the Completion row (`CLOSED by <epic id>` after completion
-  approval); rdd-plan, rdd-triage, rdd-completion-review, rdd-deliver and
-  PROCESS.md carry the routing and closing steps.
-  `epics get <id> --fields backlog --json`
+  approval); the installed process is re-pinned to the req-driven-dev revision
+  whose rdd-plan, rdd-triage, rdd-completion-review, rdd-deliver and PROCESS.md
+  carry the routing and closing steps. `epics get <id> --fields backlog --json`
   (also under `--full`) serves the records routed to or closed by the Epic.
   Backlog links carry `title`, `display_ref` and `available`; `backlog list`,
   `get` and `update` text print the target's title as `ROUTED to 288 — <title>`.

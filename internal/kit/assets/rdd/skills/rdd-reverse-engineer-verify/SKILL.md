@@ -11,27 +11,52 @@ current content, active acceptance criteria and implementation/test traces.
 Acceptance targets are PROPOSED. Existing DONE requirements may support the
 trace, but are not accepted again. Verification does not change lifecycle state.
 
-1. Identify what each acceptance criterion requires and where the existing
-   implementation supplies it. Preserve the actual requirement, code and test
-   identities. A source link or test name alone does not establish correctness.
-2. Map every in-scope criterion to meaningful assertions. For a user requirement,
-   assess its user-facing scenarios independently of lower-level system tests.
-   Include the supporting system requirements actually required by those
-   scenarios; do not invent relationships or parents to fill a diagram.
-3. Run the existing tests, or inspect retained execution results that genuinely
-   apply to the inspected implementation. Record the command/report, environment,
-   tested code revision, test identities, criterion targets and actual PASS,
-   FAIL or SKIP outcomes through the CLI. A broad
-   passing suite proves only the assertions it executed.
-4. Report uncovered criteria, failures, skipped checks and uncertainty. If tests
-   or behavior need changing, leave the requirements PROPOSED and hand the
-   missing work to normal planning/build/verification. Do not change product or
-   test code during this pass or fabricate a RED result for existing behavior.
-5. Read back the stored evidence and traces. Recheck that the requirement
-   content and relevant implementation still match what was evaluated. Present
-   the exact requirement set, criterion-level results, exclusions and remaining
-   risks. Complete evidence is ready for rdd-reverse-engineer-accept; it is not
-   human acceptance and does not itself mark anything DONE.
+1. Read current verification status through the supported requirement-selection
+   check before reserving or executing anything. Skip DONE requirements. Reuse
+   complete applicable recorded results for unchanged requirements and tests.
+   Inspect current requirement content and executable assertions through their
+   existing identities; a file link or test name alone does not prove execution.
+2. Resolve required tests through TestCase-to-criterion Traces. Before executing,
+   confirm each TestCase has an active, same-System Trace to its executable source
+   file, as required by PROCESS.md's verification contract. Record missing code
+   relationships through the supported recording operation. Select the
+   existing TestCase UUIDs and revisions; a shared test executes once for all
+   selected criteria it covers. Requirements and executable code define expected
+   behavior. Store no procedure, runner, selector, assertion array or copied
+   definition. For user requirements, check their scenarios independently of
+   lower-level system tests and retain only real supporting relationships.
+3. If the selected requirements already have complete applicable passing proof,
+   report those result identities and proceed to separate human acceptance. Do
+   not rerun tests merely to refresh a read, produce another presentation or
+   repeat this pass. Missing tests, failed execution or changed behavior leave
+   verification incomplete and route the needed work to normal development.
+4. For requirements that have no recorded execution, reserve one running run
+   through the CLI with the tested code revision. Retain its returned UUID before
+   executing. Run each distinct required test once and finalize one actual result
+   per test. Record the actual outcome, executed TestCase revision and criterion
+   relationships. A failed
+   assertion is FAIL; setup/build failures are ERROR. Missing, skipped, stale,
+   inconclusive and incomplete evidence cannot establish pass. Upload no command,
+   report, environment, raw output or definition snapshot. Every request uses
+   current tenant/System permissions and scoped relationships.
+5. Recover a lost finalization response by current readback or exact replay under
+   the same run UUID. Never reserve another run to retry submission. Conflicting
+   outcomes or mappings are refused rather than overwriting an observation.
+   An empty reservation has no stored test selection: do not infer ownership or
+   reuse it from a matching SHA. If its identity is lost, report the uncertainty
+   instead of claiming a completed or exactly-once execution.
+6. Read the current verification response again. All criteria of each unresolved
+   requirement must be supported by one current run with complete passing test
+   coverage. A newer partial or nonpassing execution cannot borrow older passes.
+   Independent requirements may reuse their own already-recorded current runs;
+   shared run/result records appear once across the selection. No accumulated
+   execution history, accepted-version bodies or presentation bundle is needed.
+7. Report the exact requirement set, criterion status, current run/result IDs,
+   missing links, failures and uncertainty. Do not change product or test code
+   during this pass or fabricate RED evidence for existing behavior. Complete
+   verification is ready for rdd-reverse-engineer-accept; it does not itself
+   accept the requirements or set DONE. Epic implementation retains its separate
+   registration and RED/GREEN rules.
 
 Record grounded requirements even when tests are missing; verification is a
 subsequent requested operation, not a prerequisite for recording. Do not restore

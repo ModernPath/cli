@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -175,16 +174,14 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 			"modernpath reverse-engineer schema", "server JSON Schema", "existing_requirement_conflict",
 		},
 		"modernpath reverse-engineer review": {
-			`{"requirements": [{"kind"`, "missing_criterion_evidence", "test_identity_required",
-			"evidence_predates_current_content", "requirement_owned",
+			`"requirements"`, "current", "eligible",
 		},
-		"modernpath reverse-engineer accept":           {`{"review":`, `"source"`, `"reason"`, "review_changed", "already_accepted"},
-		"modernpath epics plan":                        {`"body"`, `"requirements"`, `"traces"`, "incomplete reviewed content", "change_epic_id"},
+		"modernpath reverse-engineer accept":           {`"requirements"`, `"source"`, `"reason"`, "current"},
+		"modernpath epics plan":                        {`"body"`, `"requirements"`, `"traces"`, "current", "ownership"},
 		"modernpath epics plan approve-implementation": {"USER:", "IN_PROGRESS"},
 		"modernpath epics plan approve-completion":     {"USER:", "DONE"},
 		"modernpath evidence record": {
-			"ci | local_test | browser_verification | manual | migration",
-			"pass | fail | skip | error | inconclusive", "RED", "criterion", "test_case_ref", "requirement_kind",
+			"native_verification", "test_case_id", "executed_test_case", "criterion", "revision",
 		},
 		"modernpath traces list": {"implements, verifies, derives or relates"},
 	} {
@@ -358,8 +355,6 @@ func TestSR1636_1GlossaryKeysTheRefusalsOnTheirPrintedText(t *testing.T) {
 		{"trace criterion has other epic", "server 422", ""},
 		{reasonRequiredMessage, "server 422", "`reason_required`"},
 		{invalidActorMessage, "server 422", "`invalid_actor`"},
-		{presentationRequiredPrefix, "server 422", "`return_presentation_required`"},
-		{presentationChangedPrefix, "server 409", "`return_presentation_changed`"},
 	} {
 		cells := strings.Split(strings.Trim(glossaryRow(t, loop, want.key), "| "), " | ")
 		if len(cells) != 4 || !strings.HasPrefix(cells[1], want.origin) || !strings.Contains(cells[1], want.code) || cells[2] == "" || cells[3] == "" {
@@ -386,73 +381,27 @@ func TestSR1636_3WrongStateRowIsKeyedOnThePrintedLifecycleMessage(t *testing.T) 
 // SR-1638.3: the reference, both CLI guides and the return help show the return
 // with its completion bundle, after epics gates presentation, and name its
 // refusals by their printed messages.
-func TestSR1638_3TheReturnShowsItsBundleWhereverItIsDocumented(t *testing.T) {
+func TestReturnUsesCurrentStateWithoutAFile(t *testing.T) {
 	loop := renderedLoop()
-	presentation, ret := -1, -1
-	for i, line := range strings.Split(loop, "\n") {
-		if strings.HasPrefix(line, "epics gates presentation ") {
-			presentation = i
-		}
-		if strings.HasPrefix(line, "plan return-to-implementation --file <presentation.json> ") {
-			ret = i
-		}
-	}
-	if presentation < 0 || ret < 0 || presentation > ret {
-		t.Errorf("the lifecycle block must show epics gates presentation (line %d) before plan return-to-implementation --file <presentation.json> (line %d)", presentation, ret)
-	}
 	row := phaseRow(t, loop, "| Review, publish and complete |")
-	at, retAt := strings.Index(row, "`epics gates presentation <id> --json`"), strings.Index(row, "`epics plan return-to-implementation <id> --file <presentation.json>")
-	if at < 0 || retAt < 0 || at > retAt {
-		t.Errorf("the rdd-completion-review row must show the return with --file <presentation.json> after epics gates presentation: %s", row)
-	}
-	if !strings.Contains(glossaryRow(t, loop, "; the Epic is"), "`return-to-implementation`") {
-		t.Error("the wrong-state row does not name return-to-implementation")
+	for _, want := range []string{"epics plan return-to-implementation <id> --reason", "current", "readiness", "ownership"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("completion row omits %s", want)
+		}
 	}
 	kit, err := os.ReadFile("../internal/kit/assets/cli-guide/cli.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The image's Go test stage copies only tools/modernpath, so docs/cli.md is
-	// compared wherever the workspace has it.
-	if guide, err := os.ReadFile("../../../docs/cli.md"); err == nil {
-		if !bytes.Equal(guide, kit) {
-			t.Error("the kit's CLI guide differs from docs/cli.md")
-		}
-	} else if !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(kit), "modernpath epics plan return-to-implementation <epic-id> --file ") {
-		t.Error("the CLI guide does not show the return with --file")
-	}
-	guide := strings.Join(strings.Fields(string(kit)), " ")
-	for _, place := range []struct{ name, text string }{
-		{"the lifecycle block's return entry", lifecycleEntry(loop, "plan return-to-implementation --file <presentation.json> ")},
-		{"the rdd-completion-review row", row},
-		{"the CLI guide", guide},
-	} {
-		for _, message := range []string{reasonRequiredMessage, presentationRequiredPrefix, presentationChangedPrefix} {
-			if !strings.Contains(place.text, message) {
-				t.Errorf("%s does not name the refusal %q", place.name, message)
-			}
-		}
-	}
-	for name, text := range map[string]string{"the CLI guide": guide, "the rdd-completion-review row": row} {
-		if !strings.Contains(text, invalidActorMessage) {
-			t.Errorf("%s does not name the refusal of a blank --agent slug %q", name, invalidActorMessage)
-		}
+	if !strings.Contains(string(kit), "return-to-implementation") || strings.Contains(string(kit), "--file <presentation.json>") {
+		t.Fatal("guide has obsolete bundle upload")
 	}
 	help, err := runRoot(t, "epics", "plan", "return-to-implementation", "--help")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := strings.Join(strings.Fields(help), " ")
-	for _, want := range []string{"--file string", "--reason string", reasonRequiredMessage, presentationRequiredPrefix, presentationChangedPrefix} {
-		if !strings.Contains(text, want) {
-			t.Errorf("epics plan return-to-implementation --help does not show %q", want)
-		}
-	}
-	if c, _, err := rootCmd.Find([]string{"epics", "plan", "return-to-implementation"}); err != nil || c.Name() != "return-to-implementation" {
-		t.Error("the binary has no epics plan return-to-implementation")
+	if !strings.Contains(help, "--reason string") || strings.Contains(help, "--file string") {
+		t.Fatal(help)
 	}
 }
 

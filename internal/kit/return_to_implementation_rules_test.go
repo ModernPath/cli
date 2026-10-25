@@ -42,13 +42,13 @@ func TestSR3835_2InstalledProcessNamesTheReturn(t *testing.T) {
 		{"PROCESS.md", process, []string{
 			"A human's not-yet at completion review returns the Epic and its owned requirements to `IN_PROGRESS`",
 			"with the plan, the implementation approval and the ownership kept",
-			"record it with the presentation the human declined",
+			"record the explicit human reason against current server state",
 			"continue the build and submit for review again",
 		}},
 		{"rdd-completion-review", canonical, []string{
-			"If the human answers not yet, record that answer with the unchanged retained presentation as a return to implementation through the CLI.",
-			"Read back the Epic and its owned requirements IN_PROGRESS with the plan, the implementation approval and the ownership unchanged",
-			"continue the build, and renew whatever changed before submitting for review again",
+			"If the human answers not yet, record the reason as a return to implementation.",
+			"Read back IN_PROGRESS with the same plan, implementation approval and ownership",
+			"continue the approved build, and renew changed evidence and review before submitting again",
 		}},
 	} {
 		text := kitWhitespaceNormalised(file.body)

@@ -26,49 +26,20 @@ func addReverseAcceptanceCommands(root *cobra.Command, load func() (*cliEnv, err
 func newReverseEngineerReviewCommand(load func() (*cliEnv, error)) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "review",
-		Short: "Review current requirement content and evidence",
-		Long: `Read a complete review bundle for selected native requirements. This command
-uses POST for a read-only preview. Use --json to capture the exact bundle for
-reverse-engineer accept --file.
-
-The selection file is {"requirements": [{"kind": "user_requirement" |
-"system_requirement", "id": "<uuid>"}, ...]} and nothing else; at most 1000
-rows, no duplicates.
-
-The bundle is {"system_id", "eligible", "problems": [...], "requirements":
-[...]}. Each requirement row carries kind, id, revision, work_status, content,
-criteria (active ones), traces (active confirmed ones touching it or its
-criteria), evidence (the newest non-RED criterion results) and versions
-(accepted versions so far). A problem is {"kind", "id", "criterion_id",
-"reason"}; the bundle is eligible only when the list is empty. Reasons and
-what clears them:
-
-  requirement_not_proposed        only PROPOSED requirements are accepted
-  candidate_unconfirmed           an unconfirmed candidate; confirm it first
-  requirement_owned               an Epic owns it; it completes through that Epic
-  missing_criteria                it has no active criteria; record some
-  missing_criterion_evidence      no evidence result targets the criterion
-                                  (target_type criterion, target_id its UUID)
-  incomplete_evidence_run         the run's status is not complete
-  evidence_not_current            the result's validity is not current
-  criterion_not_passing           the newest result is not pass
-  execution_evidence_required     the run kind is migration; record a real execution
-  test_identity_required          the result has no test_case_ref
-  tested_revision_required        no revision on the result, nor sha or
-                                  source_revision on the run
-  execution_report_required       no raw_evidence, log_ref or detail.command
-  environment_required            neither result nor run carries an environment
-  evidence_predates_current_content  the requirement, a criterion or a trace
-                                  changed after the evidence; run and record again
-
-Only results whose role is not RED count, and only those of the newest run
-that observed the criterion. Record evidence with evidence record; see its
-help for the fields. An ineligible bundle is still printed, so this command is
-the read that tells a verification pass what remains.`,
+		Short: "Check current verification before running existing tests",
+		Long: `Check current requirement status, required test identities and current execution
+results before running tests. Selection: {"requirements":[{"kind":"system_requirement","id":"<UUID>"}]}.
+Each unresolved requirement uses one current run; shared tests and results appear once.
+Reuse applicable passing results and skip DONE requirements. Missing, changed or
+nonpassing evidence blocks acceptance. Keep a reserved run's ID for submission retries;
+never reserve a second run merely to retry finalization. This read writes no evidence
+or approval and returns eligible/problems without content snapshots, historical versions
+or old execution lists.
+Read requirement content separately when needed. Human acceptance remains separate`,
 		Args: cobra.NoArgs,
 	}
 	command.Flags().String("file", "", "JSON selection file; - reads stdin (required)")
-	command.Flags().Bool("json", false, "emit the complete review bundle as JSON")
+	command.Flags().Bool("json", false, "emit current verification status and identities as JSON")
 	_ = command.MarkFlagRequired("file")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, _ := cmd.Flags().GetString("file")
@@ -93,29 +64,14 @@ func newReverseEngineerAcceptCommand(load func() (*cliEnv, error)) *cobra.Comman
 	command := &cobra.Command{
 		Use:   "accept",
 		Short: "Accept reviewed existing behavior for requirements",
-		Long: `Accept an exact review bundle after a human has decided its content and
-evidence are sufficient. The server rechecks the bundle and atomically publishes
-the requirements as DONE. Repeat submissions return the existing versions.
-
-The file is {"review": <the bundle reverse-engineer review --json printed,
-unchanged>, "source": "USER:<date>: <who decided>", "reason": "<their words>"}.
-Both strings are required and non-empty; the review object is validated
-locally and must belong to the bound System. For example:
-
-  jq '{review: ., source: "USER:2026-10-19: <name> accepted", reason: "..."}' review.json > acceptance.json
-
-The server requires the bundle to read eligible with no problems, re-derives
-each row and refuses when anything moved since the review (review_changed,
-409) or a problem appeared (acceptance_not_ready, 409); then, in one
-transaction, it sets each requirement DONE, raises its revision by one and
-retains an immutable version of acceptance_kind existing_behavior with the
-criteria, traces, evidence links, actor, time and reason. Nothing changes on
-a refusal. A requirement already accepted with the same content answers
-already_accepted and gets no second version.
-
-This command applies a decision the human has already made in the session; it
-never asks. The receipt lists kind, id, revision, work_status, result
-(accepted | already_accepted) and the version per requirement.`,
+		Long: `Apply an explicit human acceptance decision to eligible current database state.
+Input: {"requirements":[{"kind":"system_requirement","id":"<UUID>"}],
+"source":"USER:<source>","reason":"<human decision>"}.
+The server reads current content and native evidence under locks, then publishes
+all selected requirements atomically. No review bundle is uploaded. A repeated
+acceptance returns the existing accepted version and publishes nothing twice.
+Already DONE requirements from other completion paths return skipped unchanged.
+Read state and the approval audit after an uncertain response`,
 		Args: cobra.NoArgs,
 	}
 	command.Flags().String("file", "", "JSON acceptance file; - reads stdin (required)")
@@ -131,9 +87,6 @@ never asks. The receipt lists kind, id, revision, work_status, result
 		if err != nil {
 			return err
 		}
-		if err := validateReverseReviewBundle(input.Reviewed, env.SystemID, nil); err != nil {
-			return fmt.Errorf("review bundle does not belong to this workspace binding: %w", err)
-		}
 		data, err := reverseAcceptanceAcceptCall(env, input)
 		if err != nil {
 			return err
@@ -148,10 +101,9 @@ never asks. The receipt lists kind, id, revision, work_status, result
 }
 
 type reverseAcceptanceInput struct {
-	Reviewed  map[string]any
-	RawReview json.RawMessage
-	Source    string
-	Reason    string
+	Requirements []reverseRequirementRef `json:"requirements"`
+	Source       string                  `json:"source"`
+	Reason       string                  `json:"reason"`
 }
 
 func readReverseRequirementSelection(cmd *cobra.Command, path string) ([]reverseRequirementRef, error) {
@@ -159,6 +111,10 @@ func readReverseRequirementSelection(cmd *cobra.Command, path string) ([]reverse
 	if err != nil {
 		return nil, err
 	}
+	return decodeReverseRequirementSelection(fields)
+}
+
+func decodeReverseRequirementSelection(fields map[string]json.RawMessage) ([]reverseRequirementRef, error) {
 	raw, ok := fields["requirements"]
 	if !ok {
 		return nil, fmt.Errorf("input must include %q", "requirements")
@@ -167,8 +123,8 @@ func readReverseRequirementSelection(cmd *cobra.Command, path string) ([]reverse
 	if err := json.Unmarshal(raw, &rows); err != nil || rows == nil {
 		return nil, fmt.Errorf("input field %q must be an array", "requirements")
 	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("input field %q must contain at least one requirement", "requirements")
+	if len(rows) == 0 || len(rows) > 1000 {
+		return nil, fmt.Errorf("input field %q must contain between 1 and 1000 requirements", "requirements")
 	}
 	selection := make([]reverseRequirementRef, 0, len(rows))
 	seen := make(map[string]bool, len(rows))
@@ -203,27 +159,22 @@ func readReverseRequirementSelection(cmd *cobra.Command, path string) ([]reverse
 }
 
 func readReverseAcceptanceInput(cmd *cobra.Command, path string) (reverseAcceptanceInput, error) {
-	fields, err := readReverseJSONFields(cmd, path, "review", "source", "reason")
+	fields, err := readReverseJSONFields(cmd, path, "requirements", "source", "reason")
 	if err != nil {
 		return reverseAcceptanceInput{}, err
 	}
-	for _, required := range []string{"review", "source", "reason"} {
-		if _, ok := fields[required]; !ok {
-			return reverseAcceptanceInput{}, fmt.Errorf("input must include %q", required)
-		}
+	selection, err := decodeReverseRequirementSelection(fields)
+	if err != nil {
+		return reverseAcceptanceInput{}, err
 	}
 	var source, reason string
-	if json.Unmarshal(fields["source"], &source) != nil || strings.TrimSpace(source) == "" {
-		return reverseAcceptanceInput{}, fmt.Errorf("input field %q must be a non-empty string", "source")
+	if json.Unmarshal(fields["source"], &source) != nil || !strings.HasPrefix(source, "USER:") || strings.TrimSpace(strings.TrimPrefix(source, "USER:")) == "" {
+		return reverseAcceptanceInput{}, fmt.Errorf("source must retain an explicit USER: decision")
 	}
 	if json.Unmarshal(fields["reason"], &reason) != nil || strings.TrimSpace(reason) == "" {
-		return reverseAcceptanceInput{}, fmt.Errorf("input field %q must be a non-empty string", "reason")
+		return reverseAcceptanceInput{}, fmt.Errorf("reason must be a non-empty human decision")
 	}
-	reviewed, err := decodeReverseReviewBundle(fields["review"])
-	if err != nil {
-		return reverseAcceptanceInput{}, fmt.Errorf("input field %q: %w", "review", err)
-	}
-	return reverseAcceptanceInput{Reviewed: reviewed, RawReview: fields["review"], Source: source, Reason: reason}, nil
+	return reverseAcceptanceInput{Requirements: selection, Source: source, Reason: reason}, nil
 }
 
 func readReverseJSONFields(cmd *cobra.Command, path string, allowed ...string) (map[string]json.RawMessage, error) {
@@ -287,7 +238,7 @@ func reverseAcceptanceReviewCall(env *cliEnv, selection []reverseRequirementRef)
 	if !ok {
 		return nil, fmt.Errorf("reverse-engineering review response is missing its data object; no review can be confirmed")
 	}
-	if err := validateReverseReviewBundle(data, env.SystemID, selection); err != nil {
+	if err := validateReverseReview(data, env.SystemID, selection); err != nil {
 		return nil, fmt.Errorf("invalid reverse-engineering review response: %w", err)
 	}
 	return data, nil
@@ -297,12 +248,7 @@ func reverseAcceptanceAcceptCall(env *cliEnv, input reverseAcceptanceInput) (map
 	if env.SystemID <= 0 {
 		return nil, fmt.Errorf("connect this workspace to a system before reverse-engineering")
 	}
-	payload := struct {
-		Review json.RawMessage `json:"review"`
-		Source string          `json:"source"`
-		Reason string          `json:"reason"`
-	}{Review: input.RawReview, Source: input.Source, Reason: input.Reason}
-	status, body, err := env.write(http.MethodPost, fmt.Sprintf(reverseAcceptancePrefix, env.SystemID), payload)
+	status, body, err := env.write(http.MethodPost, fmt.Sprintf(reverseAcceptancePrefix, env.SystemID), input)
 	if err != nil {
 		return nil, err
 	}
@@ -313,133 +259,125 @@ func reverseAcceptanceAcceptCall(env *cliEnv, input reverseAcceptanceInput) (map
 	if !ok {
 		return nil, fmt.Errorf("reverse-engineering acceptance response is missing its data object; no acceptance can be confirmed")
 	}
-	if err := validateReverseAcceptanceResponse(data, env.SystemID, input.Reviewed); err != nil {
+	if err := validateReverseAcceptanceResponse(data, env.SystemID, reverseSelectionMap(input.Requirements)); err != nil {
 		return nil, fmt.Errorf("invalid reverse-engineering acceptance response: %w", err)
 	}
 	return data, nil
 }
 
-func decodeReverseReviewBundle(raw json.RawMessage) (map[string]any, error) {
-	var bundle map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&bundle); err != nil || bundle == nil {
-		return nil, fmt.Errorf("must be an object")
+func reverseSelectionMap(refs []reverseRequirementRef) map[string]any {
+	rows := make([]any, 0, len(refs))
+	for _, ref := range refs {
+		rows = append(rows, map[string]any{"kind": ref.Kind, "id": ref.ID})
 	}
-	var trailing any
-	if decoder.Decode(&trailing) != io.EOF {
-		return nil, fmt.Errorf("must contain exactly one JSON object")
-	}
-	if err := validateReverseReviewBundle(bundle, 0, nil); err != nil {
-		return nil, err
-	}
-	return bundle, nil
+	return map[string]any{"requirements": rows}
 }
 
-func validateReverseReviewBundle(bundle map[string]any, systemID int, expected []reverseRequirementRef) error {
-	gotSystemID, ok := numberAsInt(bundle["system_id"])
-	if !ok || gotSystemID <= 0 || (systemID > 0 && gotSystemID != int64(systemID)) {
-		return fmt.Errorf("system_id is missing, invalid, or outside the bound System")
+func validateReverseReview(data map[string]any, systemID int, expected []reverseRequirementRef) error {
+	gotSystemID, ok := numberAsInt(data["system_id"])
+	if !ok || gotSystemID != int64(systemID) {
+		return fmt.Errorf("review is outside the bound System")
 	}
-	if _, ok := bundle["eligible"].(bool); !ok {
+	if _, ok := data["eligible"].(bool); !ok {
 		return fmt.Errorf("eligible must be a boolean")
 	}
-	if _, ok := bundle["problems"].([]any); !ok {
+	if _, ok := data["problems"].([]any); !ok {
 		return fmt.Errorf("problems must be an array")
 	}
-	rows, ok := bundle["requirements"].([]any)
-	if !ok || len(rows) == 0 {
-		return fmt.Errorf("requirements must be a non-empty array")
+	records := make(map[string]map[string]map[string]any)
+	for _, name := range []string{"runs", "evidence", "test_cases"} {
+		rows, ok := data[name].([]any)
+		if !ok {
+			return fmt.Errorf("%s must be an array", name)
+		}
+		records[name] = make(map[string]map[string]any)
+		for _, raw := range rows {
+			row, ok := raw.(map[string]any)
+			id := strings.ToLower(str(row, "id"))
+			if !ok || !requirementUUIDPattern.MatchString(id) || records[name][id] != nil {
+				return fmt.Errorf("%s contains an invalid or duplicate identity", name)
+			}
+			records[name][id] = row
+		}
 	}
-	if expected != nil && len(rows) != len(expected) {
-		return fmt.Errorf("requirements count does not match the requested selection")
+	for _, row := range records["test_cases"] {
+		if rev, ok := numberAsInt(row["revision"]); !ok || rev < 0 {
+			return fmt.Errorf("test revision is missing")
+		}
 	}
-	wanted := make(map[string]bool, len(expected))
+	for _, row := range records["runs"] {
+		if _, ok := row["sha"].(string); !ok {
+			return fmt.Errorf("tested code revision is missing")
+		}
+		if row["status"] != "running" && row["status"] != "complete" && row["status"] != "error" {
+			return fmt.Errorf("invalid run status")
+		}
+	}
+	for _, row := range records["evidence"] {
+		if records["runs"][strings.ToLower(str(row, "run_id"))] == nil || records["test_cases"][strings.ToLower(str(row, "target_id"))] == nil {
+			return fmt.Errorf("result references an unknown run or test")
+		}
+		if _, ok := row["result"].(string); !ok {
+			return fmt.Errorf("result outcome is missing")
+		}
+		if _, ok := row["validity"].(string); !ok {
+			return fmt.Errorf("result validity is missing")
+		}
+	}
+	rows, ok := data["requirements"].([]any)
+	if !ok || len(rows) == 0 || (expected != nil && len(rows) != len(expected)) {
+		return fmt.Errorf("requirements do not match the selection")
+	}
+	wanted := make(map[string]bool)
 	for _, ref := range expected {
 		wanted[ref.Kind+":"+strings.ToLower(ref.ID)] = true
 	}
-	seen := make(map[string]bool, len(rows))
-	for i, raw := range rows {
+	seen := make(map[string]bool)
+	for _, raw := range rows {
 		row, ok := raw.(map[string]any)
-		if !ok {
-			return fmt.Errorf("requirement %d must be an object", i)
-		}
-		kind, kindOK := row["kind"].(string)
-		id, idOK := row["id"].(string)
-		if !kindOK || (kind != "user_requirement" && kind != "system_requirement") || !idOK || !requirementUUIDPattern.MatchString(id) {
-			return fmt.Errorf("requirement %d has an invalid kind or native UUID id", i)
-		}
-		key := kind + ":" + strings.ToLower(id)
-		if seen[key] || (expected != nil && !wanted[key]) {
-			return fmt.Errorf("requirement %d is duplicated or was not requested", i)
+		key := requirementKey(row)
+		if !ok || (row["kind"] != "user_requirement" && row["kind"] != "system_requirement") ||
+			!requirementUUIDPattern.MatchString(str(row, "id")) || seen[key] || (expected != nil && !wanted[key]) {
+			return fmt.Errorf("requirement is invalid, duplicated or outside the selection")
 		}
 		seen[key] = true
-		revision, revisionOK := numberAsInt(row["revision"])
-		if !revisionOK || revision < 0 {
-			return fmt.Errorf("requirement %d is missing its current revision", i)
+		if rev, ok := numberAsInt(row["revision"]); !ok || rev < 0 {
+			return fmt.Errorf("requirement revision is missing")
 		}
 		if _, ok := row["work_status"].(string); !ok {
-			return fmt.Errorf("requirement %d is missing its work status", i)
+			return fmt.Errorf("requirement status is missing")
 		}
-		if _, ok := row["content"].(map[string]any); !ok {
-			return fmt.Errorf("requirement %d is missing its content snapshot", i)
-		}
-		for _, key := range []string{"criteria", "traces", "evidence"} {
-			if _, ok := row[key].([]any); !ok {
-				return fmt.Errorf("requirement %d is missing its %s snapshot", i, key)
+		for _, field := range []string{"content", "traces", "evidence", "versions"} {
+			if _, exists := row[field]; exists {
+				return fmt.Errorf("current review contains a %s snapshot", field)
 			}
 		}
-		versionRows, ok := row["versions"].([]any)
+		criteria, ok := row["criteria"].([]any)
 		if !ok {
-			return fmt.Errorf("requirement %d is missing its versions readback", i)
+			return fmt.Errorf("criterion checks must be an array")
 		}
-		latestVersionRevision := int64(0)
-		for j, rawVersion := range versionRows {
-			version, ok := rawVersion.(map[string]any)
-			if !ok {
-				return fmt.Errorf("requirement %d version %d must be an object", i, j)
+		for _, raw := range criteria {
+			criterion, ok := raw.(map[string]any)
+			if !ok || !requirementUUIDPattern.MatchString(str(criterion, "criterion_id")) {
+				return fmt.Errorf("invalid criterion identity")
 			}
-			if !requirementUUIDPattern.MatchString(str(version, "id")) ||
-				version["requirement_kind"] != kind ||
-				!strings.EqualFold(str(version, "requirement_id"), id) {
-				return fmt.Errorf("requirement %d version %d does not identify this native requirement", i, j)
+			if _, ok := criterion["state"].(string); !ok {
+				return fmt.Errorf("criterion state is missing")
 			}
-			versionRevision, ok := numberAsInt(version["revision"])
-			if !ok || versionRevision < 1 {
-				return fmt.Errorf("requirement %d version %d has an invalid revision", i, j)
-			}
-			if versionRevision > latestVersionRevision {
-				latestVersionRevision = versionRevision
-			}
-			if _, ok := version["content"].(map[string]any); !ok {
-				return fmt.Errorf("requirement %d version %d is missing its content snapshot", i, j)
-			}
-			for _, field := range []string{"criteria", "traces", "evidence"} {
-				if _, ok := version[field].([]any); !ok {
-					return fmt.Errorf("requirement %d version %d is missing its %s snapshot", i, j, field)
+			for field, collection := range map[string]string{"test_keys": "test_cases", "result_ids": "evidence"} {
+				refs, ok := criterion[field].([]any)
+				if !ok {
+					return fmt.Errorf("%s must be an array", field)
+				}
+				for _, ref := range refs {
+					id, ok := ref.(string)
+					if !ok || records[collection][strings.ToLower(id)] == nil {
+						return fmt.Errorf("criterion references an unknown %s identity", collection)
+					}
 				}
 			}
-			if acceptanceKind, ok := version["acceptance_kind"].(string); !ok ||
-				(acceptanceKind != "epic_completion" && acceptanceKind != "existing_behavior") {
-				return fmt.Errorf("requirement %d version %d has an invalid acceptance kind", i, j)
-			}
-			if _, exists := version["epic_id"]; !exists {
-				return fmt.Errorf("requirement %d version %d is missing Epic readback", i, j)
-			}
-			if _, exists := version["approved_by_id"]; !exists {
-				return fmt.Errorf("requirement %d version %d is missing approver readback", i, j)
-			}
-			if approvedAt, ok := version["approved_at"].(string); !ok || strings.TrimSpace(approvedAt) == "" {
-				return fmt.Errorf("requirement %d version %d is missing its approval time", i, j)
-			}
-			if _, exists := version["reason"]; !exists {
-				return fmt.Errorf("requirement %d version %d is missing reason readback", i, j)
-			}
-		}
-		status, _ := row["work_status"].(string)
-		if status == "DONE" && len(versionRows) > 0 {
-			if latestVersionRevision != revision {
-				return fmt.Errorf("requirement %d current revision does not match its latest accepted version", i)
+			if id := str(criterion, "run_id"); id != "" && records["runs"][strings.ToLower(id)] == nil {
+				return fmt.Errorf("criterion references an unknown run")
 			}
 		}
 	}
@@ -475,10 +413,13 @@ func validateReverseAcceptanceResponse(data map[string]any, systemID int, review
 		if row["work_status"] != "DONE" {
 			return fmt.Errorf("requirement receipt %d does not confirm DONE", i)
 		}
-		if revision, ok := numberAsInt(row["revision"]); !ok || revision < 1 {
+		if revision, ok := numberAsInt(row["revision"]); !ok || revision < 0 || (revision == 0 && row["result"] != "skipped") {
 			return fmt.Errorf("requirement receipt %d is missing its resulting revision", i)
 		}
 		result, ok := row["result"].(string)
+		if ok && result == "skipped" {
+			continue
+		}
 		if !ok || (result != "accepted" && result != "already_accepted") {
 			return fmt.Errorf("requirement receipt %d has an invalid result", i)
 		}
@@ -519,10 +460,14 @@ func reverseAcceptanceReceipt(systemID int, data map[string]any) (map[string]any
 		if !ok {
 			return nil, fmt.Errorf("acceptance response contains an invalid requirement receipt")
 		}
-		receipts = append(receipts, map[string]any{
+		receipt := map[string]any{
 			"kind": row["kind"], "id": row["id"], "revision": row["revision"],
-			"work_status": row["work_status"], "result": row["result"], "version": row["version"],
-		})
+			"work_status": row["work_status"], "result": row["result"],
+		}
+		if row["result"] != "skipped" {
+			receipt["version"] = row["version"]
+		}
+		receipts = append(receipts, receipt)
 	}
 	return map[string]any{"system_id": systemID, "requirements": receipts}, nil
 }
@@ -532,7 +477,7 @@ func writeReverseReview(cmd *cobra.Command, data map[string]any) error {
 	if machine {
 		return writeCommandJSON(cmd, data)
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Review bundle for System %v:\n", data["system_id"]); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Current verification for System %v:\n", data["system_id"]); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(data, "", "  ")

@@ -35,6 +35,27 @@ func TestDecodeObjectValidatesShapeAndRetainsNumbers(t *testing.T) {
 	}
 }
 
+func TestTraceListReadsNativeEvidenceResultInBoundSystem(t *testing.T) {
+	const resultID = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("entity_type") != "evidence_result" || r.URL.Query().Get("entity_id") != resultID || r.URL.Query().Get("system_id") != "4" {
+			t.Errorf("unscoped result trace request: %s", r.URL)
+		}
+		_, _ = w.Write([]byte(`{"data":{"items":[{"source":{"type":"evidence_result","id":"11111111-1111-4111-8111-111111111111"},"relation":"relates","target":{"type":"test_case","id":"22222222-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
+	}))
+	defer server.Close()
+	root := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	root.SetArgs([]string{"--entity-type", "evidence_result", "--entity-id", resultID, "--json"})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), resultID) {
+		t.Fatalf("missing result trace: %s", out.String())
+	}
+}
+
 func TestRequirementGetUsesNativeKindAndSystemScopedDetail(t *testing.T) {
 	const requirementID = "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,10 +199,10 @@ func TestTraceListScopesNativeRequirementBeforeReadingTraces(t *testing.T) {
 	}
 }
 
-func TestTestCaseWritesAllowRetainedStepsAndRejectProtectedFields(t *testing.T) {
+func TestTestCaseWritesAllowTitleAndRejectProtectedFields(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "update.json")
-	if err := os.WriteFile(file, []byte(`{"title":"Sign in","steps":[{"number":1,"description":"Enter credentials"}]}`), 0600); err != nil {
+	if err := os.WriteFile(file, []byte(`{"title":"Sign in"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := readObject(file)
@@ -189,7 +210,7 @@ func TestTestCaseWritesAllowRetainedStepsAndRejectProtectedFields(t *testing.T) 
 		t.Fatal(err)
 	}
 	if err := validateTestCaseWrite(payload, true); err != nil {
-		t.Fatalf("native TestCase steps should be retained writable content: %v", err)
+		t.Fatalf("native TestCase title should be writable: %v", err)
 	}
 	if err := validateTestCaseWrite(map[string]any{"system_id": 9}, true); err == nil || !strings.Contains(err.Error(), `unsupported test-case field "system_id"`) {
 		t.Fatalf("expected bound System protection, got %v", err)
@@ -215,8 +236,8 @@ func TestTestCaseWritesAllowRetainedStepsAndRejectProtectedFields(t *testing.T) 
 	}
 }
 
-func TestTestCaseCreatePostsBoundSystemAndNativeSteps(t *testing.T) {
-	input := `{"title":"Sign in","steps":[{"number":1,"description":"Enter credentials","expected_result":"Signed in"}]}`
+func TestTestCaseCreatePostsBoundSystemAndTitle(t *testing.T) {
+	input := `{"title":"Sign in"}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/compliance/test-cases" {
 			t.Errorf("request=%s %s", r.Method, r.URL)
@@ -230,8 +251,8 @@ func TestTestCaseCreatePostsBoundSystemAndNativeSteps(t *testing.T) {
 		if body["system_id"] != json.Number("4") {
 			t.Errorf("bound system missing: %v", body)
 		}
-		if _, ok := body["steps"].([]any); !ok {
-			t.Errorf("steps missing: %v", body)
+		if body["title"] != "Sign in" || len(body) != 2 {
+			t.Errorf("expected title and bound system only: %v", body)
 		}
 		_, _ = w.Write([]byte(`{"data":{"id":"abc","system_id":4,"title":"Sign in"}}`))
 	}))
@@ -247,7 +268,7 @@ func TestTestCaseCreatePostsBoundSystemAndNativeSteps(t *testing.T) {
 func TestEvidenceRecordInjectsBoundSystemAndPreservesNativePayload(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "evidence.json")
-	if err := os.WriteFile(file, []byte(`{"kind":"local_test","ran_at":"2026-10-18T10:00:00Z","runner":{"kind":"agent","agent_slug":"codex"},"results":[{"target_type":"requirement","requirement_kind":"system_requirement","target_id":"abc","result":"pass"}]}`), 0600); err != nil {
+	if err := os.WriteFile(file, []byte(`{"sha":"code-revision","status":"running","results":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -276,12 +297,12 @@ func TestEvidenceRecordInjectsBoundSystemAndPreservesNativePayload(t *testing.T)
 	}
 }
 
-func TestTestCaseUpdateAcceptsListedDisplayReference(t *testing.T) {
+func TestTestCaseUpdateAcceptsListedNativeIdentity(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
 	patched := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/compliance/test-cases/by-ref/TC-5-0":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/compliance/test-cases/"+id+"":
 			if r.URL.Query().Get("system_id") != "4" {
 				t.Error("display-reference resolution must be scoped to the bound System")
 			}
@@ -295,14 +316,56 @@ func TestTestCaseUpdateAcceptsListedDisplayReference(t *testing.T) {
 	}))
 	defer server.Close()
 	root := newTestCasesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
-	root.SetArgs([]string{"update", "TC-5-0", "--file", "-", "--json"})
+	root.SetArgs([]string{"update", id, "--file", "-", "--json"})
 	root.SetIn(strings.NewReader(`{"title":"After"}`))
 	var out bytes.Buffer
 	root.SetOut(&out)
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !patched || !strings.Contains(out.String(), "TC-5-0") || !strings.Contains(out.String(), "After") {
+	if !patched || !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "After") {
 		t.Fatalf("missing update receipt: %s", out.String())
+	}
+}
+
+func TestEvidenceRecordReturnsNativeReceipt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"run":{"id":"11111111-1111-4111-8111-111111111111"},"results":[{"id":"22222222-2222-4222-8222-222222222222"}],"test_cases":[{"id":"33333333-3333-4333-8333-333333333333"}],"traces":[{"id":"44444444-4444-4444-8444-444444444444"}]}}`))
+	}))
+	defer server.Close()
+	root := newEvidenceCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	root.SetIn(strings.NewReader(`{"status":"running","native_verification":{"tests":[],"criteria":[]}}`))
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetArgs([]string{"record", "--file", "-", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"} {
+		if !strings.Contains(output.String(), id) {
+			t.Errorf("native identity %s missing from receipt: %s", id, output.String())
+		}
+	}
+}
+
+func TestEvidenceFullReadKeepsExecutionCoverageTraces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("include_results") != "true" || r.URL.Query().Get("system_id") != "4" {
+			t.Errorf("full read is not scoped: %s", r.URL)
+		}
+		_, _ = w.Write([]byte(`{"data":{"runs":[{"id":"run","results":[{"id":"result","target_id":"test","detail":{"executed_test_case":{"revision":0}}}],"traces":[{"source_id":"result","target_type":"criterion","target_id":"clause"}]}],"next_cursor":null}}`))
+	}))
+	defer server.Close()
+	root := newEvidenceCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetArgs([]string{"runs", "--full", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"clause", "test", "executed_test_case", "revision"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Errorf("full proof lost %s: %s", expected, output.String())
+		}
 	}
 }

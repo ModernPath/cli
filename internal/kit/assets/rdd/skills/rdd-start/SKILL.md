@@ -29,7 +29,7 @@ repository.
    the conflict for a human decision; do not silently edit approved content
    or treat plan-only checks as sufficient. If the human requests an active Epic
    return to planning, follow `PROCESS.md` §Returning to planning through the
-   CLI with the exact approved plan and decision. Read back PROPOSED, withdrawn
+   CLI with the explicit human decision and reason against current server state. Read back PROPOSED, withdrawn
    approval and released ownership before revising the draft. If unsupported,
    report the tooling gap; do not edit active records through another channel.
 3. For an explicit existing-behavior pass, read the System and

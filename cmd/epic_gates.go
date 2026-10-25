@@ -61,8 +61,8 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		name, suffix, help string
 		write              bool
 	}{
-		{"review-bundle", "/review-bundle", "Read the exact content and evidence an independent reviewer must cover", false},
-		{"presentation", "/completion-presentation", "Read the exact bundle for human completion approval", false},
+		{"review-bundle", "/review-bundle", "Read current content and native evidence for separate review", false},
+		{"presentation", "/completion-presentation", "Read current content, reviews and completion readiness", false},
 		{"review", "/phase-reviews", "Record an attributable independent plan or implementation review", true},
 		{"resolve", "/resolve-finding", "Record the resolution of a material review finding", true},
 		{"decision", "/answer-decision", "Record an explicit answer to a declared human decision", true},
@@ -190,82 +190,58 @@ and boundaries ({name, applicable, reason when false}). Criteria/checks need dis
 check IDs are allocated on save when omitted. Obligations refer to test cases.
 Legacy active plans without obligations fail closed; preserve their approved scope.
 For any active approved plan, an explicit human decision lets the current approver
-run epics plan return-to-planning with the exact plan and --reason "USER:...".
+run epics plan return-to-planning --reason "USER:...".
 It withdraws approval, releases ownership and requires fresh review, approval and
 registered verification. DONE stays closed; changed work uses a follow-up Epic.
 For an explicit human recovery decision, the current approver can run recover-legacy
-with {"plan":<exact approved plan>,"source":"USER:...","reason":"..."}. This returns
+with {"source":"USER:...","reason":"..."}. This returns
 only a legacy active plan without verification to PROPOSED, releases requirement
 ownership and retains the old approval in audit. It does not publish content;
 planning, review and fresh human implementation approval must follow.
 
-All write commands take --file <JSON>, or standard input by default:
-  candidate: {"revision":"commit-sha","author_context":"build-session"}
-  start-execution: {"revision":"sha","role":"RED|GREEN","obligation_ids":["uuid"],
-                    "command":"test command","environment":{"runner":"local"},
-                    "runner":{"kind":"agent","agent_slug":"codex"}}
-Register before running tests, then use evidence record --file result.json with the
-returned run_id as id. For example, a criterion GREEN finalization is:
-  {"id":"<returned run_id>","status":"complete",
-   "runner":{"kind":"agent","agent_slug":"codex"},"raw_evidence":"actual output",
-   "results":[{"target_type":"criterion","target_id":"<criterion UUID>",
-     "test_case_ref":"<test-case UUID>","role":"GREEN","revision":"sha",
-     "result":"pass","detail":{"command":"test command"}}]}
-Use the same runner attribution as registration. Report
-criterion results, or target_type=epic, target_id=<id>, target_clause=<check-id>
-for project checks; include test_case_ref, role, revision, actual report and command.
-A RED needs result=fail and detail.failure_kind=assertion plus expected_assertion.
-RED must finish before GREEN starts. A newer running, failing or skipped execution
-blocks an older pass. Registered outcomes/applicability are immutable; exact retries
-are allowed, corrections need a new execution. GREEN uses the declared candidate.
+All record commands take --file <JSON>, or standard input by default:
+  candidate: {"revision":"tested-code-revision"}
+  start-execution: {"revision":"tested-code-revision","obligation_ids":["uuid"]}
+Register before executing. Finalize the returned run_id through evidence record --file:
+  {"id":"<returned run_id>","status":"complete","native_verification":{
+    "tests":[{"test_case_id":"<TestCase UUID>","result":"pass",
+      "detail":{"executed_test_case":{"revision":0}}}],
+    "criteria":[{"criterion_id":"<criterion UUID>","test_keys":["<TestCase UUID>"]}]}}
+One actual outcome is stored per executed test. Project checks select their
+native TestCase through the approved plan; no extra criterion conclusion is
+stored. Required test coverage comes from the native links. A failed assertion
+is fail; setup/build failures are error, never RED. Failure finalization must
+precede registration of the passing run. A newer incomplete or nonpassing
+execution blocks older passes. Passing evidence must belong to the current
+candidate identity and revision. Same-SHA redeclaration needs new evidence.
+No candidate author context, role, procedure snapshot, runner, command,
+environment or raw output is uploaded.
 
-Planning accepts a real implements trace for existing code or a plan-only
-planned declaration when the source file does not exist yet. Completion-review
-and completion require a real implements trace for every requirement. A planned
-declaration has no file endpoint or trace ID and is never published as a trace.
-
-review-bundle <id> emits the exact snapshot to pass as review.presentation.
-review-bundle <id> --phase <phase> reads that unchanged snapshot with the Epic
-title, status and approvals, phase reviews and findings, and the same readiness
-report as gates check. Its source_files field maps real source-file IDs to their
-repository_key and path for independent review. This descriptive metadata sits
-outside the unchanged review snapshot. This read does not write a gate audit event. Use the
-review field as the exact review.presentation; an approval requiring the raw
-snapshot still takes the no-phase output.
-  review: {"phase":"plan|implementation","presentation":{...},
-           "reviewer_context":"independent-session","criteria":["uuid"],
-           "obligations":["uuid"],"reason":"review conclusion","findings":[],
-           "scope_implemented":false}
-Review all criteria/obligations; implementation reviews set scope_implemented=true.
-Findings have severity=material|note and description. The server assigns finding IDs.
+Planning accepts real implements traces or plan-only planned declarations for
+files that do not yet exist. Completion requires scoped real code endpoints.
+review-bundle and presentation are current reads, with each test and execution
+included once by native identity. Normal review history retains findings,
+coverage and resolutions without saved presentations. Record the actual
+separately performed review:
+  review: {"phase":"plan|implementation","reviewer_context":"separate context",
+    "criteria":["uuid"],"obligations":["uuid"],"reason":"review conclusion",
+    "findings":[],"scope_implemented":false}
+Implementation reviews set scope_implemented=true. Findings have severity
+material|note and description; the server assigns identities.
   resolve: {"review_id":"uuid","finding_id":"uuid","reason":"resolution"}
-  decision: {"decision_id":"declared-uuid","answer":"human decision","source":"USER:..."}
   declare-decision: {"question":"Question requiring a human decision"}
-The server retains the question and returns content.id. Add this UUID to
-plan.verification.decisions and save the plan; do not invent decision identities.
+  decision: {"decision_id":"declared UUID","answer":"human decision","source":"USER:..."}
 
-Review independence is an attestation of a separate reviewer context, recorded
-with the signed-in actor. Different context strings do not prove different humans.
-Only the implementation approver's account can declare candidates and register
-executions, including CI registrations. Another workspace using that account is
-allowed; runner attribution identifies who or what actually executed the check.
+Review context attests to a separately performed review. Comparing context
+strings cannot prove independent work. The candidate has no author context.
+Current native changes invalidate review applicability through existing records
+and server ordering. Unknown applicability blocks. No fingerprints, ETags or
+reviewed-state fields are introduced.
 
-Decision answers are PROPOSED-only. Each latest attributable answer is part of
-review-bundle; replacing an answer requires renewed independent plan review.
-Present and retain that bundle before human implementation approval, then use
-epics plan approve-implementation --presentation-file with that exact file and
---file with its plan. Do not attach a fresh bundle to an earlier human answer.
-Implementation approval freezes decision answers. To revise them, explicitly return
-the active Epic to planning first, then declare and answer fresh decisions and
-obtain fresh independent review and human approval.
-
-presentation <id> emits the exact human completion bundle. Show it to the human;
-then pass it unchanged to epics plan approve-completion <id> --file <bundle.json>,
-or, for a "not yet", to epics plan return-to-implementation <id> --file <bundle.json>.
-New candidate/evidence/review invalidates the presentation. Human implementation and
-completion approvals remain separate; these commands do not merge or deploy.
-
-Finalize a valid RED before registering GREEN. If GREEN was registered too early,
-finalize the original valid RED, then register and execute a new GREEN. A candidate
-is needed for GREEN; it is not required before registering RED.
+Human implementation and completion decisions remain separate. Apply them with
+epics plan approve-implementation or approve-completion --reason "USER:...".
+Use return-to-implementation --reason for a not-yet decision even when readiness
+fails. These commands check current database state under locks and upload no
+plan or presentation. They do not merge or deploy. To change active scope, the
+current approver explicitly returns it to planning and obtains fresh approval.
 `

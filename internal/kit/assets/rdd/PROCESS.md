@@ -72,8 +72,8 @@ resolves; it does not prove that the source supports the claim.
 | `UR` | Actor, context, user outcome, sources, acceptance scenarios, optional Epic relation |
 | `SR` | One independently implementable system behavior, source, boundary, technical context, code and test links |
 | `CODE` | Implementing files, symbols, revision, branch and changes |
-| `TEST_CASE` | Stable test identity, target clause and expected observation |
-| `TEST_RESULT` | Outcome, command/report, environment when relevant, tested revision and validity |
+| `TEST_CASE` | Native identity, title, existing revision and approval attribution; typed links to requirements, criteria and code |
+| `TEST_RESULT` | Run/TestCase identity, executed TestCase revision, actual outcome and validity; run retains tested code revision |
 
 Requirement and Epic identifiers come from the authoritative process store.
 Use those IDs in plans, code/test links, review notes and evidence.
@@ -108,8 +108,8 @@ the return is applied. Separately authorized work may use another Epic.
 approval. The ownership lock, approved proposal and prior published requirement
 content remain unchanged. A human's not-yet at completion review returns the
 Epic and its owned requirements to `IN_PROGRESS` with the plan, the
-implementation approval and the ownership kept; record it with the
-presentation the human declined, continue the build and submit for review
+implementation approval and the ownership kept; record the explicit human
+reason against current server state, continue the build and submit for review
 again. `DONE` follows human completion approval: atomically
 publish the approved content, increment each requirement revision once, retain
 an immutable accepted version with criteria and trace meaning, record the
@@ -124,7 +124,7 @@ publishes the accepted versions, increments each revision once, retains the
 immutable accepted versions with criteria and trace meaning, and retains the
 evidence links. It records the acceptance actor, time and reason with no
 originating Epic, and leaves the scope unchanged on failure. It is idempotent.
-It must reject changed content or evidence, incomplete or failing evidence, and
+It must reject ineligible current content or evidence, incomplete or failing evidence, and
 any requirement owned by active implementation work. It does not create an
 Epic, an implementation approval, or an ownership lock. Already-DONE
 requirements are left unchanged. A missing human decision leaves requirements
@@ -146,8 +146,7 @@ applicable; none authorizes publication or erases an accepted version.
 ### Returning to planning
 
 An `IN_PROGRESS` or `IN_REVIEW` Epic can return to `PROPOSED` through the
-supported CLI operation with the exact approved plan and the human's explicit
-decision and reason. The current implementation approver records the decision.
+supported CLI operation with the human's explicit decision and reason. The current implementation approver records the decision.
 This applies whether or not verification declarations already exist. `DONE`
 stays closed; changed work uses a follow-up Epic with its own plan and approvals.
 
@@ -155,8 +154,8 @@ The operation atomically withdraws implementation approval, releases requirement
 ownership and returns the Epic and selected requirements to `PROPOSED`. Retain
 the draft proposal, published requirement content, revisions, accepted versions,
 and all prior approvals, reviews and execution history. Record the actor, time,
-reason, prior state, exact plan and withdrawn approval in the Audit Trail. A
-stale presentation, unauthorized actor, ownership conflict or failed write
+reason, prior state and withdrawn approval in the Audit Trail. The current plan
+stays on the Epic. An unauthorized actor, ownership conflict or failed write
 leaves all effects unchanged.
 
 Revise the draft, obtain a fresh independent plan review and human implementation
@@ -199,6 +198,34 @@ supported atomic operation above. If behavior or tests need to change, return
 to [Work scope](#work-scope) to choose small-change or Epic delivery.
 Verification does not alter lifecycle state, and neither recording nor passing
 evidence implies human acceptance.
+Verification retains native TestCase identities, existing revisions, actual
+EvidenceResult outcomes and scoped typed TRACEs. Expected behavior belongs to
+requirements, criteria and executable assertions. Select existing test UUIDs
+explicitly; code relationships use Traces. TestCases retain no procedures,
+preconditions, runner/selector identity, embeddings or candidate authority.
+Before executing, ensure each TestCase has an active, same-System Trace to its
+executable source file. Use the supported recording operation to add a missing
+code relationship. A missing code Trace blocks finalization; it does not justify
+rerunning a completed test after repairing the relationship.
+
+Reserve a server-issued run identity before executing. Finalize one actual
+outcome per executed TestCase and retain only its existing executed revision.
+Runs retain tested code revision and status. TestCase-to-criterion links define
+required coverage; immutable result-to-test/criterion links and actual outcomes
+establish observed coverage. A pass for one test cannot cover other required
+tests. Do not add companion criterion conclusions, assertion arrays or stored
+full/partial flags. Authorize every request through current tenant/System
+permissions and Epic ownership; retain no per-run actor pinning or submission.
+
+Identical finalization replay reuses stored identities, revisions, outcomes and
+links; conflicting proof refuses atomically. Adding a Trace leaves recorded
+results unchanged. Meaningful test/criterion edits and changes to existing
+relationships can invalidate applicability without rewriting the recorded
+outcome or revision. Removed structural Traces are hard-deleted; immutable
+execution-result relationships remain protected.
+Historical reads expose surviving native facts, never reconstructed definitions,
+raw output or earlier presentation bodies. Ambiguous legacy records cannot prove
+current behavior. Read back the native relationships before reporting verification.
 
 Local working-set files may hold store projections and development inputs.
 They are not a second authority and need no fingerprint or synchronization
@@ -359,9 +386,9 @@ The four Epic gates and their CLI checks are:
 | Epic gate | Required conditions | CLI check |
 |---|---|---|
 | Plan readiness (`plan-ready`) | Saved requirements, criteria, code/test traces, test definitions and verification obligations; answered decisions; current independent plan review and resolved material findings. | `modernpath epics gates check <epic-id> --phase plan-ready --json` |
-| Implementation approval (`implementation`) | Plan readiness and requirements available for ownership. Approval also checks the exact reviewed plan and, for declared decisions, the retained presentation shown to the user. | `modernpath epics gates check <epic-id> --phase implementation --json` |
+| Implementation approval (`implementation`) | Plan readiness and requirements available for ownership. Approval reads the current saved plan, decisions and applicable separate review under server locks. | `modernpath epics gates check <epic-id> --phase implementation --json` |
 | Completion review (`completion-review`) | Current candidate, intact membership and ownership, passing results for every obligation, qualifying RED evidence for changed criteria, current implementation review confirming scope, and resolved material findings. | `modernpath epics gates check <epic-id> --phase completion-review --json` |
-| Completion approval (`completion`) | Completion-review conditions while the Epic is IN_REVIEW. Approval also checks the exact retained completion presentation and requires the user's explicit decision. | `modernpath epics gates check <epic-id> --phase completion --json` |
+| Completion approval (`completion`) | Completion-review conditions while the Epic is IN_REVIEW. Approval rechecks eligible current database state under locks and requires the user's explicit decision. | `modernpath epics gates check <epic-id> --phase completion --json` |
 
 Each explicit check records its readiness result and blockers in the Audit Trail,
 with the actor, server time and Git SHA source, without changing Epic lifecycle.
@@ -392,21 +419,30 @@ These are test definitions, not executable test changes before approval.
 Obtain and record answers to declared decisions before the final independent
 review. A later answer changes the reviewed content and requires a renewed review.
 
-The agent handling the task fetches and retains the authoritative review bundle, supplies it
-to a context independent of the author, and records the returned review against
-that exact bundle. The reviewer covers every criterion and obligation, reports
-material findings separately from notes, and states limitations. Distinct author
-and reviewer context labels attest to separate contexts; they do not prove that
-different people performed the work. Do not replace an independent review with
-an author-assigned label. The agent handling the task records finding resolutions and reads
-back the review; a changed bundle needs review again.
+The agent supplies current authoritative requirements, plan, traces, outcomes and
+findings to a review context independent of the author. The reviewer covers every
+criterion and obligation, separates material findings from notes, and states
+limitations. Record reviewer context, actor, coverage, findings and resolutions.
+A context string attests to a separately performed review; comparing strings
+cannot prove independence. Candidates carry no author context.
 
-Retain the exact plan and decision answers presented for implementation approval
-before asking the human. Apply their answer to that retained presentation; do
-not refresh it silently to reuse an earlier answer. At completion, similarly
-retain the presentation containing the approved proposal, published baseline,
-candidate, evidence, reviews and readiness before asking. Changed presented
-content requires a current presentation and a fresh human answer.
+The server derives review applicability from existing semantic change records,
+native revisions, ownership, candidate/registration/finalization identities and
+server ordering. Relevant changes require renewed review; ambiguous applicability
+blocks. Writers share the existing serialization boundary and assign ordering
+times after acquiring it. A no-op save or JSON formatting change is not a semantic
+change. Add no fingerprints, ETags, tokens, counters or reviewed-state fields.
+
+Present the current saved plan and effective human decisions before implementation
+approval, and the approved proposal, published baseline, outcomes, findings and
+risks before completion approval. Apply the explicit human action with its reason
+and attribution. Actions approve eligible current database state; they do not
+certify that a previously rendered screen stayed unchanged. They upload no plan
+or presentation. The server reads and checks current state under its existing
+locks, then commits publication, ownership and audit atomically. Normal responses
+include records once by native identity and review summaries without nested
+historical presentations. Explicit history reads expose surviving facts and
+accepted content. No archive or exact historical bundle reconstruction is kept.
 
 For a human-requested revision of an active plan, use
 [Returning to planning](#returning-to-planning) before saving changes. Incomplete
@@ -460,7 +496,7 @@ instead. For each clause:
 
 1. Write or select a focused assertion that expresses the approved behavior.
 2. Register the RED execution through the CLI before running
-   it, identifying obligations, revision, command and environment. Run it
+   it, identifying obligations and tested code revision. Run it
    against the current implementation and confirm the expected failure;
    a build error or unrelated failure is not RED evidence.
 3. Finalize and read back the actual RED evidence before registering GREEN.
@@ -474,15 +510,17 @@ instead. For each clause:
 
 Registration is required for evidence claimed against active declared obligations,
 including CI and delegated verification. Use the CLI's authorized
-registration account; a runner attribution does not grant write authority. A
+account with current tenant/System access and Epic ownership. A
 candidate is required before GREEN, not before RED. If GREEN was registered too
 early, finalize the valid original RED and register and execute a new GREEN;
 do not manufacture a replacement RED. Every rerun needs a new registration.
 Finish evidence collection before the implementation review; a change to reviewed
 evidence requires renewed review before submission.
 
-Do not reconstruct RED or passing evidence after the fact. Preserve the test
-output, command, environment and revision for each result. Never skip or
+Do not reconstruct RED or passing evidence after the fact. Inspect actual test
+execution, classify its outcome correctly, and record the selected native test
+identity, executed revision, outcome and links. Commands and output may remain
+local diagnostics and PR check notes; do not upload them as evidence fields. Never skip or
 weaken a failing assertion to pass a project commit gate. Deletion checks prove scoped machinery is absent and retained data is preserved.
 When the human explicitly accepts broken affected paths, report their actual
 failures; do not restore removed machinery, invent replacements, weaken tests
@@ -509,9 +547,10 @@ rewriting or splitting the refused action.
 
 ## Evidence and completion
 
-A test result records its stable test identity, target requirement, outcome,
-command/report, environment when relevant and exact code revision. Outcomes
-are `PASS`, `FAIL` or `SKIP`. A rerun is a new observation. Only a passing
+A test result records its native TestCase/run identity, executed TestCase
+revision, actual outcome and validity. The run records tested code revision.
+Outcomes are `PASS`, `FAIL`, `ERROR`, `SKIP` or `INCONCLUSIVE`. Only an executed
+assertion failure is FAIL; setup and build failures are ERROR, never RED. A rerun is a new observation. Only a passing
 result that actually exercises the cited assertion at the identified revision
 supports the trace. A broad suite proves only assertions it exercised. RED
 and passing evidence are separate results; a RED demonstrates regression

@@ -12,7 +12,7 @@ import (
 const acceptanceRequirementID = "8f5ec2c0-57c1-4a9f-aeb0-a8dfc4d12a9c"
 const acceptanceVersionID = "f291ce3d-8b3b-4bd2-b80f-983d42b25da4"
 
-func TestReverseEngineerReviewReturnsFullBundleAndAllowsIneligibleReview(t *testing.T) {
+func TestReverseEngineerReviewReturnsCurrentChecksAndAllowsIneligibleReview(t *testing.T) {
 	selection := `{"requirements":[{"kind":"system_requirement","id":"` + acceptanceRequirementID + `"}]}`
 	var request map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +23,7 @@ func TestReverseEngineerReviewReturnsFullBundleAndAllowsIneligibleReview(t *test
 			t.Errorf("decode request: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"system_id":4,"requirements":[{"kind":"system_requirement","id":"` + acceptanceRequirementID + `","revision":2,"work_status":"IN_REVIEW","content":{"title":"Catalog lookup"},"criteria":[{"statement":"Returns an entry"}],"traces":[{"kind":"implements"}],"evidence":[{"result":"fail","role":"green"}],"versions":[]}],"eligible":false,"problems":[{"code":"evidence_not_passing"}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"system_id":4,"requirements":[{"kind":"system_requirement","id":"` + acceptanceRequirementID + `","revision":2,"work_status":"IN_REVIEW","criteria":[]}],"runs":[],"evidence":[],"test_cases":[],"eligible":false,"problems":[{"code":"evidence_not_passing"}]}}`))
 	}))
 	defer server.Close()
 
@@ -43,8 +43,8 @@ func TestReverseEngineerReviewReturnsFullBundleAndAllowsIneligibleReview(t *test
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("review output is not JSON: %v", err)
 	}
-	if result["eligible"] != false || len(result["problems"].([]any)) != 1 || result["requirements"].([]any)[0].(map[string]any)["evidence"] == nil {
-		t.Fatalf("review omitted full ineligible bundle: %s", out.String())
+	if result["eligible"] != false || len(result["problems"].([]any)) != 1 || result["evidence"] == nil {
+		t.Fatalf("review omitted current checks: %s", out.String())
 	}
 }
 
@@ -66,9 +66,8 @@ func TestReverseEngineerReviewRejectsMalformedSelectionBeforeLoading(t *testing.
 	}
 }
 
-func TestReverseEngineerAcceptPostsExactReviewAndReturnsVersionReceipt(t *testing.T) {
-	review := `{"system_id":4,"requirements":[{"kind":"system_requirement","id":"` + acceptanceRequirementID + `","revision":2,"work_status":"PROPOSED","content":{"title":"Catalog lookup"},"criteria":[],"traces":[],"evidence":[],"versions":[]}],"eligible":true,"problems":[]}`
-	input := `{"review":` + review + `,"source":"USER:2026-10-19","reason":"Observed behavior and evidence are accepted"}`
+func TestReverseEngineerAcceptPostsDecisionAndReturnsVersionReceipt(t *testing.T) {
+	input := `{"requirements":[{"kind":"system_requirement","id":"` + acceptanceRequirementID + `"}],"source":"USER:2026-10-19","reason":"Observed behavior and evidence are accepted"}`
 	var request map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/systems/4/reverse-engineering/acceptance" {
@@ -90,8 +89,8 @@ func TestReverseEngineerAcceptPostsExactReviewAndReturnsVersionReceipt(t *testin
 	if err := command.Execute(); err != nil {
 		t.Fatalf("accept failed: %v", err)
 	}
-	if request["source"] != "USER:2026-10-19" || request["reason"] != "Observed behavior and evidence are accepted" || request["review"].(map[string]any)["system_id"] != float64(4) {
-		t.Fatalf("accept request lost explicit decision or review bundle: %#v", request)
+	if request["source"] != "USER:2026-10-19" || request["reason"] != "Observed behavior and evidence are accepted" || len(request) != 3 || request["requirements"].([]any)[0].(map[string]any)["id"] != acceptanceRequirementID {
+		t.Fatalf("accept request lost explicit decision or selection: %#v", request)
 	}
 	var receipt map[string]any
 	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
@@ -127,55 +126,77 @@ func TestReverseAcceptanceRejectsWrongSystemAndRequirementSet(t *testing.T) {
 	selection := []reverseRequirementRef{{Kind: "system_requirement", ID: acceptanceRequirementID}}
 	bundle := map[string]any{
 		"system_id": json.Number("4"), "eligible": false, "problems": []any{},
+		"runs": []any{}, "evidence": []any{}, "test_cases": []any{},
 		"requirements": []any{map[string]any{
 			"kind": "system_requirement", "id": acceptanceRequirementID,
-			"revision": json.Number("2"), "work_status": "IN_REVIEW", "content": map[string]any{},
-			"criteria": []any{}, "traces": []any{}, "evidence": []any{}, "versions": []any{},
+			"revision": json.Number("2"), "work_status": "IN_REVIEW", "criteria": []any{},
 		}},
 	}
-	if err := validateReverseReviewBundle(bundle, 4, selection); err != nil {
+	if err := validateReverseReview(bundle, 4, selection); err != nil {
 		t.Fatalf("valid bundle rejected: %v", err)
 	}
-	if err := validateReverseReviewBundle(bundle, 5, selection); err == nil {
+	if err := validateReverseReview(bundle, 5, selection); err == nil {
 		t.Fatal("review for a different bound System was accepted")
 	}
 	wrongSelection := []reverseRequirementRef{{Kind: "user_requirement", ID: acceptanceRequirementID}}
-	if err := validateReverseReviewBundle(bundle, 4, wrongSelection); err == nil {
+	if err := validateReverseReview(bundle, 4, wrongSelection); err == nil {
 		t.Fatal("review for a different native requirement was accepted")
 	}
 }
 
-func TestReverseAcceptanceValidatesCurrentFullVersionReadback(t *testing.T) {
-	bundle := map[string]any{
-		"system_id": json.Number("4"), "eligible": false, "problems": []any{},
-		"requirements": []any{map[string]any{
-			"kind": "system_requirement", "id": acceptanceRequirementID,
-			"revision": json.Number("3"), "work_status": "DONE", "content": map[string]any{},
-			"criteria": []any{}, "traces": []any{}, "evidence": []any{},
-			"versions": []any{map[string]any{
-				"id": acceptanceVersionID, "requirement_kind": "system_requirement", "requirement_id": acceptanceRequirementID,
-				"revision": json.Number("3"), "content": map[string]any{}, "criteria": []any{}, "traces": []any{},
-				"evidence": []any{}, "acceptance_kind": "existing_behavior", "epic_id": nil,
-				"approved_by_id": json.Number("8"), "approved_at": "2026-10-19T10:00:00Z", "reason": "Accepted",
+func TestReverseReviewSkipsDoneAndRejectsCopiedHistory(t *testing.T) {
+	data := map[string]any{
+		"system_id": json.Number("4"), "eligible": true, "problems": []any{},
+		"runs": []any{}, "evidence": []any{}, "test_cases": []any{},
+		"requirements": []any{map[string]any{"kind": "system_requirement", "id": acceptanceRequirementID,
+			"revision": json.Number("3"), "work_status": "DONE", "criteria": []any{}}},
+	}
+	if err := validateReverseReview(data, 4, nil); err != nil {
+		t.Fatal(err)
+	}
+	row := data["requirements"].([]any)[0].(map[string]any)
+	for _, key := range []string{"content", "traces", "evidence", "versions"} {
+		row[key] = []any{}
+		if err := validateReverseReview(data, 4, nil); err == nil {
+			t.Fatalf("accepted copied %s", key)
+		}
+		delete(row, key)
+	}
+}
+
+func TestReverseReviewResolvesSharedEvidenceIdentities(t *testing.T) {
+	const caseID = "11111111-1111-4111-8111-111111111111"
+	const runID = "22222222-2222-4222-8222-222222222222"
+	const resultID = "33333333-3333-4333-8333-333333333333"
+	const criterionID = "44444444-4444-4444-8444-444444444444"
+	fixture := func() map[string]any {
+		return map[string]any{
+			"system_id": json.Number("4"), "eligible": true, "problems": []any{},
+			"test_cases": []any{map[string]any{"id": caseID, "revision": json.Number("0")}},
+			"runs":       []any{map[string]any{"id": runID, "sha": "tested", "status": "complete"}},
+			"evidence":   []any{map[string]any{"id": resultID, "run_id": runID, "target_id": caseID, "result": "pass", "validity": "current"}},
+			"requirements": []any{map[string]any{
+				"id": acceptanceRequirementID, "kind": "system_requirement", "revision": json.Number("0"), "work_status": "PROPOSED",
+				"criteria": []any{map[string]any{"criterion_id": criterionID, "state": "pass", "problem": nil,
+					"test_keys": []any{caseID}, "run_id": runID, "result_ids": []any{resultID}}},
 			}},
-		}},
+		}
 	}
-	if err := validateReverseReviewBundle(bundle, 4, nil); err != nil {
-		t.Fatalf("complete current version readback rejected: %v", err)
+	if err := validateReverseReview(fixture(), 4, nil); err != nil {
+		t.Fatal(err)
 	}
-	row := bundle["requirements"].([]any)[0].(map[string]any)
-	version := row["versions"].([]any)[0].(map[string]any)
-	version["revision"] = json.Number("2")
-	if err := validateReverseReviewBundle(bundle, 4, nil); err == nil {
-		t.Fatal("DONE requirement with stale latest version readback was accepted")
-	}
-	delete(row, "versions")
-	if err := validateReverseReviewBundle(bundle, 4, nil); err == nil {
-		t.Fatal("review without a versions array was accepted")
-	}
-	row["versions"] = []any{}
-	if err := validateReverseReviewBundle(bundle, 4, nil); err != nil {
-		t.Fatalf("legacy DONE requirement without an immutable version was rejected: %v", err)
+	for _, collection := range []string{"test_cases", "runs", "evidence"} {
+		data := fixture()
+		data[collection] = []any{}
+		if err := validateReverseReview(data, 4, nil); err == nil {
+			t.Fatalf("accepted missing %s reference", collection)
+		}
+		data = fixture()
+		rows := data[collection].([]any)
+		data[collection] = append(rows, rows[0])
+		if err := validateReverseReview(data, 4, nil); err == nil {
+			t.Fatalf("accepted duplicated %s identity", collection)
+		}
 	}
 }
 
@@ -189,5 +210,30 @@ func TestReverseAcceptanceRejectsIncompleteSuccessResponse(t *testing.T) {
 	}}}
 	if err := validateReverseAcceptanceResponse(response, 4, reviewed); err == nil {
 		t.Fatal("success response without a version record was accepted")
+	}
+}
+
+func TestReverseAcceptanceSkipsDoneWithoutReadingItsHistoricalVersion(t *testing.T) {
+	selection := map[string]any{"requirements": []any{map[string]any{
+		"kind": "system_requirement", "id": acceptanceRequirementID,
+	}}}
+	row := map[string]any{
+		"kind": "system_requirement", "id": acceptanceRequirementID, "revision": json.Number("0"),
+		"work_status": "DONE", "result": "skipped",
+	}
+	response := map[string]any{"system_id": json.Number("4"), "requirements": []any{row}}
+	if err := validateReverseAcceptanceResponse(response, 4, selection); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := reverseAcceptanceReceipt(4, response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, copied := receipt["requirements"].([]any)[0].(map[string]any)["version"]; copied {
+		t.Fatal("skipped receipt must not carry a historical version")
+	}
+	row["work_status"] = "PROPOSED"
+	if err := validateReverseAcceptanceResponse(response, 4, selection); err == nil {
+		t.Fatal("accepted skipped receipt for an unfinished requirement")
 	}
 }

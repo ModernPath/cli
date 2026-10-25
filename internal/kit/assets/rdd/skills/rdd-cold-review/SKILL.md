@@ -37,7 +37,8 @@ Check that:
 A source link resolving is not proof that it supports the claim. Open the
 source and assess the connection. Report findings with severity, the precise
 claim or plan section, inspected evidence and a concrete correction. The agent handling the task
-records the review against the retained bundle, records explicit
+records the actual verdict, coverage, reason and findings without uploading a
+presentation, records explicit
 material-finding resolutions, then runs the `plan-ready` Epic gate check and
 reports its recorded result and blockers. A passing review alone is not a passing
 gate check or human approval. That agent resubmits whenever reviewed content changes,

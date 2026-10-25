@@ -20,7 +20,7 @@ returning to planning waives no RED or GREEN requirement.
 For each behavior:
 
 1. Write or select a focused assertion for the approved outcome.
-2. Register the RED execution with obligations, revision, command and environment
+2. Register the RED execution with obligations and tested code revision
    through the authorized account, then run it against current code and confirm
    the expected failure. A compile
    error or unrelated failure is not RED evidence.
@@ -31,8 +31,10 @@ For each behavior:
    returned identity with actual evidence and read it back.
 5. Clean up without changing behavior and rerun affected checks with fresh
    registrations. Update a changed candidate and obtain fresh passing evidence.
-6. Preserve actual commands, outputs and tested revisions; keep RED separate
-   from passing results.
+6. Inspect actual execution and record native test/run identities, executed test
+   revision, outcomes and links. Commands and output are local diagnostics and
+   PR check notes; upload no procedure, role, runner, environment or raw report.
+   Keep actual failures separate from passing executions.
 
 Never disable or weaken tests to get past a project check. Keep security,
 authorization, tenant isolation and atomic data integrity in the first

@@ -10,8 +10,9 @@ current process and CLI reference. This path accepts an accurate,
 verified description of existing behavior; it does not approve a requested code
 change or require an implementation Epic merely to manufacture a lifecycle path.
 
-1. Read the exact requirement set, current content and acceptance
-   criteria, implementation/test traces and persisted execution evidence.
+1. Read the current verification check for the exact requirement set. Read
+   requirement content separately when needed, using existing identities. Reuse
+   the recorded current results and their implementation/test traces.
    Targets must remain PROPOSED and have complete applicable passing evidence.
    Leave already DONE requirements unchanged. Requirements owned by active
    implementation work continue through that work's completion process.
@@ -21,15 +22,18 @@ change or require an implementation Epic merely to manufacture a lifecycle path.
    that acceptance has already been supplied for the same reviewed content and
    evidence. Approval to record requirements or run tests is not acceptance.
    Rejection or missing proof leaves the targets PROPOSED.
-3. Apply the human decision only through a documented, supported server
-   operation for accepting verified existing requirements. The operation must
+3. Apply the requirement selection and explicit human decision through
+   the supported current-state acceptance operation. Upload no review body,
+   fingerprint or presentation. The operation must
    recheck current scope, content, evidence, lifecycle, tenant/System access and
    ownership, then atomically publish the accepted requirement versions, move
    exactly the approved targets from PROPOSED to DONE and retain the evidence
    links and attributed acceptance reason. Failure must leave the scope
    unchanged. Repeating an applied acceptance must not publish another version.
-4. Read back the actual accepted versions, DONE states, evidence links and
-   actor/reason audit. If an operation's outcome is uncertain, read its stored
+4. Read back the acceptance receipt: DONE states, incremented versions and
+   actor/reason attribution for new acceptance; `skipped` and unchanged revisions
+   for requirements already completed through another path. The current check skips DONE without loading old
+   evidence or version bodies. If an operation's outcome is uncertain, read its stored
    result before retrying. Changed content or evidence needs verification and a
    human decision over the changed scope; do not reuse approval for other work.
 

@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -48,60 +47,31 @@ func presentationFile(t *testing.T) string {
 
 // SR-1638.1: the return posts the human's reason and the completion bundle read
 // from --file, and reports the operation it performed.
-func TestSR1638_1ReturnPostsTheReasonAndTheBundle(t *testing.T) {
-	var method, path string
-	var body map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/systems" {
-			healthyProbe(w, r)
-			return
-		}
-		method, path = r.Method, r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1,"process_status":"IN_PROGRESS"}}`))
-	}))
-	defer server.Close()
-	cobraWorkspace(t, server)
-
-	out, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--file", presentationFile(t), "--reason", "USER:2026-10-20: not yet")
+func TestReturnPostsOnlyTheHumanDecision(t *testing.T) {
+	bodies := planServer(t, "IN_PROGRESS")
+	out, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--reason", "USER: continue")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != "POST" || path != "/api/work/epics/42/return-to-implementation" {
-		t.Fatalf("return sent %s %s, want POST /api/work/epics/42/return-to-implementation", method, path)
+	if len(*bodies) != 1 || len((*bodies)[0]) != 1 || (*bodies)[0]["reason"] != "USER: continue" {
+		t.Fatalf("decision=%#v", *bodies)
 	}
-	var want map[string]any
-	if err := json.Unmarshal([]byte(presentationBundle), &want); err != nil {
-		t.Fatal(err)
-	}
-	presentation, _ := body["presentation"].(map[string]any)
-	if body["reason"] != "USER:2026-10-20: not yet" || !reflect.DeepEqual(presentation, want) {
-		t.Fatalf("return must send the reason and the file's bundle as presentation, got %#v", body)
-	}
-	for _, want := range []string{"operation: implementation-returned", "id: 42", "process_status: IN_PROGRESS"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("return output lacks %q: %q", want, out)
-		}
+	if !strings.Contains(out, "implementation-returned") {
+		t.Fatal(out)
 	}
 }
 
-// SR-1638.5: without --file the return fails before any request and names the
-// completion bundle it needs.
-func TestSR1638_5ReturnWithoutFileFailsBeforeAnyRequest(t *testing.T) {
+func TestReturnRejectsRemovedBundleFlagBeforeAnyRequest(t *testing.T) {
 	bodies := planServer(t, "IN_PROGRESS")
-	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--reason", "USER:2026-10-20: not yet")
-	if err == nil || !strings.Contains(err.Error(), "completion bundle") {
-		t.Fatalf("return-to-implementation without --file must fail naming the completion bundle, got %v", err)
-	}
-	if len(*bodies) != 0 {
-		t.Fatalf("return-to-implementation without --file sent %d requests, want none", len(*bodies))
+	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--file", "obsolete.json", "--reason", "USER: continue")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") || len(*bodies) != 0 {
+		t.Fatalf("err=%v requests=%#v", err, *bodies)
 	}
 }
 
-// SR-1638.2: a non-positive Epic ID is refused before any request.
 func TestSR1638_2ReturnRefusesANonPositiveEpicID(t *testing.T) {
 	bodies := planServer(t, "IN_PROGRESS")
-	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "0", "--file", presentationFile(t), "--reason", "r")
+	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "0", "--reason", "r")
 	if err == nil || !strings.Contains(err.Error(), "epic ID must be a positive integer") {
 		t.Fatalf("return-to-implementation 0 must fail with the Epic ID message, got %v", err)
 	}
@@ -243,14 +213,14 @@ func TestEpicReturnToPlanningRetainsHumanDecisionAndExactPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/return-to-planning" ||
-			input["reason"] != "USER: correct verification scope" || input["plan"].(map[string]any)["body"] != "Exact approved scope" {
+			input["reason"] != "USER: correct verification scope" || input["plan"] != nil || input["presentation"] != nil {
 			t.Errorf("changed return decision: %s %s %#v", r.Method, r.URL.Path, input)
 		}
 		_, _ = w.Write([]byte(`{"data":{"id":287,"process_status":"PROPOSED"}}`))
 	}))
 	defer server.Close()
 	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
-	command.SetArgs([]string{"return-to-planning", "287", "--file", "-", "--reason", "USER: correct verification scope"})
+	command.SetArgs([]string{"return-to-planning", "287", "--reason", "USER: correct verification scope"})
 	command.SetIn(strings.NewReader(`{"body":"Exact approved scope"}`))
 	var output bytes.Buffer
 	command.SetOut(&output)
@@ -269,14 +239,14 @@ func TestEpicReturnToPlanningRetainsAgentAttribution(t *testing.T) {
 			t.Fatal(err)
 		}
 		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/return-to-planning" ||
-			input["actor"].(map[string]any)["agent_slug"] != "planning-builder" || input["reason"] != "USER: correct verification scope" || input["plan"].(map[string]any)["body"] != "Exact approved scope" {
+			input["actor"].(map[string]any)["agent_slug"] != "planning-builder" || input["reason"] != "USER: correct verification scope" || input["plan"] != nil || input["presentation"] != nil {
 			t.Errorf("changed return decision: %s %s %#v", r.Method, r.URL.Path, input)
 		}
 		_, _ = w.Write([]byte(`{"data":{"id":287,"process_status":"PROPOSED"}}`))
 	}))
 	defer server.Close()
 	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
-	command.SetArgs([]string{"return-to-planning", "287", "--file", "-", "--reason", "USER: correct verification scope", "--agent", "planning-builder"})
+	command.SetArgs([]string{"return-to-planning", "287", "--reason", "USER: correct verification scope", "--agent", "planning-builder"})
 	command.SetIn(strings.NewReader(`{"body":"Exact approved scope"}`))
 	var output bytes.Buffer
 	command.SetOut(&output)
@@ -311,73 +281,26 @@ func TestEpicApprovalInputIsOneCompletePlanObject(t *testing.T) {
 	}
 }
 
-func TestEpicCompletionApprovalRequiresAnExplicitPresentationFile(t *testing.T) {
+func TestEpicCompletionRejectsRemovedPresentationFlag(t *testing.T) {
 	loads := 0
-	command := newEpicPlanCommand(func() (*cliEnv, error) {
-		loads++
-		return nil, errors.New("unexpected server access")
-	})
-	command.SetArgs([]string{"approve-completion", "42"})
-	command.SetIn(strings.NewReader("stdin must not be read"))
-
-	err := command.Execute()
-	if err == nil || !strings.Contains(err.Error(), "--file") {
-		t.Fatalf("missing presentation file error = %v", err)
-	}
-	if loads != 0 {
-		t.Fatalf("loaded CLI environment %d times before validating required input", loads)
+	command := newEpicPlanCommand(func() (*cliEnv, error) { loads++; return nil, errors.New("unexpected access") })
+	command.SetArgs([]string{"approve-completion", "42", "--presentation-file", "obsolete.json"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag") || loads != 0 {
+		t.Fatalf("err=%v loads=%d", err, loads)
 	}
 }
 
-// SR-1602: transport only the decision bundle shown to the human; never refresh it.
-func TestEpicImplementationApprovalRetainsDecisionPresentation(t *testing.T) {
-	const bundle = `{"plan":{"body":"A","requirements":[]},"decisions":[{"actor_id":9223372036854775807,"content":{"answer":"Choose A","source":"USER: A"}}]}`
-	file := filepath.Join(t.TempDir(), "reviewed.json")
-	if err := os.WriteFile(file, []byte(bundle), 0600); err != nil {
+func TestEpicImplementationApprovalSendsOnlyDecision(t *testing.T) {
+	bodies := planServer(t, "IN_PROGRESS")
+	_, err := runRoot(t, "epics", "plan", "approve-implementation", "42", "--reason", "USER: implement")
+	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/approve-implementation" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
-		}
-		var input map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Fatal(err)
-		}
-		var got, want any
-		decoder := json.NewDecoder(bytes.NewReader(input["presentation"]))
-		decoder.UseNumber()
-		if err := decoder.Decode(&got); err != nil {
-			t.Errorf("missing presentation: %v", err)
-		}
-		decoder = json.NewDecoder(strings.NewReader(bundle))
-		decoder.UseNumber()
-		_ = decoder.Decode(&want)
-		actual, _ := json.Marshal(got)
-		expected, _ := json.Marshal(want)
-		if !bytes.Equal(actual, expected) {
-			t.Errorf("changed decision bundle: %s", actual)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"process_status": "IN_PROGRESS"}})
-	}))
-	defer server.Close()
-	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
-	command.SetArgs([]string{"approve-implementation", "287", "--file", "-", "--presentation-file", file})
-	command.SetIn(strings.NewReader(`{"body":"A","requirements":[]}`))
-	command.SetOut(&bytes.Buffer{})
-	command.SetErr(&bytes.Buffer{})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 1 {
-		t.Fatalf("approval fetched unseen content: %d calls", calls)
+	if len(*bodies) != 1 || len((*bodies)[0]) != 1 || (*bodies)[0]["reason"] != "USER: implement" {
+		t.Fatalf("decision=%#v", *bodies)
 	}
 }
 
-// Epic 290 (SR6): `epics plan history` summarizes each stored revision by
-// default and prints the served items unchanged with --full.
 func TestEpicPlanHistorySummarizesRevisionsAndForwardsPaging(t *testing.T) {
 	var gotQuery string
 	status := 200
@@ -444,11 +367,8 @@ func TestEpicPlanHistorySummarizesRevisionsAndForwardsPaging(t *testing.T) {
 	if saved["comment"] != "second draft" || saved["id"] != "e1" {
 		t.Fatalf("plan_saved item: %#v", saved)
 	}
-	if got := counts(saved["saved_plan"]); got != `{"body_chars":12,"criteria":3,"requirements":2,"traces":1}` {
-		t.Fatalf("saved_plan counts: %s", got)
-	}
-	if got := counts(saved["delta"]); got != `{"body_chars":5,"criteria":2,"requirements":1,"traces":1}` {
-		t.Fatalf("delta counts: %s", got)
+	if saved["saved_plan"] != nil || saved["delta"] != nil {
+		t.Fatalf("unexpected copied plan summary: %#v", saved)
 	}
 	if _, has := saved["revision"]; has || strings.Contains(out, "Plan v2 body") {
 		t.Fatalf("summary leaked the body or named a revision: %s", out)

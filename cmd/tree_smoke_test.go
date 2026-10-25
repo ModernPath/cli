@@ -418,10 +418,10 @@ var leafDispositions = map[string]disposition{
 	"epics plan show":                   {kind: dispExecute, args: []string{"epics", "plan", "show", "42"}},
 	"epics plan history":                {kind: dispExecute, args: []string{"epics", "plan", "history", "42"}},
 	"epics plan save":                   {kind: dispNoCall, args: []string{"epics", "plan", "save", "42", "--reason", "smoke"}, reason: "needs-precondition"},
-	"epics plan return-to-planning":     {kind: dispNoCall, args: []string{"epics", "plan", "return-to-planning", "42", "--reason", "USER: smoke"}, reason: "needs-precondition"},
-	"epics plan approve-implementation": {kind: dispNoCall, args: []string{"epics", "plan", "approve-implementation", "42", "--reason", "smoke"}, reason: "needs-precondition"},
+	"epics plan return-to-planning":     {kind: dispExecute, args: []string{"epics", "plan", "return-to-planning", "42", "--reason", "USER: smoke"}},
+	"epics plan approve-implementation": {kind: dispExecute, args: []string{"epics", "plan", "approve-implementation", "42", "--reason", "smoke"}},
 	"epics plan submit-review":          {kind: dispExecute, args: []string{"epics", "plan", "submit-review", "42", "--reason", "smoke"}},
-	"epics plan approve-completion":     {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "plan", "approve-completion", "42", "--reason", "smoke"}},
+	"epics plan approve-completion":     {kind: dispExecute, args: []string{"epics", "plan", "approve-completion", "42", "--reason", "smoke"}},
 	"focus":                             {kind: dispExecute, args: []string{"focus", "10000000-0000-4000-8000-000000000001"}},
 	"github":                            {kind: dispUnrun, reason: "interactive"},
 	"hooks doctor":                      {kind: dispNoCall, reason: "local-only"},
@@ -477,7 +477,7 @@ var leafDispositions = map[string]disposition{
 	// approve-completion it stops before the call without the completion
 	// bundle. Its own block keeps gofmt from re-aligning the whole map around
 	// the longer key.
-	"epics plan return-to-implementation": {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "plan", "return-to-implementation", "42", "--reason", "smoke"}},
+	"epics plan return-to-implementation": {kind: dispExecute, args: []string{"epics", "plan", "return-to-implementation", "42", "--reason", "smoke"}},
 }
 
 func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
@@ -578,7 +578,7 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 			rootCmd.SetIn(strings.NewReader(`{"requirements":[{"kind":"system_requirement","id":"10000000-0000-4000-8000-000000000001"}]}`))
 		}
 		if name == "reverse-engineer accept" {
-			rootCmd.SetIn(strings.NewReader(`{"review":{"system_id":1,"requirements":[{"kind":"system_requirement","id":"10000000-0000-4000-8000-000000000001","revision":0,"work_status":"PROPOSED","content":{},"criteria":[],"traces":[],"evidence":[],"versions":[]}],"eligible":true,"problems":[]},"source":"USER:smoke","reason":"smoke"}`))
+			rootCmd.SetIn(strings.NewReader(`{"requirements":[{"kind":"system_requirement","id":"10000000-0000-4000-8000-000000000001"}],"source":"USER:smoke","reason":"smoke"}`))
 		}
 		_ = rootCmd.Execute() // errors are fine — a stub server answers junk
 		rootCmd.SetArgs(nil)
