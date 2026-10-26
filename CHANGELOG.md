@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Plan-ready and implementation gates report `criterion_test_case_changed` when
+  a kept criterion is planned for a TestCase with no active verifies trace to
+  it while another TestCase has one. Such a plan could never pass
+  completion-review, because the old TestCase stays required until completion.
+  Give the revised criterion a new id, or plan it for a linked TestCase.
+  PROCESS.md, rdd-plan, the return-to-planning help and the CLI guide now say a
+  rewritten test needs a renamed TestCase or a changed criterion, and a
+  criterion planned for a new TestCase needs a new criterion id. Requires the
+  matching server (Epic 353).
+
 ## v0.23.0 — native evidence, batch commands and release acceptance
 
 - A review is recorded as it is and stands until a relevant change is recorded

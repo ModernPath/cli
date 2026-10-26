@@ -44,6 +44,9 @@ process authority.
    context, and required human decisions using IDs issued through the CLI.
    Retain each declared question beside its effective human answer.
    This creates test definitions, not executable tests before approval.
+   A criterion planned for a new TestCase needs a new criterion id: an
+   existing test link keeps the old TestCase required until completion, so
+   plan-ready refuses a kept criterion planned for an unlinked TestCase.
    Write criteria as observable behavior, with kit or prompt wording checked
    by phrase tests. Gate only on deterministic tests; plan a model-dependent
    run as a measurement reported at the end.

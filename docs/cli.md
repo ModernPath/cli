@@ -947,8 +947,7 @@ works when completion readiness fails. Return to planning withdraws approval and
 starts a new planning cycle. Decisions listed with `--carry-decision` and RED for
 a criterion and TestCase unchanged since the return carry into it; a new plan
 review, implementation approval, the candidate, GREEN and the implementation
-review are always renewed. A rewritten test needs a
-renamed or new TestCase, or a changed criterion, to require a new RED. Human implementation and completion decisions remain separate.
+review are always renewed. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. Human implementation and completion decisions remain separate.
 No command merges or deploys. Read state and audit after an uncertain response.
 
 History exposes surviving decisions and accepted facts. Copied plans, raw output,

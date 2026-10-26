@@ -165,9 +165,7 @@ Earlier decisions, reviews, candidates and executions remain history and cannot
 satisfy the new planning cycle, with two exceptions: a decision the return lists
 in `carry_decisions` keeps its question and answer, and a RED stands for a
 criterion whose statement, TestCase and TestCase revision are unchanged since
-the return. A
-rewritten test needs a renamed or new TestCase, or a changed criterion, to
-require a new RED. Returning to planning waives no RED or GREEN requirement. Completion still needs its
+the return. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. Returning to planning waives no RED or GREEN requirement. Completion still needs its
 separate human approval. If the CLI cannot perform the return, report the gap;
 never edit an active plan or process state through another channel.
 

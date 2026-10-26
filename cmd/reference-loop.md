@@ -172,8 +172,7 @@ cycle, with two exceptions: a decision the return lists with `--carry-decision`
 keeps its question and answer, and a RED stands for a criterion whose text,
 TestCase and TestCase revision are unchanged since the return. The plan review,
 implementation approval, the candidate, GREEN and the implementation review are
-always renewed. A rewritten test needs a renamed or new TestCase, or a changed
-criterion, to require a new RED. A return itself waives no evidence obligation. A failing gate alone is not a human return decision.
+always renewed. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. A return itself waives no evidence obligation. A failing gate alone is not a human return decision.
 
 `epics gates recover-legacy` remains a compatibility command limited to active
 plans without verification obligations. It takes
