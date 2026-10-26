@@ -6,7 +6,11 @@ description: Implement behavior within a human-approved Epic plan, using red-fir
 # Build approved behavior
 
 For a small change selected by `rdd-start`, follow `PROCESS.md` §Small changes
-and its RED/GREEN loop; the Epic registration steps below do not apply.
+and its RED/GREEN loop. First read or create the requirements, criteria and
+scoped source/test Traces. Reserve a test run before each execution, finalize
+actual outcomes and criterion/TestCase mappings, and read back RED before
+reserving GREEN. The Epic candidate/obligation registration steps below do not
+apply; test evidence recording and read-back still do.
 
 For Epic work, read `PROCESS.md` and verify through the CLI that the current
 saved plan and proposed content has human implementation approval. Confirm the Epic and

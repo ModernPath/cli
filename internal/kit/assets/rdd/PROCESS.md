@@ -132,8 +132,9 @@ PROPOSED. If the CLI does not provide this operation, report
 the tooling gap and leave them PROPOSED.
 
 This path describes and accepts existing behavior only. If behavior or tests
-need to change, route that work through an Epic plan and implementation
-approval; verification evidence alone never authorizes the change.
+need to change, classify that work under [Work scope](#work-scope): use the
+small-change path or an Epic plan and implementation approval as applicable.
+Verification evidence alone never authorizes the change.
 
 There is no READY/TODO entry step, requirement stage, evidence-conclusion status,
 plan-revision token, fingerprint, generic gate or separate ownership framework.
@@ -297,29 +298,69 @@ result.
 
 Small changes do not require an Epic. A small change has a clear requested
 outcome, a narrow code and test boundary, and focused tests plus proportional
-regression checks that can verify it. It may relate to a single system
-requirement; that relationship is optional and does not by itself require an
-Epic. When present, cite the requirement in the PR or handoff. Judge the
-behavior and dependencies, not the number of changed lines. State the scope
-and expected observation briefly in the session; the user's request authorizes work within that scope.
+regression checks that can verify it. State the scope and expected observation
+briefly in the session; the user's request authorizes work within that scope.
 No separate Epic plan or implementation-approval ceremony is required.
+The exemption removes the Epic, not requirements, acceptance criteria,
+recorded evidence or the human's completion decision.
 
-Small changes follow the [AI TDD inner loop](#ai-tdd-inner-loop), including
-RED/GREEN execution, regression checks and retained evidence.
+1. Before changing tests or behavior, find the relevant UR/SR requirements
+   through the CLI and read their current content, criteria, traces and ownership.
+   Reuse accurate requirements and criteria. Create missing requirements and
+   observable criteria, or update eligible unowned, unpublished drafts, through
+   supported CLI operations; read them back. Cover every changed clause and
+   retain its source, boundary and expected observation. Do not edit accepted
+   versions or active Epic-owned content: published behavior changes need a
+   supported proposal/revision path or a follow-up requirement; active Epic-owned
+   work stays within its approved Epic and evidence obligations.
+2. Establish scoped implementation and test Traces and link each criterion
+   to its required TestCases before execution. Use actual source and test
+   identities, with TestCase revisions; a PR description is no substitute
+   for these records. Read the CLI reference for supported shapes and commands.
+3. Follow the [AI TDD inner loop](#ai-tdd-inner-loop). Reserve a test
+   run through the CLI before each execution, retaining its tested code revision.
+   Execute the applicable assertion RED before implementation, finalize its
+   actual FAIL and criterion/TestCase mapping, and read it back before reserving
+   GREEN. Implement the narrow change, then execute and record GREEN and the
+   proportional regression checks. Only an assertion failure proves RED;
+   setup/build failures are ERROR. Read back actual outcomes, executed test
+   revisions and criterion coverage. Keep commands and output in PR notes;
+   retain the minimal evidence in the platform.
+4. Verify the current requirement-to-criterion-to-TestCase-to-result chains and
+   their source-code Traces. Present the exact proposed requirement content,
+   RED/GREEN results, tested revisions, exclusions and remaining risks for the
+   human's separate completion decision. Approval to implement, passing tests,
+   a PR or a merge does not supply that decision.
+5. After explicit human completion approval, use a supported requirement-level
+   completion operation that checks current content, complete applicable evidence,
+   scope and ownership and atomically publishes the accepted version, criteria
+   and trace meaning with actor, time and reason. Read back publication and the
+   revision increment; an identical retry must not publish twice. This is the
+   lightweight completion path without an Epic. Do not use existing-behavior
+   acceptance to disguise changed behavior or manufacture an Epic approval.
 
-Do not create Epic, requirement or execution-registration records solely to
-use this exception. PR and test evidence suffice for this path; they do not
-publish or complete governed requirements. Existing Epic-owned work stays
-within its approved Epic and evidence obligations. If investigation expands
-the change beyond a narrow, verifiable scope, return to the Epic path before
-implementing the expanded scope. Security, tenant isolation, data integrity,
-project checks and human merge, deployment and release authority still apply.
+Check capabilities before relying on them. If the CLI cannot write criteria,
+retain applicable test evidence, propose a published requirement change or
+complete a small change, report the specific tooling gap through the project's
+named channel. Keep the requirement and evidence work already recorded, leave
+unpublished requirements PROPOSED, and report completion as blocked. Do not
+invent a command, bypass the CLI, silently fall back to PR-only evidence or claim
+that these instructions implement missing server behavior. This process change
+does not retroactively create RED evidence or complete earlier small changes.
+
+If investigation expands beyond a narrow, verifiable scope, return to the Epic
+path before implementing the expanded scope. Security, tenant isolation, data
+integrity, project checks and human merge, deployment and release authority
+still apply. Repository/process meta-work remains outside the product loop
+under `AGENTS.md` §Product work and meta-work.
 
 A small change has no Epic to route a backlog, gap or tooling record to. When
-it delivers such a record, name the record in the PR. If the change cites a
-requirement, use the CLI to mark the record as routed to that requirement and
-read it back. Once the change merges, use the CLI to mark the record as closed
-by that pull request and read it back.
+it delivers such a record, name the record in the PR, use the CLI to mark the
+record as routed to the relevant requirement, and read it back. Once the change
+merges, use the CLI to mark the record as closed by that pull request and read it back.
+This closes the delivered discovery, not the governed requirement; requirement
+publication still needs its explicit human completion decision. If completion
+or delivered scope remains blocked, leave the discovery open and explain why.
 
 ## Autopilot
 
@@ -510,22 +551,25 @@ reached and report what remains.
 
 Establish each changed clause's expected failure before implementing it.
 For Epic work, begin after implementation approval. Small changes use the
-same test sequence, omitting Epic candidate declaration, execution registration
-and store finalization/read-back; retain the evidence in the PR or handoff
-instead. For each clause:
+same test sequence and test evidence finalization/read-back, replacing Epic
+candidate declaration and obligation registration with a test run reservation
+before each execution. Keep requirement, criterion, source-code and TestCase
+links in the platform and retain diagnostic output in the PR. For each clause:
 
 1. Write or select a focused assertion that expresses the approved behavior.
-2. Register the RED execution through the CLI before running
-   it, identifying obligations and tested code revision. Run it
+2. For Epic work, register the RED execution through the CLI before running
+   it, identifying obligations and tested code revision. For a small change,
+   reserve the test run before execution as described above. Run it
    against the current implementation and confirm the expected failure;
    a build error or unrelated failure is not RED evidence.
 3. Finalize and read back the actual RED evidence before registering GREEN.
    Implement the smallest change that makes the assertion pass.
-4. Declare the candidate revision before GREEN. Register each execution before
-   running the focused test and proportional boundary and regression checks;
+4. For Epic work, declare the candidate revision before GREEN and register each
+   execution. For a small change, reserve each test run before GREEN. Run the
+   focused test and proportional boundary and regression checks;
    finalize each returned execution identity with its actual evidence.
 5. Clean up without changing behavior and rerun affected checks with fresh
-   registrations. A changed candidate needs fresh passing evidence and review.
+   Epic registrations or small-change test run reservations. A changed candidate needs fresh passing evidence and review.
 6. Re-run affected user scenarios and verify the complete changed trace.
 
 Registration is required for evidence claimed against active declared obligations,

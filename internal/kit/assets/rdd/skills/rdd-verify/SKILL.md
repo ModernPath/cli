@@ -5,9 +5,14 @@ description: Verify implementation under an approved Epic plan, including curren
 
 # Verify approved work
 
-For a small change, verify the actual RED/GREEN evidence and regression checks
-under `PROCESS.md` §Small changes, then report results in the PR or handoff.
-The Epic candidate, registration and completion steps below do not apply.
+For a small change, read back the governed requirements, criteria, source/test
+Traces, TestCase revisions and actual RED/GREEN results and regression
+checks under `PROCESS.md` §Small changes. Verify every changed criterion has
+applicable coverage; PR output alone is insufficient. Present exact content and
+evidence for separate human requirement completion through a supported CLI
+operation. Missing support leaves completion blocked; never substitute
+existing-behavior acceptance for changed behavior. The Epic candidate, obligation
+registration and Epic completion steps below do not apply.
 
 For Epic work, read `PROCESS.md`, the approved plan and proposed content and
 its requirement, code and test links. Confirm the tested content is the current candidate

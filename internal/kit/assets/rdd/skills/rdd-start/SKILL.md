@@ -16,7 +16,10 @@ repository.
    pass limited to existing behavior. Do not infer this from the branch or
    worktree. For a small change, follow `PROCESS.md` §Small changes: state
    its scope and expected observation, then execute and retain RED/GREEN
-   evidence without requiring an Epic or its approval steps below. Other
+   evidence linked to requirements, criteria and source/test Traces.
+   Read or create the required records and check CLI capability before testing.
+   No Epic or its approval steps below are required; separate human requirement
+   completion still applies. Other
    changed behavior or tests use the Epic path. Explicit
    recording, verification or acceptance of existing behavior needs no
    implementation Epic.

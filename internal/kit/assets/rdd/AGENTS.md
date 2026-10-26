@@ -60,9 +60,11 @@ product loop does not apply. Do not create process records for meta-work.
 
 ## Authority and tooling gaps
 
-Small changes follow `PROCESS.md` §Small changes without an Epic and retain
-RED/GREEN evidence. For other changed behavior or tests, the human selects an
-Epic and approves its exact saved plan and proposed content for implementation,
+Small changes follow `PROCESS.md` §Small changes without an Epic, with
+requirements, observable criteria, source/test Traces and recorded
+RED/GREEN results. Explicit human requirement completion remains separate;
+missing CLI support leaves completion blocked. For other changed behavior or
+tests, the human selects an Epic and approves its exact saved plan and proposed content for implementation,
 atomically locking its
 requirements to one user and that Epic, and separately approves completion.
 For an explicit existing-behavior acceptance pass, the human accepts the exact

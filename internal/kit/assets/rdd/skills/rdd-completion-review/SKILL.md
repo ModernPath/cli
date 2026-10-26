@@ -5,6 +5,13 @@ description: Review implemented Epic work and present its exact approved proposa
 
 # Review and complete the Epic
 
+For a small change, use `PROCESS.md` §Small changes: review exact requirement
+content, criteria, source/test Traces and recorded RED/GREEN results;
+obtain explicit human requirement completion and apply only a supported
+requirement-level completion operation. Read back accepted versions and approval
+attribution. Missing capability leaves completion blocked. The Epic gates and
+transitions below apply only to Epic work.
+
 Read `PROCESS.md`, the Epic's approved plan and exact proposed content, the
 still-published requirements, ownership, implementation, traces and evidence.
 

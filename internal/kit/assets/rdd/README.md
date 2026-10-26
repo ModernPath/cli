@@ -23,9 +23,11 @@ and file traces directly; it has no hash, source capture or as-built proof
 prerequisite.
 
 Small changes need no Epic or separate implementation-approval ceremony.
-They still require an observed failing test before implementation, a passing
-run after the change, proportional regression checks and retained RED/GREEN
-evidence. See [Small changes](PROCESS.md#small-changes).
+They still require governed requirements and criteria, source/test Traces,
+an observed failing test before implementation, a passing run after the change,
+proportional regression checks and recorded RED/GREEN evidence. Separate
+human completion publishes requirements through a supported operation; missing
+capabilities are reported and leave completion blocked. See [Small changes](PROCESS.md#small-changes).
 
 ## Read first
 

@@ -6,8 +6,10 @@ description: Deliver an authorized Epic through its saved plan, human implementa
 # Deliver an Epic
 
 Read `PROCESS.md` and run `rdd-start`. Small changes follow §Small changes,
-including its RED/GREEN evidence and regression checks, without the Epic
-steps below. For Epic delivery, use the project's CLI and confirm the
+including governed requirements and criteria, source/test Traces,
+recorded RED/GREEN evidence and regression checks, without the Epic steps below.
+Continue through the separate human requirement completion decision and a
+supported completion operation; report missing capability without claiming DONE. For Epic delivery, use the project's CLI and confirm the
 human-selected Epic and its latest saved plan before acting.
 
 1. Run `rdd-start` and identify the earliest incomplete phase.
