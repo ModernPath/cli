@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.24.0 — Initiative rounds, carry across a return, and plan-ready test-link checks
+
+Released before production serves these changes (USER:2026-10-26). Entries
+marked "Requires the matching server" work against a server that includes
+them, such as the test platform; against an older server those commands are
+refused until it is updated.
 
 - Plan-ready and implementation gates report `criterion_test_case_changed` when
   a kept criterion is planned for a TestCase with no active verifies trace to
@@ -12,7 +17,19 @@
   criterion planned for a new TestCase needs a new criterion id. Requires the
   matching server (Epic 353).
 
-## v0.23.0 — native evidence, batch commands and release acceptance
+- An Epic can verify behavior that already exists. Its verification declares
+  `mode: existing_behavior` and a nonblank `existing_behavior_reason`; it needs
+  no source revision, candidate or RED, requires current implementation Traces
+  to code before approval, and completes on passing selected test results
+  without comparing earlier runs or code revisions. PROCESS.md, the CLI guide
+  and the build, verify and reverse-engineer-verify skills describe it.
+  Requires the matching server.
+
+- Small changes still need requirements. PROCESS.md and the start, build,
+  verify, deliver and completion-review skills say a small change skips the
+  Epic, not the requirements, observable criteria, source and test Traces,
+  recorded RED and GREEN results or the human's completion decision. Recorded
+  test executions are called test runs.
 
 - A review is recorded as it is and stands until a relevant change is recorded
   after it; `epics gates review-bundle` is a plain read of the current facts.
@@ -62,6 +79,8 @@
   System on a plan requirement or criterion is refused with
   `trace_removal_not_found`. Approval stores the list and completion removes
   exactly those traces. Requires the matching server (Epic 342).
+
+## v0.23.0 — native evidence, batch commands and release acceptance
 
 - Process: gating evidence comes from deterministic tests, and a model-dependent
   run is a measurement; a criterion states observable behavior and wording is
