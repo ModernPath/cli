@@ -427,3 +427,112 @@ func TestPlanningReturnHistoryDoesNotClaimPlanContentChanged(t *testing.T) {
 		t.Fatalf("planning return must retain its action without a content delta: %#v", summary)
 	}
 }
+
+// Epic 342: the plan help and both copies of the CLI guide describe
+// remove_traces, that a trace left out of a plan is kept, and that a check keeps
+// its id by name.
+func TestEpicsPlanHelpAndCLIGuideDescribeRemoveTracesKeptTracesAndCheckIDsKeptByName(t *testing.T) {
+	help, err := runRoot(t, "epics", "plan", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs := map[string]string{"epics plan --help": help}
+	for _, path := range []string{"../../../docs/cli.md", "../internal/kit/assets/cli-guide/cli.md"} {
+		body, err := os.ReadFile(path)
+		// docs/cli.md lies outside this module; the core image tests the module
+		// alone. Its identical kit copy is always checked.
+		if os.IsNotExist(err) && path == "../../../docs/cli.md" {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs[path] = string(body)
+	}
+	for name, text := range docs {
+		normalized := strings.ToLower(strings.Join(strings.Fields(text), " "))
+		for _, want := range []string{"remove_traces", "left out", "is kept", "planning gate", "keeps its id by name"} {
+			if !strings.Contains(normalized, want) {
+				t.Errorf("%s does not say %q", name, want)
+			}
+		}
+		for _, obsolete := range []string{
+			"traces left out that existed at approval are removed at completion",
+			"a new check id is assigned on save",
+		} {
+			if strings.Contains(normalized, obsolete) {
+				t.Errorf("%s still says %q", name, obsolete)
+			}
+		}
+	}
+}
+
+// TestCase (Epic 344): "return-to-planning sends repeated --carry-decision ids
+// as carry_decisions".
+func TestReturnToPlanningSendsRepeatedCarryDecisionIdsAsCarryDecisions(t *testing.T) {
+	const first = "6f1c2b8e-1d2a-4c3b-9e4f-5a6b7c8d9e01"
+	const second = "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c62"
+	run := func(t *testing.T, args ...string) ([]map[string]any, error) {
+		t.Helper()
+		var bodies []map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/return-to-planning" {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+			bodies = append(bodies, input)
+			_, _ = w.Write([]byte(`{"data":{"id":287,"process_status":"PROPOSED"}}`))
+		}))
+		defer server.Close()
+		command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+		command.SetArgs(append([]string{"return-to-planning", "287", "--reason", "USER: keep the decisions"}, args...))
+		command.SetIn(strings.NewReader(""))
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		err := command.Execute()
+		return bodies, err
+	}
+
+	t.Run("repeated flag sends the ids in flag order", func(t *testing.T) {
+		bodies, err := run(t, "--carry-decision", first, "--carry-decision", second)
+		if err != nil {
+			t.Fatalf("return with --carry-decision: %v", err)
+		}
+		if len(bodies) != 1 {
+			t.Fatalf("requests = %d, want 1", len(bodies))
+		}
+		got, ok := bodies[0]["carry_decisions"].([]any)
+		if !ok || len(got) != 2 || got[0] != first || got[1] != second {
+			t.Fatalf("carry_decisions = %#v, want [%s %s]", bodies[0]["carry_decisions"], first, second)
+		}
+		if bodies[0]["reason"] != "USER: keep the decisions" {
+			t.Fatalf("reason = %#v", bodies[0]["reason"])
+		}
+	})
+
+	t.Run("without the flag the body has no carry_decisions key", func(t *testing.T) {
+		bodies, err := run(t)
+		if err != nil || len(bodies) != 1 {
+			t.Fatalf("return without --carry-decision: err=%v requests=%d", err, len(bodies))
+		}
+		if _, present := bodies[0]["carry_decisions"]; present {
+			t.Fatalf("body without --carry-decision has carry_decisions: %#v", bodies[0])
+		}
+	})
+
+	t.Run("a value that is not a UUID fails before any request", func(t *testing.T) {
+		bodies, err := run(t, "--carry-decision", "not-a-uuid")
+		if err == nil {
+			t.Fatal("a non-UUID --carry-decision was accepted")
+		}
+		if strings.Contains(err.Error(), "unknown flag") {
+			t.Fatalf("--carry-decision is not a flag of return-to-planning: %v", err)
+		}
+		if len(bodies) != 0 {
+			t.Fatalf("requests = %d, want 0 before a valid --carry-decision", len(bodies))
+		}
+	})
+}

@@ -884,17 +884,26 @@ modernpath epics plan submit-review <epic-id> --reason "<reason>"
 modernpath epics gates presentation <epic-id> --json
 modernpath epics plan approve-completion <epic-id> --reason "USER:<source>: accept"
 modernpath epics plan return-to-implementation <epic-id> --reason "USER:<source>: continue work"
-modernpath epics plan return-to-planning <epic-id> --reason "USER:<source>: replan"
+modernpath epics plan return-to-planning <epic-id> --reason "USER:<source>: replan" --carry-decision <decision-id>
 modernpath epics plan history <epic-id> --full --json
 ```
 
-The saved plan has `body`, `requirements`, `traces` and `verification`.
-Requirement proposals retain `kind`, `id`, exact proposed `content` and
-ordered `criteria`. Traces retain typed endpoints and relationship.
+The saved plan has `body`, `requirements`, `traces`, optional `remove_traces`
+and `verification`. Requirement proposals retain `kind`, `id`, exact proposed
+`content` and ordered `criteria`. Traces retain typed endpoints and
+relationship. A trace left out of `traces` is kept; it does not by itself
+satisfy the planning gate's implements-or-planned trace rule, which reads only
+`traces`. A trace is removed only when the plan lists its ID in `remove_traces`:
+each ID must be an active trace of this System on a plan requirement or
+criterion, or save refuses it as `trace_removal_not_found`. Approval records the
+list and completion removes exactly those traces.
 `verification` declares the plan `author_context`, decision UUIDs, criterion
 obligations `{id, changed, test_case_id, boundary}`, project checks
 `{id, name, test_case_id, boundary}`, and boundaries `{name, applicable, reason}`.
-A new check ID is assigned on save. A nonapplicable boundary needs a reason.
+A check keeps its ID by name: a check saved without an ID takes the ID of the
+saved check with the same trimmed name, and a new name gets a new ID. Two checks
+with the same name, or a repeated check ID, are refused as
+`invalid_verification_obligations`. A nonapplicable boundary needs a reason.
 Source files that do not exist yet use the existing plan-only `planned` trace;
 completion requires real scoped code endpoints.
 
@@ -935,8 +944,11 @@ publishes accepted requirement content, criteria and trace meaning atomically,
 releases ownership and records approval attribution. Repeating terminal completion
 publishes once. Return to implementation uses current authorization/lifecycle and
 works when completion readiness fails. Return to planning withdraws approval and
-starts a new planning cycle; earlier candidate/execution/review records cannot
-satisfy it. Human implementation and completion decisions remain separate.
+starts a new planning cycle. Decisions listed with `--carry-decision` and RED for
+a criterion and TestCase unchanged since the return carry into it; a new plan
+review, implementation approval, the candidate, GREEN and the implementation
+review are always renewed. A rewritten test needs a
+renamed or new TestCase, or a changed criterion, to require a new RED. Human implementation and completion decisions remain separate.
 No command merges or deploys. Read state and audit after an uncertain response.
 
 History exposes surviving decisions and accepted facts. Copied plans, raw output,
@@ -1337,6 +1349,85 @@ The server preserves the original raiser and records the authenticated update
 actor and time in metadata. Read back with `backlog get <uuid> --full --json`.
 This changes the backlog disposition, not an Epic approval or completion.
 Requires a server with the Backlog PATCH endpoint; older servers refuse the write.
+
+### Initiatives
+
+An Initiative is a roadmap line of the bound System; API fields keep the name
+`line`. Every command works on the bound System and sends it as `system_id`
+(a query on reads, a body field on writes); an Initiative of another System or
+an archived one answers `not_found`. A non-UUID Initiative ID fails before any
+request.
+
+- `modernpath initiative list [--json]` lists the bound System's Initiatives in
+  one read: ID, text, release, horizon and progress. `--json` prints the served
+  list.
+- `modernpath initiative get <initiative-uuid> [--json]` prints one Initiative
+  with its work and sources, read from the same list. An ID not in the list fails with
+  `Initiative <id> not found in System <n>`.
+- `modernpath initiative create --file initiative.json [--json]` creates an
+  Initiative. The object takes `text` (required), `horizon`, `release_id`,
+  `goal_label`, `line_type`, `source` and `notes`; any other field is refused
+  before the workspace loads (`--file field <name> is not allowed`).
+- `modernpath initiative link <initiative-uuid> --epic <id>` or
+  `--requirement <uuid> [--requirement-kind user_requirement|system_requirement]`
+  links one Epic or one requirement (`user_requirement` is the default kind). The first link
+  is the Initiative's own link; later links are extra work.
+- `modernpath initiative unlink <initiative-uuid> --epic <id>` or
+  `--requirement <uuid>` (a user requirement) removes extra work. The own link is not removed this
+  way (`own_link`).
+
+`link` and `unlink` need exactly one of `--epic` or `--requirement`. Work
+another Initiative covers is refused as `already_on_roadmap: <ids>`, work that
+cannot be linked as `not_linkable: <ids>`, and a field refusal prints
+`field: message` lines (for example `text: can't be blank`).
+
+#### Initiative rounds
+
+A round is the explicit list of the Initiative's Epics that one command names
+with `--epics <id,id>`: at most 10 distinct Epic IDs (else `--epics must list 1 to 10 distinct
+Epic IDs`), each linked to the Initiative and in its System. Nothing stores a round. A round command writes
+each Epic's own records, all or nothing: the same records as the single-Epic
+commands for every Epic in the round, in one transaction, so every Epic passes
+or nothing is written, and a refusal names the Epic by index and ID
+(`epic_gate_blocked — item 1 (Epic 7)`). A round submission needs the caller to
+be each Epic's implementation approver; any one person may approve a round's
+completion. Each Epic keeps its own approvals, reviews, gate checks and
+completion, and can still be returned to planning or to implementation alone
+with the single-Epic commands.
+
+- `modernpath initiative review-bundle <initiative-uuid> --epics <ids> --phase <phase>`
+  reads `{initiative: {line_id, title, system_id}, epic_ids, members}`: each
+  Epic's review bundle, ordered by Epic ID.
+- `modernpath initiative review <initiative-uuid> --file review.json` records
+  one review of the round, sent unchanged: `phase` (`plan` or
+  `implementation`), `reviewer_context`, `reason` and `members`, listing
+  exactly the round: each Epic's `epic_id` and that Epic's `criteria`,
+  `obligations`, `findings` and `scope_implemented`. It writes one review per
+  Epic, each recording `round: {line_id, epic_ids}`, and answers
+  `{items: [{index, epic_id, review_id}]}`.
+- `modernpath initiative check <initiative-uuid> --epics <ids> --phase <phase> [--git-sha <sha>]`
+  records each Epic's own gate check and exits nonzero when any Epic is not
+  ready.
+- `modernpath initiative approve-implementation <initiative-uuid> --epics <ids> --reason "USER:..." [--agent <slug>]`
+  applies the human's one implementation approval to the round. The three
+  approval commands take `--agent` as the single commands do and answer
+  `{line_id, items: [{index, epic_id, process_status}]}`; a blocked gate prints
+  that Epic's gate report first.
+- `modernpath initiative submit-review <initiative-uuid> --epics <ids> --reason <text>`
+  submits every Epic for completion review.
+- `modernpath initiative presentation <initiative-uuid> --epics <ids>` reads
+  `{initiative, epic_ids, members: [{epic_id, presentation}], ready, review}`; `review.current` is true only when every
+  Epic's latest implementation review was recorded on this Initiative for the
+  same Epic list and is current by recorded changes.
+- `modernpath initiative approve-completion <initiative-uuid> --epics <ids> --reason "USER:..."`
+  applies the human's one completion approval to the round.
+
+A round runs in one transaction bounded at two minutes. After an uncertain
+answer, read an Epic of the round back before retrying; split a large round if
+it times out. Membership refusals: `epic_not_in_initiative` (422) and
+`member_outside_system` (409) at the Epic's index, `initiative_not_found` (404),
+`round_too_large` and `duplicate_items` (422). Requires a server with the
+Initiative round routes.
 
 ### Release acceptance
 

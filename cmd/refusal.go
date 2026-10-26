@@ -50,6 +50,11 @@ func refusalBodyText(body map[string]any) string {
 	}
 	switch errVal := body["error"].(type) {
 	case string:
+		// Epic 345: a coverage refusal (already_on_roadmap, not_linkable)
+		// names the covered records by their native ids.
+		if ids := refusalIDs(body["ids"]); ids != "" {
+			return errVal + ": " + ids
+		}
 		return errVal
 	case map[string]any:
 		if text, ok := batchRefusalText(body, errVal); ok {
@@ -85,6 +90,11 @@ func refusalBodyText(body map[string]any) string {
 		}
 		return fmt.Sprint(errVal)
 	case nil:
+		// Epic 345: a changeset refusal without `error` ({errors: {field:
+		// [messages]}}) prints its field lines.
+		if fields, ok := body["errors"].(map[string]any); ok && len(fields) > 0 {
+			return detailLines(fields)
+		}
 		// PR445-07: a non-store body (a gateway's {"message": …}) still has a
 		// sentence to print before falling back to the whole map.
 		var parts []string
@@ -128,6 +138,18 @@ func batchRefusalText(body, errVal map[string]any) (string, bool) {
 	return text, true
 }
 
+func refusalIDs(value any) string {
+	ids, ok := value.([]any)
+	if !ok || len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprint(id))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func batchItemIdentity(value any) string {
 	item, ok := value.(map[string]any)
 	if !ok {
@@ -138,6 +160,9 @@ func batchItemIdentity(value any) string {
 	}
 	if item["run_id"] != nil {
 		return "run " + fmt.Sprint(item["run_id"])
+	}
+	if item["epic_id"] != nil {
+		return "Epic " + fmt.Sprint(item["epic_id"])
 	}
 	for _, key := range []string{"obligation_ids", "obligations"} {
 		if ids, ok := item[key].([]any); ok {

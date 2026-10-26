@@ -52,6 +52,47 @@ func TestEpicReviewBundlePhaseReadsOneContext(t *testing.T) {
 	}
 }
 
+// TestCase 5c45e583 (criterion bf04aa2d, Epic 348): the review bundle is a
+// plain read; --since-review is gone.
+func TestEpicReviewBundleRefusesSinceReviewAsAnUnknownFlagAndSendsOnlyPhase(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != "GET" || r.URL.Path != "/api/work/epics/287/review-bundle" || r.URL.RawQuery != "phase=plan-ready" {
+			t.Errorf("unexpected read: %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"data":{"epic":{"id":287},"review":{"plan":{}},"reviews":[],"readiness":{"phase":"plan-ready","ready":false,"blockers":[]}}}`))
+	}))
+	defer server.Close()
+
+	since := newEpicGatesCommand(func() (*cliEnv, error) {
+		t.Fatal("--since-review must be refused before loading the CLI environment")
+		return nil, nil
+	})
+	since.SetArgs([]string{"review-bundle", "287", "--since-review", "3a10f7b4-d083-4df6-b70c-df9cf6407238", "--json"})
+	since.SetOut(&bytes.Buffer{})
+	since.SetErr(&bytes.Buffer{})
+	if err := since.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag: --since-review") {
+		t.Fatalf("--since-review: err=%v", err)
+	}
+
+	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"review-bundle", "287", "--phase", "plan-ready", "--json"})
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&bytes.Buffer{})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("review-bundle failed: %v", err)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal(out.Bytes(), &printed); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out.String())
+	}
+	if requests != 1 || printed["readiness"] == nil {
+		t.Fatalf("review-bundle read: requests=%d output=%s", requests, out.String())
+	}
+}
+
 func TestEpicRecoveryAndDecisionCommandsRetainInput(t *testing.T) {
 	for _, op := range []struct {
 		name  string

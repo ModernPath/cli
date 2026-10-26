@@ -155,15 +155,19 @@ The operation atomically withdraws implementation approval, releases requirement
 ownership and returns the Epic and selected requirements to `PROPOSED`. Retain
 the draft proposal, published requirement content, revisions, accepted versions,
 and all prior approvals, reviews and execution history. Record the actor, time,
-reason, prior state and withdrawn approval in the Audit Trail. The current plan
+reason, prior state, withdrawn approval, criteria snapshot and carried decisions in the Audit Trail. The current plan
 stays on the Epic. An unauthorized actor, ownership conflict or failed write
 leaves all effects unchanged.
 
-Revise the draft, obtain a fresh independent plan review and human implementation
-approval, then collect fresh registered verification and implementation review.
+Revise the draft, record a new plan review and obtain human implementation
+approval, then collect GREEN on a new candidate and a new implementation review.
 Earlier decisions, reviews, candidates and executions remain history and cannot
-satisfy the new planning cycle, even if the plan is saved unchanged. Returning
-to planning waives no RED or GREEN requirement. Completion still needs its
+satisfy the new planning cycle, with two exceptions: a decision the return lists
+in `carry_decisions` keeps its question and answer, and a RED stands for a
+criterion whose statement, TestCase and TestCase revision are unchanged since
+the return. A
+rewritten test needs a renamed or new TestCase, or a changed criterion, to
+require a new RED. Returning to planning waives no RED or GREEN requirement. Completion still needs its
 separate human approval. If the CLI cannot perform the return, report the gap;
 never edit an active plan or process state through another channel.
 
@@ -259,6 +263,19 @@ requirement content, raises revisions, retains immutable accepted versions,
 records audit history and releases ownership in one transaction. Implementation
 approval, review, an autopilot grant, a commit, merge or silence is not a
 completion answer.
+
+An Initiative delivered by several Epics may be reviewed, approved, submitted
+and completed in rounds. A round is the explicit list of the Initiative's Epics
+that one command names. A round command writes the same records as the
+single-Epic commands for every Epic in the round, in one transaction: every
+Epic passes or nothing is written, and a refusal names the Epic. Present every
+Epic of the round; the human's one answer names the round. A round review
+covers every criterion and obligation of every Epic in it. A round review
+records the Initiative and the Epic list it covered as ordinary review content.
+A round submission needs the
+caller to be each Epic's implementation approver; any one person may approve a
+round's completion. Each Epic keeps its own approvals, reviews, gate checks and
+completion, and can still be returned alone.
 
 For existing-behavior acceptance, present the exact PROPOSED content and its
 criterion-level verification evidence, tested revisions, exclusions and
@@ -485,6 +502,10 @@ conditions: `modernpath epics plan approve-implementation`,
 `modernpath epics plan submit-review`, and
 `modernpath epics plan approve-completion`. Follow the CLI reference for their
 required Epic ID, input files and approval arguments.
+For a round, `modernpath initiative check <initiative-id> --epics <ids> --phase <phase>`
+records each Epic's own gate check, and `modernpath initiative approve-implementation`,
+`submit-review` and `approve-completion` recheck every Epic's gate in one
+transaction.
 
 After recording the independent plan review, `rdd-cold-review` runs the
 `plan-ready` check. Before asking for implementation approval,

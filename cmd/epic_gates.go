@@ -12,6 +12,8 @@ import (
 
 func init() { epicsCmd.AddCommand(newEpicGatesCommand(cliEnvLoad)) }
 
+var reviewUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 	group := &cobra.Command{Use: "gates", Short: "Check named RDD preconditions and record Epic verification and reviews", Long: epicGatesHelp}
 	check := &cobra.Command{Use: "check <epic-id>", Short: "Record a gate check and return readiness and every missing condition", Args: cobra.ExactArgs(1)}
@@ -210,8 +212,10 @@ approvals remain required.
 Legacy active plans without obligations fail closed; preserve their approved scope.
 For any active approved plan, an explicit human decision lets the current approver
 run epics plan return-to-planning --reason "USER:...".
-It withdraws approval, releases ownership and requires fresh review, approval and
-registered verification. DONE stays closed; changed work uses a follow-up Epic.
+It withdraws approval and releases ownership. Listed --carry-decision decisions
+and RED for an unchanged criterion and TestCase carry; a new plan review,
+approval, the candidate, GREEN and the implementation review are renewed.
+DONE stays closed; changed work uses a follow-up Epic.
 For an explicit human recovery decision, the current approver can run recover-legacy
 with {"source":"USER:...","reason":"..."}. This returns
 only a legacy active plan without verification to PROPOSED, releases requirement

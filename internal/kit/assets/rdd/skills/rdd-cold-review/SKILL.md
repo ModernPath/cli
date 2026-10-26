@@ -13,7 +13,12 @@ The agent handling the task asks the user to answer the declared questions and
 records their answers before requesting the final plan review. That agent then
 fetches and retains the review bundle and supplies it with source access.
 Use that exact bundle; do not run unavailable process tools or substitute a later
-bundle. Return coverage of every criterion and verification obligation, reviewer
+bundle. For a round of an Initiative's Epics, the agent supplies
+`modernpath initiative review-bundle <initiative-id> --epics <ids> --phase <phase>`
+and records one review of the round with `modernpath initiative review`; the
+review covers every criterion and obligation of every Epic in the round. For an
+Initiative round, one review covers the round: read the round review bundle of
+the explicit list of Epics and record one review for all of them. Return coverage of every criterion and verification obligation, reviewer
 context, reason, findings and limitations. Context separation is an attestation,
 not proof of different human identities.
 

@@ -43,6 +43,13 @@ still-published requirements, ownership, implementation, traces and evidence.
    findings, risks, assumptions and any unfinished scope to the human. Obtain
    the separate explicit completion answer; never infer it from implementation
    approval, an autopilot grant, tests, code review or repository state.
+   For a round, submit with `modernpath initiative submit-review`, fetch
+   `modernpath initiative presentation <initiative-id> --epics <ids>`, present
+   every Epic in the round, and apply the human's one answer with
+   `modernpath initiative approve-completion`. A round submission needs the
+   caller to be each Epic's implementation approver; any one person may approve
+   a round's completion, which writes each Epic's own completion records, all
+   or nothing. A refusal changes no Epic.
 5. Apply only the human's explicit current-state approval and reason through the
    CLI. Upload no plan or presentation. The server rechecks current eligible
    state under locks. Read back atomic publication, one revision increment per

@@ -47,6 +47,19 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 						payload["actor"] = map[string]any{"kind": "agent", "agent_slug": agent}
 					}
 				}
+				if op.name == "return-to-planning" {
+					// Epic 344: decisions of the current plan that keep their
+					// question and answer in the next planning cycle.
+					carried, _ := cmd.Flags().GetStringArray("carry-decision")
+					for _, id := range carried {
+						if !reviewUUIDPattern.MatchString(id) {
+							return fmt.Errorf("--carry-decision must be a decision UUID, got %q", id)
+						}
+					}
+					if len(carried) > 0 {
+						payload["carry_decisions"] = carried
+					}
+				}
 				if op.input {
 					file, _ := cmd.Flags().GetString("file")
 					proposal, err := commandObject(cmd, file)
@@ -118,6 +131,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 		if op.name == "return-to-planning" {
 			command.Flags().Lookup("reason").Usage = "Required human return decision and reason beginning USER:"
 			_ = command.MarkFlagRequired("reason")
+			command.Flags().StringArray("carry-decision", nil, "Decision ID of the current plan to keep, with its answer, in the next planning cycle; repeat for each decision")
 		}
 		plan.AddCommand(command)
 	}
@@ -212,6 +226,7 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
                "link_kind": "implements" | "verifies" | "derives" | "relates"}
               | {"source_type": "user_requirement" | "system_requirement", "source_id",
                  "link_kind": "planned"}],
+   "remove_traces"?: ["<id of an existing trace this plan removes>"],
    "verification": {"author_context": "<authoring context>", "decisions": ["<issued decision UUID>"],
                     "criteria": [{"id": "<criterion UUID>", "changed": true,
                                   "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
@@ -252,13 +267,21 @@ A document trace is relates. Adding, changing or removing a trace
 needs every touched requirement in the plan, or save refuses the edit as
 trace requirement outside plan (trace criterion has other epic for a
 criterion another Epic owns). A reactivated stale trace counts as a change.
-Criteria left out of the plan are retired at completion; traces left out
-that existed at approval are removed at completion, while code and test
-links added during implementation survive.
+Criteria left out of the plan are retired at completion. A trace left out of
+traces is kept: it is removed only when the plan lists its ID in remove_traces.
+A kept trace does not by itself satisfy the planning gate's implements-or-planned
+trace rule, which reads only traces. remove_traces names active traces of this
+System on a plan requirement or criterion, or save refuses it as trace removal
+not found; an ID may not be in both lists. Approval records the list, and
+completion removes exactly those traces. Code and test links added during
+implementation survive.
 
 save accepts proposed requirement content while the Epic is PROPOSED. The server
 completes omitted content from current records, assigns missing criterion/Trace
-identities, and reads the saved plan back through show. Verification declares every
+identities, and reads the saved plan back through show. A check keeps its ID by
+name: a check sent without an ID takes the ID of the saved check with the same
+trimmed name, and a new name gets a new ID. Two checks with the same name, or a
+check ID another check already has, are refused. Verification declares every
 active criterion, project check, required test and boundary. Use decisions: [] when
 there are no declared human decisions.
 
@@ -267,8 +290,10 @@ under server locks. It takes --reason and optional --agent; it uploads no plan o
 presentation. It moves the Epic and requirements to IN_PROGRESS and acquires
 requirement ownership atomically. The active approved plan and owned content stay
 read-only. return-to-planning takes the explicit USER: reason, withdraws approval,
-releases ownership and starts a new planning cycle. Earlier reviews and executions
-cannot satisfy that cycle.
+releases ownership and starts a new planning cycle. Each --carry-decision keeps
+a decision of the current plan and its answer, and RED stands for a criterion
+and TestCase unchanged since the return; a new plan review, implementation
+approval, the candidate, GREEN and the implementation review are always renewed.
 
 submit-review checks current completion-review readiness and moves work to
 IN_REVIEW. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
@@ -292,7 +317,7 @@ var epicPlanOperationHelp = map[string]string{
 	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields with --fields or --full.",
 	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval.",
 	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
-	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. This starts a new planning cycle with fresh review, human approval and executions. DONE stays closed.",
+	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision of the current plan and its answer. In the new planning cycle RED stands only for a criterion and TestCase unchanged since the return; a new plan review, implementation approval, the candidate, GREEN and the implementation review are always renewed. A rewritten test needs a renamed or new TestCase, or a changed criterion, to require a new RED. DONE stays closed.",
 	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Only the implementation approver can submit.",
 	"return-to-implementation": "Apply the human's not-yet decision to an IN_REVIEW Epic. --reason is required. Current completion readiness may fail. The plan, approval and ownership remain in effect.",
 	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once.",

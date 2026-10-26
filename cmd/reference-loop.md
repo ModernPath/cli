@@ -149,7 +149,7 @@ To revise an IN_PROGRESS or IN_REVIEW Epic, obtain the human's explicit return
 to planning decision. The current implementation approver runs:
 
 ```sh
-modernpath epics plan return-to-planning <id> --reason "USER:<actual decision and reason>"
+modernpath epics plan return-to-planning <id> --reason "USER:<actual decision and reason>" [--carry-decision <decision-id> ...]
 ```
 
 The optional `--agent <slug>` names the agent on the Epic and requirement audit
@@ -159,16 +159,21 @@ actor is separate from the approved plan and return decision.
 The operation atomically
 returns the Epic and its selected requirements to PROPOSED, withdraws approval
 and releases ownership. The Audit Trail retains the actor, time, reason, prior
-state and withdrawn approval attribution. Published content, revisions and accepted requirement versions remain intact. Stale content, another approver,
+state, withdrawn approval attribution, the criteria snapshot and the carried
+decisions (`carry_decisions`). Published content, revisions and accepted requirement versions remain intact. Stale content, another approver,
 ownership conflicts and failed writes leave everything unchanged. DONE stays
 closed; create a follow-up Epic.
 
-Read back the return, revise the draft, answer newly declared decisions, obtain
-fresh independent plan review and human implementation approval, then collect
-fresh registered RED/GREEN executions and implementation review. Earlier decisions,
-reviews, candidates and executions remain history and cannot satisfy the new
-planning cycle, even with an unchanged plan or candidate revision. A return itself
-waives no evidence obligation. A failing gate alone is not a human return decision.
+Read back the return, revise the draft, answer newly declared decisions, record
+a new plan review, obtain human implementation approval, then collect GREEN on a
+new candidate and a new implementation review. Earlier decisions, reviews,
+candidates and executions remain history and cannot satisfy the new planning
+cycle, with two exceptions: a decision the return lists with `--carry-decision`
+keeps its question and answer, and a RED stands for a criterion whose text,
+TestCase and TestCase revision are unchanged since the return. The plan review,
+implementation approval, the candidate, GREEN and the implementation review are
+always renewed. A rewritten test needs a renamed or new TestCase, or a changed
+criterion, to require a new RED. A return itself waives no evidence obligation. A failing gate alone is not a human return decision.
 
 `epics gates recover-legacy` remains a compatibility command limited to active
 plans without verification obligations. It takes
@@ -181,7 +186,7 @@ normal replanning uses `epics plan return-to-planning`.
 epics create             -> Epic PROPOSED
 epics plan save          -> saved plan (PROPOSED only; repeat to revise; `epics plan history` lists every revision)
 plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic and the approver
-plan return-to-planning  -> active Epic and selected requirements PROPOSED; approval withdrawn; ownership released; fresh review and verification
+plan return-to-planning  -> active Epic and selected requirements PROPOSED; approval withdrawn; ownership released; listed decisions and unchanged RED carry
 plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver runs it)
 epics gates presentation -> the completion bundle the human answers (read-only, Epic IN_REVIEW)
 plan return-to-implementation --reason "USER:..." -> Epic and owned requirements IN_PROGRESS (the human's "not yet"); plan, approval and ownership kept

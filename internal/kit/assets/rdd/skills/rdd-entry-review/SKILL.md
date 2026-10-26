@@ -17,6 +17,15 @@ gate check after the plan review and record its result before asking for approva
 If it reports blockers, resolve them through the appropriate pass and check
 again. A passing check does not record the human's approval.
 
+For a round of an Initiative's Epics, run
+`modernpath initiative check <initiative-id> --epics <ids> --phase implementation`,
+present every Epic's plan in the round, and apply the human's one answer with
+`modernpath initiative approve-implementation <initiative-id> --epics <ids> --reason "USER:..."`.
+A refusal names the Epic by index and id, and nothing was approved. An
+Initiative round is the explicit list of the Initiative's Epics given to the
+command; one round approval writes each Epic's own approval records, all or
+nothing.
+
 Resolve and record declared human decisions before the final independent review.
 Read the authoritative current plan, decisions, traces and separate review
 before asking for implementation approval. A changed answer or reviewed content requires

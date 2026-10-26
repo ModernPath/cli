@@ -41,6 +41,9 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"epics", "specs", "generate"}, {"epics", "specs", "status"}, {"epics", "specs", "list"}, {"epics", "specs", "pull"}, {"epics", "specs", "push"},
 		{"requirements", "get"}, {"requirements", "create"}, {"requirements", "update"}, {"requirements", "obsolete"}, {"requirements", "set-context"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
 		{"evidence", "record"}, {"evidence", "runs"}, {"evidence", "latest"},
+		{"initiative", "list"}, {"initiative", "get"}, {"initiative", "create"}, {"initiative", "link"}, {"initiative", "unlink"},
+		{"initiative", "review-bundle"}, {"initiative", "review"}, {"initiative", "check"}, {"initiative", "approve-implementation"},
+		{"initiative", "submit-review"}, {"initiative", "presentation"}, {"initiative", "approve-completion"},
 	}
 
 	for _, path := range paths {
@@ -490,6 +493,20 @@ var leafDispositions = map[string]disposition{
 	// bundle. Its own block keeps gofmt from re-aligning the whole map around
 	// the longer key.
 	"epics plan return-to-implementation": {kind: dispExecute, args: []string{"epics", "plan", "return-to-implementation", "42", "--reason", "smoke"}},
+
+	// Epic 345: Initiatives and Initiative rounds.
+	"initiative list":                   {kind: dispExecute, args: []string{"initiative", "list"}},
+	"initiative get":                    {kind: dispExecute, args: []string{"initiative", "get", "10000000-0000-4000-8000-000000000001"}},
+	"initiative create":                 {kind: dispExecute, args: []string{"initiative", "create", "--file", "-", "--json"}},
+	"initiative link":                   {kind: dispExecute, args: []string{"initiative", "link", "10000000-0000-4000-8000-000000000001", "--epic", "42"}},
+	"initiative unlink":                 {kind: dispExecute, args: []string{"initiative", "unlink", "10000000-0000-4000-8000-000000000001", "--epic", "42"}},
+	"initiative review-bundle":          {kind: dispExecute, args: []string{"initiative", "review-bundle", "10000000-0000-4000-8000-000000000001", "--epics", "42"}},
+	"initiative review":                 {kind: dispExecute, args: []string{"initiative", "review", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
+	"initiative check":                  {kind: dispExecute, args: []string{"initiative", "check", "10000000-0000-4000-8000-000000000001", "--epics", "42", "--phase", "implementation"}},
+	"initiative approve-implementation": {kind: dispExecute, args: []string{"initiative", "approve-implementation", "10000000-0000-4000-8000-000000000001", "--epics", "42", "--reason", "smoke"}},
+	"initiative submit-review":          {kind: dispExecute, args: []string{"initiative", "submit-review", "10000000-0000-4000-8000-000000000001", "--epics", "42", "--reason", "smoke"}},
+	"initiative presentation":           {kind: dispExecute, args: []string{"initiative", "presentation", "10000000-0000-4000-8000-000000000001", "--epics", "42"}},
+	"initiative approve-completion":     {kind: dispExecute, args: []string{"initiative", "approve-completion", "10000000-0000-4000-8000-000000000001", "--epics", "42", "--reason", "smoke"}},
 }
 
 func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
@@ -588,6 +605,12 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		}
 		if name == "acceptance report record" {
 			rootCmd.SetIn(strings.NewReader(`{"outcome":"pass"}`))
+		}
+		if name == "initiative create" {
+			rootCmd.SetIn(strings.NewReader(`{"text":"Smoke initiative"}`))
+		}
+		if name == "initiative review" {
+			rootCmd.SetIn(strings.NewReader(`{"phase":"plan","reviewer_context":"smoke","reason":"smoke","members":[]}`))
 		}
 		if name == "reverse-engineer record" {
 			rootCmd.SetIn(strings.NewReader(`{"requirements":[],"traces":[]}`))
