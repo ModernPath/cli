@@ -13,7 +13,7 @@ import (
 
 func init() { rootCmd.AddCommand(newReverseEngineerCommand(cliEnvLoad)) }
 
-// Reverse engineering records proposed native requirements and their source
+// Reverse engineering records proposed requirements and their source
 // file traces. Analysis and content decisions belong to the caller.
 func newReverseEngineerCommand(load func() (*cliEnv, error)) *cobra.Command {
 	root := &cobra.Command{
@@ -181,7 +181,7 @@ func parseReverseRecord(contents []byte) (reverseRecordPayload, error) {
 	decoder = json.NewDecoder(bytes.NewReader(contents))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return reverseRecordPayload{}, fmt.Errorf("invalid native input: %w", err)
+		return reverseRecordPayload{}, fmt.Errorf("invalid input: %w", err)
 	}
 	return payload, nil
 }

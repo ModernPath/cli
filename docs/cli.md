@@ -33,7 +33,7 @@ activated, creation remains planned, and repeating activation is idempotent
 but still requires the PIN.
 
 `factory release activate` and `factory pin set/status` are compatibility
-entry points for these native operations. A compatible server must expose
+entry points for these operations. A compatible server must expose
 `POST /api/compliance/releases/:id/activate`; UI and CLI share this endpoint.
 
 ## Move requirements between releases
@@ -43,7 +43,7 @@ CLI. Sources may have no release, be in Base or be in an open delivery release.
 The destination must be a planned or active non-Base release in the bound System. Closed,
 release-exempt, deleted or foreign requirements refuse the entire request.
 
-Create `selection.json` with native kinds and UUIDs:
+Create `selection.json` with kinds and UUIDs:
 
 ```json
 {"requirements":[
@@ -527,12 +527,12 @@ fields. Large content is returned only when explicitly selected or exported.
 `--json` preserves the same selection and includes list pagination metadata.
 The command-specific details below define identity fields and any exceptions.
 
-- `epics list` prints the native numeric ID and title, one row per Epic.
+- `epics list` prints the numeric ID and title, one row per Epic.
   `requirements list` prints the display reference and title, one row per
   requirement. Titles are kept on one terminal line.
 - Both lists default to 20 items (maximum 200). Filtering, ordering and
   continuation run on the server before the page is returned. `--order id`
-  is the stable default; `--order title` orders by title with native identity
+  is the stable default; `--order title` orders by title with identity
   breaking ties. `--cursor` continues the same System, filters and order.
   A mismatched or malformed cursor is an error; pages are live reads, not
   snapshots.
@@ -548,7 +548,7 @@ The command-specific details below define identity fields and any exceptions.
 - `--json` emits the same selected data as a JSON object. Lists emit
   `{"items":[...],"next_cursor":null}`; a continuation replaces null with an
   opaque cursor. Epic list items contain `id` and `title`. Requirement list
-  items contain `id` (native UUID), `requirement_kind`, `display_ref` and `title`.
+  items contain `id` (UUID), `requirement_kind`, `display_ref` and `title`.
   Requirement detail always retains those identity fields (`id`,
   `requirement_kind`, `display_ref`), including when `--fields` selects content.
 - Text lists print a continuation hint to stderr when another page exists.
@@ -557,12 +557,12 @@ The command-specific details below define identity fields and any exceptions.
   identifying the affected resource and result; explicit content reads and
   specification exports may return complete content.
 
-#### Requirement references and native identity
+#### Requirement references and identity
 
 A requirement display reference is `UR-<display_number>-<revision>` for a
 user requirement or `SR-<display_number>-<revision>` for a system requirement.
 For example, `UR-6-0` identifies user requirement number 6 at revision 0.
-Its native UUID is immutable; the display reference changes with the revision.
+Its UUID is immutable; the display reference changes with the revision.
 All lookups are scoped to the authenticated workspace and bound System.
 
 `requirements get UR-6-0` infers the kind from the prefix. A conflicting
@@ -570,7 +570,7 @@ All lookups are scoped to the authenticated workspace and bound System.
 revision exactly: a stale reference returns an actionable error rather than
 silently returning newer content. This command does not retrieve historical
 accepted content. UUID lookup remains available and requires `--kind user`
-or `--kind system`. The native `user_requirement` and `system_requirement`
+or `--kind system`. The `user_requirement` and `system_requirement`
 values printed by JSON lists are also accepted.
 
 ```sh
@@ -585,7 +585,7 @@ modernpath requirements get UR-6-0 --fields title,description
 modernpath requirements get <uuid> --kind user --fields title,description
 ```
 
-### Create native requirements
+### Create requirements
 
 Create a requirement for new behavior in the bound System:
 
@@ -605,13 +605,13 @@ For example, `system-requirement.json` can contain:
 {"title":"Rotate signing keys","description":"Keys can be rotated without interrupting requests","verification_method":"integration test"}
 ```
 
-The CLI supplies the bound `system_id`. The server assigns the native UUID,
+The CLI supplies the bound `system_id`. The server assigns the UUID,
 display reference, revision `0`, `PROPOSED` status and authenticated author,
 and records the creation audit atomically. Client identity, lifecycle,
 release assignment and approval fields are rejected.
 
 The receipt includes `id`, `requirement_kind`, `display_ref`, `title`,
-`system_id`, `work_status` and `revision`. Use its native kind and UUID in
+`system_id`, `work_status` and `revision`. Use its kind and UUID in
 `epics plan save`; propose acceptance criteria and further content there.
 Creating a requirement does not approve implementation or completion.
 
@@ -680,7 +680,7 @@ reverse-engineering pass replaced, pass a batch file with `--file <path|->`.
 The request is all-or-nothing: either every listed requirement is obsoleted
 (or reported `already_obsolete`), or nothing changes and the refusal names the
 failing item's zero-based index and identity. A batch holds at most 200 items,
-each a native UUID listed once. An item's own `reason` overrides the batch
+each a UUID listed once. An item's own `reason` overrides the batch
 `reason`; one of them is required. `--file` cannot be combined with a
 positional id, `--kind` or `--reason`. This requires a server serving
 `POST /api/v1/systems/:system_id/requirements/obsolete`.
@@ -730,12 +730,12 @@ modernpath requirements list --status IN_REVIEW --kind user --context AUTH --que
 The command returns one page, 20 rows by default and at most 200. Status means
 the exact `work_status`; kind is `system` or `user`; context is the exact
 context code. These filters combine, while `--query` is a case-insensitive
-literal substring search across the native UUID, display reference, title and
+literal substring search across the UUID, display reference, title and
 description.
 Null status and context values remain eligible when those filters are absent.
 
 Each result contains the display reference and title; JSON additionally retains
-the native UUID and requirement kind. Pages are live reads, so concurrent
+the UUID and requirement kind. Pages are live reads, so concurrent
 changes may affect a later page. Continue with the returned cursor
 and the same filters; the cursor does not provide a snapshot. `--json` prints
 `items` and `next_cursor` for scripts. The command returns compact summaries
@@ -763,10 +763,10 @@ content or `--full` to request the complete hit.
 
 `requirements search` covers user requirements, system requirements and test
 cases. It matches display references (`UR-5`, `SR-12-0`, `TC-8`) and stored content;
-results retain native identities alongside display references.
+results retain identities alongside display references.
 `OBSOLETE` requirement rows are never returned. Unconfirmed test cases are
 found by exact match only and are marked `candidate`. `epics search`
-shows the native Epic ID as `#<id>` and says `keyword`,
+shows the Epic ID as `#<id>` and says `keyword`,
 `semantic` or both. The complete Epic hit includes its app link; select `url` or use `--full`
 to include it. Links use the server-advertised app address, falling back to the
 API host when none is available.
@@ -779,7 +779,7 @@ Use `requirements list` for exact status filters and paging.
 
 ### Read Epics and exchange specifications
 
-Epics use native IDs. Read, create and update them under the bound System, and exchange
+Epics use IDs. Read, create and update them under the bound System, and exchange
 specifications with the dedicated `epics specs` commands:
 
 ```sh
@@ -799,7 +799,7 @@ returns a short identity receipt without selecting the Epic as active work. `epi
 accepts a partial JSON object using `--file` or `--file -` and forwards its
 fields after a JSON type check: the strings `title`, `description`, `scope`,
 `non_goals`, `outcome_source`, `start_date`, `target_date`, `severity`,
-`category` and `target_profile_id`, the native record IDs `assignee_id` and
+`category` and `target_profile_id`, the record IDs `assignee_id` and
 `release_id`, the objects `metadata`, `shared_context`, `impact_assessment`
 and `knowledge_config`, and `evidence`, an array of objects. The server
 decides what it writes: the client-writable fields are `title`,
@@ -869,7 +869,7 @@ The response contains Epic context, current `review`, review findings and
 resolutions, `readiness`, and source-file identities. Within `review`, `test_cases`
 is keyed by TestCase UUID and `evidence` by run UUID. Each execution contains its
 registration, run, actual results and finalization once. Registrations name the
-criterion/check obligations. Results reference native TestCases; typed Traces
+criterion/check obligations. Results reference TestCases; typed Traces
 supply criterion mappings. No full presentation is retained inside a review.
 
 ```sh
@@ -889,8 +889,8 @@ modernpath epics plan history <epic-id> --full --json
 ```
 
 The saved plan has `body`, `requirements`, `traces` and `verification`.
-Requirement proposals retain `kind`, native `id`, exact proposed `content` and
-ordered `criteria`. Traces retain typed native endpoints and relationship.
+Requirement proposals retain `kind`, `id`, exact proposed `content` and
+ordered `criteria`. Traces retain typed endpoints and relationship.
 `verification` declares the plan `author_context`, decision UUIDs, criterion
 obligations `{id, changed, test_case_id, boundary}`, project checks
 `{id, name, test_case_id, boundary}`, and boundaries `{name, applicable, reason}`.
@@ -926,7 +926,7 @@ Approval and return requests contain reason and optional actor attribution.
 The server checks eligible current database state under its existing locks.
 They upload no plan, presentation, hash or token. A preview does not certify that
 a previously rendered screen stayed unchanged. Independent review applicability
-comes from native changes, existing revisions and server ordering; formatting
+comes from changes, existing revisions and server ordering; formatting
 alone is not a semantic change. Unknown applicability blocks.
 
 Implementation approval owns the selected requirements and freezes the active
@@ -946,7 +946,7 @@ There is no archive or reconstruction from current TestCase content. See the
 
 ### Read requirements, test cases, traces and evidence
 
-Read a requirement by display reference, or by native UUID and kind. Use
+Read a requirement by display reference, or by UUID and kind. Use
 `--fields` or `--full` to include stored criteria and trace detail:
 
 ```sh
@@ -962,7 +962,7 @@ Trace entity types use the stored names: `user_requirement`,
 `system_requirement`, `test_case`, `system_document`, `source_file`,
 `file_analysis`, `subsystem`, `epic`, or `criterion`. Trace reads are filtered
 to the System bound to the checkout. Requirement and test-case detail reads
-also verify the native entity belongs to that System.
+also verify the entity belongs to that System.
 
 For a Trace audit, read each in-scope requirement with criteria, then enumerate
 its Traces and those touching its criteria. Use `--json` and follow every
@@ -981,10 +981,10 @@ report was created if its focus failed. Create no missing-capability reports or 
 for other Systems. Never query private transport. During planning assess intended targets; during verification and
 completion assess executed results and their applicability to the tested revision.
 
-TestCases retain native UUID, tenant/System, title, existing revision, approval
+TestCases retain UUID, tenant/System, title, existing revision, approval
 attribution, deletion and server timestamps. Create with `{"title":"Access check"}`;
 update with the same title-only shape. The CLI supplies the bound System. Reads
-use native UUIDs and title; lists search UUID/title and order by UUID or title.
+use UUIDs and title; lists search UUID/title and order by UUID or title.
 Procedure, preconditions, runner/selector, authority, embeddings, descriptive body,
 status and TC-number references are removed. A title change advances the existing
 revision and invalidates earlier applicable proof.
@@ -996,9 +996,9 @@ modernpath test-cases get <uuid> --full --json
 modernpath evidence runs --target-type criterion --target-id <criterion-uuid> --full --json
 ```
 
-Native results, executed revisions and typed relationships remain inspectable
+results, executed revisions and typed relationships remain inspectable
 through these existing identities. Historical definitions and raw output are not
-retained or reconstructed. See [Native verification evidence](#native-verification-evidence).
+retained or reconstructed. See [Verification evidence](#verification-evidence).
 
 ### Other lists, content reads and operational output
 
@@ -1006,7 +1006,7 @@ The same terse output contract applies across the command surface:
 
 | Commands | Discovery and detail |
 |---|---|
-| `test-cases list`, `get` | Native UUID, title and revision. `get` and `update` use UUIDs. Lists search UUID/title with `--query` and sort with `--order id|title`. |
+| `test-cases list`, `get` | UUID, title and revision. `get` and `update` use UUIDs. Lists search UUID/title with `--query` and sort with `--order id|title`. |
 | `traces list` | Requires an entity type and ID; supports relation filtering and server continuation. Each row identifies the trace and its endpoints. |
 | `evidence latest`, `runs` | Bounded server queries support target, outcome and time filters. `runs` also supports kind. `latest` filters the newest observation per target, so filtering cannot resurrect an older pass. |
 | `read-doc` without `--id` | Paged metadata discovery with query, tier, angle and ordering. Select content through a direct ID read. |
@@ -1176,10 +1176,10 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Current work visibility | `focus` |
 | Knowledge | `search`, `ask`, `context`, `read-doc`, `read-file`, `docs`, `system-docs`, `datamodel` |
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
-| Native requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
+| requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
-| Requirement traces and native test records | `traces list`, `test-cases list/get/create/update` |
+| Requirement traces and test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
 | Reverse engineering | `reverse-engineer schema/check/record/review/accept` |
 | Release acceptance (not RDD evidence) | `acceptance specs list/create/update/retire`, `acceptance report open/get/record/sign-off/reject`, `acceptance release` |
@@ -1188,7 +1188,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 
 `dev review` inspects the current Git diff.
 
-`modernpath reverse-engineer record --file <JSON|->` sends native requirements,
+`modernpath reverse-engineer record --file <JSON|->` sends requirements,
 and their traces to the bound system in one request.
 Before constructing input, query the server's current JSON Schema:
 
@@ -1389,7 +1389,7 @@ rejected report is closed: further results, sign-off or reject answer
 `sign_off_note_required`, `no_specs`, `invalid_order`, `release_required` and
 `release_not_open` (422). Requires a server with the acceptance routes.
 
-## Native verification evidence
+## Verification evidence
 
 Reserve an empty non-Epic run before execution with
 `{"sha":"<tested code revision>","status":"running"}`. Retain the returned `run.id`.
@@ -1402,12 +1402,12 @@ Finalize under that identity:
   "status": "complete",
   "native_verification": {
     "tests": [{
-      "test_case_id": "<existing native TestCase UUID>",
+      "test_case_id": "<existing TestCase UUID>",
       "result": "pass",
       "detail": {"executed_test_case": {"revision": 0}}
     }],
     "criteria": [{
-      "criterion_id": "<native criterion UUID>",
+      "criterion_id": "<criterion UUID>",
       "test_keys": ["<the same TestCase UUID>"]
     }]
   }
@@ -1425,7 +1425,7 @@ Required tests come from TestCase-to-criterion links. Actual result-to-test and
 result-to-criterion Traces establish executed mappings. All required tests must
 pass at applicable revisions for complete coverage; no separate criterion result
 or stored full/partial flag is created. The same test supporting several criteria
-has one native identity and one result per run. Project checks use their approved
+has one identity and one result per run. Project checks use their approved
 plan's TestCase identity. Missing, stale, skipped, incomplete or changed-definition
 proof cannot establish pass; newer relevant failures cannot expose an older pass.
 
@@ -1445,7 +1445,7 @@ separate and submits requirement identities, source and reason, not a review bod
 
 ## Personal focus on Backlog records
 
-Use a native Backlog UUID with an explicit discriminator:
+Use a Backlog UUID with an explicit discriminator:
 
 ```sh
 modernpath focus <uuid> --ref-kind backlog_record
@@ -1453,7 +1453,7 @@ modernpath focus
 modernpath focus --drop <uuid> --ref-kind backlog_record
 ```
 
-The declaration and scoped drop use the bound System. The list shows the native
+The declaration and scoped drop use the bound System. The list shows the
 record ID and title. `--requirement-kind` remains for requirement UUIDs and cannot
 be combined with `--ref-kind`. Backlog focus is explicit only and remains until
 dropped, including after the record disposition changes. These operations do

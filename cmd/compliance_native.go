@@ -27,9 +27,9 @@ func newNativeComplianceCommands(load func() (*cliEnv, error)) []*cobra.Command 
 }
 
 func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
-	cmd := &cobra.Command{Use: "get <uuid|display-ref>", Short: "Read a concise native requirement record", Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{Use: "get <uuid|display-ref>", Short: "Read a concise requirement record", Args: cobra.ExactArgs(1)}
 	kind := ""
-	cmd.Flags().StringVar(&kind, "kind", "", "requirement kind for UUIDs: user or system (native *_requirement names also accepted)")
+	cmd.Flags().StringVar(&kind, "kind", "", "requirement kind for UUIDs: user or system (*_requirement names also accepted)")
 	cmd.Flags().Bool("json", false, "Emit selected fields as JSON")
 	addRecordReadFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -121,8 +121,8 @@ func requirementDetailFields(kind string) []string {
 }
 
 func newTraceListCommand(load func() (*cliEnv, error)) *cobra.Command {
-	cmd := &cobra.Command{Use: "list", Short: "List traces touching a native entity", Args: cobra.NoArgs,
-		Long: `List the active traces whose source or target is one native entity of the
+	cmd := &cobra.Command{Use: "list", Short: "List traces touching a entity", Args: cobra.NoArgs,
+		Long: `List the active traces whose source or target is one entity of the
 bound System. Each row is source, relation and target; an endpoint is its type
 and id (a source_file endpoint shows repository and path). --relation filters
 by link kind: implements, verifies, derives or relates. A requirement's
@@ -131,8 +131,8 @@ criteria are entities of their own: list a criterion's traces with
 an Epic plan at implementation and completion approval; there is no direct
 trace write.`}
 	entityType, entityID := "", ""
-	cmd.Flags().StringVar(&entityType, "entity-type", "", "native entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, evidence_result)")
-	cmd.Flags().StringVar(&entityID, "entity-id", "", "native entity id")
+	cmd.Flags().StringVar(&entityType, "entity-type", "", "entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, evidence_result)")
+	cmd.Flags().StringVar(&entityID, "entity-id", "", "entity id")
 	cmd.Flags().Bool("json", false, "emit JSON")
 	cmd.Flags().Int("limit", 20, "page size (1–200)")
 	cmd.Flags().String("cursor", "", "continue from a previous page")
@@ -149,7 +149,7 @@ trace write.`}
 			return err
 		}
 		// A detail read rejects a UUID-backed compliance entity from another System;
-		// the trace endpoint also filters every native type to the bound System.
+		// the trace endpoint also filters every type to the bound System.
 		if kind, ok := map[string]string{"user_requirement": "user", "system_requirement": "system", "test_case": "test-case"}[entityType]; ok {
 			detailType := map[string]string{"user": "user-requirements", "system": "system-requirements", "test-case": "test-cases"}[kind]
 			if _, err := nativeGetData(env, "/api/compliance/"+detailType+"/"+url.PathEscape(entityID)+"?system_id="+fmt.Sprint(env.SystemID), "entity detail", true); err != nil {
@@ -182,19 +182,19 @@ trace write.`}
 }
 
 func newTraceCommands(load func() (*cliEnv, error)) *cobra.Command {
-	root := &cobra.Command{Use: "traces", Short: "Read native trace relationships"}
+	root := &cobra.Command{Use: "traces", Short: "Read trace relationships"}
 	root.AddCommand(newTraceListCommand(load))
 	return root
 }
 
 func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
-	root := &cobra.Command{Use: "test-cases", Short: "Read and update native test identities"}
-	create := &cobra.Command{Use: "create", Short: "Create a native test identity in the bound System", Args: cobra.NoArgs}
+	root := &cobra.Command{Use: "test-cases", Short: "Read and update test identities"}
+	create := &cobra.Command{Use: "create", Short: "Create a test identity in the bound System", Args: cobra.NoArgs}
 	createFile := ""
 	create.Flags().StringVar(&createFile, "file", "", "JSON object with title (required)")
 	_ = create.MarkFlagRequired("file")
 	create.Flags().Bool("json", false, "emit JSON")
-	create.Long = `Create a native TestCase: {"title":"Sign in"}. The CLI supplies system_id; the server owns identity, revision and approval attribution.`
+	create.Long = `Create a TestCase: {"title":"Sign in"}. The CLI supplies system_id; the server owns identity, revision and approval attribution.`
 	create.RunE = func(cmd *cobra.Command, _ []string) error {
 		payload, err := readObjectInput(cmd, createFile)
 		if err != nil {
@@ -272,7 +272,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return err
 		}
 		if !requirementUUIDPattern.MatchString(args[0]) {
-			return fmt.Errorf("test case requires a native UUID")
+			return fmt.Errorf("test case requires a UUID")
 		}
 		env, err := load()
 		if err != nil {
@@ -300,7 +300,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 	update.Flags().StringVar(&file, "file", "", "JSON object with title (required)")
 	update.MarkFlagRequired("file")
 	update.Flags().Bool("json", false, "emit JSON")
-	update.Long = `Update a native TestCase: {"title":"Login"}. A changed title advances its existing revision and invalidates earlier proof.`
+	update.Long = `Update a TestCase: {"title":"Login"}. A changed title advances its existing revision and invalidates earlier proof.`
 	update.RunE = func(cmd *cobra.Command, args []string) error {
 		payload, err := readObjectInput(cmd, file)
 		if err != nil {
@@ -321,7 +321,7 @@ func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		entity := detail["entity"].(map[string]any)
 		id, ok := entity["id"].(string)
 		if !ok || strings.TrimSpace(id) == "" {
-			return fmt.Errorf("test-case detail response is missing its native ID")
+			return fmt.Errorf("test-case detail response is missing its ID")
 		}
 		id = url.PathEscape(id)
 		status, body, err := env.write("PATCH", "/api/compliance/test-cases/"+id, payload)
@@ -482,7 +482,7 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 // evidenceRecordHelp is the run file as Core.Evidence and the evidence
 // schemas accept it, with the fields the acceptance review later requires,
 // so a verification pass records what the review will read.
-const evidenceRecordHelp = `Record actual native TestCase outcomes and their criterion relationships.
+const evidenceRecordHelp = `Record actual TestCase outcomes and their criterion relationships.
 
 Reserve: {"sha":"<tested code revision>","status":"running"}.
 For an active Epic, use epics gates start-execution first and reuse its run_id.
@@ -495,15 +495,15 @@ Finalize several registered runs at once with {"items":[<finalize object>, ...]}
 at most 50 items with distinct ids, all-or-nothing, one result per item in input
 order. A refusal names the failing item and its run. Reservations are not batched.
 
-Select existing native tests explicitly. Their title/revision identify the test;
+Select existing tests explicitly. Their title/revision identify the test;
 requirements and executable code define expected behavior. Code relationships
-must resolve through scoped native Traces. Before executing, each TestCase must
+must resolve through scoped Traces. Before executing, each TestCase must
 have an active Trace to a source_file or file_analysis in the same System.
 Use reverse-engineer record to establish missing code relationships first.
 Outcomes are pass, fail, error, skip
 or inconclusive. Only an actual assertion failure is fail; setup/build failures
 are error. All required tests must have applicable passing results to verify a
-criterion. The server derives completeness from current native links.
+criterion. The server derives completeness from current links.
 
 Runs retain only identity, scope, tested SHA, status and server timestamps.
 Results retain run/test identity, actual outcome, validity and the executed test
@@ -515,7 +515,7 @@ Finalized outcomes and result mappings are immutable. An identical retry reuses
 stored identities; a conflict refuses atomically. Adding a Trace preserves
 recorded results. Meaningful test/criterion edits and changes to existing
 relationships can invalidate applicability without rewriting the outcome or revision.
-Historical reads expose surviving native facts, never reconstructed definitions.
+Historical reads expose surviving facts, never reconstructed definitions.
 `
 
 func lenAny(value any) int { rows, _ := value.([]any); return len(rows) }

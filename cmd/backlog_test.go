@@ -150,7 +150,7 @@ func TestBacklogReportsRefusalsAndRejectsUnscopedReceipts(t *testing.T) {
 	}{
 		{422, `{"error":{"message":"denied"}}`, "Backlog request refused"},
 		{201, `{"data":{"backlog":{"id":"11111111-1111-4111-8111-111111111111","system_id":99,"disposition":"OPEN"}}}`, "different System"},
-		{201, `{"data":{"backlog":{"system_id":4}}}`, "invalid native identity"},
+		{201, `{"data":{"backlog":{"system_id":4}}}`, "invalid identity"},
 		{201, `{}`, "missing its data"},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,14 +218,14 @@ func TestBacklogListSkipsAnInvalidRowAndNamesIt(t *testing.T) {
 	}
 	for i, want := range []struct{ id, reason string }{
 		{foreign, "different System"},
-		{"BL-1", "invalid native identity"},
+		{"BL-1", "invalid identity"},
 		{"?", "not an object"},
 	} {
 		if page.Skipped[i].ID != want.id || !strings.Contains(page.Skipped[i].Reason, want.reason) {
 			t.Errorf("skipped[%d] = %+v, want id %q with reason %q", i, page.Skipped[i], want.id, want.reason)
 		}
 	}
-	for _, want := range []string{foreign, "BL-1", "different System", "invalid native identity", "not an object"} {
+	for _, want := range []string{foreign, "BL-1", "different System", "invalid identity", "not an object"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("a skipped row is named on stderr; %q missing in:\n%s", want, stderr)
 		}

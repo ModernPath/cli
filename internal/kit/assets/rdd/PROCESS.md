@@ -72,7 +72,7 @@ resolves; it does not prove that the source supports the claim.
 | `UR` | Actor, context, user outcome, sources, acceptance scenarios, optional Epic relation |
 | `SR` | One independently implementable system behavior, source, boundary, technical context, code and test links |
 | `CODE` | Implementing files, symbols, revision, branch and changes |
-| `TEST_CASE` | Native identity, title, existing revision and approval attribution; typed links to requirements, criteria and code |
+| `TEST_CASE` | ID, title, existing revision and approval attribution; typed links to requirements, criteria and code |
 | `TEST_RESULT` | Run/TestCase identity, executed TestCase revision, actual outcome and validity; run retains tested code revision |
 
 Requirement and Epic identifiers come from the authoritative process store.
@@ -206,7 +206,7 @@ supported atomic operation above. If behavior or tests need to change, return
 to [Work scope](#work-scope) to choose small-change or Epic delivery.
 Verification does not alter lifecycle state, and neither recording nor passing
 evidence implies human acceptance.
-Verification retains native TestCase identities, existing revisions, actual
+Verification retains TestCase identities, existing revisions, actual
 EvidenceResult outcomes and scoped typed TRACEs. Expected behavior belongs to
 requirements, criteria and executable assertions. Select existing test UUIDs
 explicitly; code relationships use Traces. TestCases retain no procedures,
@@ -231,9 +231,9 @@ results unchanged. Meaningful test/criterion edits and changes to existing
 relationships can invalidate applicability without rewriting the recorded
 outcome or revision. Removed structural Traces are hard-deleted; immutable
 execution-result relationships remain protected.
-Historical reads expose surviving native facts, never reconstructed definitions,
+Historical reads expose stored records, never reconstructed definitions,
 raw output or earlier presentation bodies. Ambiguous legacy records cannot prove
-current behavior. Read back the native relationships before reporting verification.
+current behavior. Read back the stored Traces before reporting verification.
 
 Local working-set files may hold store projections and development inputs.
 They are not a second authority and need no fingerprint or synchronization
@@ -440,6 +440,29 @@ resolutions for material findings, including findings from superseded reviews;
 editing the plan alone does not record their disposition. The review audits the planned
 change, not the amount of prose or the presence of links.
 
+### Verifying an Epic whose behavior already exists
+
+An Epic may explicitly declare that it verifies already-implemented behavior.
+Its saved verification declaration uses `mode: existing_behavior` and a nonblank
+`existing_behavior_reason`. It requires no source revision, candidate declaration,
+RED result or comparison with historical runs. Omitted mode or `implementation`
+retains ordinary implementation rules. Keep each criterion's `changed`
+classification truthful to its published baseline.
+
+Before approval, every requirement needs current, active implementation Traces
+to code in the same System. Review establishes that the behavior and tests exist;
+a proposed link alone does not establish implementation. Product or executable
+test changes use ordinary implementation.
+
+Verification checks the selected completed test results and their current
+requirement, criterion, TestCase and code relationships. Each required test must
+pass. A different run or code revision is not compared to establish whether the
+behavior exists. Required reviews, ownership and separate human completion still
+apply. Missing, failing or inapplicable selected results block completion.
+Publication retains requirement, TestCase, run, result and Trace IDs and remains
+atomic and idempotent. Recorded outcomes are never rewritten.
+This Epic mode does not replace the separate unowned-requirement acceptance path.
+
 ### Epic gates, verification and review
 
 The four Epic gates and their CLI checks are:
@@ -473,7 +496,9 @@ through the appropriate pass. None of these checks records a human approval.
 Before the final plan review, create or reuse test definitions and declare
 verification obligations for every active criterion and required project check.
 Each obligation identifies its test, boundary and expected observation;
-each criterion states whether behavior changes and therefore needs RED evidence.
+each criterion states whether its content differs from the accepted baseline.
+Ordinary implementation requires RED for changed criteria. An explicitly reviewed
+existing-behavior Epic uses that declaration instead of manufacturing failures.
 Record applicable boundaries and reasons for exclusions, the plan author's
 context, and required human decisions using identities issued by the CLI. Retain each decision question beside its effective human answer.
 These are test definitions, not executable test changes before approval.
@@ -488,7 +513,7 @@ A context string attests to a separately performed review; comparing strings
 cannot prove independence. Candidates carry no author context.
 
 The server derives review applicability from existing semantic change records,
-native revisions, ownership, candidate/registration/finalization identities and
+revisions, ownership, candidate/registration/finalization identities and
 server ordering. Relevant changes require renewed review; ambiguous applicability
 blocks. Writers share the existing serialization boundary and assign ordering
 times after acquiring it. A no-op save or JSON formatting change is not a semantic
@@ -501,7 +526,7 @@ and attribution. Actions approve eligible current database state; they do not
 certify that a previously rendered screen stayed unchanged. They upload no plan
 or presentation. The server reads and checks current state under its existing
 locks, then commits publication, ownership and audit atomically. Normal responses
-include records once by native identity and review summaries without nested
+include each record once by its ID and review summaries without nested
 historical presentations. Explicit history reads expose surviving facts and
 accepted content. No archive or exact historical bundle reconstruction is kept.
 
@@ -589,7 +614,7 @@ Finish evidence collection before the implementation review; a change to reviewe
 evidence requires renewed review before submission.
 
 Do not reconstruct RED or passing evidence after the fact. Inspect actual test
-execution, classify its outcome correctly, and record the selected native test
+execution, classify its outcome correctly, and record the selected test
 identity, executed revision, outcome and links. Commands and output may remain
 local diagnostics and PR check notes; do not upload them as evidence fields. Never skip or
 weaken a failing assertion to pass a project commit gate. Deletion checks prove scoped machinery is absent and retained data is preserved.
@@ -618,7 +643,7 @@ rewriting or splitting the refused action.
 
 ## Evidence and completion
 
-A test result records its native TestCase/run identity, executed TestCase
+A test result records its TestCase/run identity, executed TestCase
 revision, actual outcome and validity. The run records tested code revision.
 Outcomes are `PASS`, `FAIL`, `ERROR`, `SKIP` or `INCONCLUSIVE`. Only an executed
 assertion failure is FAIL; setup and build failures are ERROR, never RED. A rerun is a new observation. Only a passing

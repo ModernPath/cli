@@ -68,7 +68,7 @@ bound to, through the same lifecycle the UI uses.
 
 A server refusal prints its error code and message and exits non-zero, so a
 script fails loudly. Only reset asks for a confirmation; without a terminal it
-needs --yes. Mutating commands accept --json for native response data and
+needs --yes. Mutating commands accept --json for response data and
 --wait --timeout to wait up to 30 minutes for that exact run.`,
 }
 

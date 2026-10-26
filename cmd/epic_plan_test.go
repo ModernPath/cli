@@ -32,6 +32,26 @@ func planServer(t *testing.T, state string) *[]map[string]any {
 	return &bodies
 }
 
+func TestExistingBehaviorPlanDeclarationReachesServer(t *testing.T) {
+	bodies := planServer(t, "PROPOSED")
+	file := filepath.Join(t.TempDir(), "plan.json")
+	input := `{"body":"Verify implemented behavior","verification":{"mode":"existing_behavior","existing_behavior_reason":"Already implemented"}}`
+	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRoot(t, "epics", "plan", "save", "42", "--file", file); err != nil {
+		t.Fatal(err)
+	}
+	if len(*bodies) != 1 {
+		t.Fatalf("expected one save request: %#v", *bodies)
+	}
+	plan := (*bodies)[0]["plan"].(map[string]any)
+	verification := plan["verification"].(map[string]any)
+	if verification["mode"] != "existing_behavior" || verification["existing_behavior_reason"] != "Already implemented" {
+		t.Fatalf("declaration was changed in transport: %#v", verification)
+	}
+}
+
 // presentationBundle stands in for the completion bundle that epics gates
 // presentation returns; presentationFile saves it as the human saw it.
 const presentationBundle = `{"review":{"plan":{"body":"Reviewed plan"}},"reviews":[{"phase":"implementation"}],"readiness":{"ready":true,"blockers":[]}}`

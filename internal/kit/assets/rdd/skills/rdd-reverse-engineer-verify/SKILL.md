@@ -55,8 +55,10 @@ trace, but are not accepted again. Verification does not change lifecycle state.
    missing links, failures and uncertainty. Do not change product or test code
    during this pass or fabricate RED evidence for existing behavior. Complete
    verification is ready for rdd-reverse-engineer-accept; it does not itself
-   accept the requirements or set DONE. Epic implementation retains its separate
-   registration and RED/GREEN rules.
+   accept the requirements or set DONE. Epic-owned work retains its separate
+   registration and approval rules. An explicitly approved existing-behavior Epic
+   follows `rdd-verify` using selected passing results, with no fabricated RED; ordinary
+   implementation retains RED/GREEN.
 
 Record grounded requirements even when tests are missing; verification is a
 subsequent requested operation, not a prerequisite for recording. Do not restore

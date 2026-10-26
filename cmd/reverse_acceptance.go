@@ -67,7 +67,7 @@ func newReverseEngineerAcceptCommand(load func() (*cliEnv, error)) *cobra.Comman
 		Long: `Apply an explicit human acceptance decision to eligible current database state.
 Input: {"requirements":[{"kind":"system_requirement","id":"<UUID>"}],
 "source":"USER:<source>","reason":"<human decision>"}.
-The server reads current content and native evidence under locks, then publishes
+The server reads current content and evidence under locks, then publishes
 all selected requirements atomically. No review bundle is uploaded. A repeated
 acceptance returns the existing accepted version and publishes nothing twice.
 Already DONE requirements from other completion paths return skipped unchanged.
@@ -146,7 +146,7 @@ func decodeReverseRequirementSelection(fields map[string]json.RawMessage) ([]rev
 			return nil, fmt.Errorf("requirement %d kind must be user_requirement or system_requirement", i)
 		}
 		if raw, ok := row["id"]; !ok || json.Unmarshal(raw, &ref.ID) != nil || !requirementUUIDPattern.MatchString(ref.ID) {
-			return nil, fmt.Errorf("requirement %d must include a native UUID id", i)
+			return nil, fmt.Errorf("requirement %d must include a UUID id", i)
 		}
 		key := ref.Kind + ":" + strings.ToLower(ref.ID)
 		if seen[key] {

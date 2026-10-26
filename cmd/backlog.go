@@ -121,7 +121,7 @@ focus, preserving other focus lanes. Example: {"title":"Keep cart after payment 
 	create.Flags().Bool("json", false, "Emit JSON")
 	create.Flags().Bool("focus", false, "Add the new record to the signed-in reporter's focus")
 	parent.AddCommand(create)
-	get := &cobra.Command{Use: "get <uuid>", Short: "Read a native Backlog record", Args: cobra.ExactArgs(1),
+	get := &cobra.Command{Use: "get <uuid>", Short: "Read a Backlog record", Args: cobra.ExactArgs(1),
 		Long: `Read one Backlog record of the bound System. Text output names a routing or closure
 target by its title (ROUTED to 288 — <title>); --json serves the disposition as stored and the
 target's title, display_ref and available on each link.`,
@@ -254,11 +254,11 @@ func backlogRowProblem(value any, system int) string {
 	}
 	id, _ := row["id"].(string)
 	if !requirementUUIDPattern.MatchString(id) {
-		return "invalid native identity"
+		return "invalid identity"
 	}
 	sid, ok := numberAsInt(row["system_id"])
 	if !ok {
-		return "invalid native identity"
+		return "invalid identity"
 	}
 	if sid != int64(system) {
 		return "different System"
@@ -270,7 +270,7 @@ func validateBacklogRecord(row map[string]any, system int) error {
 	id, _ := row["id"].(string)
 	sid, ok := numberAsInt(row["system_id"])
 	if !requirementUUIDPattern.MatchString(id) || !ok || sid != int64(system) {
-		return fmt.Errorf("Backlog response has an invalid native identity or different System")
+		return fmt.Errorf("Backlog response has an invalid identity or different System")
 	}
 	return nil
 }

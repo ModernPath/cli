@@ -76,7 +76,7 @@ func init() {
 			}
 			id, valid := numberAsInt(row["id"])
 			if !valid || id <= 0 {
-				return fmt.Errorf("Epic page item is missing its positive native ID")
+				return fmt.Errorf("Epic page item is missing its positive ID")
 			}
 			title, ok := row["title"].(string)
 			if !ok {
@@ -163,7 +163,7 @@ func init() {
 		}
 		id, ok := numberAsInt(row["id"])
 		if !ok || id <= 0 {
-			return fmt.Errorf("Epic creation response is missing its native ID")
+			return fmt.Errorf("Epic creation response is missing its ID")
 		}
 		if err := validateBoundEpic(row, env.SystemID, id); err != nil {
 			return err
@@ -174,7 +174,7 @@ func init() {
 		Long: `Update authored fields on an explicit Epic in the bound System. The CLI checks
 JSON types and forwards the fields: strings title, description, scope,
 non_goals, outcome_source, start_date, target_date, severity, category and
-target_profile_id (dates use YYYY-MM-DD); native record IDs assignee_id and
+target_profile_id (dates use YYYY-MM-DD); record IDs assignee_id and
 release_id; objects metadata, shared_context, impact_assessment and
 knowledge_config; evidence, an array of objects. Null clears an optional
 field. The server decides what it writes: the client-writable fields are
@@ -225,7 +225,7 @@ standard input. Input examples:
 				if value != nil {
 					id, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
 					if err != nil || id <= 0 {
-						return fmt.Errorf("Epic field %q must be a positive native record ID or null", field)
+						return fmt.Errorf("Epic field %q must be a positive record ID or null", field)
 					}
 				}
 			case "metadata", "shared_context", "impact_assessment", "knowledge_config":
@@ -270,7 +270,30 @@ standard input. Input examples:
 		}
 		return writeRecord(cmd, map[string]any{"operation": "updated", "id": id, "title": row["title"]})
 	}
-	for _, cmd := range []*cobra.Command{create, update} {
+	retire := &cobra.Command{Use: "retire <epic-id>", Short: "Retire an Epic while preserving its history", Args: cobra.ExactArgs(1),
+		Long: `Retire an explicit Epic in the bound System through the server's soft-delete operation. Requirements, saved plans, tests, evidence and audit history are preserved. The server refuses retirement while the Epic owns an approved requirement change. Retirement does not approve or complete the Epic.`}
+	retire.RunE = func(cmd *cobra.Command, args []string) error {
+		env, id, err := explicitEpic(args[0])
+		if err != nil {
+			return err
+		}
+		if env.SystemID <= 0 {
+			return fmt.Errorf("retirement requires a bound System")
+		}
+		if _, err := readBoundEpic(env, id); err != nil {
+			return err
+		}
+		data, err := epicWrite(env, "DELETE", fmt.Sprintf("/api/work/epics/%d", id), nil)
+		if err != nil {
+			return err
+		}
+		row, ok := data.(map[string]any)
+		if !ok || row["deleted"] != true {
+			return fmt.Errorf("Epic response did not confirm retirement")
+		}
+		return writeRecord(cmd, map[string]any{"operation": "retired", "id": id})
+	}
+	for _, cmd := range []*cobra.Command{create, update, retire} {
 		cmd.Flags().Bool("json", false, "Emit JSON")
 		epicsCmd.AddCommand(cmd)
 	}
@@ -480,7 +503,7 @@ func readBoundEpic(env *cliEnv, id int64) (map[string]any, error) {
 func validateBoundEpic(data map[string]any, systemID int, id int64) error {
 	responseID, ok := numberAsInt(data["id"])
 	if !ok || responseID != id {
-		return fmt.Errorf("Epic detail has no matching native ID")
+		return fmt.Errorf("Epic detail has no matching ID")
 	}
 	sid, ok := numberAsInt(data["system_id"])
 	if !ok {

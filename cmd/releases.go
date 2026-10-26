@@ -264,7 +264,7 @@ func releaseFailure(status int, body map[string]any) error {
 		return fmt.Errorf("release operation refused (HTTP %d): %s", status, code)
 	}
 	if status == 404 {
-		return fmt.Errorf("release endpoint unavailable (HTTP 404); deploy a server supporting native release activation")
+		return fmt.Errorf("release endpoint unavailable (HTTP 404); deploy a server supporting release activation")
 	}
 	return fmt.Errorf("release operation refused (HTTP %d)", status)
 }

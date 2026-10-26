@@ -31,7 +31,7 @@ func requirementSelection(raw any, reviewed bool) ([]releaseRequirement, error) 
 		kind, _ := row["kind"].(string)
 		id, _ := row["id"].(string)
 		if (kind != "user_requirement" && kind != "system_requirement") || !requirementUUIDPattern.MatchString(id) {
-			return nil, fmt.Errorf("each requirement needs its native kind and UUID")
+			return nil, fmt.Errorf("each requirement needs its kind and UUID")
 		}
 		for field := range row {
 			if field != "kind" && field != "id" && !(reviewed && field == "expected_release_id") {

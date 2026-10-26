@@ -24,14 +24,14 @@ var requirementsListJSON bool
 
 var requirementsCmd = &cobra.Command{
 	Use:   "requirements",
-	Short: "Create and find native requirements",
+	Short: "Create and find requirements",
 }
 
 var requirementsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List bounded requirement ID and title rows",
 	Args:  cobra.NoArgs,
-	Long: `List a bounded page of native system and user requirement ID and title rows.
+	Long: `List a bounded page of system and user requirement ID and title rows.
 
 Use --cursor from a previous response to continue with the same filters.`,
 	RunE: runRequirementsList,

@@ -219,6 +219,18 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
                                 "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
                     "boundaries": [{"name": "<name>", "applicable": true}]}}
 
+verification.mode is optional: omitted or "implementation" retains ordinary
+implementation rules. To verify behavior already present, use
+"mode":"existing_behavior" and "existing_behavior_reason":"<explanation>".
+No source revision, candidate declaration, RED result or comparison with
+historical runs is required. Verify the selected completed test results against
+the current requirements, criteria, tests and code links. Every required test
+must pass. Keep changed:true when criterion text differs from its baseline.
+Existing-behavior entry requires current stored implements Traces for every
+requirement. Reviews and separate human completion remain required. Product or
+test changes use ordinary implementation. Change an active declaration through
+an explicit return to planning, fresh review and approval.
+
 content keys are title, description, context, context_name, release_note
 and detail_md, plus actor and intended_use for a user
 requirement or boundary, rationale and verification_method for a system
@@ -232,7 +244,7 @@ It has no target, path or trace ID and creates no file record. Real implements
 traces and planned declarations may coexist for different requirements in the
 same plan. Use real traces for code that already exists. Completion requires a
 real implements trace to source_file or file_analysis for every requirement;
-planned declarations never become native traces. After implementing new code,
+planned declarations are never stored as Traces. After implementing new code,
 record its real links with reverse-engineer record without changing the approved
 plan. Read reverse-engineer schema before constructing that input. New links
 are covered by the implementation review and retained at completion.
@@ -259,7 +271,7 @@ releases ownership and starts a new planning cycle. Earlier reviews and executio
 cannot satisfy that cycle.
 
 submit-review checks current completion-review readiness and moves work to
-IN_REVIEW. approve-completion rechecks current native facts under locks, publishes
+IN_REVIEW. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
 one accepted requirement version and releases ownership. Repeating completion on
 DONE publishes nothing twice. return-to-implementation needs a non-empty human
 reason and the current IN_REVIEW lifecycle; it also works when completion readiness

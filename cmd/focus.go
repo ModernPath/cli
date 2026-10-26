@@ -350,7 +350,7 @@ func focusReference(value, requirementKind string) (any, string, error) {
 		}
 		return id, "", nil
 	}
-	return nil, "", fmt.Errorf("focus requires a typed requirement UUID, an explicit Backlog UUID or native Epic integer ID")
+	return nil, "", fmt.Errorf("focus requires a typed requirement UUID, an explicit Backlog UUID or Epic integer ID")
 }
 
 func focusAge(startedAt string) string {

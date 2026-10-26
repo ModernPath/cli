@@ -90,7 +90,7 @@ func TestRequirementCreateReportsRefusalsAndRejectsUnscopedReceipts(t *testing.T
 	}{
 		{"refusal", 422, `{"errors":{"title":["is invalid"]}}`, "requirement creation refused"},
 		{"foreign", 201, `{"data":{"system_id":99}}`, "different System"},
-		{"missing identity", 201, `{"data":{"system_id":4}}`, "native identity"},
+		{"missing identity", 201, `{"data":{"system_id":4}}`, "identity"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -61,7 +61,7 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		name, suffix, help string
 		write              bool
 	}{
-		{"review-bundle", "/review-bundle", "Read current content and native evidence for separate review", false},
+		{"review-bundle", "/review-bundle", "Read current content and evidence for separate review", false},
 		{"presentation", "/completion-presentation", "Read current content, reviews and completion readiness", false},
 		{"review", "/phase-reviews", "Record an attributable independent plan or implementation review", true},
 		{"resolve", "/resolve-finding", "Record the resolution of a material review finding", true},
@@ -200,6 +200,13 @@ Before approval, plan.verification declares author_context, decisions (UUIDs), c
 ({id, changed, test_case_id, boundary}), checks ({id, name, test_case_id, boundary}),
 and boundaries ({name, applicable, reason when false}). Criteria/checks need distinct IDs;
 check IDs are allocated on save when omitted. Obligations refer to test cases.
+Optional verification.mode defaults to implementation. Explicit existing_behavior
+requires only existing_behavior_reason. It requires current implementation Traces
+before approval and selected completed passing test results. It requires no source
+revision or candidate, and compares no historical runs or RED/GREEN ordering.
+Read epics plan --help for the declaration. Current reviews and both human
+approvals remain required.
+
 Legacy active plans without obligations fail closed; preserve their approved scope.
 For any active approved plan, an explicit human decision lets the current approver
 run epics plan return-to-planning --reason "USER:...".
@@ -214,6 +221,7 @@ planning, review and fresh human implementation approval must follow.
 All record commands take --file <JSON>, or standard input by default:
   candidate: {"revision":"tested-code-revision"}
   start-execution: {"revision":"tested-code-revision","obligation_ids":["uuid"]}
+  existing-behavior execution: {"obligation_ids":["uuid"]}
   or several at once: {"items":[{"revision":"...","obligation_ids":["uuid"]}]}
 Register before executing. With several obligations, register the batch, run
 the tests, finalize the batch. A batch holds at most 50 items, is all-or-nothing,
@@ -224,19 +232,21 @@ GREEN for the same obligation in one batch. Finalize the returned run_id through
       "detail":{"executed_test_case":{"revision":0}}}],
     "criteria":[{"criterion_id":"<criterion UUID>","test_keys":["<TestCase UUID>"]}]}}
 One actual outcome is stored per executed test. Project checks select their
-native TestCase through the approved plan; no extra criterion conclusion is
-stored. Required test coverage comes from the native links. A failed assertion
-is fail; setup/build failures are error, never RED. Failure finalization must
+TestCase through the approved plan; no extra criterion conclusion is
+stored. Required test coverage comes from the links. A failed assertion
+is fail; setup/build failures are error, never RED. In ordinary implementation, failure finalization must
 precede registration of the passing run. A newer incomplete or nonpassing
 execution blocks older passes. Passing evidence must belong to the current
 candidate identity and revision. Same-SHA redeclaration needs new evidence.
+Existing-behavior verification uses selected results without comparing runs or
+requiring a candidate or source revision.
 No candidate author context, role, procedure snapshot, runner, command,
 environment or raw output is uploaded.
 
-Planning accepts real implements traces or plan-only planned declarations for
+Ordinary implementation planning accepts implements traces or plan-only planned declarations for
 files that do not yet exist. Completion requires scoped real code endpoints.
 review-bundle and presentation are current reads, with each test and execution
-included once by native identity. Normal review history retains findings,
+included once by record ID. Normal review history retains findings,
 coverage and resolutions without saved presentations. Record the actual
 separately performed review:
   review: {"phase":"plan|implementation","reviewer_context":"separate context",
@@ -254,7 +264,7 @@ names the failing item: <code> — item <index> (<identity>) — <message>.
 
 Review context attests to a separately performed review. Comparing context
 strings cannot prove independent work. The candidate has no author context.
-Current native changes invalidate review applicability through existing records
+Changes to requirements, tests, results or Traces invalidate review applicability through existing records
 and server ordering. Unknown applicability blocks. No fingerprints, ETags or
 reviewed-state fields are introduced.
 

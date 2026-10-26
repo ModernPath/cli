@@ -26,12 +26,12 @@ var requirementsSearchCmd = &cobra.Command{
 system by id, display reference (UR-5, SR-12, TC-8), title, description or
 meaning, in one ranked list.
 
-	Each hit shows its native id, display reference, kind, work status and name.
+	Each hit shows its id, display reference, kind, work status and name.
 	Use --fields or --full to include descriptions and match detail. Hits
 	found both ways come first. Unconfirmed test cases are found by exact match
 	only and are marked candidate.
 
-For exact status filters use requirements list; for one native requirement with
+For exact status filters use requirements list; for one requirement with
 acceptance criteria and trace links use requirements get <uuid> --kind user|system.`,
 	RunE: runRequirementsSearch,
 }

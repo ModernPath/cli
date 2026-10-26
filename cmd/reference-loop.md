@@ -38,7 +38,7 @@ exact JSON it accepts.
   identity the store has not issued.
 - Input files are JSON objects; `--file -` reads standard input where offered.
   Follow each command's documented file shape. Unknown-field handling varies
-  by command: `evidence record` rejects removed fields. Read back native identities,
+  by command: `evidence record` rejects removed fields. Read back identities,
   outcomes and links to confirm the input was retained.
   Pass `--json` for machine output. A refusal exits non-zero with one error
   line; a server refusal reads `<what> (server <status>): <reason>`.
@@ -55,7 +55,7 @@ exact JSON it accepts.
 | Plan | `rdd-plan` | new behavior: `requirements create --kind user\|system --file`; correct an unowned, never-published draft: `requirements update <uuid\|display-ref> --file` (same content fields as create; criteria and traces preserved); the Epic: `epics create --file`, `epics update <id> --file` (title, description, scope, non_goals in any state but IN_PROGRESS and IN_REVIEW; outcome_source, impact_assessment and shared_context while PROPOSED only; every edit audited); test definitions before review: `test-cases create --file` (or reuse existing IDs); the plan including `verification`: `epics plan save <id> --file plan.json --reason "<why>"`, then `epics plan show <id> --full --json`; each backlog, gap or tooling record the plan delivers, at plan save and again when a later save adds one: `backlog update <uuid> --file` with `{"disposition":"ROUTED to <epic id>","disposition_ref":"USER:<date>:plan-save"}`, read back with `backlog get <uuid> --json` |
 | Cold review | `rdd-cold-review` | the agent handling the task fetches and retains `epics gates review-bundle <id> --json` plus source material from `epics plan show --full --json`, `requirements get`, `traces list`, `evidence latest`, and supplies these inputs to the read-only reviewer; the reviewer does not invoke shell commands. The agent handling the task records the exact independent review using `epics gates review <id> --file`, and finding resolutions using `epics gates resolve <id> --file`; after recording the plan review, run `epics gates check <id> --phase plan-ready --json`; planning changes use `epics plan save` and need a fresh review; a product finding outside the Epic becomes a `backlog create` record; missing capabilities follow the System-name rule above |
 | Implementation approval | `rdd-entry-review` | run `epics gates check <id> --phase implementation --json`; present the current plan and decisions; after the explicit human answer, `epics plan approve-implementation <id> --reason "USER:<date>: <answer>"`; read back IN_PROGRESS and requirement ownership. Upload no plan or presentation. |
-| Implement | `rdd-build` | register `epics gates start-execution <id> --file` before executing. Finalize one actual native TestCase outcome/revision through `evidence record --file`; read back the failed execution before registering the passing execution. Declare the candidate before the passing execution. No role, command, output, environment or copied definition is uploaded. |
+| Implement | `rdd-build` | register `epics gates start-execution <id> --file` before executing. Finalize one actual TestCase outcome/revision through `evidence record --file`; read back the failed execution before registering the passing execution. Declare the candidate before the passing execution. No role, command, output, environment or copied definition is uploaded. |
 | Verify | `rdd-verify` | `epics gates start-execution <id> --file` before every focused, boundary, user-flow or verification rerun; execute the declared command, then `evidence record --file` using the returned `run_id` as `id` and `status: complete`; read back `evidence latest`, `evidence runs --full --target-id <uuid>` |
 | Review, publish and complete | `rdd-completion-review` | finish evidence before independent code review; `epics gates review-bundle <id> --json` supplies current facts; record the actual verdict with `epics gates review <id> --file` (phase implementation, scope_implemented true). Resolve findings with `epics gates resolve`; `epics gates check <id> --phase completion-review --json`; `epics plan submit-review <id> --reason`; `epics gates check <id> --phase completion --json`; `epics gates presentation <id> --json` presents current facts. The human separately decides: `epics plan approve-completion <id> --reason "USER:..."`, or, for "not yet", `epics plan return-to-implementation <id> --reason "USER:..."`. Both send only a decision, recheck current state and preserve ownership rules. A return can succeed when readiness fails. Read back DONE, versions and released ownership, or IN_PROGRESS with the same approval. Then use `backlog update <uuid> --file` to record {"disposition":"CLOSED by <epic id>","disposition_ref":"USER:<date>:completion"} and read it back. Changed scope requires an explicit `epics plan return-to-planning <id> --reason "USER:..."`, renewed planning/review/approval. Every plan write supports optional --agent attribution. |
 | Discoveries and blockers | `rdd-triage` | `backlog create --file` (`kind`: `backlog` or `gap` for product discoveries; `tooling` for missing capabilities only under the System-name rule above); a record a plan delivers is routed in the store, not by naming it in a plan body: `backlog update <uuid> --file` with `{"disposition":"ROUTED to <epic id>","disposition_ref":"USER:<date>:plan-save"}`, read back with `backlog get <uuid> --json`; `requirements obsolete <uuid> --kind … --reason`, or `requirements obsolete --file` for an all-or-nothing batch of up to 200; `requirements set-context`; changed active scope: explicit human `epics plan return-to-planning <id> --reason "USER:..."`, then revise, review and re-approve; DONE needs a follow-up Epic |
@@ -104,6 +104,15 @@ independent review. Preview success grants no permission; transitions recheck
 atomically and human completion approval remains separate. Legacy active plans
 without obligations fail closed and need explicit human-authorized recovery below.
 
+An existing-behavior Epic explicitly saves verification.mode=existing_behavior
+and existing_behavior_reason. Current stored implementation Traces are required
+at entry. Verify selected completed passing results against current requirements,
+criteria, tests and code links; no source revision, candidate, RED result or
+historical-run comparison is required. Reviews and separate human completion
+remain required. Product or test changes use ordinary implementation.
+Use epics retire <id> to retire an unnecessary Epic while preserving requirements
+and history; the server refuses an Epic that owns approved requirement changes.
+
 The implementation approver's signed-in account must declare candidates and
 register executions. Another workspace using that account is allowed; a runner
 attribution or CI `kind` does not authorize a different account. CI must arrange
@@ -121,7 +130,7 @@ an obligation or a test case. Never register RED and GREEN for the same
 obligation in one batch. Finalize batches carry run ids only; reservations stay
 single calls.
 
-RED must be finalized before GREEN registration. If GREEN was registered too
+For ordinary implementation, RED must be finalized before GREEN registration. If GREEN was registered too
 early, finalize the valid original RED and register and execute a new GREEN;
 a new RED is not inherently necessary. Candidate declaration is required before
 GREEN, not RED. A changed test definition, decision answer, membership, candidate
@@ -158,8 +167,8 @@ Read back the return, revise the draft, answer newly declared decisions, obtain
 fresh independent plan review and human implementation approval, then collect
 fresh registered RED/GREEN executions and implementation review. Earlier decisions,
 reviews, candidates and executions remain history and cannot satisfy the new
-planning cycle, even with an unchanged plan or candidate revision. No gate or
-RED/GREEN obligation is waived. A failing gate alone is not a human return decision.
+planning cycle, even with an unchanged plan or candidate revision. A return itself
+waives no evidence obligation. A failing gate alone is not a human return decision.
 
 `epics gates recover-legacy` remains a compatibility command limited to active
 plans without verification obligations. It takes
@@ -196,7 +205,7 @@ and `IN_REVIEW`; the human-authorized return ends approval before edits.
 | `requirement_in_progress` / `requirement_owned` | server 409 | `update`, `set-context` or `obsolete` targets approved or Epic-owned work; existing-behavior acceptance also refuses owned work | finish through the owning Epic, or ask its implementation approver to return it to planning; then apply the requested operation's lifecycle rules |
 | `requirement_already_published` | server 409 | a content `update` or `obsolete` targets DONE, a nonzero revision or an accepted version | use a follow-up Epic for published content; grouping-only updates may still be allowed |
 | `invalid_requirement_status` | server 409 | a content edit or obsoletion targets an ineligible state | content edits and new obsoletions require unowned, unpublished PROPOSED, BLOCKED or DEFERRED requirements; repeated obsoletion is unchanged |
-| `items_required` / `too_many_items` / `duplicate_items` / `invalid_item` | server 422 | a `requirements obsolete --file` batch is empty, holds more than 200 items, repeats an item or names an item without kind `user`/`system` and a native UUID; nothing was written | fix the file; a refusal naming `item <index> (<kind> <id>)` points at the failing entry, and the whole batch is retried after the fix |
+| `items_required` / `too_many_items` / `duplicate_items` / `invalid_item` | server 422 | a `requirements obsolete --file` batch is empty, holds more than 200 items, repeats an item or names an item without kind `user`/`system` and a UUID; nothing was written | fix the file; a refusal naming `item <index> (<kind> <id>)` points at the failing entry, and the whole batch is retried after the fix |
 | `stale_reference` | server 409 | an exact requirement reference names an older or incorrect revision | read the current requirement and retry with its exact reference |
 | `does not belong to the bound System` | cli | an Epic or review bundle of another System | check `modernpath status`; use an id of this System |
 | `unknown input field` / `input must include` / `must be an array` | cli | a file key outside the documented shape; nothing was sent | correct the key (see the command's section) |
@@ -237,9 +246,9 @@ review pass. Verification reruns require a fresh execution registration; a prior
 run ID cannot be reused for changed results. An unexecuted applicable boundary
 needs a criterion or project-check obligation before plan approval.
 
-Native verification reserves an empty running run before execution. Finalize one
-actual outcome per selected native TestCase, its executed revision, and criterion
-links. `evidence runs --full` exposes surviving native EvidenceResults and Traces.
+verification reserves an empty running run before execution. Finalize one
+actual outcome per selected TestCase, its executed revision, and criterion
+links. `evidence runs --full` exposes surviving EvidenceResults and Traces.
 Exact replay preserves those identities and immutable facts after later edits;
 changed outcomes need a new run. No output, submission, procedure snapshot or
 historical presentation is stored or reconstructed. Current-state actions do not

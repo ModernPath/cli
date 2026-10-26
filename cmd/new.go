@@ -308,7 +308,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 			printWarning("Failed to create .modernpath: %v\n", err)
 			setupErr = err
 		} else {
-			// Save the System binding. Epic commands take an explicit native ID.
+			// Save the System binding. Epic commands take an explicit ID.
 			cfg := &config.Config{
 				APIURL:     baseURL,
 				SystemID:   archResult.ID,

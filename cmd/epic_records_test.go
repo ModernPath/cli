@@ -10,6 +10,54 @@ import (
 	"testing"
 )
 
+func TestEpicRetireUsesScopedSoftDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name, detail, response, wantError string
+		status, deletes                   int
+	}{
+		{"success", `{"id":42,"system_id":1}`, `{"data":{"deleted":true}}`, "", 200, 1},
+		{"foreign System", `{"id":42,"system_id":2}`, `{"data":{"deleted":true}}`, "bound System", 200, 0},
+		{"owned requirement", `{"id":42,"system_id":1}`, `{"error":"Complete the Epic's approved requirement change before retiring it"}`, "approved requirement change", 409, 1},
+		{"missing receipt", `{"id":42,"system_id":1}`, `{"data":{}}`, "confirm retirement", 200, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deletes := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/systems" {
+					healthyProbe(w, r)
+					return
+				}
+				if r.URL.Path != "/api/work/epics/42" {
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"data":` + tc.detail + `}`))
+					return
+				}
+				if r.Method != http.MethodDelete {
+					t.Errorf("expected DELETE, got %s", r.Method)
+				}
+				deletes++
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.response))
+			}))
+			defer server.Close()
+			cobraWorkspace(t, server)
+			out, err := runRoot(t, "epics", "retire", "42", "--json")
+			if tc.wantError == "" {
+				if err != nil || !strings.Contains(out, `"operation": "retired"`) {
+					t.Fatalf("retire = %q, %v", out, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("expected %q, got %v", tc.wantError, err)
+			}
+			if deletes != tc.deletes {
+				t.Fatalf("DELETE count = %d, want %d", deletes, tc.deletes)
+			}
+		})
+	}
+}
+
 func TestEpicReadsSendNoRequestBody(t *testing.T) {
 	for _, args := range [][]string{
 		{"epics", "get", "42", "--full", "--json"},

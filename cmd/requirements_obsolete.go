@@ -17,7 +17,7 @@ const maxObsoleteBatchItems = 200
 func newRequirementObsoleteCommand(load func() (*cliEnv, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "obsolete [<uuid>]",
-		Short: "Obsolete unpublished, unowned native requirements",
+		Short: "Obsolete unpublished, unowned requirements",
 		Args:  cobra.MaximumNArgs(1),
 		Long: `Mark a PROPOSED, BLOCKED, or DEFERRED requirement obsolete. The server records the authenticated actor and reason, and rejects active Epic ownership or published requirements.
 
@@ -52,7 +52,7 @@ the failing item's index and identity. --file cannot be combined with a position
 			return fmt.Errorf("--kind must be user or system")
 		}
 		if !requirementUUIDPattern.MatchString(args[0]) {
-			return fmt.Errorf("requirement id must be a native UUID")
+			return fmt.Errorf("requirement id must be a UUID")
 		}
 		id := strings.ToLower(args[0])
 		reason = strings.TrimSpace(reason)
@@ -125,7 +125,7 @@ func runRequirementObsoleteBatch(cmd *cobra.Command, load func() (*cliEnv, error
 		}
 		id, _ := item["id"].(string)
 		if !requirementUUIDPattern.MatchString(id) {
-			return fmt.Errorf("item %d: id must be a native requirement UUID", index)
+			return fmt.Errorf("item %d: id must be a requirement UUID", index)
 		}
 		id = strings.ToLower(id)
 		key := kind + " " + id

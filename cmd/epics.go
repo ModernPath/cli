@@ -27,7 +27,7 @@ var epicsSearchCmd = &cobra.Command{
 	Short: "Find epics by name or meaning",
 	Args:  cobra.MinimumNArgs(1),
 	Long: `Find epics of the bound system by title, description or meaning.
-Each hit shows its native ID, process status, name, app link and how it matched.
+Each hit shows its ID, process status, name, app link and how it matched.
 Read a saved plan with epics plan show <epic-id>.`,
 	RunE: runEpicsSearch,
 }

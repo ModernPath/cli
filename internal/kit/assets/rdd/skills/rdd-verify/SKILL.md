@@ -14,7 +14,16 @@ operation. Missing support leaves completion blocked; never substitute
 existing-behavior acceptance for changed behavior. The Epic candidate, obligation
 registration and Epic completion steps below do not apply.
 
-For Epic work, read `PROCESS.md`, the approved plan and proposed content and
+For an approved existing-behavior Epic, read its mode, reason and current
+implementation Traces. Register the selected tests without a source revision or
+candidate declaration, execute them and record each result and its relationships.
+Check completed passing results against the current requirements, criteria,
+TestCases and code links. Do not compare historical runs, source revisions or
+RED/GREEN ordering. Review the selected results and current behavior, then use
+`rdd-completion-review` for separate human completion. If behavior or tests need
+to change, return the active Epic to planning for ordinary implementation.
+
+For ordinary implementation Epic work, read `PROCESS.md`, the approved plan and proposed content and
 its requirement, code and test links. Confirm the tested content is the current candidate
 revision and the work remains within approved scope.
 
@@ -22,6 +31,7 @@ revision and the work remains within approved scope.
    result, with RED finalized before GREEN registration. If GREEN started too
    early, finalize valid original RED and register and execute a new GREEN.
    A build error or unrelated failure does not count as RED.
+
 2. Confirm the declared candidate and authorized registration account. Register
    each focused, boundary, regression and user-flow execution before running it,
    including CI; finalize its returned identity with actual evidence and read back.

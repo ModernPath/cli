@@ -21,7 +21,12 @@ review. For a requested scope or acceptance change, follow `PROCESS.md`
 draft. Fresh review and implementation approval are required before resuming;
 returning to planning waives no RED or GREEN requirement.
 
-For each behavior:
+For an approved existing-behavior Epic, confirm its explicit verification mode,
+reason and current implementation links, then follow `rdd-verify` without changing
+product or test code or fabricating RED. New behavior or test changes require
+ordinary implementation and an explicit return to planning for active work.
+
+For each changed behavior in ordinary implementation:
 
 1. Write or select a focused assertion for the approved outcome.
 2. Register the RED execution with obligations and tested code revision
@@ -35,7 +40,7 @@ For each behavior:
    returned identity with actual evidence and read it back.
 5. Clean up without changing behavior and rerun affected checks with fresh
    registrations. Update a changed candidate and obtain fresh passing evidence.
-6. Inspect actual execution and record native test/run identities, executed test
+6. Inspect actual execution and record test/run identities, executed test
    revision, outcomes and links. Commands and output are local diagnostics and
    PR check notes; upload no procedure, role, runner, environment or raw report.
    Keep actual failures separate from passing executions.

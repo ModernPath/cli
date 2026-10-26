@@ -15,7 +15,7 @@ func init() {
 func newRequirementSetContextCommand(load func() (*cliEnv, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-context <uuid>",
-		Short: "Set the current grouping context for a native requirement",
+		Short: "Set the current grouping context for a requirement",
 		Long:  "Compatibility shortcut for requirements update with context fields. Uses the same update service without changing requirement status, revision, accepted versions, criteria, traces or evidence freshness. Omitted --context-name defaults to --context; explicitly blank names are refused.",
 		Args:  cobra.ExactArgs(1),
 	}
@@ -31,7 +31,7 @@ func newRequirementSetContextCommand(load func() (*cliEnv, error)) *cobra.Comman
 			return fmt.Errorf("--kind must be user or system")
 		}
 		if !requirementUUIDPattern.MatchString(args[0]) {
-			return fmt.Errorf("requirement id must be a native UUID")
+			return fmt.Errorf("requirement id must be a UUID")
 		}
 		id := strings.ToLower(args[0])
 		if !cmd.Flags().Changed("context-name") {

@@ -467,6 +467,7 @@ var leafDispositions = map[string]disposition{
 	"epics get":                         {kind: dispExecute, args: []string{"epics", "get", "42"}},
 	"epics create":                      {kind: dispNoCall, reason: "needs-precondition"},
 	"epics update":                      {kind: dispNoCall, reason: "needs-precondition"},
+	"epics retire":                      {kind: dispNoCall, reason: "needs-precondition"},
 	"epics specs list":                  {kind: dispExecute, args: []string{"epics", "specs", "list", "42"}},
 	"epics specs status":                {kind: dispExecute, args: []string{"epics", "specs", "status", "42"}},
 	"epics specs generate":              {kind: dispExecute, args: []string{"epics", "specs", "generate", "42"}},
