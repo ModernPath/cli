@@ -125,18 +125,20 @@ func newTraceListCommand(load func() (*cliEnv, error)) *cobra.Command {
 		Long: `List the active traces whose source or target is one entity of the
 bound System. Each row is source, relation and target; an endpoint is its type
 and id (a source_file endpoint shows repository and path). --relation filters
-by link kind: implements, verifies, derives or relates. A requirement's
-criteria are entities of their own: list a criterion's traces with
---entity-type criterion. Traces are written by reverse-engineer record and by
-an Epic plan at implementation and completion approval; there is no direct
-trace write.`}
+by link kind: implements, verifies, derives or relates within the System, or
+modernizes, the trace that links a new requirement to the legacy requirement it
+modernizes in another System. A requirement's criteria are entities of their
+own: list a criterion's traces with --entity-type criterion. Traces are
+written by reverse-engineer record and by an Epic plan at implementation and
+completion approval; only an Epic plan writes a modernizes trace, and there is
+no direct trace write.`}
 	entityType, entityID := "", ""
 	cmd.Flags().StringVar(&entityType, "entity-type", "", "entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, evidence_result)")
 	cmd.Flags().StringVar(&entityID, "entity-id", "", "entity id")
 	cmd.Flags().Bool("json", false, "emit JSON")
 	cmd.Flags().Int("limit", 20, "page size (1–200)")
 	cmd.Flags().String("cursor", "", "continue from a previous page")
-	cmd.Flags().String("relation", "", "filter by trace relation")
+	cmd.Flags().String("relation", "", "filter by trace relation (implements, verifies, derives, relates or modernizes)")
 	cmd.MarkFlagRequired("entity-type")
 	cmd.MarkFlagRequired("entity-id")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {

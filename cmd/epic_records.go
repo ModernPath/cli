@@ -21,6 +21,10 @@ var epicPublicFields = []string{
 	"summary", "scenarios", "audit_events", "user_requirements", "system_requirements", "traces", "relationships",
 	// SR-3812: the backlog records routed to or closed by the Epic.
 	"backlog",
+	// Epic 325 (A2): the planning contexts of the Epic's Release and Initiative.
+	"planning_contexts",
+	// Epic 327 (A4): the Initiative on the Roadmap that covers the Epic.
+	"covered_by",
 }
 
 func init() {
@@ -133,7 +137,21 @@ func init() {
 		return writeRecord(cmd, selected)
 	}
 	create := &cobra.Command{Use: "create", Short: "Create an Epic from a JSON object", Args: cobra.NoArgs,
-		Long: `Create an Epic directly in the bound System. Input example: {"title":"Account access","description":"Allow users to sign in","scope":"Sign-in flow","non_goals":"Account recovery"}. Pass --file=- to read standard input. The command returns an identity receipt and does not select an active Epic.`}
+		Long: `Create an Epic directly in the bound System. Input example: {"title":"Account access","description":"Allow users to sign in","scope":"Sign-in flow","non_goals":"Account recovery"}. Pass --file=- to read standard input. The command returns an identity receipt and does not select an active Epic.
+
+The file may name an Initiative of the Roadmap by its id as line_id (a
+string), beside release_id: the server links the Epic to that Initiative and
+places it in the Initiative's Release unless release_id names another open
+Release, and the receipt names the Release and the Initiative with its
+context, which you write into the requirements you create for the Epic.
+line_id needs a server with this change: when the answer names no Initiative,
+the command stops with an error naming the Epic the server created.
+
+The server accepts system_id (the CLI supplies the bound System), line_id and
+the fields epics update may write; any other field is refused with 422
+unsupported Epic fields, a System outside your workspace with 404, and a
+planning-field value epics update would refuse on a new Epic with 422 and the
+field named.`}
 	create.Flags().String("file", "", "Epic JSON file, or - for standard input (required)")
 	_ = create.MarkFlagRequired("file")
 	create.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -141,6 +159,11 @@ func init() {
 		payload, err := commandObject(cmd, file)
 		if err != nil {
 			return err
+		}
+		// Epic 327 (A4): line_id names an Initiative by its id, a string.
+		lineID, sentLine := payload["line_id"]
+		if _, isString := lineID.(string); sentLine && !isString {
+			return fmt.Errorf("line_id must be the Initiative's id as a string")
 		}
 		env, err := cliEnvLoad()
 		if err != nil {
@@ -168,7 +191,15 @@ func init() {
 		if err := validateBoundEpic(row, env.SystemID, id); err != nil {
 			return err
 		}
-		return writeRecord(cmd, map[string]any{"operation": "created", "id": id, "title": row["title"]})
+		receipt := map[string]any{"operation": "created", "id": id, "title": row["title"], "release_id": row["release_id"]}
+		if initiative, ok := row["initiative"].(map[string]any); ok {
+			receipt["initiative"] = initiative
+		} else if sentLine {
+			// A server without this change ignores line_id and writes the Epic
+			// without the link before the CLI reads the answer.
+			return fmt.Errorf("the server created Epic %d but did not link it to the Initiative: line_id needs a server with this change; link Epic %d with Add on the Initiative's panel", id, id)
+		}
+		return writeRecord(cmd, receipt)
 	}
 	update := &cobra.Command{Use: "update <epic-id>", Short: "Update an Epic's authored and planning fields", Args: cobra.ExactArgs(1),
 		Long: `Update authored fields on an explicit Epic in the bound System. The CLI checks

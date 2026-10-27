@@ -34,6 +34,10 @@ Check that:
 - reconnaissance covers affected state, interfaces, integrations, failure
   modes, risks and project test gates;
 - the change boundary says what changes and what must remain unchanged;
+- the plan stays within the planning contexts of the Epic's Release and
+  Initiative that the review bundle carries (`planning_contexts`) and names the
+  decisions and assumptions it relies on; a plan that contradicts one of them
+  is a material finding;
 - every reader and screen of changed data, behavior at the largest expected
   input, and the privileges and bypasses of any database or security
   mechanism the plan relies on are covered;

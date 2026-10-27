@@ -14,10 +14,17 @@ the user's requested repository and behavior scope. Use the CLI to read existing
 2. Reuse existing requirements by identity and kind. Preserve their
    content. Avoid duplicate requirements; link serving system requirements to
    the user outcomes they implement.
-3. Record requirements, source file references and typed Traces atomically.
+3. Give every requirement a context from the System's one list of contexts.
+   Read the list before recording. Use a listed context's code and leave the
+   name out for a listed context; the requirement takes the name the list
+   gives it. Add a new context only when no listed one fits, with a code and a
+   name that no listed context has; never "—" or Unclassified, which stand for
+   requirements without a context. To move a recorded requirement to another
+   context, regroup it with a requirement update.
+4. Record requirements, source file references and typed Traces atomically.
    Use IDs for trace endpoints. File references name repository and path;
    a known revision is optional context. New requirements start as PROPOSED.
-4. Read back the recorded requirements, criteria, files and traces. Report
+5. Read back the recorded requirements, criteria, files and traces. Report
    created and reused records, unresolved questions and remaining requested work.
 
 Do not hash files, inventories, documents or reports. Do not require source

@@ -97,7 +97,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return fmt.Errorf("Epic plan response is missing its data object")
 				}
 				if op.name == "show" {
-					allowed := []string{"id", "system_id", "process_status", "plan", "implementation_approval", "completion_approval", "versions", "suggested_plan", "source_files"}
+					allowed := []string{"id", "system_id", "process_status", "plan", "implementation_approval", "completion_approval", "versions", "suggested_plan", "source_files", "modernization"}
 					selected, err := selectRecordFields(cmd, data, []string{"id", "process_status", "implementation_approval", "completion_approval"}, allowed, nil)
 					if err != nil {
 						return err
@@ -223,7 +223,7 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
                                    "position", "statement" | "given", "when", "then",
                                    "status": "active"}]}],
    "traces": [{"id"?, "source_type", "source_id", "target_type", "target_id",
-               "link_kind": "implements" | "verifies" | "derives" | "relates"}
+               "link_kind": "implements" | "verifies" | "derives" | "relates" | "modernizes"}
               | {"source_type": "user_requirement" | "system_requirement", "source_id",
                  "link_kind": "planned"}],
    "remove_traces"?: ["<id of an existing trace this plan removes>"],
@@ -253,7 +253,8 @@ requirement. A requirement must already exist in the System (requirements
 create, or reverse-engineer record); the plan proposes what its published
 content, criteria and traces become at completion. A trace must touch one of
 the plan's requirements or criteria; its other endpoint must exist in the
-System. When the source file does not exist yet, declare a plan-only trace:
+System, except the target of a modernizes trace. When the source file does not
+exist yet, declare a plan-only trace:
   {"source_type":"system_requirement","source_id":"<requirement UUID>","link_kind":"planned"}
 It has no target, path or trace ID and creates no file record. Real implements
 traces and planned declarations may coexist for different requirements in the
@@ -275,6 +276,28 @@ System on a plan requirement or criterion, or save refuses it as trace removal
 not found; an ID may not be in both lists. Approval records the list, and
 completion removes exactly those traces. Code and test links added during
 implementation survive.
+
+A modernizes trace links a new requirement of the plan, its source, to the
+legacy requirement it modernizes in another System, its target:
+  {"source_type":"user_requirement","source_id":"<plan requirement UUID>",
+   "target_type":"user_requirement","target_id":"<legacy requirement UUID>",
+   "link_kind":"modernizes"}
+Either end may be a user or system requirement. The Epic's Initiative must
+replace part of the legacy system of the Epic's Release, and save admits the
+trace only for a legacy requirement that a keep or change decision of the
+Epic's own Initiative names. Otherwise save refuses it as modernizes not
+selected, naming the legacy requirement, and a target in the Epic's own System
+as modernizes inside system. Reverse engineering never records it. A later
+Epic that holds the source carries a written modernizes trace unchanged, or
+retires it by leaving it out; its kind cannot change. In place, where the
+Epic's Release modernizes its own System, the plan takes the requirements it
+changes instead of linking new ones. In place, a verifies trace from a test
+case to a kept requirement outside the plan is admitted under that
+requirement's keep decision. An Epic of an Initiative that replaces part of
+the legacy system is approved only while the business owner's latest
+agreement holds the Initiative unchanged: the implementation check names the
+blocker, and only the business owner, or a workspace admin while none is
+named, can agree to the Now plan again.
 
 save accepts proposed requirement content while the Epic is PROPOSED. The server
 completes omitted content from current records, assigns missing criterion/Trace
@@ -305,7 +328,12 @@ requests, with no bundle upload. Human approval remains explicit and separate fo
 implementation and completion. These commands do not merge or deploy.
 
 show reads current state; --fields plan,versions,suggested_plan,source_files selects
-additional surviving records. history reads attributable saves, approvals, returns
+additional surviving records. --fields modernization reads the plan's
+modernization block: the Initiative, the legacy system and the Release, whether
+the Release is in place, each modernizes trace with the decision that admits
+it (carried for a trace an earlier Epic wrote), and in place the taken
+requirements, the tests linked to kept requirements and the kept requirements
+at risk. It is null for an Epic that no replacing Initiative covers. history reads attributable saves, approvals, returns
 and edits. Full historical presentations, outputs and copied plans are removed.
 --full shows surviving audit details; it cannot reconstruct deleted payloads.
 A preview is advisory. An action authorizes eligible current database state; it
@@ -314,7 +342,7 @@ and audit after an uncertain nonterminal response.
 `
 
 var epicPlanOperationHelp = map[string]string{
-	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields with --fields or --full.",
+	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields, such as plan or modernization, with --fields or --full.",
 	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval.",
 	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
 	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision of the current plan and its answer. In the new planning cycle RED stands only for a criterion and TestCase unchanged since the return; a new plan review, implementation approval, the candidate, GREEN and the implementation review are always renewed. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. DONE stays closed.",

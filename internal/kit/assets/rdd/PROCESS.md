@@ -88,6 +88,74 @@ Do not invent parent relations or code links to make a trace look complete.
 A code link identifies implementation; it does not prove behavior. A test
 that covers several clauses identifies each clause and assertion it checks.
 
+## Releases, Initiatives and the Roadmap
+
+A Release is a delivery grouping of a System: the Epics delivered together and
+the Initiatives shown under it, with a target date when it has one. Each Epic
+is in a Release. An Initiative is a Roadmap
+item: a scope of delivery the business owner agrees, with one bounded context
+its Epics' requirements share, placed in a horizon (Now, Next or Later) and
+delivered by its Epics. The Roadmap is the System's Initiatives by Release and
+horizon, with the Now plan its business owner agrees.
+
+The chain runs Initiative → Epic → requirement → trace: Epics deliver an
+Initiative, requirements state an Epic's behavior, and traces connect a
+requirement to code and evidence. An Initiative is shown under the earliest
+open Release of its Epics, else its own; its Epics are free to span several
+Releases.
+
+Read the Roadmap with `modernpath roadmap show` before planning an Epic: it
+lists each Initiative with its context and the Epics it covers. Change the
+Roadmap only on a person's word: `modernpath roadmap apply --file <plan.json>`
+applies a plan of Initiatives in one call, `--dry-run` first lists what it
+would do, and `--agent` names the agent beside the signed-in person. Applying a
+Roadmap plan approves no Epic and starts no build.
+
+An Initiative that replaces part of the legacy system has a selection: keep,
+change and drop rows, a reason on each drop, and one row per legacy requirement
+for each System. An agent decides a selection at volume: it reads a context
+with `roadmap selection`, suggests each row's outcome with its reason, sums the
+file up in plain words for the person, checks it with `roadmap apply --dry-run`,
+and applies it only on the person's word, naming itself with `--agent`.
+
+An Epic drafted from an Initiative that replaces part of the legacy system
+links each new requirement to the legacy requirement it modernizes with a
+`modernizes` trace in its saved plan. The platform admits that trace only for
+a keep or change decision of the Epic's own Initiative; a later Epic carries it
+unchanged or retires it by holding its source, and reverse engineering never
+records it. Such an Epic's implementation approval waits until the business
+owner's agreement holds its Initiative unchanged; the agent reports the gate's
+blocker and asks the business owner rather than working around it. In place,
+the plan takes the requirements it changes with their revised statements and
+links tests to kept requirements under their keep decisions, and the agent
+presents the kept requirements at risk with a fallback for each before asking
+for approval.
+
+A Release and an Initiative each carry a planning context: the decisions,
+assumptions, open questions and references that hold for all the work under
+them, the Release's for the whole Release and the Initiative's for its part.
+An Epic is planned and built within both. The plan review reads them from the
+review bundle, and while the Epic is PROPOSED a change to either makes its plan
+review outdated. The agent reads them when it enters a session on an Epic and
+again before it plans and before it builds, with
+`epics get <id> --fields planning_contexts` or `roadmap show`; the context hook
+does not carry them.
+
+A planning context locks when the business owner agrees it and at the first
+approval of an Epic that reads it. When the business owner agrees the Now plan
+on the Roadmap, the planning context of each Initiative in it locks, and so
+does the planning context of the Release each one is shown under. Approving an
+Epic locks the planning contexts of its Release and of its Initiative, in any
+horizon, if they have never been locked. A planning context with nothing in it
+stays unlocked. Nobody can edit a locked planning context: its page, Chat's
+plan card and `roadmap apply` all refuse the change. A locked planning context
+changes only through Open for change, by a team member with a reason, on the
+Release page or the Initiative's page; the command line has no command for it,
+so the agent asks a person. Opening it reopens the agreement of the Now plan,
+and the business owner sees the opening and its reason on the Roadmap. Approving
+another Epic does not lock an opened planning context: the next agreement locks
+it again.
+
 ## Lifecycle
 
 `PROPOSED` is a draft. Human implementation approval moves the Epic and its
@@ -169,6 +237,13 @@ the return. A rewritten test needs a renamed TestCase, or a changed criterion, t
 separate human approval. If the CLI cannot perform the return, report the gap;
 never edit an active plan or process state through another channel.
 
+A change to a planning context returns no Epic by itself. Each approved Epic
+that reads a changed planning context lists the change on its page and in its
+completion presentation (`epics gates presentation`): the opening with who
+opened it and why, each edit, and the lock that followed. Only its approver
+returns it to planning, and only if the change needs a new plan; otherwise
+the build continues within the approved plan.
+
 Pin the base: build an Epic on the main revision it started from, and do not
 stack an Epic on an open pull request. Rebase once, before the implementation
 review. A rebase with no conflict in the Epic's files is not a return to planning:
@@ -194,6 +269,16 @@ requirements or their traces.
 New requirements start as PROPOSED. Recording is not implementation approval,
 verification, compliance approval or completion. Existing requirements may be
 referenced by identity and kind without replacing their content.
+
+Every requirement reverse engineering records has a context from the System's
+one list of contexts: each context code its requirements carry, with one name.
+Read the list before recording, take a listed code and leave its name to the
+list, and add a new context only when no listed one fits, with a code and a
+name that no listed context has. The store refuses a new requirement without a
+context, or with a code or name that disagrees with the list, and writes
+nothing of that request. A recorded requirement moves to another context with
+a requirement update, which applies the same list and keeps the code that
+Initiatives and Modernization Release scopes name.
 Authentication, tenant and System scope, valid endpoints and atomic
 writes remain normal store integrity rules.
 
@@ -282,6 +367,9 @@ those targets and that evidence. A passing test, prior approval to record or
 verify, or acceptance of different content is not acceptance. The supported
 operation and its read-back follow the lifecycle rules above; this decision
 does not stand in for implementation or completion approval on Epic work.
+
+The business owner's agreement of the Now plan, on the Roadmap, is the human
+stop for a selection, which no agent and no command records.
 
 Git and PR/CI systems own code revisions, commits, merges and conflicts. Retain
 links and tested code revisions for traceability; their hashes do not define
@@ -383,17 +471,28 @@ Autopilot is a human-granted way to continue implementation across a bounded
 sprint; it is not a completion approval. The grant names the Epic or Epics,
 end date and excluded areas and is recorded with its `USER:` source through
 the CLI. Under a current grant, the agent may continue
-within an approved saved plan and may record ordinary, reversible product
-assumptions for later human confirmation. Unless already explicitly authorized, it must stop for decisions whose
+within an approved saved plan and may choose an ordinary, reversible default
+for a product question nobody has answered, for a person to confirm later. Unless already explicitly authorized, it must stop for decisions whose
 wrong answer is hard to undo, including deletion or migration of existing
 data, security or authorization, billing or legal terms, and external-party
 contracts. It must not expand the approved Epic scope on its own.
 
+An assumed default is recorded as a backlog record of kind `assumption` with
+its question: the default the agent chose is its title, and the question it
+answers is its observation. It is routed once to the Epic being built and is
+never written into the approved plan, which stays read-only. The server
+refuses any later change of its disposition without a `USER:` source: a person
+confirms it with `ACCEPTED with USER:` and their words, rejects it with
+`REJECTED with USER:` and their words, and moving, deferring, reopening or
+closing it needs their words in `disposition_ref`. The server can only check
+that a `USER:` source is there, so the agent writes that source only from the
+person's own words, never from a template such as `USER:<date>:completion`.
+
 Autopilot does not waive red-first testing, security, tenant isolation, data
 integrity, project commit checks, independent completion review, accepted-content
 read-back, or explicit human completion approval. The human remains in
-control of merge, deployment and release. Report assumptions, exclusions,
-failures and incomplete work at sprint closeout.
+control of merge, deployment and release. Report the assumed defaults not yet
+confirmed, exclusions, failures and incomplete work at sprint closeout.
 
 ## Planning and readiness
 
@@ -745,7 +844,9 @@ restoring removed machinery or claiming a working runtime without proof.
 
 Submit implementation for review while retaining published requirement content
 and ownership. Present the review and evidence for the human's completion
-answer. After explicit approval, read back the atomically published requirement
+answer, with the changes since approval to the planning contexts the Epic
+reads and the assumed defaults not yet confirmed; neither blocks completion.
+After explicit approval, read back the atomically published requirement
 content and immutable versions, incremented revisions, actor/time/reason/Epic
 audit and released ownership. Never infer that answer or claim `DONE` from
 code, test, review or repository state. Merge and deployment remain separate
@@ -784,7 +885,9 @@ Backlog, gap and tooling records live on the server like every other delivery
 record: they are created, routed and closed there, through the CLI. When a
 saved plan delivers a record, mark the record as routed to that Epic. After
 human completion approval, mark it as closed by that Epic. If the human wants
-a record left open, leave it open and add a note saying why. Whether a record
+a record left open, leave it open and add a note saying why. An assumed
+default is never closed by the Epic: it stays routed to the Epic until a
+person accepts or rejects it in their own words. Whether a record
 is open, routed or closed (its disposition) is read from the server, not from
 the plan text; a plan only lists the records it delivers. A discovery that
 exists only in a note is not yet a record.

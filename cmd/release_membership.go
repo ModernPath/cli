@@ -104,7 +104,7 @@ func resolveMembershipTarget(env *cliEnv, requested, by string) (map[string]any,
 
 func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 	c := &cobra.Command{Use: "move-requirements <id|slug>", Short: "Preview or apply an exact requirement selection to an open delivery release", Args: cobra.ExactArgs(1),
-		Long: "Move selected user and system requirements between open releases, or initially assign requirements with no release or in Base. Defaults to a write-free preview. Save --json output, review it, then pass that same file with --apply. Content, lifecycle and evidence freshness are preserved. A failed request is never retried automatically."}
+		Long: "Move selected user and system requirements between open releases, or initially assign requirements with no release or in Base. Defaults to a write-free preview. Save --json output, review it, then pass that same file with --apply. Content, lifecycle and evidence freshness are preserved. A requirement that an in-place Epic took moves only with that Epic while the Epic is in its Release: the request is refused, naming the requirement and the Epic. A failed request is never retried automatically."}
 	c.Flags().String("file", "", "Selection JSON file, or - for stdin; --apply requires reviewed preview output")
 	c.Flags().String("by", "auto", "Select by auto, id, or exact slug")
 	c.Flags().Bool("apply", false, "Apply the exact reviewed preview instead of previewing")
@@ -270,11 +270,28 @@ func membershipFailure(status int, body map[string]any) error {
 			}
 		}
 		return fmt.Errorf("requirement membership refused (HTTP %d): %s", status, code)
+	case "selected_requirement_held":
+		return heldRequirementFailure(status, body)
 	}
 	if status == 404 {
 		return fmt.Errorf("requirement membership endpoint unavailable; server support is required (HTTP 404)")
 	}
 	return fmt.Errorf("requirement membership refused (HTTP %d)", status)
+}
+
+// heldRequirementFailure names a requirement that an in-place Epic took and
+// that moves only with that Epic (Epic 334, C1): the server's sentence, then
+// the requirement and the Epic it names.
+func heldRequirementFailure(status int, body map[string]any) error {
+	requirement, _ := body["requirement"].(map[string]any)
+	epic, _ := body["epic"].(map[string]any)
+	name := strings.TrimSpace(str(requirement, "display_ref") + " " + str(requirement, "title"))
+	message := str(body, "message")
+	if message == "" {
+		message = fmt.Sprintf("%s moves with the Epic %s, which took it. Move the Epic to move it.", orDash(name), orDash(str(epic, "title")))
+	}
+	return fmt.Errorf("requirement membership refused (HTTP %d): selected_requirement_held: %s Requirement: %s (%s:%s). Epic: %s (id %v).",
+		status, message, orDash(name), str(requirement, "kind"), str(requirement, "id"), orDash(str(epic, "title")), epic["id"])
 }
 
 func newReleaseMembers(load func() (*cliEnv, error)) *cobra.Command {

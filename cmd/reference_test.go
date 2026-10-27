@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -430,6 +431,153 @@ func TestSR1638_4ChangelogListsTheReturnWithItsBundle(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the CHANGELOG section listing the return does not say %q", want)
+		}
+	}
+}
+
+// Epic 329 (A6), test case bd44c890, criterion a7fba45b: the reference's
+// completion row closes only backlog, gap and tooling records by the Epic and
+// never an assumed default; its triage row gives the routing template only for
+// a backlog, gap or tooling record and for an assumed default's first routing,
+// and says moving one that is already routed needs the person's own words; the
+// help of `backlog update` says where the USER: source goes for each
+// disposition and that after its first routing an assumed default's
+// disposition_ref changes only to a USER: source. The phrases are read with
+// a6Plain, so they may wrap or carry Markdown code marks.
+
+// a6Plain folds whitespace, drops Markdown code and emphasis marks, makes
+// typographic quotes plain and lowers letters, as the kit's phrase tests do.
+func a6Plain(text string) string {
+	plain := strings.NewReplacer("`", "", "*", "", "’", "'").Replace(text)
+	return strings.ToLower(strings.Join(strings.Fields(plain), " "))
+}
+
+func TestA6BD44C890ReferenceCompletionRowClosesNoAssumedDefault(t *testing.T) {
+	row := a6Plain(phaseRow(t, renderedLoop(), "| Review, publish and complete |"))
+	for _, want := range []string{
+		"for each backlog, gap or tooling record routed to the epic",
+		"an assumed default is never closed by the epic",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the completion row does not say %q: %s", want, row)
+		}
+	}
+}
+
+func TestA6BD44C890ReferenceTriageRowLimitsTheRoutingTemplate(t *testing.T) {
+	row := a6Plain(phaseRow(t, renderedLoop(), "| Discoveries and blockers |"))
+	for _, want := range []string{
+		"only for a backlog, gap or tooling record and for an assumed default's first routing",
+		"moving an assumed default that is already routed needs the person's own words",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the triage row does not say %q: %s", want, row)
+		}
+	}
+}
+
+func TestA6BD44C890BacklogUpdateHelpPlacesTheUserSource(t *testing.T) {
+	cmd := newBacklogCommand(func() (*cliEnv, error) { t.Fatal("help loaded the workspace"); return nil, nil })
+	cmd.SetArgs([]string{"update", "--help"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	help := a6Plain(out.String())
+	if !strings.Contains(help, "update a backlog record from a json object") {
+		t.Fatalf("backlog update --help printed no update help: %q", help)
+	}
+	for _, want := range []string{
+		"every change of an assumed default's disposition but its first routing needs a user: source",
+		"after with for accepted with and rejected with",
+		"in the same file's disposition_ref for closed by, deferred, open and routed to",
+		"after its first routing an assumed default's disposition_ref changes only to a user: source",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("the help of backlog update does not say %q: %s", want, help)
+		}
+	}
+}
+
+// g1ContextRefusals are the refusals of a context that disagrees with the
+// System's list of contexts (Epic 340, G1).
+var g1ContextRefusals = []string{"context_required", "context_name_mismatch", "context_code_conflict", "context_name_conflict", "invalid_context"}
+
+// g1GlossaryCells returns the four cells of the glossary row keyed on key, or
+// nil, without stopping the test, so every missing row is reported.
+func g1GlossaryCells(loop, key string) []string {
+	for _, line := range strings.Split(loop, "\n") {
+		if strings.HasPrefix(line, "| `"+key+"`") {
+			return strings.Split(strings.Trim(line, "| "), " | ")
+		}
+	}
+	return nil
+}
+
+func g1Folded(text string) string { return strings.Join(strings.Fields(text), " ") }
+
+// Epic 340 (G1), test case 94c50400: the Record existing behavior row of the
+// pass-to-command map names requirements contexts. The check runs this test by
+// its name.
+func TestG1ListRecordRowNamesRequirementsContexts(t *testing.T) {
+	row := phaseRow(t, renderedLoop(), "| Record existing behavior |")
+	if !strings.Contains(row, "`requirements contexts") {
+		t.Errorf("the Record existing behavior row does not name `requirements contexts`: %s", row)
+	}
+}
+
+// Epic 340 (G1), test case e62a7b48: the refusal glossary has a row keyed on
+// each context refusal, with the origin server 422, a cause that names
+// reverse-engineer record and what clears it; and the section on
+// reverse-engineer record says that every new requirement needs a context
+// from the System's list and names requirements contexts. The check runs this
+// test by its name.
+func TestG1RecordingReferenceNeedsAContextFromTheList(t *testing.T) {
+	loop := renderedLoop()
+	for _, key := range g1ContextRefusals {
+		cells := g1GlossaryCells(loop, key)
+		if cells == nil {
+			t.Errorf("the refusal glossary has no row keyed %q", key)
+			continue
+		}
+		if len(cells) != 4 || cells[1] != "server 422" || !strings.Contains(cells[2], "reverse-engineer record") || cells[3] == "" {
+			t.Errorf("the %q row must give origin server 422, a cause naming reverse-engineer record and what clears it: %q", key, cells)
+		}
+	}
+	section := g1Folded(referenceSection(t, renderCLIReference(rootCmd), "modernpath reverse-engineer record"))
+	if !strings.Contains(strings.ToLower(section), "every new requirement needs a context from the system's list") {
+		t.Error("the reverse-engineer record section does not say that every new requirement needs a context from the System's list")
+	}
+	if !strings.Contains(section, "requirements contexts") {
+		t.Error("the reverse-engineer record section does not name requirements contexts")
+	}
+}
+
+// Epic 340 (G1), test case b71f8e62: the rendered sections of requirements
+// set-context and requirements update say that a requirement takes the name
+// the System's list gives a listed context, no longer that a missing name
+// defaults to the code; and the glossary rows of the refusals regrouping shares
+// with recording name both commands. The check runs this test by its name.
+func TestG1RegroupReferenceGivesTheListsNameAndRefusals(t *testing.T) {
+	ref := renderCLIReference(rootCmd)
+	for path, stale := range map[string]string{
+		"modernpath requirements set-context": "defaults to --context",
+		"modernpath requirements update":      "context_name defaults to context",
+	} {
+		section := g1Folded(referenceSection(t, ref, path))
+		if !strings.Contains(section, "takes the name the System's list gives that context") {
+			t.Errorf("the %s section does not say that a requirement takes the name the System's list gives that context", path)
+		}
+		if strings.Contains(section, stale) {
+			t.Errorf("the %s section still says %q", path, stale)
+		}
+	}
+	loop := renderedLoop()
+	for _, key := range []string{"context_code_conflict", "context_name_conflict", "invalid_context"} {
+		cells := g1GlossaryCells(loop, key)
+		if len(cells) != 4 || !strings.Contains(cells[2], "requirements set-context") || !strings.Contains(cells[2], "requirements update") {
+			t.Errorf("the %q row's cause must name requirements set-context and requirements update: %q", key, cells)
 		}
 	}
 }

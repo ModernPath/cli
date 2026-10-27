@@ -23,7 +23,11 @@ source, code and test evidence. Preserve IDs.
    DONE stays closed; changed work uses a follow-up Epic. When a saved plan
    delivers a backlog, gap or tooling record, use the CLI to mark the record as
    routed to that Epic, with a reference to the plan save, and read it back.
-   Listing the record in the plan body does not route it.
+   Listing the record in the plan body does not route it. A backlog record of
+   kind `assumption` holds an assumed default. An assumed default is routed
+   that way only for its first routing, to the Epic being built. Moving an
+   assumed default that is already routed needs the person's own words as its
+   `USER:` source.
 4. Ask the human to resolve intent that sources cannot establish. Record the
    decision through the CLI before relying on it.
 5. Disclose blockers, assumptions and deferred work. Do not silently add

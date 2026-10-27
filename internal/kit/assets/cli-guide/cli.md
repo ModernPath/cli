@@ -75,7 +75,13 @@ in one atomic transaction with audit.
 A refused requirement is identified by kind and UUID, with a reason, without
 revealing content from another System or workspace. No selected rows move.
 A changed source returns `requirement_source_changed`: preview again and review
-the new sources. A now-closed target refuses. Already-target eligible rows are
+the new sources. A requirement that an in-place Epic took moves only with that
+Epic while the Epic is in the requirement's Release, in any state, DONE
+included: the preview and the move answer 409 `selected_requirement_held`, and
+the command prints the server's sentence, such as `UR-7-0 Export invoices moves
+with the Epic Billing cutover, which took it. Move the Epic to move it.`, with
+the requirement and the Epic. Nothing moves; move the Epic instead. A
+now-closed target refuses. Already-target eligible rows are
 unchanged. Only selected membership changes; Epics, linked requirements and
 Roadmap records are not moved. Content, lifecycle, accepted versions and evidence
 freshness stay intact; audit owns the movement time. This preservation applies
@@ -643,16 +649,18 @@ to planning. Published or `DONE` content requires a follow-up Epic; `OBSOLETE`
 content stays closed. The server checks these conditions under the planning,
 System and requirement locks.
 
-For grouping-only changes, send `{"context":"Billing"}` or include
+For grouping-only changes, send `{"context":"BILLING"}` or include
 `context_name`. Both use the same rules as `set-context`: context is required,
-both values must be nonblank strings of at most 255 bytes, and omitted
-context_name defaults to context. These edits preserve content timestamps and
-evidence, even on unowned `DONE` or `OBSOLETE` requirements. Active Epic-owned
-work remains read-only. A request mixing grouping and content fields must meet
-the content-edit rules above and commits atomically. If the supplied content
-values are unchanged and only grouping values change, content timestamps and
-evidence remain current. Explicitly blank context names are rejected by both
-commands; only an omitted context name defaults to context.
+both values must be nonblank strings of at most 255 bytes, and a requirement
+moved without `context_name` takes the name the System's list gives that
+context (see `requirements contexts`), or its code for a new context. So
+leave the name out for a listed context. These edits preserve content
+timestamps and evidence, even on unowned `DONE` or `OBSOLETE` requirements.
+Active Epic-owned work remains read-only. A request mixing grouping and content
+fields must meet the content-edit rules above and commits atomically. If the
+supplied content values are unchanged and only grouping values change, content
+timestamps and evidence remain current. Explicitly blank context names are
+rejected by both commands.
 
 The Audit Trail records the authenticated actor and changed fields. Optional
 `--reason` records why; if supplied it must contain nonblank text of at most
@@ -698,6 +706,35 @@ The output prints one line per item in input order with its index, kind, id
 and result; `--json` prints the same items as a JSON array. A refusal reads
 `requirement obsoletion refused (server 409): requirement_owned — item 1 (system <uuid>) — <message>`.
 
+### List the System's contexts
+
+A requirement's context is the group it belongs to: a code, such as
+`BILLING`, and a display name, such as `Billing`. The System's list of contexts
+is every code its requirements carry, each with one name: the name most of the
+code's requirements carry, ties broken alphabetically. A requirement without a
+name carries its code, so a code whose requirements carry no name has its code
+as its name.
+
+```sh
+modernpath requirements contexts
+modernpath requirements contexts --json
+```
+
+The command prints one line per code with its name, its number of requirements
+and the other names its requirements carry, then a line labelled
+`Unclassified` with the number of requirements without a context. The numbers
+count every requirement that is not deleted, `OBSOLETE` ones included, so they
+can differ from a Modernization Release's counts, which leave `OBSOLETE`
+requirements out. `--json` prints the data of
+`GET /api/v1/systems/:system_id/requirements/contexts`:
+`{"contexts": [{"code", "name", "other_names", "requirement_count"}],
+"without_context": n}`. The command needs a bound System, and a refusal exits
+non-zero with the server's reason.
+
+Read the list before recording requirements, and give every new requirement a
+listed code with the name left out, or a new code and name that no listed
+context has.
+
 ### Set a requirement's grouping context
 
 `set-context` is a compatibility shortcut to the same update service used by
@@ -709,12 +746,29 @@ current requirement row can therefore have a newer grouping value than an
 older accepted snapshot. Active implementation work rejects regrouping.
 
 ```sh
+modernpath requirements set-context <uuid> --kind system --context BILLING
 modernpath requirements set-context <uuid> --kind system --context snake-game --context-name "Snake game"
-modernpath requirements set-context <uuid> --kind system --context shifts
 ```
 
-When omitted, `--context-name` defaults to the `--context` value. The server
-records the actor and old/new grouping values in the requirement audit trail.
+Without `--context-name` the command sends only the context, and the
+requirement takes the name the System's list gives that context, or its code
+for a new context. Leave the name out for a listed context. For the
+requirement's own code that is the name the whole list shows: sending only the
+code gives a requirement that carries a minority name the list's name, and
+leaves one that already carries it unchanged. `--context-name` gives a listed
+context another name on this requirement, which renames the context one
+requirement at a time while its code stays the same.
+
+`set-context` and `requirements update` apply the System's list of contexts as
+`reverse-engineer record` does. They refuse with 422 a code that differs from
+a listed code only in letter case (`context_code_conflict`), a name that
+another context has or its requirements carry (`context_name_conflict`), and a
+value with spaces before or after it, the code `—` or `Unclassified` in any
+letter case (`invalid_context`); the refusal names the listed value. Moving a
+requirement into the exact code the team keeps succeeds while another code
+carries the same name or the code is listed in another letter case, so a
+legacy ledger can be cleaned up. The server records the actor and old/new
+grouping values in the requirement audit trail.
 
 ### Find synced requirements
 
@@ -827,6 +881,39 @@ server-assigned field (`tenant_id`, `system_id`, `process_status`, `plan`,
 `metadata`, `evidence`, `knowledge_config`, …) is refused with 422
 `unsupported Epic fields`, a body whose `epic` is not a JSON object with 422
 `Epic must be a JSON object`, and nothing is written.
+
+`epics create` takes `line_id`, the id of an Initiative on the Roadmap
+(`roadmap show --json` lists them), beside `release_id`: the server links the
+Epic to that Initiative and places it in the Initiative's Release unless
+`release_id` names another open Release, else in the System's current
+Release. The receipt names the Release (`release_id`) and returns the
+Initiative's context (`initiative` with `line_id`, `text`, `context` and
+`context_name`); write that context into the requirements it creates for that
+Epic (`requirements create` with `context` and `context_name`). `line_id`
+needs a server with this change: when the answer names no Initiative,
+`epics create` stops with an error that names the Epic the server created
+without the link, which you link with Add on the Initiative's panel.
+`epics get <id> --fields covered_by` returns the Initiative that covers an
+Epic (`line_id` and `text`), or `null`.
+
+`epics create` and `modernpath new` both call `POST /api/work/epics`, which
+checks every request before it writes anything; a refused request writes
+nothing. It accepts `system_id` (the CLI supplies the bound System),
+`line_id` and the client-writable fields of `epics update`; any field other
+than `system_id` and `line_id` outside those, such as `metadata`, `evidence`,
+`knowledge_config`, `generated_from` or `tenant_id`, is refused with 422
+`unsupported Epic fields`. A missing `system_id`, or one that is not a
+positive integer, is refused with 422 `invalid_system_id`, and a System
+outside the workspace you selected answers 404. A planning-field value that
+`epics update` would refuse on a new Epic, such as `shared_context`
+references other than `[]` or an `accepted_context_revision` other than `0`,
+is refused with 422 and the field named.
+
+`epics get <id> --fields planning_contexts` (also under `--full`) returns the
+planning contexts the Epic is planned within: `release`, the Epic's own
+Release, and `initiative`, the one Initiative that covers it, each with its
+`planning_context`, every reference with its title, and who last changed it
+and when (`changed_by`, `changed_at`); either is `null` when the Epic has none.
 `specs status` reports the artifact count and counts by stored status;
 `--fields artifacts` selects the artifact metadata.
 `specs list` summarizes the specification count; `--fields specs` or `--full`
@@ -838,6 +925,238 @@ failures return a nonzero status.
 Specification generation captures the Epic’s Knowledge Core snapshot when none
 exists and preserves an existing snapshot. It schedules work only after that
 preparation succeeds.
+
+### Read the Roadmap and apply a Roadmap plan
+
+```sh
+modernpath roadmap show
+modernpath roadmap show --json
+modernpath roadmap selection --context <code or name> --out <file>
+modernpath roadmap selection --initiative <initiative-id> --json
+modernpath roadmap apply --file plan.json --dry-run
+modernpath roadmap apply --file plan.json --agent <agent-name>
+```
+
+`roadmap show` prints the bound System's Releases with the Initiatives under
+each, then the Initiatives with no Release by horizon. A Release's and an
+Initiative's planning context prints under its name, as stored; `--json`
+carries `planning_context` on each Release and each Initiative, with references
+as stored and no titles.
+
+Under each Initiative a line says whether it is done. An Initiative is done
+when at least one item of its linked work counts and every one of them is
+DONE; its linked work is its Epics, the user requirements linked to it
+directly and a system requirement that is its own link, and an item counts
+unless it was deleted, is OBSOLETE or is a candidate that still needs
+confirmation. The line reads `Done`, `No work yet` when no linked work counts,
+or `Not done: 1 of 2 Epics complete`, naming only the kinds it has (Epics,
+user requirements, system requirements). Under an Initiative that is not done,
+one line per unfinished item gives its title, its step (Blocked, Not shaped
+into work yet, Being built, Plan waiting for approval, Completion waiting for
+approval, Deferred) and whose turn it is (The team, A person on the team),
+blocked items first and deferred ones last; one with no linked work waits for
+the team to shape it into work. `--json` carries `done`, `done_when` (the
+`work_complete` item with `met` and the counts by kind) and `waiting_for`
+(each item's `kind`, `id`, `title`, `step`, `turn` and the `member_epic` that
+gives a user requirement its step) on each Initiative.
+
+Under a Modernization Release come the legacy system it replaces, or `in
+place`; its reference revision, or `not set`; and one line per context of its
+scope with how many of its legacy requirements are undecided and how many are
+decided, such as `Billing (BILL): 1 of 4 undecided, 3 decided`. A legacy
+requirement is decided when an Initiative of the System has a keep, change or
+drop row for it. When the scope holds legacy requirements that the business
+owner's latest agreement did not record and no Initiative has decided, a line
+says `New since the agreement: 4 legacy requirements`; `--json` carries that
+number as the Release's `new_since_agreement_count`, and each context of
+`modernization.contexts` with its `in_scope`, `undecided` and `decided`. Under
+an Initiative that replaces part of the legacy system a line gives its
+decisions, such as `Decisions: 2 keep, 1 change, 1 drop`; `--json` carries them
+as the Initiative's `selection`: `keep`, `change`, `drop` and `agreed`, whether
+the latest agreement holds them unchanged. An Initiative of new work has
+`selection` null.
+
+The context counts and the decisions both end with how many kept or changed
+legacy requirements are drafted and built: `Billing (BILL): 1 of 4 undecided, 3 decided, 2 drafted, 1 built`
+and `Decisions: 2 keep, 1 change, 1 drop, 2 drafted, 1 built`. Onto a new
+system, a legacy requirement is drafted while an Epic's saved plan, or a
+written trace, links a new requirement of the System to it with a `modernizes`
+trace, and built once a written one has a DONE source. In place, it is drafted
+while an Epic's saved plan takes it or links a test to it, and built once that
+Epic is DONE. Drafted includes built, and a dropped legacy requirement is
+neither. `--json` carries `drafted` and `built` in each context of
+`modernization.contexts` and in each Initiative's `selection`.
+
+`roadmap apply` applies a plan file `{"request_id": "...", "operations": [...]}`.
+`create_line` and `update_line` take `planning_context`, the Initiative's whole
+planning context. A write sends four lists, and a list left out is stored
+empty, so `{}` is the empty planning context and on `update_line` clears it:
+
+- a decision `{"statement": "...", "rationale": "..."}`, the rationale optional;
+- an assumption `{"statement": "..."}`;
+- an open question `{"question": "...", "status": "open" | "resolved", "resolution": "..."}`,
+  the resolution optional;
+- a reference `{"kind": "document" | "file", "target_ref": "document:doc:<id>" | "document:sd:<uuid>" | "file:v2:..."}`.
+
+A statement or question is refused when empty, each text holds at most 20,000
+characters, a `version` key on an entry is dropped and any other key is
+refused. Beside the four lists, `version` 1 and `accepted_context_revision` 0
+are accepted, so a value read with `roadmap show --json` can be sent back. At
+most 100 decisions, assumptions and open questions together, and at most 100
+references. A reference must name a document or a file of the workspace; the
+older `file:<system>:<digest>` form is refused. A refusal names the operation,
+the list and the entry to fix, and nothing is written. Each change is recorded
+with the signed-in person and, with `--agent`, the agent.
+
+A Release's planning context is written on the Release page; the command line
+creates and edits no Release.
+
+### Read and set an Initiative's selection
+
+An Initiative that replaces part of the legacy system has a selection: a keep,
+change or drop row for each legacy requirement of its Release's legacy system
+that it decides, with a reason on each drop. A legacy requirement has at most
+one row in a System. The business owner agrees the selection with the Now plan
+on the Roadmap; no agent and no command records that agreement.
+
+```sh
+modernpath roadmap selection --context Integrations --out integrations.json
+modernpath roadmap selection --context INTG --release 21 --json
+modernpath roadmap selection --initiative <initiative-id> --json
+```
+
+`roadmap selection` reads the legacy requirements of one context, or the rows
+of one Initiative, and writes them as one JSON document holding every page of
+the read: `release`, `legacy_system`, `context` (null for an Initiative),
+`initiative` (null for a context), `counts` (`in_scope`, `undecided`,
+`decided`, `keep`, `change`, `drop`, `drafted`, `built`) and `requirements`. `--context` takes a
+context of the legacy system by code or name. Without `--release` the command
+reads the Roadmap and takes the one open Modernization Release whose scope
+holds the context; it refuses when none or several do, naming them, and
+`--release <id>` picks one. `--initiative` reads the Initiative's rows in every
+context. `--out` writes the file and prints
+`Wrote 300 legacy requirements to integrations.json`; `--json` prints the
+document. Nothing is written when the command refuses.
+
+Each requirement carries its `requirement_kind`, `requirement_id`,
+`display_ref`, `title`, `description`, `context` and `work_status`;
+`legacy_proof`, the legacy system's latest test results (`state` `passing`,
+`failing` or `missing`, and its criteria counts); `group`, the user
+requirement a system requirement belongs to; `dependents`, the other legacy
+requirements linked to it; `flags`; and `decision`, null while it is
+undecided, else its `outcome`, `reason`, `expected_level`,
+`expected_level_reason`, `initiative`, `set_by`, `set_at` and `agent`. The
+flags are `agreed` (the latest agreement holds this decision),
+`revised_since_selected` (the requirement changed, or was made obsolete or
+deleted, after it was decided), `context_changed_since_decided`, `not_counted`
+(decided, but not among the legacy requirements the agreement counted) and
+`new_since_agreement` (undecided, in the scope now and not recorded by the
+latest agreement). The flag `new_since_agreement`
+marks one legacy requirement; the Release's `new_since_agreement_count` in
+`roadmap show --json` counts the undecided ones of a Release.
+
+Each requirement also carries `expected_level`, the level of proof it should
+reach (`compared`, `screens_compared` or `tests_only`), and
+`expected_level_basis`, the code that says where that level comes from. The
+Selection tab gives each code in words:
+
+- `changed`, "changed requirement": a row decided change expects
+  `tests_only`.
+- `person`, "set by {person}", with the reason: a person set the level on a
+  row decided keep, and the reason is the decision's `expected_level_reason`.
+- `estimated`, "estimated from its files": the level comes from the roles of
+  the source files the requirement's traces reach, as the legacy System's
+  analysis gives them or, for a file it did not analyze, as the file's path
+  gives them. A controller, API, worker, model or migration gives `compared`;
+  otherwise a view or component gives `screens_compared`; otherwise, and with
+  no traced file, the level is `tests_only`. An undecided or dropped row gets
+  the level it should reach if kept.
+
+Read the codes as an open list: a planned change (Epic 341) adds `recorded`,
+"recorded by reverse engineering", which comes before `estimated`. With the
+basis `estimated`, `expected_level_files` gives the roles the estimate found
+and how many files it read, such as
+`{"roles": ["component", "view"], "count": 2}`; with any other basis it is
+null.
+
+When the Release modernizes its own System in place, `at_risk` lists the
+change rows behind At risk, the Selection tab's filter of kept requirements
+at risk: for a row decided keep, each change row of the same Initiative whose
+requirement shares a traced source file with it, with its `requirement_kind`,
+`requirement_id` and `display_ref`, in order of `display_ref`. `at_risk` is
+empty for any other row and for every row onto a new system. The command
+writes the four fields as the server serves them and prints no words for
+them.
+
+Each requirement also carries `counterpart`, the new requirements and Epics
+that draft or build it, and `holder`. `counterpart` is a list of
+`{"requirement", "epic", "state"}`, `state` `drafted` or `built`, empty when
+nothing drafts it. Onto a new system an entry names the new requirement of a
+`modernizes` trace and the Epic whose saved plan holds the trace, or no Epic
+once only the written trace remains; in place it names the Epic and no
+requirement. `holder` is null, or what holds the row's decision:
+`{"kind", "id", "title", "approver"}`, an approved Epic (`epic`) that relies
+on the decision, or the new requirement (`requirement`) of a written
+`modernizes` trace to it, with the person who approved that Epic or the
+completion that wrote the trace.
+
+`roadmap apply` sets the rows with `set_selection`. It names the Initiative by
+`line_id`, or by `line_ref`, the `ref` a `create_line` earlier in the plan
+gives the Initiative it creates:
+
+```json
+{"request_id": "intg-selection", "operations": [
+  {"op": "create_line", "ref": "provider", "release_id": 21, "horizon": "next",
+   "text": "Provider connections", "context": "INTG", "work_kind": "replaces_legacy"},
+  {"op": "set_selection", "line_ref": "provider", "rows": [
+    {"requirement_kind": "user_requirement", "requirement_id": "<uuid>", "outcome": "keep",
+     "expected_level": "compared", "expected_level_reason": "The bank reads the file."},
+    {"requirement_kind": "user_requirement", "requirement_id": "<uuid>", "outcome": "drop",
+     "reason": "The bank takes the API now."}],
+   "clear": [{"requirement_kind": "system_requirement", "requirement_id": "<uuid>"}]}]}
+```
+
+A row takes `requirement_kind`, `requirement_id`, `outcome` (`keep`, `change`
+or `drop`), `reason`, `expected_level` (`compared`, `screens_compared` or
+`tests_only`), `expected_level_reason` and `move`. A drop needs a reason. An
+expected level, with its reason, goes only on a keep row. A row without
+`outcome` changes only the expected level of the Initiative's keep row.
+`"move": true` takes a legacy requirement another Initiative of the System
+holds; without it that row is refused. A `clear` entry deletes the
+Initiative's row, so the legacy requirement is undecided again. One
+`set_selection` takes at most 1,000 rows and a plan at most 5,000 rows in all;
+`set_selection` operations do not count toward the 50 operations of a plan.
+The Initiative must replace part of the legacy system, have a context and be
+shown under an open Modernization Release.
+
+A refused `set_selection` writes nothing of the plan. `roadmap apply`, with or
+without `--dry-run`, prints under the operation's error one line per refused
+row, rows first and then `clear` entries:
+`row 1: Export invoices: A drop in an initiative's selection needs a reason.`
+A row that names no legacy requirement of the Release shows its requirement
+id instead of a title, and a legacy requirement another Initiative holds ends
+with `(held by <initiative>)`. The receipt gives each `set_selection`'s
+`written`, `unchanged`, `cleared` and `moved` counts.
+
+A held row cannot change, be cleared or move to another Initiative: an Epic
+approved with a plan that relies on its decision holds it until its approver
+returns the Epic to planning (in place, until the Epic completes), and a
+written `modernizes` trace holds it until a later Epic that holds the trace's
+new requirement retires the trace. Nor can its Initiative be archived, deleted
+or sent back to the Roadmap at a close. The refused row has the reason
+`selection_row_held` and its `holder`, and `roadmap apply` prints a sentence
+that says what holds it and who can act:
+`row 1: Export invoices cannot change: the Epic Billing export, approved by Ada Lovelace, relies on its decision. Ada Lovelace can return that Epic to planning.`
+For a move it also names the Initiative that holds the decision:
+`row 3: Archive statements cannot move to this initiative: the initiative Provider connections holds its decision, and the Epic Billing export, approved by Ada Lovelace, relies on it. Ada Lovelace can return that Epic to planning.`
+An `archive_line` of an Initiative with a held row is refused with a sentence
+that names the Initiative, the legacy requirement, the holder and who can act.
+A held row's expected level stays writable.
+
+An agent decides a selection at volume: it reads a context with
+`roadmap selection`, suggests each row's outcome with its reason, sums the file
+up in plain words for the person, checks it with `roadmap apply --dry-run`, and
+applies it only on the person's word, naming itself with `--agent`.
 
 ### Epic gates and human approvals
 
@@ -907,6 +1226,47 @@ with the same name, or a repeated check ID, are refused as
 Source files that do not exist yet use the existing plan-only `planned` trace;
 completion requires real scoped code endpoints.
 
+A plan trace's `link_kind` is `implements`, `verifies`, `derives`, `relates`
+or `modernizes`. A modernizes trace links a new requirement to the legacy
+requirement it modernizes in another System. The platform admits it only for
+a legacy requirement that a keep or change decision of the Epic's own
+Initiative names; reverse engineering never records it. Its source is a user or
+system requirement of the plan, its target a user or system requirement of the
+legacy system of the Epic's Release:
+`{"source_type": "user_requirement", "source_id": "<new requirement>", "target_type": "user_requirement", "target_id": "<legacy requirement>", "link_kind": "modernizes"}`.
+Save refuses any other target with 422 `modernizes_not_selected`, whose
+message names the legacy requirement and why (no keep or change decision, no
+Initiative linked to the Epic, or a deleted legacy requirement) and whose
+`legacy_requirement` gives its `kind`, `id`, `display_ref` and `title`, and a
+target in the Epic's own System with `modernizes_inside_system`; nothing is
+saved. Completion writes the trace in the Epic's System. A later Epic that
+holds the source carries a written trace unchanged, or retires it by listing
+it in `remove_traces`; a changed kind is refused. In place, where the Epic's Release
+modernizes its own System, the plan takes the requirements it changes with
+their revised statements, and a `verifies` trace from a test case to a kept
+requirement outside the plan is admitted under that requirement's keep
+decision.
+
+`epics plan show <epic-id> --fields modernization` (also under `--full`) reads
+the plan's `modernization` block: `initiative`, `legacy_system`, `release`,
+`in_place`, `traces` (each `modernizes` trace with its `source`, `target`, the
+`decision` that admits it and `carried`), and in place `taken` (the
+requirements the plan takes), `kept_reached` (the tests linked to kept
+requirements) and, before approval, `kept_at_risk` (each kept requirement at
+risk with the files it `shares` with the plan). The block is null for an Epic
+that no Initiative replacing part of the legacy system covers.
+
+For an Epic of an Initiative that replaces part of the legacy system, the
+`implementation` check reports `initiative_not_agreed` until the business
+owner's latest agreement holds the Initiative among its Now Initiatives, and
+`initiative_changed_since_agreement` when the Initiative's context, kind of
+work or planning context, its Release's planning context, or a selection row
+the plan relies on changed since that agreement. Each message names the
+Initiative, what changed and who agrees the Now plan; `approve-implementation`
+is refused with 409 `epic_gate_blocked` until the business owner agrees
+again. Report the blocker and ask the business owner; no command records the
+agreement.
+
 Candidate input is `{"revision":"<tested code revision>"}`. Execution registration
 is `{"revision":"<tested code revision>","obligation_ids":["<UUID>"]}`. Register
 before running tests. Actual failed assertions establish RED; errors, skips and
@@ -950,6 +1310,15 @@ review, implementation approval, the candidate, GREEN and the implementation
 review are always renewed. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. Human implementation and completion decisions remain separate.
 No command merges or deploys. Read state and audit after an uncertain response.
 
+`epics gates presentation` also lists `changes_since_approval` and
+`assumed_defaults`. The first holds each change since the approval to the
+planning contexts of the Epic's Release and Initiative: an opening for change
+with who opened it and the reason, an edit, a lock, or a move of the Epic that
+changes which planning context it reads. The second holds the assumed defaults
+still routed to the Epic, which no person has accepted or rejected yet. Neither
+blocks completion. The agent reads both before building and presents both at
+completion review.
+
 History exposes surviving decisions and accepted facts. Copied plans, raw output,
 executed procedure snapshots and nested historical presentations are removed.
 There is no archive or reconstruction from current TestCase content. See the
@@ -973,7 +1342,11 @@ Trace entity types use the stored names: `user_requirement`,
 `system_requirement`, `test_case`, `system_document`, `source_file`,
 `file_analysis`, `subsystem`, `epic`, or `criterion`. Trace reads are filtered
 to the System bound to the checkout. Requirement and test-case detail reads
-also verify the entity belongs to that System.
+also verify the entity belongs to that System. `traces list
+--relation` takes `implements`, `verifies`, `derives`, `relates` or
+`modernizes`; a `modernizes` trace's target is a legacy requirement in another
+System, and a requirement's detail gives each trace's other requirement end
+its System id and name.
 
 For a Trace audit, read each in-scope requirement with criteria, then enumerate
 its Traces and those touching its criteria. Use `--json` and follow every
@@ -1187,8 +1560,9 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Current work visibility | `focus` |
 | Knowledge | `search`, `ask`, `context`, `read-doc`, `read-file`, `docs`, `system-docs`, `datamodel` |
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
-| requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context` |
+| requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context`, `requirements contexts` |
 | Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
+| Roadmap | `roadmap show`, `roadmap selection`, `roadmap apply` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |
@@ -1212,7 +1586,23 @@ command reads the authenticated bound System and prints the schema directly;
 failed reads report an error rather than falling back to a copied model. This
 requires a server version that exposes recording schema discovery.
 New requirements are recorded as `PROPOSED` in the bound System's Base release.
-The server creates Base if needed within the recording transaction. Reused
+The server creates Base if needed within the recording transaction.
+
+Every new requirement needs a context from the System's list of contexts
+(`modernpath requirements contexts`), also one given by a client UUID. Give a
+listed code and leave `context_name` out, and the requirement takes the name
+the list gives it; give a new code only when no listed context fits, with a
+name that no listed context has. The server checks the requirements of one
+request in order, so a later one in a code an earlier one introduced takes its
+name. It refuses with 422 and writes nothing for a requirement without a
+context (`context_required`), a listed code with another name
+(`context_name_mismatch`), a code that differs from a listed code only in
+letter case (`context_code_conflict`), a name another context has or its
+requirements carry (`context_name_conflict`), and a value with spaces before
+or after it, a blank name, the code `—` or `Unclassified`
+(`invalid_context`). The refusal names the requirement's position in the file,
+counted from 0, its title and the listed value. A requirement reused by id
+keeps its stored context, and a null `context_name` matches the stored name. Reused
 requirements retain their existing release assignments. The command reads the
 supplied JSON and posts it directly; it does not inspect a repository checkout
 or require a run, content digest or proof report.
@@ -1313,8 +1703,13 @@ Human acceptance remains separate from verification; no review body is uploaded.
 
 `modernpath backlog create --file discovery.json --json` adds an attributed
 `OPEN` record to the bound System. Use `--file -` for stdin. Input requires
-`title`; optional `kind` is `backlog` (default), `gap` or `tooling`. Gaps require
-`gap_kind` of `capability` or `specification`. Use
+`title`; optional `kind` is `backlog` (default), `gap`, `tooling` or `assumption`.
+Gaps require `gap_kind` of `capability` or `specification`. A record of kind
+`assumption` holds an assumed default: an answer the agent chose during a build
+for a question nobody had answered. Its `title` is the default and its
+`observation` is the question the default answers. The command refuses an
+assumption without a question before it sends anything, and the server gives it
+the reference `Assumed default <n>`. Use
 `modernpath backlog create --help` for content fields and examples.
 Add `--focus` to atomically append a declared lane for the signed-in reporter.
 Existing focus remains intact; a focus failure rolls back creation. Automatic
@@ -1331,7 +1726,8 @@ Route or close a discovery with
 `modernpath backlog update <uuid> --file resolution.json --json`.
 The JSON object accepts only `notes_md`, `disposition` and `disposition_ref`;
 omitted fields are preserved. Notes replace existing notes, and an empty reference
-clears the reference. For example:
+clears the reference, except on an assumed default after its first routing. For
+example:
 
 ```json
 {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md":"Verified the merged fix."}
@@ -1348,6 +1744,21 @@ The server preserves the original raiser and records the authenticated update
 actor and time in metadata. Read back with `backlog get <uuid> --full --json`.
 This changes the backlog disposition, not an Epic approval or completion.
 Requires a server with the Backlog PATCH endpoint; older servers refuse the write.
+
+An assumed default is routed once to the Epic being built: its first routing,
+from `OPEN` to `ROUTED to <epic id>` while it has no `disposition_ref`, needs no
+source. Every change of an assumed default's disposition but its first routing
+needs a `USER:` source: after `with` for `ACCEPTED with` and `REJECTED with`, as
+in `ACCEPTED with USER:<the person's words>`, and in the same file's
+`disposition_ref` for `CLOSED by`, `DEFERRED`, `OPEN` and `ROUTED to`. A source
+stored by an earlier change does not count. After its first routing an assumed
+default's `disposition_ref` changes only to a `USER:` source, so an empty value no
+longer clears it. Without a source the server refuses the whole update, notes
+included, and `backlog update` prints the refusal as it is. The server can only
+check that a `USER:` source is there, so an agent writes one only from the
+person's own words, never from a template. After completion approval the agent
+closes each backlog, gap or tooling record routed to the Epic with
+`CLOSED by <epic id>`; an assumed default is never closed by the Epic.
 
 ### Initiatives
 

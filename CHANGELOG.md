@@ -82,6 +82,174 @@ refused until it is updated.
 
 ## v0.23.0 — native evidence, batch commands and release acceptance
 
+- The modernizes trace and drafting from decisions (Epic 334). `epics plan
+  show --fields modernization` (also under `--full`, and with `--json`) reads
+  the plan's `modernization` block: the Initiative, the legacy system, the
+  Release, `in_place`, each `modernizes` trace with the decision that admits
+  it, and in place the taken requirements, the tests linked to kept
+  requirements and the kept requirements at risk; it is null for an Epic that
+  no replacing Initiative covers. `epics plan --help` describes the
+  `modernizes` kind, the rule that admits it (a keep or change decision of the
+  Epic's own Initiative) and the in-place `verifies` exception; `traces list
+  --help` names `modernizes` among the relations. `roadmap show` ends each
+  context's counts and each Initiative's `Decisions:` with `, <n> drafted, <n>
+  built`.
+  `roadmap apply`, with or without `--dry-run`, prints a held refused row
+  (`selection_row_held`) as one sentence that names what holds its decision,
+  who approved it and who can act, and for a move the Initiative that holds
+  it: `row 1: Export invoices cannot change: the Epic Billing export, approved
+  by Ada Lovelace, relies on its decision. Ada Lovelace can return that Epic to
+  planning.` `releases move-requirements` prints the server's sentence for
+  `selected_requirement_held`, with the requirement and the Epic, instead of
+  only `requirement membership refused (HTTP 409)`. `roadmap selection`
+  writes each row's `counterpart` and `holder` and the counts' `drafted` and
+  `built` as served, and its help names them. The CLI guide describes the
+  `modernizes` kind and its rule, the hold, the counts and the approval rule.
+  Requires the server's modernizes trace, the plan read's `modernization`
+  block, the hold and the counts.
+
+- Process: PROCESS.md says, beside the selection text, that an Epic drafted
+  from an Initiative that replaces part of the legacy system links each new
+  requirement to the legacy requirement it modernizes with a `modernizes`
+  trace in its saved plan, which rule admits that trace, that its
+  implementation approval waits for the business owner's agreement, and how an
+  in-place plan takes the requirements it changes and presents the kept
+  requirements at risk with a fallback for each (Epic 334). Run `modernpath
+  install` to refresh the installed process.
+
+- The expected level of proof and At risk (Epic 333). The document that
+  `roadmap selection` writes gives each legacy requirement four more fields,
+  as the selection route serves them: `expected_level` (`compared`,
+  `screens_compared` or `tests_only`), `expected_level_basis` (`changed`,
+  `person` or `estimated`, an open list), `expected_level_files` (the roles
+  and the number of files behind an estimate) and `at_risk` (in place, the
+  change rows behind At risk, each with `requirement_kind`, `requirement_id`
+  and `display_ref`). The command's code does not change, and it prints no
+  words for these fields. Its help and the CLI guide give the words for each
+  basis code: "changed requirement", "set by {person}" with the reason, and
+  "estimated from its files". Requires the server's expected level and At
+  risk on the selection route.
+
+- Selection rows (Epic 332). Add `roadmap selection (--context <code or name>
+  [--release <id>] | --initiative <id>) (--out <file> | --json)`: it writes the
+  legacy requirements of one context of a Modernization Release, or one
+  Initiative's keep, change and drop decisions, to one JSON document holding
+  every page of the read; without `--release` it takes the one open
+  Modernization Release whose scope holds the context. `roadmap show` prints
+  each replacing Initiative's decisions (`Decisions: 2 keep, 1 change, 1
+  drop`), each scope context's decided count beside its undecided one, and a
+  Modernization Release's legacy requirements new since the agreement; `--json`
+  carries the Initiative's `selection`, each context's `decided` and the
+  Release's `new_since_agreement_count`. `roadmap apply` takes `set_selection`
+  (`line_id` or `line_ref`, `rows` and `clear`; at most 1,000 rows an operation
+  and 5,000 a plan, outside the 50-operation cap) and `ref` on `create_line`;
+  with or without `--dry-run` it prints each refused row of a refused
+  `set_selection` with its title, the reason and the Initiative that holds it,
+  and the receipt gives each `set_selection`'s written, unchanged, cleared and
+  moved counts. Requires the server's selection route
+  `GET /api/v1/systems/:system_id/roadmap/selection` and its selection support
+  on the Roadmap read and the Roadmap plan route.
+
+- Process: PROCESS.md says what an Initiative's selection is, how an agent
+  decides one at volume with `roadmap selection` and `roadmap apply --dry-run`,
+  and that the business owner's agreement of the Now plan is the human stop for
+  a selection.
+
+- The Modernization Release (Epic 330). `roadmap show` prints, under a
+  Modernization Release, its type with the legacy system it replaces (or "in
+  place"), its reference revision ("not set" until it is), and each context of
+  its scope with how many legacy requirements are undecided; `--json` carries
+  the Release's `release_type`, `legacy_system_id`, `legacy_system_name`,
+  `in_place`, `legacy_scope`, `legacy_reference_revision` and `modernization`
+  as the Roadmap read gives them. `roadmap apply` takes `work_kind`
+  (`new_work` or `replaces_legacy`) on `create_line` and `update_line`.
+  Requires the server's Modernization Release support on the Roadmap read and
+  the Roadmap plan route.
+- Contexts from one list (Epic 340). Add `requirements contexts [--json]`,
+  which prints the bound System's list of contexts: each context code with its
+  name, its number of requirements and its other names, then the requirements
+  without a context on a line labelled Unclassified. `reverse-engineer record`
+  now needs a context on every new requirement: the server refuses one without
+  a context (`context_required`), a listed code with another name
+  (`context_name_mismatch`), a code that differs from a listed code only in
+  letter case (`context_code_conflict`), a name another context has or its
+  requirements carry (`context_name_conflict`), and a value with spaces around
+  it, the code `—` or Unclassified (`invalid_context`), naming the
+  requirement's position, counted from 0. `requirements set-context` and
+  `requirements update` no longer send the code as the name: a requirement
+  moved without a name takes the name the System's list gives that context,
+  and the commands accept the name the server returns. Requires
+  `GET /api/v1/systems/:system_id/requirements/contexts` and a server that
+  applies the list; update the CLI after the server serves it, because an
+  older `set-context` sends the code as the name.
+
+- Process: the rdd-reverse-engineer procedure, its batch reference and
+  PROCESS.md tell the agent to read the System's list of contexts before
+  recording, to give every requirement a context from it, and to regroup a
+  recorded requirement with a requirement update.
+
+- `epics create` takes `line_id`, an Initiative's id (Epic 327). The server
+  links the Epic to that Initiative and places it in the Initiative's Release
+  unless `release_id` names another open Release, and the receipt prints the
+  Release (`release_id`) and the Initiative with its context (`initiative`:
+  `line_id`, `text`, `context`, `context_name`), which the agent writes into
+  the requirements it creates for the Epic. `line_id` must be a string.
+  Requires a server with this change: a server without it ignores `line_id`
+  and writes the Epic without the link, so when the answer names no
+  Initiative `epics create` prints no receipt and exits with an error that
+  names the created Epic, which you link with Add on the Initiative's panel.
+  `epics get --fields covered_by` prints the Initiative that covers an Epic.
+  `POST /api/work/epics` now checks every request: a System outside your
+  workspace answers 404; a missing `system_id`, or one that is not a positive
+  integer, 422 `invalid_system_id`; a field outside `system_id`, `line_id` and
+  the fields `epics update` may write, 422 `unsupported Epic fields`; a
+  planning-field value `epics update` would refuse on a new Epic, 422 with the
+  field named. Fields `epics create` forwarded before and the route now
+  refuses include `metadata`, `evidence`, `knowledge_config`, `generated_from`
+  and `tenant_id`. These checks reached the test platform and production only
+  after the release whose `modernpath new` sends just the accepted fields.
+
+- `modernpath new` posts its initial Epic with only `title`, `description` and
+  `system_id` (Epic 327). It no longer sends `priority`, `project_type`,
+  `project_overview`, `auto_generated` or `metadata`, which the server never
+  stored (`metadata` held only `source` and `created_by`) and which
+  `POST /api/work/epics` will refuse with 422 `unsupported Epic fields`. This
+  release comes out before the server's field check reaches the test platform
+  or production: a `modernpath new` of an earlier release creates its System
+  and then fails to create its Epic ("Failed to create Epic") once a server
+  refuses those fields, so upgrade before then.
+
+- Planning contexts (Epic 325). `roadmap show` prints each Release's and each
+  Initiative's planning context (decisions, assumptions, open questions and
+  references) under its name, and `--json` carries `planning_context` on each.
+  `roadmap apply` takes `planning_context` on `create_line` and `update_line`,
+  the Initiative's whole planning context (`{}` clears it). `epics get --fields
+  planning_contexts` (also under `--full`) returns the planning contexts of the
+  Epic's Release and Initiative, with reference titles and who last changed
+  them. Requires the server's planning-context support on the Roadmap and Epic
+  reads and the Roadmap plan route.
+
+- Process: PROCESS.md says what the Release's and the Initiative's planning
+  contexts hold and that an Epic is planned and built within them; rdd-start,
+  rdd-plan and rdd-build read them with `epics get <id> --fields
+  planning_contexts`, and rdd-cold-review checks the plan against them. The
+  context hook does not carry them.
+
+- Add `roadmap show` and `roadmap apply --file <plan.json> [--request-id <id>]
+  [--agent <name>] [--dry-run]` (Epic 324). `show` prints the bound System's
+  Releases with their Initiatives, then the Initiatives with no Release by
+  horizon, each with its context, kind of work and Epics, and whether the Now
+  plan is agreed. `apply` applies a Roadmap plan of up to 50 operations in one
+  call; the request id is the file's `request_id`, else `--request-id`, else
+  derived from the operations, so applying the same file again returns the
+  saved result and writes nothing. `--dry-run` prints each operation's summary
+  and writes nothing. Requires `GET /api/v1/systems/:system_id/roadmap` and
+  `POST /api/v1/systems/:system_id/roadmap/plan`.
+
+- Process: PROCESS.md says what a Release, an Initiative and the Roadmap are,
+  and the chain Initiative → Epic → requirement → trace; rdd-start and rdd-plan
+  read the Roadmap with `modernpath roadmap show` before planning.
+
 - Process: gating evidence comes from deterministic tests, and a model-dependent
   run is a measurement; a criterion states observable behavior and wording is
   checked by phrase tests; pin an Epic's base and rebase once, where a clean

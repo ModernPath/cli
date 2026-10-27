@@ -20,10 +20,21 @@ func newBacklogCommand(load func() (*cliEnv, error)) *cobra.Command {
 		Long: `Update a Backlog record from a JSON object using --file or --file - for stdin.
 Allowed fields: notes_md, disposition, disposition_ref. Omitted fields are preserved.
 Disposition uses OPEN, DEFERRED, ROUTED to <id>, REJECTED with <source>,
-CLOSED by <id>, or ACCEPTED with <source>. Use an empty disposition_ref to clear it.
+CLOSED by <id>, or ACCEPTED with <source>. Use an empty disposition_ref to clear it,
+except on an assumed default after its first routing (below).
 ROUTED to must name an Epic id or a requirement UUID of the bound System and writes the
 routing link with the record; CLOSED by links an Epic, requirement or test case id and
 keeps any other reference, such as a pull-request number, as text.
+An assumed default is a record of kind assumption. Its first routing, from OPEN to
+ROUTED to <epic id> while it has no disposition_ref, needs no source. Every change of
+an assumed default's disposition but its first routing needs a USER: source: after
+with for ACCEPTED with and REJECTED with, as in ACCEPTED with USER:<the person's words>,
+and in the same file's disposition_ref for CLOSED by, DEFERRED, OPEN and ROUTED to.
+A source stored by an earlier change does not count. After its first routing an
+assumed default's disposition_ref changes only to a USER: source. An agent writes a
+USER: source only from the person's own words, never from a template. Without one
+the server refuses the whole update, notes included, and this command prints the
+server's refusal as it is.
 The server records the authenticated update actor and time; original attribution is preserved.
 Text output names a routing or closure target by its title (ROUTED to 288 — <title>);
 --json serves the disposition as stored, with the title on the link.
@@ -70,10 +81,14 @@ Example: {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md"
 	parent.AddCommand(update)
 	create := &cobra.Command{Use: "create", Short: "Create an attributed OPEN Backlog record", Args: cobra.NoArgs,
 		Long: `Create a discovery from a JSON object using --file or --file - for stdin.
-Title is required; kind defaults to backlog (backlog, gap or tooling).
+Title is required; kind defaults to backlog (backlog, gap, tooling or assumption).
 Optional fields: notes_md, observation, why_unrouted, candidate_route,
 gap_kind, consequence, metadata. A gap requires gap_kind capability or
-specification. Identity, scope, attribution and OPEN disposition are assigned
+specification. An assumption is an assumed default: an answer the agent chose
+during a build for a question nobody had answered. Its title is the default and
+its observation, which it requires, is the question the default answers, as in
+{"kind":"assumption","title":"Show the points balance on the receipt","observation":"Should the receipt show the points balance?"}.
+Identity, scope, attribution and OPEN disposition are assigned
 by the server. --focus atomically adds the record to the signed-in reporter’s
 focus, preserving other focus lanes. Example: {"title":"Keep cart after payment retry","metadata":{"synthetic":true}}.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -309,8 +324,11 @@ func validateBacklogCreate(payload map[string]any) error {
 	if value, exists := payload["kind"]; exists {
 		kind = value.(string)
 	}
-	if kind != "backlog" && kind != "gap" && kind != "tooling" {
-		return fmt.Errorf("kind must be backlog, gap or tooling")
+	if kind != "backlog" && kind != "gap" && kind != "tooling" && kind != "assumption" {
+		return fmt.Errorf("kind must be backlog, gap, tooling or assumption")
+	}
+	if observation, _ := payload["observation"].(string); kind == "assumption" && strings.TrimSpace(observation) == "" {
+		return fmt.Errorf("an assumed default needs its question: give the question the default answers in observation")
 	}
 	gap, hasGap := payload["gap_kind"]
 	if kind == "gap" && gap != "capability" && gap != "specification" {

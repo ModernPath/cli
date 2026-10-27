@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -66,6 +67,20 @@ func TestCreateEpicPostsTheFieldTheCoreRequires(t *testing.T) {
 	}
 	if _, present := payload["name"]; present {
 		t.Fatalf("`name` is not a cast field — sending it is what produced the 422: %#v", payload)
+	}
+	// Epic 327 (A4), test case e7453cba (criterion 982294cf): POST
+	// /api/work/epics refuses any field outside system_id, line_id and the
+	// client fields of `epics update`, so `modernpath new` sends only these.
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if strings.Join(keys, ",") != "description,system_id,title" {
+		t.Fatalf("modernpath new must post only title, description and system_id, it posted %v", keys)
+	}
+	if payload["description"] != "a ledger" || payload["system_id"] != float64(4242) {
+		t.Fatalf("modernpath new must post the System's description and id: %#v", payload)
 	}
 }
 

@@ -118,6 +118,20 @@ the same requirement UUIDs and unchanged content avoids creating new requirement
 Any refusal leaves nothing written. Recording is neither verification nor
 acceptance; nothing here hashes files or needs a clean checkout.
 
+Every new requirement needs a context from the System's list of contexts, which
+modernpath requirements contexts shows. Give a listed code and leave
+context_name out, and the requirement takes the name the list gives it; give a
+new code only when no listed context fits, with a name no listed context has
+(the code is its name when context_name is left out). The server refuses a new
+requirement without a context (context_required), a listed code with another
+name (context_name_mismatch), a code that differs from a listed code only in
+letter case (context_code_conflict), a name another context has or its
+requirements carry (context_name_conflict), and a value with spaces before or
+after it, a blank name, the code "—" or Unclassified (invalid_context). The
+refusal names the requirement's position in the file, counted from 0, its
+title and the listed value. A requirement reused by id keeps its stored context,
+and a null context_name matches the stored name, so a retried file is reused.
+
 The receipt lists each requirement's id, kind, display_number, title and
 work_status, and the number of traces. Read back with requirements get
 <uuid> --kind user|system --full and traces list --entity-type <kind>

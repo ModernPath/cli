@@ -40,7 +40,10 @@ still-published requirements, ownership, implementation, traces and evidence.
    blockers before asking for completion approval. Fetch and retain the
    authoritative completion presentation before asking.
    Present its exact approved proposal, current published content, evidence,
-   findings, risks, assumptions and any unfinished scope to the human. Obtain
+   findings, risks and any unfinished scope to the human. Also present the
+   changes since approval and the assumed defaults not yet confirmed, which
+   block nothing: the presentation lists them as `changes_since_approval` and
+   `assumed_defaults`. Obtain
    the separate explicit completion answer; never infer it from implementation
    approval, an autopilot grant, tests, code review or repository state.
    For a round, submit with `modernpath initiative submit-review`, fetch
@@ -64,8 +67,9 @@ still-published requirements, ownership, implementation, traces and evidence.
    changed evidence and review before submitting again.
 6. After that publication is read back, use the CLI to mark each backlog, gap
    or tooling record routed to the Epic as closed by the Epic, and read each
-   record back. If the human wants a record left open, leave it open and add
-   a note saying why.
+   record back. An assumed default is never closed by the Epic: it stays
+   routed until a person accepts or rejects it in their own words. If the
+   human wants a record left open, leave it open and add a note saying why.
 
 Git and PR/CI own code integration. Never merge a PR without the user's explicit
 approval for that PR. Deployment is a separate human act. If a required process

@@ -49,3 +49,39 @@ func TestInstalledCoverageReferenceDefinesInventoryAndCompletionChecks(t *testin
 		}
 	}
 }
+
+// Epic 340 (G1), test case e1a8ea3a: the installed reverse-engineering
+// procedure, with the references it links, tells the agent to read the
+// System's list of contexts before recording and to record every requirement
+// in a context from it. The check runs this test by its name.
+func TestG1FlowSkillRecordsInTheListOfContexts(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	skill := installedReverseEngineeringInstructions(t, root)
+	for _, phrase := range []string{
+		"Give every requirement a context from the System's one list of contexts.",
+		"Read the list before recording.",
+		"leave the name out for a listed context",
+		"Add a new context only when no listed one fits",
+	} {
+		if !strings.Contains(skill, phrase) {
+			t.Errorf("installed reverse-engineering procedure is missing %q", phrase)
+		}
+	}
+}
+
+// Epic 340 (G1), test case b71f8e62: the installed reverse-engineering
+// procedure regroups a recorded requirement with a requirement update. The
+// check runs this test by its name.
+func TestG1RegroupSkillRegroupsWithARequirementUpdate(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	skill := installedReverseEngineeringInstructions(t, root)
+	if phrase := "regroup it with a requirement update"; !strings.Contains(skill, phrase) {
+		t.Errorf("installed reverse-engineering procedure is missing %q", phrase)
+	}
+}

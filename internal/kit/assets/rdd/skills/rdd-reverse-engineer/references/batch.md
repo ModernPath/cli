@@ -6,11 +6,14 @@ workers, and makes every store write. It can run unattended for hours.
 
 ## The batch question
 
-Ask once, for the whole batch: the repositories; the contexts, each with a
-code, a name, and the directories and shared mechanisms it owns; an id prefix
-per context for titles and file names; exclusion globs, each with one reason
-(generated, vendor, fixtures); the stored requirements to keep, by id; and
-unattended: yes or no. Write the answer to
+Read the System's list of contexts before the batch question, and start the
+question from it. Ask once, for the whole batch: the repositories; the
+contexts, each with a code, a name, and the directories and shared mechanisms
+it owns; an id prefix per context for titles and file names; exclusion globs,
+each with one reason (generated, vendor, fixtures); the stored requirements to
+keep, by id; and unattended: yes or no. A context on the list keeps its code
+and the list's name; a new context needs a code and a name that no listed
+context has. Write the answer to
 `batch-plan.md`. It is never asked again: a resumed session reads the batch
 folder instead. The context code and name fill every requirement's `context`
 and `context_name`.

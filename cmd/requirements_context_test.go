@@ -10,19 +10,26 @@ import (
 	"testing"
 )
 
-func TestRequirementSetContextUsesBoundScopedEndpointAndDefaultsName(t *testing.T) {
+// Epic 340 (G1), test case 9022296b: set-context without --context-name sends
+// only the context, and the server fills in the name from the System's list of
+// contexts. This replaces the test that asserted the old default, the code
+// sent as the name (TestRequirementSetContextUsesBoundScopedEndpointAndDefaultsName).
+func TestRequirementSetContextUsesBoundScopedEndpointAndSendsNoName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/systems/4/requirements/system/"+obsoleteRequirementID+"/context" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
-		var payload map[string]string
+		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload["context"] != "snake-game" || payload["context_name"] != "snake-game" {
+		if payload["context"] != "snake-game" {
 			t.Errorf("payload = %#v", payload)
 		}
-		_, _ = w.Write([]byte(`{"data":{"id":"` + obsoleteRequirementID + `","work_status":"DONE","context":"snake-game","context_name":"snake-game","result":"updated"}}`))
+		if name, sent := payload["context_name"]; sent {
+			t.Errorf("set-context without --context-name sent the name %#v", name)
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":"` + obsoleteRequirementID + `","work_status":"DONE","context":"snake-game","context_name":"Snake game","result":"updated"}}`))
 	}))
 	defer server.Close()
 
@@ -33,8 +40,82 @@ func TestRequirementSetContextUsesBoundScopedEndpointAndDefaultsName(t *testing.
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"context_name": "snake-game"`) {
+	if !strings.Contains(out.String(), `"context_name": "Snake game"`) {
 		t.Fatalf("receipt = %s", out.String())
+	}
+}
+
+// Epic 340 (G1), test case 9022296b: without --context-name, set-context
+// accepts the non-blank name the server returns and prints the name and the
+// result: for a requirement of another context, for one already in the
+// context with a minority name (updated), and for one that already carries the
+// list's name (unchanged), also the only requirement of its context.
+func TestRequirementSetContextAcceptsTheNameTheServerReturns(t *testing.T) {
+	for _, tc := range []struct {
+		name, context, contextName, result string
+	}{
+		{"from another context", "BILLING", "Billing", "updated"},
+		{"already in the context with a minority name", "BILLING", "Billing", "updated"},
+		{"the only requirement of its context", "SHIPPING", "Shipping", "unchanged"},
+		{"its own name decides the list's name", "BILLING", "Billing", "unchanged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&payload)
+				if len(payload) != 1 || payload["context"] != tc.context {
+					t.Errorf("payload = %#v; want only the context %s", payload, tc.context)
+				}
+				fmt.Fprintf(w, `{"data":{"id":%q,"work_status":"PROPOSED","context":%q,"context_name":%q,"result":%q}}`,
+					obsoleteRequirementID, tc.context, tc.contextName, tc.result)
+			}))
+			defer server.Close()
+
+			command := newRequirementSetContextCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+			command.SetArgs([]string{obsoleteRequirementID, "--kind", "system", "--context", tc.context})
+			var out bytes.Buffer
+			command.SetOut(&out)
+			if err := command.Execute(); err != nil {
+				t.Fatalf("set-context refused the server's receipt: %v", err)
+			}
+			for _, want := range []string{"context_name: " + tc.contextName, "result: " + tc.result} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output lacks %q:\n%s", want, out.String())
+				}
+			}
+		})
+	}
+}
+
+// Epic 340 (G1), test case 9022296b, guard: a receipt with another context or
+// a blank name is still refused, and an explicit --context-name is still sent
+// and must come back.
+func TestRequirementSetContextStillRefusesAnotherContextOrABlankName(t *testing.T) {
+	for _, tc := range []struct {
+		name, receipt string
+		args          []string
+	}{
+		{"another context", `{"data":{"id":"` + obsoleteRequirementID + `","context":"OTHER","context_name":"Billing","result":"updated"}}`, nil},
+		{"an empty name", `{"data":{"id":"` + obsoleteRequirementID + `","context":"BILLING","context_name":"","result":"updated"}}`, nil},
+		{"a blank name", `{"data":{"id":"` + obsoleteRequirementID + `","context":"BILLING","context_name":"  ","result":"updated"}}`, nil},
+		{"another name than the one sent", `{"data":{"id":"` + obsoleteRequirementID + `","context":"BILLING","context_name":"Invoices","result":"updated"}}`, []string{"--context-name", "Billing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&payload)
+				if tc.args != nil && payload["context_name"] != "Billing" {
+					t.Errorf("an explicit --context-name was not sent: %#v", payload)
+				}
+				_, _ = w.Write([]byte(tc.receipt))
+			}))
+			defer server.Close()
+			command := newRequirementSetContextCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+			command.SetArgs(append([]string{obsoleteRequirementID, "--kind", "system", "--context", "BILLING"}, tc.args...))
+			if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "does not confirm") {
+				t.Fatalf("error = %v; want a refusal that the response does not confirm the values", err)
+			}
+		})
 	}
 }
 

@@ -26,6 +26,12 @@ repository.
 2. For the Epic path, confirm the user-selected Epic by its ID. If none
    is selected, ask which one to work on. Read the Epic, its latest saved plan, implementation approval,
    lifecycle, linked requirements, recent evidence and completion state.
+   Read the planning contexts of the Epic's Release and Initiative with
+   `epics get <id> --fields planning_contexts` (or `roadmap show`); the Epic
+   is planned and built within them.
+   Before planning, read the Roadmap with `modernpath roadmap show`: it lists
+   each Initiative with the Epics it covers. Note the context of the
+   Initiative the Epic is linked to; the Epic's requirements share it.
    If a draft Epic has no requirements, or its requirements lack
    behavior coverage, criteria or planned code/test traces, route to
    `rdd-plan` before its first review. If already reviewed, present these gaps

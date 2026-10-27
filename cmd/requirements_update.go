@@ -20,9 +20,12 @@ Accepts every content field supported by requirements create, including context;
 omitted fields, criteria and traces are preserved. Content edits require unowned,
 never-published PROPOSED, BLOCKED or DEFERRED requirements. Drafts in planning
 Epics can be edited, but need a fresh plan review before implementation approval.
-Context-only edits follow set-context rules: context is required, context_name
-defaults to context, and evidence and accepted versions stay unchanged, including
-on DONE requirements. Active Epic-owned work must return to planning first.
+Context-only edits follow set-context rules: context is required, and without
+context_name the requirement takes the name the System's list gives that context
+(see requirements contexts), or the code for a new context; leave the name out
+for a listed context. A code or name that conflicts with the list is refused.
+Evidence and accepted versions stay unchanged, including on DONE requirements.
+Active Epic-owned work must return to planning first.
 On editable drafts, unchanged content fields alongside a grouping change also
 preserve evidence; requests containing content fields still require a draft.
 Any workspace member may edit. --reason optionally records why in the Audit Trail.
@@ -109,11 +112,12 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 		validState := revision == 0 && (state == "PROPOSED" || state == "BLOCKED" || state == "DEFERRED")
 		if groupingOnly {
 			validState = revision >= 0 && (state == "PROPOSED" || state == "BLOCKED" || state == "DEFERRED" || state == "DONE" || state == "OBSOLETE")
-			name, ok := payload["context_name"]
-			if !ok {
-				name = payload["context"]
-			}
-			validIdentity = validIdentity && data["context"] == payload["context"] && data["context_name"] == name
+			// Without context_name the server answers with the list's name; any
+			// nonblank name confirms the request then.
+			returned, _ := data["context_name"].(string)
+			name, named := payload["context_name"]
+			validIdentity = validIdentity && data["context"] == payload["context"] &&
+				strings.TrimSpace(returned) != "" && (!named || returned == name)
 		}
 		if !validIdentity || sid != int64(env.SystemID) || data["requirement_kind"] != kind+"_requirement" ||
 			str(data, "display_ref") == "" || strings.TrimSpace(str(data, "title")) == "" || !validRevision || !validState {

@@ -222,3 +222,17 @@ func TestReverseEngineerBaselineSentencesUnchanged(t *testing.T) {
 		"coverage gate or as-built acceptance before recording.",
 	})
 }
+
+// Epic 340 (G1), test case e1a8ea3a: the batch reference starts its batch
+// question from the System's list of contexts, and PROCESS.md says that every
+// recorded requirement has a context from that list. The check runs this test
+// by its name.
+func TestG1FlowBatchReferenceAndProcessUseTheList(t *testing.T) {
+	requirePhrases(t, "batch.md", embeddedText(t, reverseEngineerSkillDir+"references/batch.md"), []string{
+		"Read the System's list of contexts before the batch question",
+		"A context on the list keeps its code and the list's name",
+	})
+	requirePhrases(t, "PROCESS.md", embeddedText(t, "assets/rdd/PROCESS.md"), []string{
+		"Every requirement reverse engineering records has a context from the System's one list of contexts",
+	})
+}

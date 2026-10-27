@@ -145,3 +145,64 @@ func TestRequirementUpdatePreservesActionableServerRefusalsAndChecksReceipt(t *t
 		server.Close()
 	}
 }
+
+// requirementGroupingReceipt is the update route's receipt for a grouping-only
+// change of SR-3-0 in System 4.
+func requirementGroupingReceipt(context, contextName, result string) string {
+	return fmt.Sprintf(`{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Existing title","work_status":"PROPOSED","revision":0,"context":%q,"context_name":%q,"result":%q}}`,
+		context, contextName, result)
+}
+
+// Epic 340 (G1), test case 9022296b: requirements update with a grouping-only
+// file without context_name sends the file as it is and accepts the non-blank
+// name the server returns, the list's name, updated or unchanged.
+func TestRequirementUpdateGroupingOnlyAcceptsTheNameTheServerReturns(t *testing.T) {
+	for _, tc := range []struct{ file, context, contextName, result string }{
+		{`{"context":"BILLING"}`, "BILLING", "Billing", "updated"},
+		{`{"context":"SHIPPING"}`, "SHIPPING", "Shipping", "unchanged"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&payload)
+				if len(payload) != 1 || payload["context"] != tc.context {
+					t.Errorf("payload = %#v; want only the context %s", payload, tc.context)
+				}
+				fmt.Fprint(w, requirementGroupingReceipt(tc.context, tc.contextName, tc.result))
+			}))
+			defer server.Close()
+			command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+			command.SetArgs([]string{"SR-3-0", "--file", "-", "--json"})
+			command.SetIn(strings.NewReader(tc.file))
+			var out bytes.Buffer
+			command.SetOut(&out)
+			if err := command.Execute(); err != nil {
+				t.Fatalf("requirements update refused the server's receipt: %v", err)
+			}
+			for _, want := range []string{`"context_name": "` + tc.contextName + `"`, `"result": "` + tc.result + `"`} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("receipt lacks %s:\n%s", want, out.String())
+				}
+			}
+		})
+	}
+}
+
+// Epic 340 (G1), test case 9022296b, guard: a grouping-only receipt with
+// another context, or with a blank name, is still refused.
+func TestRequirementUpdateGroupingOnlyStillRefusesAnotherContextOrABlankName(t *testing.T) {
+	for _, receipt := range []string{
+		requirementGroupingReceipt("OTHER", "Billing", "updated"),
+		requirementGroupingReceipt("BILLING", "", "updated"),
+		requirementGroupingReceipt("BILLING", "  ", "updated"),
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, receipt) }))
+		command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		command.SetArgs([]string{"SR-3-0", "--file", "-"})
+		command.SetIn(strings.NewReader(`{"context":"BILLING"}`))
+		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "draft identity") {
+			t.Errorf("receipt %s: error = %v; want the receipt refused", receipt, err)
+		}
+		server.Close()
+	}
+}

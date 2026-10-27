@@ -14,7 +14,16 @@ apply; test evidence recording and read-back still do.
 
 For Epic work, read `PROCESS.md` and verify through the CLI that the current
 saved plan and proposed content has human implementation approval. Confirm the Epic and
-requirement IDs and remain inside approved scope. Read the plan review notes the
+requirement IDs and remain inside approved scope. Before the first change,
+read the planning contexts of the Epic's Release and Initiative again
+(`epics get <id> --fields planning_contexts`) and build within them; a question
+they leave open goes to the human. Before building, read the changes since
+approval with `epics gates presentation <id> --json` (`changes_since_approval`):
+a team member may have opened one of those planning contexts for change and
+edited it since the approval. Tell the approver about a change the plan did not
+know; only the approver returns the Epic to planning, and only if the change
+needs a new plan.
+Read the plan review notes the
 human left to the build, recorded as finding resolutions, and apply them.
 Change a test title before that test's first recorded result: a changed title
 advances the test's revision and invalidates evidence already recorded for it.

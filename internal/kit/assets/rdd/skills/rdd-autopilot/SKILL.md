@@ -9,9 +9,15 @@ Read `PROCESS.md`, confirm the grant through the CLI, and verify its Epic scope,
 grant is missing, expired or ambiguous.
 
 1. Confirm each selected Epic and its current saved plan. Do not expand scope.
-2. Review sources and plan changes; record ordinary reversible assumptions
-   for later confirmation. Unless already explicitly authorized, stop for
-   hard-to-reverse decisions: existing-data
+2. Review sources and plan changes. For an ordinary, reversible product
+   question nobody has answered, choose a default for a person to confirm
+   later. An assumed default is recorded as a backlog record of kind
+   `assumption` with its question: the default as its title and the question
+   as its observation. It is routed once to the Epic being built and never
+   written into the approved plan. The server refuses any later change of its
+   disposition without a `USER:` source, and the agent writes that source only
+   from the person's own words, never from a template. Unless already
+   explicitly authorized, stop for hard-to-reverse decisions: existing-data
    deletion or migration, security or authorization, billing or legal terms,
    or an external-party contract.
 3. Follow `rdd-build` and `rdd-verify` for every slice: register before execution,
@@ -28,8 +34,9 @@ grant is missing, expired or ambiguous.
    to retain and record the independent implementation review, resolve findings,
    submit and retain the human completion presentation. Audit its
    Epic/requirement/code/test traces. Record tested code revisions through
-   version control and present assumptions, findings, evidence and unfinished
-   scope. Keep published requirement content and ownership unchanged in review.
+   version control and present the changes since approval, the assumed
+   defaults not yet confirmed, findings, evidence and unfinished scope. Keep
+   published requirement content and ownership unchanged in review.
 6. Obtain explicit human completion approval, then read back atomic requirement
    publication, revision increments, immutable versions, audit and released
    ownership. The grant is never that answer.

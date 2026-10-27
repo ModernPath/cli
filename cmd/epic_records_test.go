@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -289,5 +291,194 @@ func TestEpicUpdateHelpNamesSharedContextEntryShapes(t *testing.T) {
 				t.Errorf("epics update %s does not name %q", name, want)
 			}
 		}
+	}
+}
+
+// Epic 327 (A4), test case e7453cba (criterion 39d59354): `epics create`
+// names an Initiative with `line_id`. It forwards `line_id` and `release_id`
+// from the file, adds only `system_id`, refuses a `line_id` that is not a
+// string before sending, prints the Release and the Initiative with its
+// context in the receipt, and stops with an error naming the created Epic
+// when the server answered without the Initiative (a server without this
+// change ignores `line_id`). `epics get --fields covered_by` prints the
+// Initiative that covers an Epic.
+
+const a4LineID = "6f1c2a52-3d4e-4f60-8a7b-9c0d1e2f3a4b"
+
+// The route's accepted list: system_id, line_id and the client fields of
+// `epics update` (Core.Planning.EpicRecord).
+var a4AcceptedEpicKeys = map[string]bool{
+	"system_id": true, "line_id": true,
+	"title": true, "description": true, "scope": true, "non_goals": true, "outcome_source": true,
+	"impact_assessment": true, "shared_context": true, "start_date": true, "target_date": true,
+	"severity": true, "category": true, "target_profile_id": true, "assignee_id": true, "release_id": true,
+}
+
+// a4CreateServer answers POST /api/work/epics with `answer` and records each body.
+func a4CreateServer(t *testing.T, answer string) (*httptest.Server, *[]map[string]any) {
+	t.Helper()
+	var received []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/work/epics" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		received = append(received, body)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(answer))
+	}))
+	t.Cleanup(server.Close)
+	return server, &received
+}
+
+func a4EpicFile(t *testing.T, body string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "epic.json")
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+func TestA4EpicsCreateForwardsTheInitiativeAndPrintsItInTheReceipt(t *testing.T) {
+	server, received := a4CreateServer(t, `{"data":{"id":42,"target_architecture_id":1,"title":"Wallet checkout","process_status":"PROPOSED","release_id":12,"initiative":{"line_id":"`+a4LineID+`","text":"Pay in one step","context":"PAY","context_name":"Payments"}}}`)
+	cobraWorkspace(t, server)
+	file := a4EpicFile(t, `{"title":"Wallet checkout","line_id":"`+a4LineID+`","release_id":12}`)
+
+	out, err := runRoot(t, "epics", "create", "--file", file, "--json")
+	if err != nil {
+		t.Fatalf("create: %s %v", out, err)
+	}
+	if len(*received) != 1 {
+		t.Fatalf("expected one request, got %d", len(*received))
+	}
+	body := (*received)[0]
+	if body["line_id"] != a4LineID || body["release_id"] != float64(12) || body["system_id"] != float64(1) || body["title"] != "Wallet checkout" || len(body) != 4 {
+		t.Fatalf("epics create must forward line_id and release_id and add only system_id: %#v", body)
+	}
+
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(out), &receipt); err != nil {
+		t.Fatalf("receipt is not JSON: %q", out)
+	}
+	if receipt["operation"] != "created" || receipt["id"] != float64(42) || receipt["title"] != "Wallet checkout" {
+		t.Fatalf("receipt lost the Epic: %#v", receipt)
+	}
+	if receipt["release_id"] != float64(12) {
+		t.Fatalf("receipt must carry the Release: %#v", receipt)
+	}
+	initiative, ok := receipt["initiative"].(map[string]any)
+	if !ok {
+		t.Fatalf("receipt must carry the Initiative: %#v", receipt)
+	}
+	if initiative["line_id"] != a4LineID || initiative["text"] != "Pay in one step" || initiative["context"] != "PAY" || initiative["context_name"] != "Payments" {
+		t.Fatalf("receipt's Initiative must carry line_id, text, context and context_name: %#v", initiative)
+	}
+
+	out, err = runRoot(t, "epics", "create", "--file", file)
+	if err != nil {
+		t.Fatalf("text create: %s %v", out, err)
+	}
+	for _, want := range []string{"release_id: 12", "Pay in one step", "PAY", "Payments"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text receipt does not name %q: %q", want, out)
+		}
+	}
+}
+
+func TestA4EpicsCreateRefusesALineIDThatIsNotAStringBeforeSending(t *testing.T) {
+	server, received := a4CreateServer(t, `{"data":{"id":42,"target_architecture_id":1,"title":"Wallet checkout"}}`)
+	cobraWorkspace(t, server)
+
+	for _, value := range []string{`17`, `null`, `{"id":"x"}`, `["` + a4LineID + `"]`} {
+		file := a4EpicFile(t, `{"title":"Wallet checkout","line_id":`+value+`}`)
+		out, err := runRoot(t, "epics", "create", "--file", file, "--json")
+		if err == nil || !strings.Contains(err.Error(), "line_id") {
+			t.Errorf("line_id %s must be refused naming line_id: out=%q err=%v", value, out, err)
+		}
+	}
+	if len(*received) != 0 {
+		t.Fatalf("a refused line_id must send nothing, the server received %d requests: %#v", len(*received), *received)
+	}
+}
+
+func TestA4EpicsCreateStopsWhenTheServerDidNotLinkTheInitiative(t *testing.T) {
+	server, received := a4CreateServer(t, `{"data":{"id":42,"target_architecture_id":1,"title":"Wallet checkout","process_status":"PROPOSED","release_id":12}}`)
+	cobraWorkspace(t, server)
+	file := a4EpicFile(t, `{"title":"Wallet checkout","line_id":"`+a4LineID+`"}`)
+
+	out, err := runRoot(t, "epics", "create", "--file", file, "--json")
+	if len(*received) != 1 {
+		t.Fatalf("expected one request, got %d", len(*received))
+	}
+	if err == nil {
+		t.Fatalf("epics create must fail when the answer names no Initiative, it printed %q", out)
+	}
+	message := err.Error()
+	for _, want := range []string{"42", "line_id"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the error must name %q: %q", want, message)
+		}
+	}
+	if !strings.Contains(strings.ToLower(message), "server") {
+		t.Errorf("the error must say that line_id needs a server with this change: %q", message)
+	}
+	if strings.Contains(out, `"operation"`) || strings.Contains(out, "operation:") {
+		t.Fatalf("no receipt may be printed for an Epic the server did not link: %q", out)
+	}
+}
+
+func TestA4EpicsCreateSendsNoKeyOutsideTheAcceptedList(t *testing.T) {
+	server, received := a4CreateServer(t, `{"data":{"id":42,"target_architecture_id":1,"title":"Account access","process_status":"PROPOSED"}}`)
+	cobraWorkspace(t, server)
+	file := a4EpicFile(t, `{"title":"Account access","description":"Allow users to sign in","scope":"Sign-in flow","non_goals":"Account recovery","release_id":12}`)
+
+	if out, err := runRoot(t, "epics", "create", "--file", file, "--json"); err != nil {
+		t.Fatalf("create: %s %v", out, err)
+	}
+	if len(*received) != 1 {
+		t.Fatalf("expected one request, got %d", len(*received))
+	}
+	if _, wrapped := (*received)[0]["epic"]; wrapped {
+		t.Fatalf("the Epic object is sent unwrapped: %#v", (*received)[0])
+	}
+	for key := range (*received)[0] {
+		if !a4AcceptedEpicKeys[key] {
+			t.Errorf("epics create sent %q, a key POST /api/work/epics refuses", key)
+		}
+	}
+}
+
+func TestA4EpicsGetPrintsTheInitiativeThatCoversTheEpic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1,"title":"Wallet checkout","process_status":"PROPOSED","covered_by":{"line_id":"` + a4LineID + `","text":"Pay in one step"}}}`))
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+
+	out, err := runRoot(t, "epics", "get", "42", "--fields", "covered_by", "--json")
+	if err != nil {
+		t.Fatalf("epics get --fields covered_by: %q %v", out, err)
+	}
+	var selected map[string]any
+	if err := json.Unmarshal([]byte(out), &selected); err != nil {
+		t.Fatal(err)
+	}
+	covered, ok := selected["covered_by"].(map[string]any)
+	if len(selected) != 1 || !ok || covered["line_id"] != a4LineID || covered["text"] != "Pay in one step" {
+		t.Fatalf("--fields covered_by must print the covering Initiative: %#v", selected)
 	}
 }

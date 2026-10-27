@@ -480,3 +480,68 @@ func TestReleaseRequirementLostMutationResponseIsNotRetried(t *testing.T) {
 		t.Fatalf("uncertain mutation result: %v attempts %d", err, attempts)
 	}
 }
+
+// Epic 334 (C1), test case 6487fdc2, criterion 64808f51 (its command-line
+// clause) and scenario 303fe4bd: a selected requirement that an Epic took
+// moves with that Epic, so moving it alone out of the Epic's Release answers
+// 409 selected_requirement_held (contract §8). releases move-requirements, in
+// preview and with --apply, prints the server's sentence with the requirement
+// and the Epic, not only "requirement membership refused (HTTP 409)".
+func TestC1_6487fdc2_MoveRequirementsPrintsTheHeldRequirementSentence(t *testing.T) {
+	const sentence = "UR-7 Export invoices moves with the Epic Billing cutover, which took it. Move the Epic to move it."
+	for _, scenario := range []struct {
+		name, path string
+		input      func(t *testing.T) string
+		args       []string
+	}{
+		{"preview", "/api/compliance/releases/2/requirements/preview",
+			func(t *testing.T) string {
+				return membershipInput(t, map[string]any{"requirements": membershipSelection()})
+			}, nil},
+		{"apply", "/api/compliance/releases/2/requirements/move",
+			func(t *testing.T) string { return membershipInput(t, membershipReceipt()) },
+			[]string{"--apply"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var posts []string
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" {
+					listMembershipReleases(w)
+					return
+				}
+				posts = append(posts, r.URL.Path)
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]any{
+					"error":       "selected_requirement_held",
+					"requirement": map[string]any{"kind": "user_requirement", "id": membershipUR, "display_ref": "UR-7", "title": "Export invoices"},
+					"epic":        map[string]any{"id": 31, "title": "Billing cutover"},
+					"message":     sentence,
+				})
+			}))
+			defer s.Close()
+			out, err := runMembership(t, s, append([]string{"move-requirements", "next", "--file", scenario.input(t), "--json"}, scenario.args...)...)
+
+			// Guards: the refusal ends the command with an error after one request, never retried.
+			if err == nil {
+				t.Fatalf("releases move-requirements %s of a held requirement ended without an error:\n%s", scenario.name, out)
+			}
+			if len(posts) != 1 || posts[0] != scenario.path {
+				t.Errorf("releases move-requirements %s sent %v; want one POST %s", scenario.name, posts, scenario.path)
+			}
+			text := out + "\n" + err.Error()
+			for _, part := range []struct{ what, text string }{
+				{"the server's message", sentence},
+				{"the requirement's display_ref", "UR-7"},
+				{"the requirement's title", "Export invoices"},
+				{"the Epic's title", "Billing cutover"},
+			} {
+				if !strings.Contains(text, part.text) {
+					t.Errorf("releases move-requirements %s does not print %s %q: %s", scenario.name, part.what, part.text, text)
+				}
+			}
+			if strings.TrimSpace(err.Error()) == "requirement membership refused (HTTP 409)" {
+				t.Errorf("releases move-requirements %s prints only the status: %v", scenario.name, err)
+			}
+		})
+	}
+}

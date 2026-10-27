@@ -17,6 +17,11 @@ Read `PROCESS.md`, the selected Epic and its requirement links. Inspect
 relevant product documents, code and tests; do not treat repository state as
 process authority.
 
+Before planning, read the Roadmap with `modernpath roadmap show`, which lists
+each Initiative with the Epics it covers. Place the Epic's requirements in the
+context of the Initiative its Epic is linked to, and name in the plan any
+requirement that falls outside it.
+
 If the plan already has an independent review, present the plan and that review
 to the human through `rdd-entry-review`. Revise a reviewed plan only when the
 human requests it. A requested revision gets one new review, then returns to
@@ -79,7 +84,10 @@ the review that follows them. Before the new review of a requested revision:
 4. Inspect affected control/data flow, persistence, interfaces, integrations,
    failure modes, dependencies and project test gates. For shared or persisted
    state, identify actual writers, readers, existing shapes, partial-failure
-   behavior and recovery.
+   behavior and recovery. Read the planning contexts of the Epic's Release and
+   Initiative again before planning (`epics get <id> --fields planning_contexts`),
+   plan within them, and name in the plan the decisions and assumptions it
+   relies on and any it conflicts with.
 5. Define behavior boundaries, acceptance scenarios, code/test targets,
    expected RED assertions, focused and proportional regression checks,
    operational and security risks, and the requirement content that completion would publish.

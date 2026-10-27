@@ -398,6 +398,9 @@ var leafDispositions = map[string]disposition{
 	"acceptance report sign-off":        {kind: dispExecute, args: []string{"acceptance", "report", "sign-off", "10000000-0000-4000-8000-000000000001", "--source", "USER:smoke", "--json"}},
 	"acceptance report reject":          {kind: dispExecute, args: []string{"acceptance", "report", "reject", "10000000-0000-4000-8000-000000000001", "--note", "smoke", "--source", "USER:smoke", "--json"}},
 	"acceptance release":                {kind: dispExecute, args: []string{"acceptance", "release", "2", "--json"}},
+	"roadmap show":                      {kind: dispExecute, args: []string{"roadmap", "show", "--json"}},
+	"roadmap selection":                 {kind: dispExecute, args: []string{"roadmap", "selection", "--initiative", "11111111-1111-4111-8111-111111111111", "--json"}},
+	"roadmap apply":                     {kind: dispExecute, args: []string{"roadmap", "apply", "--file", "-", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
 	"auth status":                       {kind: dispExecute},
 	"context":                           {kind: dispExecute, args: []string{"context", "smoke query"}},
@@ -451,6 +454,7 @@ var leafDispositions = map[string]disposition{
 	"requirements search":               {kind: dispExecute, args: []string{"requirements", "search", "smoke", "--json"}},
 	"requirements obsolete":             {kind: dispExecute, args: []string{"requirements", "obsolete", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--reason", "smoke"}},
 	"requirements set-context":          {kind: dispExecute, args: []string{"requirements", "set-context", "10000000-0000-4000-8000-000000000001", "--kind", "system", "--context", "snake-game"}},
+	"requirements contexts":             {kind: dispExecute, args: []string{"requirements", "contexts", "--json"}},
 	"reverse-engineer schema":           {kind: dispExecute, args: []string{"reverse-engineer", "schema"}},
 	"reverse-engineer check":            {kind: dispNoCall, args: []string{"reverse-engineer", "check", "--self-test"}, reason: "local-only"},
 	"reverse-engineer record":           {kind: dispExecute, args: []string{"reverse-engineer", "record", "--file", "-"}},
@@ -605,6 +609,9 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		}
 		if name == "acceptance report record" {
 			rootCmd.SetIn(strings.NewReader(`{"outcome":"pass"}`))
+		}
+		if name == "roadmap apply" {
+			rootCmd.SetIn(strings.NewReader(`{"operations":[{"op":"create_line","horizon":"next","text":"Smoke"}]}`))
 		}
 		if name == "initiative create" {
 			rootCmd.SetIn(strings.NewReader(`{"text":"Smoke initiative"}`))
