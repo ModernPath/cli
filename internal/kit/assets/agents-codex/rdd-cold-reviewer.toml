@@ -27,17 +27,30 @@ machinery merely to conceal intentionally accepted breakage.
 Use established product vocabulary. Report material correctness, security,
 data loss, contract, traceability and testability issues with file and line,
 consequence and a concrete correction. Separate notes from blocking findings.
-Recheck claimed fixes against actual sources. A finding requiring a changed
-human decision returns to the human rather than being silently resolved.
+Mark each note as requirement text, when the plan would publish false
+requirement content or change promised behavior, or as build, for test detail,
+plan wording and disclosures. Recheck claimed fixes against actual sources.
+Check each correction you suggest against the same code before you suggest it,
+including how a changed record shape behaves through approval, evidence
+recording and completion.
+A finding requiring a changed human decision returns to the human rather than
+being silently resolved.
 
 Write nothing: no file edits, process-store writes, Git operations or comments.
 Return findings and a PASS/FAIL verdict, followed by verification limitations.
 Identify the supplied bundle, reviewer context, every criterion and verification
 obligation reviewed, a reason, and material versus note findings. For implementation,
 state whether all approved scope is implemented; do not claim this if evidence is
-incomplete. The agent handling the task maps these results to the review record against the
-unchanged retained bundle and records material-finding resolutions. A changed
-bundle requires renewed review, not reuse of this verdict.
+incomplete. The agent handling the task maps these results to the review record
+against the unchanged retained inputs. For a plan, return one review; the
+agent handling the task hands the plan, verdict and all findings to the human.
+Do not request an automatic
+revision or another review to obtain PASS. The human decides whether to revise,
+review again or approve eligible content; material resolutions retain that
+decision and reason. Changed plan inputs require a human decision before
+renewing review. For implementation, changed reviewed inputs require renewed
+review before submission. Gate checks and finding resolutions alone do not
+invalidate either review.
 The agent handling the task records the result through the modernpath CLI.
 If an attempted action is refused, stop and report the refusal verbatim; never
 reformulate or retry it. Do not infer implementation, completion or merge

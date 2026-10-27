@@ -427,6 +427,14 @@ shared state, inspect the actual writers, readers, existing data shapes,
 partial-failure behavior and recovery; document the risks and mitigation in
 the saved plan. Do not replace reconnaissance with a list of source links.
 
+Before drafting, and after a first reconnaissance, list the questions only the
+human can answer and ask them together: conflicts with stored requirements,
+documented behavior or the kit's own rules, which entry points and callers are
+in scope, names for new user-visible terms, behavior at the largest expected
+input, and how earlier answers apply after later changes. Declare each one as a
+decision; its answer is recorded once the saved plan lists it. A question left
+for a reviewer to find costs a review round and a plan revision.
+
 A criterion states observable behavior: what the system does, refuses, saves
 or shows. Text that an agent follows (kit, prompt or instruction wording) is
 checked by phrase tests under the criterion it serves; a wording change that
@@ -442,18 +450,51 @@ the chosen text with deterministic tests.
 
 A plan with no requirements, uncovered in-scope behavior, missing
 criteria or missing planned code/test traces is not ready for implementation
-approval. Return it to planning rather than approving plan-only acceptance
-checks.
+approval. Correct these gaps before its first review. If already reviewed,
+present the gaps with that review and let the human direct any revision.
 
-An independent cold review checks the saved plan against its sources, scope,
-acceptance, architecture, state boundaries, risks and test strategy. Record
-material findings and correct the plan before asking for implementation
-approval. Renew the review whenever its reviewed content changes, including
-decision answers, membership, test definitions, candidate or relevant evidence.
-An identical saved value does not itself require another review. Record explicit
-resolutions for material findings, including findings from superseded reviews;
-editing the plan alone does not record their disposition. The review audits the planned
-change, not the amount of prose or the presence of links.
+Each plan submission gets one independent cold review against its sources,
+scope, acceptance, architecture, state boundaries, risks and test strategy.
+Then present the exact saved plan, review verdict, material findings, notes,
+limitations and gate blockers to the human, even when the review fails. Wait
+for the human to approve eligible content, request a revision or further review,
+or reject the plan. Do not revise the plan or repeat the review in response to
+findings before that decision. Notes are nonblocking; do not polish the plan
+or insert review results into its body after review.
+
+The reviewer marks each note as requirement text or build. A requirement-text
+note says the plan would publish false requirement content or change promised
+behavior; a build note concerns test detail, plan wording or disclosures.
+Present the notes in these two groups so the human can choose which to fix
+before approval. For a failed review, present each material finding with the
+correction the agent proposes, and ask separately any question only the human
+can answer. A finding about existing behavior that the Epic leaves unchanged
+goes to `rdd-triage` as a Backlog record unless the human widens the Epic.
+
+A human-requested revision gets one new independent review, then returns to
+the human. A fix is a design change: make the smallest change that removes each
+finding, and check every claim, option and suggested correction it relies on in
+the code as for the first draft, including how a changed record shape behaves
+through approval, evidence recording and completion. Check each change for side
+effects: search the plan body, every requirement field, the criteria and the
+test titles for the old wording, and inspect what else reads the changed
+behavior, including code that reads any path or name the change introduces and
+the actual output of any tool it names. Before the new review, a read-only agent
+that did not write the fixes checks them the same way; that check records no
+review.
+Reuse recorded reviews when resuming a session. If reviewed inputs
+changed, including decision answers, membership or test definitions, disclose
+the stale review and obtain a human decision before renewing it. A current
+review remains required for implementation approval. Gate checks, finding
+resolutions and an identical saved value do not themselves require another
+review. After applying the human's disposition, record actual resolutions and
+reasons for material findings, including findings from superseded reviews;
+editing the plan alone does not record their disposition. Record the
+disposition of each note the human leaves to the build, so the build finds it
+in the review bundle. Do not mark a
+promised correction resolved, manufacture a resolution or
+waive server gate conditions. The review audits the planned change, not the
+amount of prose or the presence of links.
 
 ### Verifying an Epic whose behavior already exists
 
@@ -506,13 +547,17 @@ records each Epic's own gate check, and `modernpath initiative approve-implement
 transaction.
 
 After recording the independent plan review, `rdd-cold-review` runs the
-`plan-ready` check. Before asking for implementation approval,
-`rdd-entry-review` runs `implementation`. `rdd-completion-review` runs
+`plan-ready` check once. `rdd-entry-review` runs `implementation` once and
+presents the plan and review with either passing or blocked results. Recheck
+a planning gate only after a relevant condition changes; do not poll unchanged
+state or treat each gate as a request for another independent review.
+`rdd-completion-review` runs
 `completion-review` before submission and `completion` before asking for
-human completion approval. Inspect each recorded result and resolve blockers
-through the appropriate pass. None of these checks records a human approval.
+human completion approval. Resolve planning blockers as directed by the human;
+completion blockers follow the implementation and verification passes.
+None of these checks records a human approval.
 
-Before the final plan review, create or reuse test definitions and declare
+Before the plan review, create or reuse test definitions and declare
 verification obligations for every active criterion and required project check.
 Each obligation identifies its test, boundary and expected observation;
 each criterion states whether its content differs from the accepted baseline.
@@ -521,8 +566,11 @@ existing-behavior Epic uses that declaration instead of manufacturing failures.
 Record applicable boundaries and reasons for exclusions, the plan author's
 context, and required human decisions using identities issued by the CLI. Retain each decision question beside its effective human answer.
 These are test definitions, not executable test changes before approval.
-Obtain and record answers to declared decisions before the final independent
-review. A later answer changes the reviewed content and requires a renewed review.
+Obtain and record answers to declared decisions before the independent review.
+Inspect read-only phase readiness and correct structural blockers before review;
+a missing independent review is expected at this point. A later answer changes
+the reviewed content; disclose it for the human to direct renewed review before
+implementation approval.
 
 The agent supplies current authoritative requirements, plan, traces, outcomes and
 findings to a review context independent of the author. The reviewer covers every
@@ -533,8 +581,10 @@ cannot prove independence. Candidates carry no author context.
 
 The server derives review applicability from existing semantic change records,
 revisions, ownership, candidate/registration/finalization identities and
-server ordering. Relevant changes require renewed review; ambiguous applicability
-blocks. Writers share the existing serialization boundary and assign ordering
+server ordering. Relevant changes require renewed review before approval;
+planning follows the human decision above. Implementation review is renewed
+after relevant code or evidence changes. Ambiguous applicability blocks approval.
+Writers share the existing serialization boundary and assign ordering
 times after acquiring it. A no-op save or JSON formatting change is not a semantic
 change. Add no fingerprints, ETags, tokens, counters or reviewed-state fields.
 
@@ -560,7 +610,8 @@ The Epic delivery loop is:
 
 ```text
 CHOOSE EPIC -> SAVE PLAN AND PROPOSED CONTENT -> ANSWER DECLARED DECISIONS
--> RETAIN REVIEW BUNDLE -> INDEPENDENT REVIEW + RECORDED RESOLUTIONS
+-> RETAIN REVIEW BUNDLE -> ONE INDEPENDENT PLAN REVIEW
+-> HUMAN DECISION ON PLAN AND FINDINGS -> RECORD FINDING RESOLUTIONS
 -> HUMAN IMPLEMENTATION APPROVAL / IN_PROGRESS + REQUIREMENT OWNERSHIP
 -> REGISTER / EXECUTE / FINALIZE RED -> CANDIDATE
 -> REGISTER / EXECUTE / FINALIZE GREEN -> CLEANUP -> VERIFY
@@ -579,8 +630,8 @@ gap.
 | Session entry and scope | `rdd-start` | Small-change scope and RED/GREEN checks identified, Epic plan read, or System/requirements/evidence read for an explicit existing-behavior pass; next phase identified |
 | Discover and classify | `rdd-discover` | Sources and proposed scope/decisions recorded for the selected Epic |
 | Plan | `rdd-plan` | Saved plan and exact proposed content ready for independent review |
-| Cold review | `rdd-cold-review` | Findings resolved or clearly disclosed; reviewed content identified |
-| Implementation approval | `rdd-entry-review` | Human implementation approval read back for the exact saved plan and exact proposed content |
+| Cold review | `rdd-cold-review` | One review recorded; exact plan, findings and gate blockers handed to the human |
+| Implementation approval | `rdd-entry-review` | Human decision on the plan and review; eligible approval read back, requested revision routed, or rejection reported |
 | Implement | `rdd-build` | Red-first implementation and focused checks complete |
 | Verify | `rdd-verify` | Required lower and upper evidence passes at the candidate revision |
 | Review, publish and complete | `rdd-completion-review` | Human-approved content atomically published/versioned/audited, ownership released, or incomplete work reported |
@@ -722,7 +773,7 @@ tooling gap and leave the item explicitly incomplete.
 
 | Discovery | Route |
 |---|---|
-| New behavior or changed user outcome | Revise a PROPOSED plan and obtain human implementation approval; for an active Epic, obtain an explicit human return to planning first, then fresh review and approval. DONE uses a follow-up Epic |
+| New behavior or changed user outcome | Revise a PROPOSED plan before its first review; after review, present the change for the human to direct any revision. Obtain human implementation approval. For an active Epic, obtain an explicit human return to planning first, then fresh review and approval. DONE uses a follow-up Epic |
 | Missing human decision or ambiguous intent | Ask the human and record the answer with its source before relying on it |
 | Technical failure inside approved behavior | Continue red-first implementation and verification |
 | External impediment | Report the blocker, its owner and the next action |

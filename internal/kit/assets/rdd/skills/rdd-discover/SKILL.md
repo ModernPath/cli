@@ -17,7 +17,9 @@ CLI for process state and preserve IDs.
    dependencies, risks and unknowns. Do not create a requirement merely to
    mirror a file, route or test.
 4. Ask the human to resolve intent or scope that sources cannot establish.
-   Do not treat a proposed plan or assumption as approval.
+   Ask these questions together, including the conflicts, scope edges, new
+   names, behavior at scale and readings of earlier answers that `rdd-plan`
+   lists before drafting. Do not treat a proposed plan or assumption as approval.
 5. Route sourced scope into the selected Epic's saved plan through
    `rdd-plan` only while it is `PROPOSED`; implementation requires human
    approval. Once implementation is approved, keep the active plan and owned

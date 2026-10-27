@@ -28,7 +28,8 @@ repository.
    lifecycle, linked requirements, recent evidence and completion state.
    If a draft Epic has no requirements, or its requirements lack
    behavior coverage, criteria or planned code/test traces, route to
-   `rdd-plan` before approval. If already approved with these gaps, surface
+   `rdd-plan` before its first review. If already reviewed, present these gaps
+   with that review for a human decision. If already approved with these gaps, surface
    the conflict for a human decision; do not silently edit approved content
    or treat plan-only checks as sufficient. If the human requests an active Epic
    return to planning, follow `PROCESS.md` §Returning to planning through the
@@ -44,12 +45,17 @@ repository.
    route and classify the change under step 1.
 4. If Epic implementation is not approved for the current saved content, route to
    `rdd-plan`, `rdd-cold-review` or `rdd-entry-review`, whichever is first
-   incomplete. Do not start implementation or test changes before approval.
+   incomplete. If a plan review already exists and awaits a human decision,
+   route to `rdd-entry-review` with its findings and blockers, even if it failed
+   or became stale. Resuming a session does not authorize another plan review
+   or revision. Follow an explicit human request to revise or review again.
+   Do not start implementation or test changes before approval.
 5. If Epic implementation is approved, route to `rdd-build` or `rdd-verify` based
    on current evidence. If ready for delivery, route to
    `rdd-completion-review`.
 6. If scope or acceptance changes while the Epic is PROPOSED, route back to
-   planning and obtain human approval before implementation. Once implementation
+   planning before its first review. After review, present the change and wait
+   for the human to direct a revision. Obtain human approval before implementation. Once implementation
    is approved, keep the active plan and owned requirements read-only until
    an explicit human return to planning is applied. Then require fresh review,
    implementation approval and verification. DONE uses a follow-up Epic.

@@ -14,7 +14,11 @@ apply; test evidence recording and read-back still do.
 
 For Epic work, read `PROCESS.md` and verify through the CLI that the current
 saved plan and proposed content has human implementation approval. Confirm the Epic and
-requirement IDs and remain inside approved scope. The active approved plan and
+requirement IDs and remain inside approved scope. Read the plan review notes the
+human left to the build, recorded as finding resolutions, and apply them.
+Change a test title before that test's first recorded result: a changed title
+advances the test's revision and invalidates evidence already recorded for it.
+The active approved plan and
 owned requirement content are read-only during implementation and completion
 review. For a requested scope or acceptance change, follow `PROCESS.md`
 §Returning to planning with the human's explicit decision before revising the

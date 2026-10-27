@@ -15,12 +15,14 @@ human-selected Epic and its latest saved plan before acting.
 1. Run `rdd-start` and identify the earliest incomplete phase.
 2. Establish sources and scope with `rdd-discover` when needed; save the plan
    with `rdd-plan`.
-3. Obtain and record answers to declared decisions before the final plan review.
-   Retain the authoritative bundle. Obtain an independent plan review with
-   `rdd-cold-review`. Resolve and record resolutions for material
-   findings and revise the draft plan before implementation approval.
-4. Present the exact saved plan and proposed content for human implementation approval
-   with `rdd-entry-review`. Do not implement before approval.
+3. Obtain and record answers to declared decisions before the plan review.
+   Retain the authoritative bundle. Obtain one independent plan review with
+   `rdd-cold-review`; reuse it if already recorded. Do not revise the plan or
+   repeat the review in response to its findings before the human decides.
+4. Present the exact saved plan, proposed content, review and gate blockers
+   with `rdd-entry-review`, even when the review fails. Wait for the human's
+   decision. Only a human-requested revision or further review starts another
+   pass, which returns to the human. Do not implement before eligible approval.
 5. Implement red-first with `rdd-build`, then run `rdd-verify` for required
    focused, boundary and user-flow evidence.
 6. Use `rdd-completion-review` for independent code review, trace audit and
@@ -32,7 +34,8 @@ human-selected Epic and its latest saved plan before acting.
    add a note saying why.
 
 Keep all work inside the approved Epic. A material scope or acceptance change
-may revise its saved plan only while the Epic is `PROPOSED`. Once implementation
+may revise its saved plan only while the Epic is `PROPOSED`; after plan review,
+wait for the human to direct that revision. Once implementation
 is approved, keep the active plan and owned requirements read-only until an
 explicit human return to planning under `PROCESS.md` is applied. Resume the
 loop with the revised draft, fresh independent review, human implementation

@@ -13,8 +13,10 @@ source, code and test evidence. Preserve IDs.
    or future work outside the Epic.
 2. Continue red-first work for a defect within approved behavior.
 3. For a material change in user outcome, acceptance, architecture or scope,
-   revise the saved plan through `rdd-plan` only while the Epic is `PROPOSED`;
-   implementation waits for human approval. Once implementation is approved,
+   revise the saved plan through `rdd-plan` only while the Epic is `PROPOSED`.
+   If it already has a plan review, present the discovery with that review and
+   wait for the human to direct a revision; do not restart review automatically.
+   Implementation waits for human approval. Once implementation is approved,
    keep the active plan and owned requirements read-only until an explicit
    human return to planning under `PROCESS.md` is applied. Then route the
    PROPOSED revision through planning, fresh review and implementation approval.
