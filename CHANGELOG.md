@@ -1,88 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.25.0 — Roadmap planning, Initiative selection, the modernizes trace and one review per plan
 
-## v0.24.0 — Initiative rounds, carry across a return, and plan-ready test-link checks
-
-Released before production serves these changes (USER:2026-10-26). Entries
-marked "Requires the matching server" work against a server that includes
-them, such as the test platform; against an older server those commands are
-refused until it is updated.
-
-- Plan-ready and implementation gates report `criterion_test_case_changed` when
-  a kept criterion is planned for a TestCase with no active verifies trace to
-  it while another TestCase has one. Such a plan could never pass
-  completion-review, because the old TestCase stays required until completion.
-  Give the revised criterion a new id, or plan it for a linked TestCase.
-  PROCESS.md, rdd-plan, the return-to-planning help and the CLI guide now say a
-  rewritten test needs a renamed TestCase or a changed criterion, and a
-  criterion planned for a new TestCase needs a new criterion id. Requires the
-  matching server (Epic 353).
-
-- An Epic can verify behavior that already exists. Its verification declares
-  `mode: existing_behavior` and a nonblank `existing_behavior_reason`; it needs
-  no source revision, candidate or RED, requires current implementation Traces
-  to code before approval, and completes on passing selected test results
-  without comparing earlier runs or code revisions. PROCESS.md, the CLI guide
-  and the build, verify and reverse-engineer-verify skills describe it.
-  Requires the matching server.
-
-- Small changes still need requirements. PROCESS.md and the start, build,
-  verify, deliver and completion-review skills say a small change skips the
-  Epic, not the requirements, observable criteria, source and test Traces,
-  recorded RED and GREEN results or the human's completion decision. Recorded
-  test executions are called test runs.
-
-- A review is recorded as it is and stands until a relevant change is recorded
-  after it; `epics gates review-bundle` is a plain read of the current facts.
-  An `initiative review` member takes only `epic_id`, `criteria`,
-  `obligations`, `findings` and `scope_implemented`; any other key is refused
-  as `invalid_review`. `initiative presentation` counts a round review only
-  when every Epic's latest implementation review was recorded on this
-  Initiative for the same Epic list. PROCESS.md says to add no fingerprints or
-  reviewed-state fields. Requires the matching server (Epic 348).
-
-- `modernpath initiative` lists, reads, creates, links and unlinks the bound
-  System's Initiatives over the existing roadmap line routes (`list`, `get`,
-  `create --file`, `link` and `unlink` with `--epic` or `--requirement`), and
-  runs Initiative rounds: `review-bundle`, `review --file`, `check`,
-  `approve-implementation`, `submit-review`, `presentation` and
-  `approve-completion` take one Initiative and `--epics <ids>`, the explicit
-  list of at most 10 of its Epics. A round command writes each Epic's own
-  records, all or nothing, and a refusal prints the Epic's index and ID
-  (`item 1 (Epic 7)`). A round submission needs the caller to be each Epic's
-  implementation approver; any one person may approve a round's completion.
-  The approval leaves take `--agent`, a blocked gate prints that Epic's report
-  first, and `link`/`unlink --requirement` take `--requirement-kind`. Refusals
-  now print `already_on_roadmap: <ids>` and `not_linkable: <ids>`, and a
-  field-error body as `field: message` lines. Requires the matching server
-  (Epic 345).
-
-- A return to planning carries unchanged work. `epics plan return-to-planning`
-  takes a repeatable `--carry-decision <id>`, sent as `carry_decisions`: each
-  listed decision of the current plan keeps its question and answer in the next
-  planning cycle. A listed ID outside the plan's `verification.decisions` is
-  refused as `carry_decision_not_in_plan`, one whose definition belongs to an
-  earlier cycle as `decision_from_previous_cycle`. The return records a criteria
-  snapshot; a RED stands for a criterion whose text, TestCase and TestCase
-  revision are unchanged since the return. A new plan review, implementation
-  approval, the candidate, GREEN and the implementation review are always
-  renewed. A rewritten
-  test needs a renamed or new TestCase, or a changed criterion, to require a new
-  RED. Help, the CLI guide, the reference loop and PROCESS.md state the rules.
-  Requires the matching server (Epic 344).
-
-- Plan saves keep identity. A check sent without an ID keeps the ID of the saved
-  check with the same name, so reviews and execution registrations that name it
-  stay valid; two checks with the same name, or a repeated check ID, are refused
-  as `invalid_verification_obligations`. A trace left out of a plan's `traces` is
-  now kept; a plan removes a trace only by listing its ID in the new
-  `remove_traces` key, and a listed ID that is not an active trace of the Epic's
-  System on a plan requirement or criterion is refused with
-  `trace_removal_not_found`. Approval stores the list and completion removes
-  exactly those traces. Requires the matching server (Epic 342).
-
-## v0.23.0 — native evidence, batch commands and release acceptance
+Released before production serves these changes (USER:2026-10-28). Entries
+marked "Requires" work against a server that includes them, such as the test
+platform; against an older server those commands fail until it is updated.
 
 - The modernizes trace and drafting from decisions (Epic 334). `epics plan
   show --fields modernization` (also under `--full`, and with `--json`) reads
@@ -251,6 +173,102 @@ refused until it is updated.
 - Process: PROCESS.md says what a Release, an Initiative and the Roadmap are,
   and the chain Initiative → Epic → requirement → trace; rdd-start and rdd-plan
   read the Roadmap with `modernpath roadmap show` before planning.
+
+- Process: each plan the agent submits gets one independent review. The agent
+  then presents the saved plan, the verdict, the findings and the gate
+  blockers to the human, also when the review fails, and revises the plan or
+  asks for another review only after the human decides. A revision the human
+  asks for gets one review and goes back to the human. Before drafting, the
+  planner asks the human, in one batch, the questions only the human can
+  answer; before each review, it checks each design claim against the code.
+  The reviewer marks each note as requirement text or build detail, and the
+  human sees the notes in these two groups. A finding about behavior the Epic
+  leaves unchanged becomes a Backlog record. PROCESS.md, the rdd-plan,
+  rdd-discover, rdd-cold-review, rdd-entry-review, rdd-build, rdd-deliver,
+  rdd-start and rdd-triage skills, the cold-reviewer agent definitions and the
+  loop reference say this.
+
+## v0.24.0 — Initiative rounds, carry across a return, and plan-ready test-link checks
+
+Released before production serves these changes (USER:2026-10-26). Entries
+marked "Requires the matching server" work against a server that includes
+them, such as the test platform; against an older server those commands are
+refused until it is updated.
+
+- Plan-ready and implementation gates report `criterion_test_case_changed` when
+  a kept criterion is planned for a TestCase with no active verifies trace to
+  it while another TestCase has one. Such a plan could never pass
+  completion-review, because the old TestCase stays required until completion.
+  Give the revised criterion a new id, or plan it for a linked TestCase.
+  PROCESS.md, rdd-plan, the return-to-planning help and the CLI guide now say a
+  rewritten test needs a renamed TestCase or a changed criterion, and a
+  criterion planned for a new TestCase needs a new criterion id. Requires the
+  matching server (Epic 353).
+
+- An Epic can verify behavior that already exists. Its verification declares
+  `mode: existing_behavior` and a nonblank `existing_behavior_reason`; it needs
+  no source revision, candidate or RED, requires current implementation Traces
+  to code before approval, and completes on passing selected test results
+  without comparing earlier runs or code revisions. PROCESS.md, the CLI guide
+  and the build, verify and reverse-engineer-verify skills describe it.
+  Requires the matching server.
+
+- Small changes still need requirements. PROCESS.md and the start, build,
+  verify, deliver and completion-review skills say a small change skips the
+  Epic, not the requirements, observable criteria, source and test Traces,
+  recorded RED and GREEN results or the human's completion decision. Recorded
+  test executions are called test runs.
+
+- A review is recorded as it is and stands until a relevant change is recorded
+  after it; `epics gates review-bundle` is a plain read of the current facts.
+  An `initiative review` member takes only `epic_id`, `criteria`,
+  `obligations`, `findings` and `scope_implemented`; any other key is refused
+  as `invalid_review`. `initiative presentation` counts a round review only
+  when every Epic's latest implementation review was recorded on this
+  Initiative for the same Epic list. PROCESS.md says to add no fingerprints or
+  reviewed-state fields. Requires the matching server (Epic 348).
+
+- `modernpath initiative` lists, reads, creates, links and unlinks the bound
+  System's Initiatives over the existing roadmap line routes (`list`, `get`,
+  `create --file`, `link` and `unlink` with `--epic` or `--requirement`), and
+  runs Initiative rounds: `review-bundle`, `review --file`, `check`,
+  `approve-implementation`, `submit-review`, `presentation` and
+  `approve-completion` take one Initiative and `--epics <ids>`, the explicit
+  list of at most 10 of its Epics. A round command writes each Epic's own
+  records, all or nothing, and a refusal prints the Epic's index and ID
+  (`item 1 (Epic 7)`). A round submission needs the caller to be each Epic's
+  implementation approver; any one person may approve a round's completion.
+  The approval leaves take `--agent`, a blocked gate prints that Epic's report
+  first, and `link`/`unlink --requirement` take `--requirement-kind`. Refusals
+  now print `already_on_roadmap: <ids>` and `not_linkable: <ids>`, and a
+  field-error body as `field: message` lines. Requires the matching server
+  (Epic 345).
+
+- A return to planning carries unchanged work. `epics plan return-to-planning`
+  takes a repeatable `--carry-decision <id>`, sent as `carry_decisions`: each
+  listed decision of the current plan keeps its question and answer in the next
+  planning cycle. A listed ID outside the plan's `verification.decisions` is
+  refused as `carry_decision_not_in_plan`, one whose definition belongs to an
+  earlier cycle as `decision_from_previous_cycle`. The return records a criteria
+  snapshot; a RED stands for a criterion whose text, TestCase and TestCase
+  revision are unchanged since the return. A new plan review, implementation
+  approval, the candidate, GREEN and the implementation review are always
+  renewed. A rewritten
+  test needs a renamed or new TestCase, or a changed criterion, to require a new
+  RED. Help, the CLI guide, the reference loop and PROCESS.md state the rules.
+  Requires the matching server (Epic 344).
+
+- Plan saves keep identity. A check sent without an ID keeps the ID of the saved
+  check with the same name, so reviews and execution registrations that name it
+  stay valid; two checks with the same name, or a repeated check ID, are refused
+  as `invalid_verification_obligations`. A trace left out of a plan's `traces` is
+  now kept; a plan removes a trace only by listing its ID in the new
+  `remove_traces` key, and a listed ID that is not an active trace of the Epic's
+  System on a plan requirement or criterion is refused with
+  `trace_removal_not_found`. Approval stores the list and completion removes
+  exactly those traces. Requires the matching server (Epic 342).
+
+## v0.23.0 — native evidence, batch commands and release acceptance
 
 - Process: gating evidence comes from deterministic tests, and a model-dependent
   run is a measurement; a criterion states observable behavior and wording is
