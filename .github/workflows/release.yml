@@ -19,9 +19,9 @@
 # these repository variables:
 #
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
-#     The Entra app registration with a federated credential for
+#     The user-assigned managed identity with a federated credential for
 #     repo:ModernPath/cli:environment:release and the "Artifact Signing
-#     Certificate Profile Signer" role on the certificate profile.
+#     Certificate Profile Signer" role on the signing account.
 #   ARTIFACT_SIGNING_ENDPOINT   e.g. https://neu.codesigning.azure.net/
 #   ARTIFACT_SIGNING_ACCOUNT    the Artifact Signing account name
 #   ARTIFACT_SIGNING_PROFILE    the Public Trust certificate profile name
@@ -29,6 +29,13 @@
 # Without ARTIFACT_SIGNING_ACCOUNT the Windows binary ships unsigned, as
 # before. With it, a failed signature fails the release: nothing unsigned is
 # published once signing is on.
+#
+# Dry run: start the workflow by hand (workflow_dispatch) on main. It builds
+# and signs, and uploads the signed modernpath.exe as the `windows-signed`
+# workflow artifact; it publishes nothing. The release environment admits only
+# v* tags and main, so a dispatch from another branch cannot sign.
+# The variables and the environment are managed in live-infrastructure
+# (github-cli-release).
 
 name: Release
 
@@ -36,6 +43,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -54,7 +62,11 @@ jobs:
 
       - name: Build binaries
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dryrun+${GITHUB_SHA::7}"
+          fi
           BINARY_NAME="modernpath"
 
           mkdir -p dist
@@ -142,9 +154,9 @@ jobs:
   release:
     needs: [build, sign-windows]
     # sign-windows is skipped while signing is not configured; a failed
-    # signature stops the release.
+    # signature stops the release. A dry run never publishes.
     if: >-
-      always() && needs.build.result == 'success' &&
+      always() && github.event_name == 'push' && needs.build.result == 'success' &&
       (needs.sign-windows.result == 'success' || needs.sign-windows.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
@@ -203,7 +215,7 @@ jobs:
         run: |
           gh workflow run update-formula.yml \
             -R modernpath/homebrew-tap \
-            -f version=${VERSION#v} \
+            -f version="${VERSION#v}" \
             -f darwin_arm64_sha256=${{ steps.checksums.outputs.DARWIN_ARM64 }} \
             -f darwin_amd64_sha256=${{ steps.checksums.outputs.DARWIN_AMD64 }} \
             -f linux_arm64_sha256=${{ steps.checksums.outputs.LINUX_ARM64 }} \
@@ -218,6 +230,6 @@ jobs:
         run: |
           gh workflow run update-formula.yml \
             -R ModernPath/scoop-bucket \
-            -f version=${VERSION#v} \
+            -f version="${VERSION#v}" \
             -f windows_sha256=${{ steps.checksums.outputs.WINDOWS_AMD64 }} || \
           echo "Scoop bucket update skipped (create ModernPath/scoop-bucket repo and re-run)"
