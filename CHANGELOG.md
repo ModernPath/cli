@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.25.0 — Roadmap planning, Initiative selection, the modernizes trace and one review per plan
 
 Released before production serves these changes (USER:2026-10-28). Entries
