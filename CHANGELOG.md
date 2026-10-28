@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.24.0 — Initiative rounds, carry across a return, and plan-ready test-link checks
 
 Released before production serves these changes (USER:2026-10-26). Entries
