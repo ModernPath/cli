@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.26.0 — Signed Windows binary
 
 - The Windows binary, `modernpath.exe`, is signed with Azure Artifact
