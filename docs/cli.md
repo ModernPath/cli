@@ -1276,11 +1276,19 @@ scope with `scope_implemented: true`. Findings have `severity` and `description`
 the server assigns IDs. Resolutions reference `review_id` and `finding_id` with a
 reason. A decision definition stores its question once; answers reference its
 existing decision ID and retain answer/source. No review uploads a presentation.
+Give each declared question a one-line title that names the choice (`title`, 1 to
+120 characters, no control character), and its alternatives in `options`, with
+the recommended one marked: 2 to 6 `{"key","text","recommended"}` objects, each
+key 1 to 8 ASCII letters or digits, unique and case-sensitive, each text 1 to
+1000 characters, `recommended` true on at most one. The background stays in the
+question text. Any other shape is refused with `invalid_human_decision` and
+nothing is written; the answer stays free text.
 `epics gates declare-decision` and `epics gates decision` also take a batch,
 `{"items":[...]}` of the single objects: 1 to 200 distinct items, written in
 input order in one call, all or nothing. A batch declare returns
-`{"items":[{"index","id","question"}]}`. A refused batch writes nothing and
-names the item: `<code> — item <index> (<identity>) — <message>`.
+`{"items":[{"index","id","question","title","options"}]}`, with `title` null
+and `options` empty for a question declared without them. A refused batch
+writes nothing and names the item: `<code> — item <index> (<identity>) — <message>`.
 
 Return to planning carries selected decisions. It clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. A new plan review and implementation approval are required, followed by retesting each changed published criterion.
 

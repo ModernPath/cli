@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `epics gates declare-decision` takes an optional one-line `title` and
+  optional `options` (Epic 382). Requires a server that includes it. The title
+  is 1 to 120 characters after trimming, with no control character; options are
+  2 to 6 `{key, text, recommended}` objects with unique, case-sensitive keys of
+  1 to 8 ASCII letters or digits, texts of 1 to 1000 characters and at most one
+  recommended. Any other shape is refused with `invalid_human_decision` and
+  nothing is written. A batch declare lists each item's `title` and `options`.
+  The `epics gates` help, the `rdd-plan` skill, PROCESS.md and the CLI guide
+  tell agents to give each question a one-line title naming the choice, its
+  alternatives as options with the recommended one marked, and its background
+  in the question text.
+
 ## v0.26.0 — Signed Windows binary
 
 - The Windows binary, `modernpath.exe`, is signed with Azure Artifact

@@ -231,4 +231,32 @@ func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecis
 			t.Errorf("epics gates help must say the addressee is the email of a workspace member")
 		}
 	})
+
+	// Epic 382 (SR-4625-0, criterion f8d17252): the input example shows the
+	// optional title and options, and the batch reply lists them.
+	t.Run("epics gates declare-decision help shows title and options", func(t *testing.T) {
+		raw := help(t, "epics", "gates")
+		text := roundWordingText(raw)
+		var line string
+		for _, candidate := range strings.Split(raw, "\n") {
+			if strings.Contains(candidate, "declare-decision:") {
+				line = candidate
+			}
+		}
+		for _, field := range []string{`"title"`, `"options"`} {
+			if !strings.Contains(line, field) {
+				t.Errorf("the declare-decision input example must name %s, got %q", field, line)
+			}
+		}
+		for _, phrase := range []string{
+			`"key"`, `"text"`, `"recommended"`,
+			"1 to 120 characters",
+			"2 to 6 options",
+			`{"items":[{"index","id","question","title","options"}]}`,
+		} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("epics gates help must state %q", phrase)
+			}
+		}
+	})
 }

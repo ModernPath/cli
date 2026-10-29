@@ -627,6 +627,9 @@ store or gate on a separate RED result. An explicitly reviewed
 existing-behavior Epic uses that declaration instead of manufacturing failures.
 Record applicable boundaries and reasons for exclusions, the plan author's
 context, and required human decisions using identities issued by the CLI. Retain each decision question beside its effective human answer.
+Give each decision a one-line title that names the choice, and its alternatives
+as `options`, with the recommended one marked; the background stays in the
+question text.
 These are test definitions, not executable test changes before approval.
 Obtain and record answers to declared decisions before the independent review.
 Inspect read-only phase readiness and correct structural blockers before review;

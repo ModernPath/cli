@@ -193,11 +193,21 @@ Record a separate review with --file:
     "criteria":["uuid"],"obligations":["uuid"],"reason":"review conclusion",
     "findings":[],"scope_implemented":false}
   resolve: {"review_id":"uuid","finding_id":"uuid","reason":"resolution"}
-  declare-decision: {"question":"Question requiring a human decision","addressee":"name@example.com"}
+  declare-decision: {"question":"Background and the question","title":"One-line title naming the choice","options":[{"key":"A","text":"First alternative","recommended":true},{"key":"B","text":"Second alternative"}],"addressee":"name@example.com"}
 addressee is optional: the email of the workspace member the question waits for,
 matched without regard to case or surrounding spaces; the reply names them as
 addressee {id, name}. An email of no workspace member is refused and nothing is written.
+title and options are optional. title is one line of 1 to 120 characters after
+trimming, with no control character; Your move shows it on the decision card.
+options are 2 to 6 options of "key" (1 to 8 ASCII letters or digits, unique,
+case-sensitive), "text" (1 to 1000 characters) and an optional boolean
+"recommended", true on at most one. Keep the background in the question text.
+Any other shape is refused with invalid_human_decision and nothing is written.
   decision: {"decision_id":"declared UUID","answer":"human decision","source":"USER:..."}
+declare-decision and decision also take a batch, {"items":[<object>, ...]}: 1 to 200
+distinct items written in input order in one call, all or nothing. A batch declare
+prints {"items":[{"index","id","question","title","options"}]}. A refused batch writes nothing and
+names the failing item: <code> — item <index> (<identity>) — <message>.
 
 Returning active work to planning requires the current approver's explicit
 human decision. It releases requirement ownership and retains draft content,

@@ -79,7 +79,11 @@ the review that follows them. Before the new review of a requested revision:
    If the prompt you ask through holds fewer questions than you have, ask the
    ones that change scope and put the rest in the plan as assumptions the human
    approves. Declare each question as a decision through the CLI and name it in
-   the plan's verification decisions. Record the answer after the plan save,
+   the plan's verification decisions. Give each question a one-line title that
+   names the choice, and put its alternatives in `options`, with the
+   recommended one marked; the background stays in the question text. Mission
+   Control shows the title on a short card and the rest when the card is opened.
+   Record the answer after the plan save,
    because the server accepts an answer only for a decision the saved plan lists.
 4. Inspect affected control/data flow, persistence, interfaces, integrations,
    failure modes, dependencies and project test gates. For shared or persisted
