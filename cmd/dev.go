@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -106,20 +105,14 @@ func localStack(apiURL string) bool {
 
 // mcpURL is ModernPath's one MCP address (SR-MCP-001-009), built the way the
 // API client builds a request to core's `/api/mcp`: on a platform API host
-// platform.Prepare moves it onto core's `/api/ex` prefix, and on the local
+// platform.CoreURL moves it onto core's `/api/ex` prefix, and on the local
 // stack it is the local gateway's. The address names no workspace; the
 // assistant signs in at ZITADEL and its token names one.
 func mcpURL(cfg *config.Config) string {
 	if localStack(cfg.APIURL) {
 		return localMCPURL
 	}
-	raw := strings.TrimRight(cfg.APIURL, "/") + "/api/mcp"
-	req, err := http.NewRequest(http.MethodPost, raw, nil)
-	if err != nil {
-		return raw
-	}
-	platform.Prepare(req)
-	return req.URL.String()
+	return platform.CoreURL(strings.TrimRight(cfg.APIURL, "/") + "/api/mcp")
 }
 
 var devCmd = &cobra.Command{

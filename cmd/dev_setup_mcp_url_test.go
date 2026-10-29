@@ -87,7 +87,7 @@ func TestDevSetupWritesMCPAddress(t *testing.T) {
 }
 
 // The tools an MCP client may run, mirrored from core's
-// `Core.MCP.ToolRegistry` @external_surface (SR-MCP-001-005).
+// `Core.MCP.External` @external_surface (SR-MCP-001-005).
 var mcpSurfaceTools = []string{
 	"start_conversation", "list_conversations", "chat", "list_epics", "get_epic",
 	"query_requirements", "trace_requirement", "chat_result", "search_epics",

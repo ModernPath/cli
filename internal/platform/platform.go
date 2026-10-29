@@ -106,14 +106,30 @@ func Prepare(req *http.Request) {
 		return
 	}
 
-	req.URL.Path = corePath(req.URL.Path)
-	if req.URL.RawPath != "" {
-		req.URL.RawPath = corePath(req.URL.RawPath)
-	}
+	moveOntoPlatformPrefix(req.URL)
 	if req.Header == nil {
 		req.Header = make(http.Header)
 	}
 	req.Header.Set(TokenHandlerHeader, TokenHandlerValue)
+}
+
+// CoreURL is rawURL as a request to it would be sent: on a platform API host a
+// core `/api/...` path moves onto core's platform prefix, as Prepare moves a
+// request's; anywhere else, or when rawURL does not parse, it is unchanged.
+func CoreURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || !isPlatformOrigin(u) {
+		return rawURL
+	}
+	moveOntoPlatformPrefix(u)
+	return u.String()
+}
+
+func moveOntoPlatformPrefix(u *url.URL) {
+	u.Path = corePath(u.Path)
+	if u.RawPath != "" {
+		u.RawPath = corePath(u.RawPath)
+	}
 }
 
 // corePath maps one of core's own `/api/...` paths onto its platform prefix.

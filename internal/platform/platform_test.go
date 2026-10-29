@@ -146,3 +146,18 @@ func TestIsPlatformHost(t *testing.T) {
 		}
 	}
 }
+
+func TestCoreURLMovesACorePathOnlyOnAPlatformHost(t *testing.T) {
+	cases := map[string]string{
+		zitadel.ProdProfile.APIURL + "/api/mcp":    zitadel.ProdProfile.APIURL + "/api/ex/mcp",
+		zitadel.TestProfile.APIURL + "/api/mcp":    zitadel.TestProfile.APIURL + "/api/ex/mcp",
+		zitadel.ProdProfile.APIURL + "/api/ex/mcp": zitadel.ProdProfile.APIURL + "/api/ex/mcp",
+		config.LocalAPIURL + "/api/mcp":            config.LocalAPIURL + "/api/mcp",
+		"::not a url":                              "::not a url",
+	}
+	for raw, want := range cases {
+		if got := CoreURL(raw); got != want {
+			t.Errorf("CoreURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
