@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/manifoldco/promptui"
 	"github.com/modernpath/cli/internal/config"
+	"github.com/modernpath/cli/internal/platform"
+	"github.com/modernpath/cli/internal/zitadel"
 	"github.com/spf13/cobra"
 )
 
@@ -76,8 +80,46 @@ func setupMCPForTool(toolName string, cfg *config.Config) error {
 	case "claude":
 		return setupClaudeMCP(cfg)
 	default:
-		return fmt.Errorf("automatic MCP setup is unavailable for %s; configure %s/api/mcp in the tool settings", toolName, cfg.APIURL)
+		return fmt.Errorf("automatic MCP setup is unavailable for %s; configure %s in the tool settings", toolName, mcpURL(cfg))
 	}
+}
+
+// The local stack's MCP sign-in (README §Calling the MCP endpoint locally).
+// Core's metadata names the gateway's /api/ex/mcp as the resource, so an
+// assistant signs in only there, not on core's own :4000. The OIDC mock
+// registers Claude Code as a public client with a fixed callback port.
+const (
+	localMCPURL          = "http://127.0.0.1:4123/api/ex/mcp"
+	localMCPClientID     = "modernpath-local-claude"
+	localMCPCallbackPort = 4153
+)
+
+// localStack reports whether apiURL is core on the local stack's :4000.
+func localStack(apiURL string) bool {
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return u.Scheme == "http" && (host == "localhost" || host == "127.0.0.1") && u.Port() == "4000"
+}
+
+// mcpURL is ModernPath's one MCP address (SR-MCP-001-009), built the way the
+// API client builds a request to core's `/api/mcp`: on a platform API host
+// platform.Prepare moves it onto core's `/api/ex` prefix, and on the local
+// stack it is the local gateway's. The address names no workspace; the
+// assistant signs in at ZITADEL and its token names one.
+func mcpURL(cfg *config.Config) string {
+	if localStack(cfg.APIURL) {
+		return localMCPURL
+	}
+	raw := strings.TrimRight(cfg.APIURL, "/") + "/api/mcp"
+	req, err := http.NewRequest(http.MethodPost, raw, nil)
+	if err != nil {
+		return raw
+	}
+	platform.Prepare(req)
+	return req.URL.String()
 }
 
 var devCmd = &cobra.Command{
@@ -335,10 +377,11 @@ func buildDevPrompt(task string, cfg *config.Config) string {
 	sb.WriteString(task)
 	sb.WriteString("\n\n")
 	sb.WriteString("Use the modernpath MCP tools to:\n")
-	sb.WriteString("- Search the codebase with `search_codebase`\n")
-	sb.WriteString("- Get architecture context with `get_architecture`\n")
-	sb.WriteString("- Ask questions with `agentic_search`\n")
-	sb.WriteString("- Build context for implementation with `search_codebase_for_context`\n")
+	sb.WriteString("- Find the system to work in with `list_systems`\n")
+	sb.WriteString("- Get context about the code for this task with `context_search`\n")
+	sb.WriteString("- Find epics and requirements with `search_epics` and `search_requirements`\n")
+	sb.WriteString("- See how a requirement is implemented and tested with `trace_requirement`\n")
+	sb.WriteString("- Ask questions about the system with `chat`\n")
 
 	if cfg.SystemName != "" {
 		sb.WriteString(fmt.Sprintf("\nProject: %s\n", cfg.SystemName))
@@ -375,7 +418,7 @@ func setupOpenCodeMCP(cfg *config.Config) error {
 
 	mcp["modernpath"] = map[string]interface{}{
 		"type":    "remote",
-		"url":     fmt.Sprintf("%s/api/mcp", cfg.APIURL),
+		"url":     mcpURL(cfg),
 		"enabled": true,
 	}
 
@@ -415,7 +458,7 @@ func setupCursorMCP(cfg *config.Config) error {
 	}
 
 	servers["modernpath"] = map[string]interface{}{
-		"url": fmt.Sprintf("%s/api/mcp", cfg.APIURL),
+		"url": mcpURL(cfg),
 	}
 
 	mcpConfig["mcpServers"] = servers
@@ -427,6 +470,19 @@ func setupCursorMCP(cfg *config.Config) error {
 	}
 
 	return os.WriteFile(configPath, data, 0644)
+}
+
+// claudeMCPOAuth is the pre-registered app Claude Code signs in with: neither
+// ZITADEL nor the local mock offers dynamic client registration. Nil where
+// no app is known, as on production today.
+func claudeMCPOAuth(cfg *config.Config) map[string]interface{} {
+	if localStack(cfg.APIURL) {
+		return map[string]interface{}{"clientId": localMCPClientID, "callbackPort": localMCPCallbackPort}
+	}
+	if p, ok := zitadel.ProfileForAPIURL(strings.TrimRight(cfg.APIURL, "/")); ok && p.MCPClientID != "" {
+		return map[string]interface{}{"clientId": p.MCPClientID}
+	}
+	return nil
 }
 
 func setupClaudeMCP(cfg *config.Config) error {
@@ -451,10 +507,14 @@ func setupClaudeMCP(cfg *config.Config) error {
 		servers = make(map[string]interface{})
 	}
 
-	servers["modernpath"] = map[string]interface{}{
+	server := map[string]interface{}{
 		"type": "http",
-		"url":  fmt.Sprintf("%s/api/mcp", cfg.APIURL),
+		"url":  mcpURL(cfg),
 	}
+	if oauth := claudeMCPOAuth(cfg); oauth != nil {
+		server["oauth"] = oauth
+	}
+	servers["modernpath"] = server
 	mcpConfig["mcpServers"] = servers
 
 	data, err := json.MarshalIndent(mcpConfig, "", "  ")

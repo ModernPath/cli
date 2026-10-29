@@ -1542,10 +1542,18 @@ available for API-backed discovery.
 
 ### Coding-agent and MCP setup
 
-`modernpath dev setup <tool>` configures the connected server's MCP endpoint
-for OpenCode, Cursor, Claude Code, or Codex. Run the command's `--help` for
-supported options, then verify the connection in your coding agent before
-using its tools.
+`modernpath dev setup <tool>` writes the connected server's MCP address for
+OpenCode, Cursor or Claude Code: `https://<api-host>/api/ex/mcp` on a platform
+API host, the local gateway's `http://127.0.0.1:4123/api/ex/mcp` for a local
+core on `:4000`, `<api_url>/api/mcp` elsewhere. The address is the same for
+every workspace and setup works whether or not the CLI is signed in: the
+coding agent signs in at ZITADEL itself, and its sign-in names the workspace.
+Codex needs the address configured by hand. For Claude Code, setup also
+writes the client id of the MCP assistant app (`oauth.clientId`) on the test
+platform and on the local stack, where it adds the mock's fixed
+`oauth.callbackPort`. Production has no assistant app yet. See
+`../../docs/guides/connect-claude-code.md`.
+Verify the connection in your coding agent before using its tools.
 
 ### Command surface
 

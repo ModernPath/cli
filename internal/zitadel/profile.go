@@ -23,6 +23,13 @@ type Profile struct {
 	// Empty means "not known here yet": login asks for exactly what it asks
 	// for today, and platform.Authorize expects nothing and refuses nothing.
 	ProjectID string
+
+	// MCPClientID is the "modernpath-mcp" native app an assistant such as
+	// Claude Code signs in with to the MCP address (EPIC-MCP-001): a public
+	// client with loopback redirects. `dev setup claude` writes it, since
+	// ZITADEL offers no dynamic client registration. Empty means no such app
+	// is registered on this instance yet.
+	MCPClientID string
 }
 
 // ProdProfile is the baked-in prod ZITADEL target: the "modernpath-cli"
@@ -61,6 +68,10 @@ var TestProfile = Profile{
 	// zitadel-project-platform (test). Same reasoning as ProdProfile, and a
 	// different project: prod and test are separate ZITADEL instances.
 	ProjectID: "371589174458843143",
+
+	// modernpath-mcp in live-infrastructure's test app_zitadel.yaml; ZITADEL
+	// accepted its loopback /callback redirect on any port (RUN:2026-10-28).
+	MCPClientID: "397099556791124142",
 }
 
 // SelectProfile returns TestProfile when test is true, otherwise ProdProfile.

@@ -45,7 +45,7 @@ func TestSetupClaudeWritesProjectScopeMCPJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("modernpath server missing: %v", servers)
 	}
-	if mp["url"] != "http://localhost:4000/api/mcp" {
+	if mp["url"] != "http://127.0.0.1:4123/api/ex/mcp" {
 		t.Fatalf("wrong MCP url: %v", mp["url"])
 	}
 

@@ -17,6 +17,21 @@
   of no member is refused with `invalid_human_decision` and nothing is written
   (Epic 377). Requires a server that includes it. The `epics gates` help names
   the field.
+- `modernpath dev setup` writes ModernPath's one MCP address (EPIC-MCP-001,
+  SR-MCP-001-009). On a platform API host Claude Code, Cursor and OpenCode now
+  get `https://<api-host>/api/ex/mcp`, the address the platform routes;
+  before, they got `<api-host>/api/mcp`, which it does not. Elsewhere the
+  address stays `<api_url>/api/mcp`. The address names no workspace: the
+  assistant signs in at ZITADEL itself. The prompt `modernpath dev run`
+  prints names only tools an MCP client may run. Requires a server with the
+  MCP endpoint.
+- `modernpath dev setup claude` writes the client id Claude Code signs in
+  with (`oauth.clientId` in `.mcp.json`): the test platform's MCP assistant
+  app, or the local mock's `modernpath-local-claude` with callback port 4153.
+  Before, `/mcp` Authenticate fell back to dynamic client registration,
+  which ZITADEL does not offer. For a local core on `:4000`, every tool now
+  gets the local gateway's `http://127.0.0.1:4123/api/ex/mcp`, the address
+  core's sign-in metadata names.
 
 ## v0.25.0 — Roadmap planning, Initiative selection, the modernizes trace and one review per plan
 
