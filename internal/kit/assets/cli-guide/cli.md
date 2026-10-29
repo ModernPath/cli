@@ -1185,19 +1185,15 @@ review bundle records no check. A passing check grants no human approval.
 Read current server facts for a separate review with
 `modernpath epics gates review-bundle <epic-id> --phase <phase> --json`.
 The response contains Epic context, current `review`, review findings and
-resolutions, `readiness`, and source-file identities. Within `review`, `test_cases`
-is keyed by TestCase UUID and `evidence` by run UUID. Each execution contains its
-registration, run, actual results and finalization once. Registrations name the
-criterion/check obligations. Results reference TestCases; typed Traces
-supply criterion mappings. No full presentation is retained inside a review.
+resolutions, `readiness`, and source-file identities. Within `review`,
+`test_cases` is keyed by TestCase UUID and `evidence` by criterion UUID.
+Each criterion shows its current outcome and result identities.
 
 ```sh
 modernpath epics plan show <epic-id> --full --json
 modernpath epics plan save <epic-id> --file plan.json --reason "<reason>"
 modernpath epics gates review-bundle <epic-id> --json
 modernpath epics plan approve-implementation <epic-id> --reason "USER:<source>: approve"
-modernpath epics gates candidate <epic-id> --file candidate.json
-modernpath epics gates start-execution <epic-id> --file execution.json
 modernpath evidence record --file result.json
 modernpath epics plan submit-review <epic-id> --reason "<reason>"
 modernpath epics gates presentation <epic-id> --json
@@ -1213,9 +1209,11 @@ and `verification`. Requirement proposals retain `kind`, `id`, exact proposed
 relationship. A trace left out of `traces` is kept; it does not by itself
 satisfy the planning gate's implements-or-planned trace rule, which reads only
 `traces`. A trace is removed only when the plan lists its ID in `remove_traces`:
-each ID must be an active trace of this System on a plan requirement or
-criterion, or save refuses it as `trace_removal_not_found`. Approval records the
-list and completion removes exactly those traces.
+each ID must be an undeleted active or stale trace of this System on a plan
+requirement or criterion. Save refuses deleted, unknown, foreign-System and
+out-of-plan IDs as `trace_removal_not_found`. Listing a stale trace does not
+implicitly revive it. Approval records the list and completion removes exactly
+those traces.
 `verification` declares the plan `author_context`, decision UUIDs, criterion
 obligations `{id, changed, test_case_id, boundary}`, project checks
 `{id, name, test_case_id, boundary}`, and boundaries `{name, applicable, reason}`.
@@ -1267,17 +1265,10 @@ is refused with 409 `epic_gate_blocked` until the business owner agrees
 again. Report the blocker and ask the business owner; no command records the
 agreement.
 
-Candidate input is `{"revision":"<tested code revision>"}`. Execution registration
-is `{"revision":"<tested code revision>","obligation_ids":["<UUID>"]}`. Register
-before running tests. Actual failed assertions establish RED; errors, skips and
-inconclusive outcomes do not. Finalize the failed run before registering the
-passing run. With several obligations, register the batch, run the tests,
-finalize the batch: both `start-execution` and `evidence record` accept
-`{"items":[...]}` (at most 50 items) and post to their batch routes. Each batch is
-all-or-nothing and a refusal prints `<code> — item <index> (<identity>)`. Items
-of one register batch cannot share an obligation or a test case, so never register
-RED and GREEN for the same obligation in one batch. Passing evidence must bind to the current candidate identity and
-revision; same-SHA redeclaration requires fresh passing evidence.
+Run focused assertions before implementation and confirm their expected
+failures. After implementation, run focused and proportional checks and record
+actual outcomes for each criterion and TestCase with `evidence record`. The
+latest committed outcome for each pair is current, including failures.
 
 A separate review records `phase`, `reviewer_context`, all criterion and obligation
 IDs, `reason`, `findings` and `scope_implemented`. Implementation review confirms
@@ -1290,6 +1281,8 @@ existing decision ID and retain answer/source. No review uploads a presentation.
 input order in one call, all or nothing. A batch declare returns
 `{"items":[{"index","id","question"}]}`. A refused batch writes nothing and
 names the item: `<code> — item <index> (<identity>) — <message>`.
+
+Return to planning carries selected decisions. It clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. A new plan review and implementation approval are required, followed by retesting each changed published criterion.
 
 Approval and return requests contain reason and optional actor attribution.
 The server checks eligible current database state under its existing locks.
@@ -1304,10 +1297,12 @@ publishes accepted requirement content, criteria and trace meaning atomically,
 releases ownership and records approval attribution. Repeating terminal completion
 publishes once. Return to implementation uses current authorization/lifecycle and
 works when completion readiness fails. Return to planning withdraws approval and
-starts a new planning cycle. Decisions listed with `--carry-decision` and RED for
-a criterion and TestCase unchanged since the return carry into it; a new plan
-review, implementation approval, the candidate, GREEN and the implementation
-review are always renewed. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. Human implementation and completion decisions remain separate.
+starts a new planning cycle. Decisions listed with `--carry-decision` retain
+their answers. Current proof for each published criterion whose approved meaning
+differs from its published meaning is cleared; unchanged criterion proof remains
+current. A new plan review and implementation approval are required, followed by
+retesting each changed published criterion. Human implementation and
+completion decisions remain separate.
 No command merges or deploys. Read state and audit after an uncertain response.
 
 `epics gates presentation` also lists `changes_since_approval` and
@@ -1363,7 +1358,7 @@ loop reference: tooling backlog items only when the bound System name contains
 signed-in reporter's focus atomically. Preserve other lanes; do not claim a
 report was created if its focus failed. Create no missing-capability reports or backlog items
 for other Systems. Never query private transport. During planning assess intended targets; during verification and
-completion assess executed results and their applicability to the tested revision.
+completion assess current criterion outcomes and scoped Traces.
 
 TestCases retain UUID, tenant/System, title, existing revision, approval
 attribution, deletion and server timestamps. Create with `{"title":"Access check"}`;
@@ -1371,16 +1366,16 @@ update with the same title-only shape. The CLI supplies the bound System. Reads
 use UUIDs and title; lists search UUID/title and order by UUID or title.
 Procedure, preconditions, runner/selector, authority, embeddings, descriptive body,
 status and TC-number references are removed. A title change advances the existing
-revision and invalidates earlier applicable proof.
+revision; that change does not invalidate proof.
 
 ```sh
 modernpath test-cases create --file test-case.json
 modernpath test-cases update <uuid> --file test-case-update.json
 modernpath test-cases get <uuid> --full --json
-modernpath evidence runs --target-type criterion --target-id <criterion-uuid> --full --json
+modernpath evidence latest --target-type criterion --target-id <criterion-uuid> --json
 ```
 
-results, executed revisions and typed relationships remain inspectable
+Current results and typed relationships remain inspectable
 through these existing identities. Historical definitions and raw output are not
 retained or reconstructed. See [Verification evidence](#verification-evidence).
 
@@ -1392,7 +1387,7 @@ The same terse output contract applies across the command surface:
 |---|---|
 | `test-cases list`, `get` | UUID, title and revision. `get` and `update` use UUIDs. Lists search UUID/title with `--query` and sort with `--order id|title`. |
 | `traces list` | Requires an entity type and ID; supports relation filtering and server continuation. Each row identifies the trace and its endpoints. |
-| `evidence latest`, `runs` | Bounded server queries support target, outcome and time filters. `runs` also supports kind. `latest` filters the newest observation per target, so filtering cannot resurrect an older pass. |
+| `evidence latest` | Bounded server queries support criterion, requirement, TestCase, outcome and time filters. Each row is current proof for one criterion and TestCase. |
 | `read-doc` without `--id` | Paged metadata discovery with query, tier, angle and ordering. Select content through a direct ID read. |
 | `system-docs list`, `get` | Metadata lists support query, type, order and continuation. `get` summarizes by default; select content with `--fields` or `--full`. |
 | `search`, `requirements search`, `epics search` | Bounded ranked hits, compact by default, with `--fields`, `--full` and `--json`. |
@@ -1542,10 +1537,18 @@ available for API-backed discovery.
 
 ### Coding-agent and MCP setup
 
-`modernpath dev setup <tool>` configures the connected server's MCP endpoint
-for OpenCode, Cursor, Claude Code, or Codex. Run the command's `--help` for
-supported options, then verify the connection in your coding agent before
-using its tools.
+`modernpath dev setup <tool>` writes the connected server's MCP address for
+OpenCode, Cursor or Claude Code: `https://<api-host>/api/ex/mcp` on a platform
+API host, the local gateway's `http://127.0.0.1:4123/api/ex/mcp` for a local
+core on `:4000`, `<api_url>/api/mcp` elsewhere. The address is the same for
+every workspace and setup works whether or not the CLI is signed in: the
+coding agent signs in at ZITADEL itself, and its sign-in names the workspace.
+Codex needs the address configured by hand. For Claude Code, setup also
+writes the client id of the MCP assistant app (`oauth.clientId`) on the test
+platform and on the local stack, where it adds the mock's fixed
+`oauth.callbackPort`. Production has no assistant app yet. See
+`../../docs/guides/connect-claude-code.md`.
+Verify the connection in your coding agent before using its tools.
 
 ### Command surface
 
@@ -1643,38 +1646,14 @@ modernpath reverse-engineer review --file selection.json --json
 
 The selection is `{"requirements":[{"kind":"system_requirement","id":"<UUID>"}]}`;
 `user_requirement` is also supported. The read returns `system_id`, `eligible`,
-`problems`, `requirements`, `test_cases`, `runs` and `evidence`.
+`problems`, `requirements`, `test_cases` and current `evidence`. Criterion checks
+name required TestCases and result IDs. Every required test needs a passing result
+linked to that criterion and a scoped source Trace. Independently recorded results
+combine; a shared test has a separate current result for each criterion.
 
-- Each requirement has `kind`, `id`, `revision`, `work_status` and `criteria`.
-  Each criterion check has `criterion_id`, `state`, `problem`, `test_keys`
-  (required TestCase IDs), `run_id` and `result_ids`.
-- `test_cases` contains each required `id` and current `revision` once.
-- `runs` contains each current `id`, `sha` and `status` once.
-- `evidence` contains each selected result's `id`, `run_id`, `target_id`
-  (TestCase ID), `result` and `validity` once.
-
-DONE requirements have empty criterion checks and contribute no execution data.
-Reuse applicable passing results; execute an unexecuted shared test once for all
-criteria it covers. Each unresolved requirement needs one current run supporting
-all its criteria. A newer partial or failed run cannot borrow older passing
-results. Independent requirements can reuse different already-recorded runs.
-A shared test's current execution affects every requirement linked to that test,
-including when its tested code revision differs from an earlier passing run.
-The server checks current relationships, executed TestCase revision, outcome and
-validity. It does not infer applicability by comparing recording timestamps.
-The response contains no historical execution lists, version bodies, copied
-content or presentation bundles. Read requirement content separately when needed.
-
-Before executing, ensure each TestCase has an active Trace to a `source_file`
-or `file_analysis` in the same System. Use `reverse-engineer record` to establish
-missing code relationships. Missing code links cause `native_test_chain_required`
-at finalization; repair the link and reuse the retained run ID.
-
-Reserve once with `evidence record`, retain the returned run ID, execute and
-finalize actual test outcomes and criterion mappings. Retry finalization with
-that same ID; do not reserve again to retry submission. An empty reservation
-cannot be safely rediscovered from SHA alone. Missing, failing, stale or
-incomplete evidence blocks acceptance.
+Reuse current passing proof when complete. Otherwise execute the required test and
+record its actual outcome for the criterion. Test and requirement revisions do
+not determine applicability. Missing, failing or incomplete proof blocks acceptance.
 
 After explicit human acceptance, send the selection and decision:
 
@@ -1842,7 +1821,7 @@ Initiative round routes.
 ### Release acceptance
 
 Release acceptance records what a human tester checked in a release. **It is
-not RDD evidence**: it records no test case, evidence run or result, and it
+not RDD evidence**: it records no criterion result, and it
 does not accept a requirement. Specs are test steps for a tester, not
 acceptance criteria. The commands are not part of the delivery loop.
 
@@ -1892,57 +1871,59 @@ rejected report is closed: further results, sign-off or reject answer
 
 ## Verification evidence
 
-Reserve an empty non-Epic run before execution with
-`{"sha":"<tested code revision>","status":"running"}`. Retain the returned `run.id`.
-Active Epic work uses `epics gates start-execution` and its returned `run_id`.
-Finalize under that identity:
+Record actual outcomes for one requirement criterion:
 
 ```json
 {
-  "id": "<reserved run UUID>",
-  "status": "complete",
-  "native_verification": {
-    "tests": [{
-      "test_case_id": "<existing TestCase UUID>",
-      "result": "pass",
-      "detail": {"executed_test_case": {"revision": 0}}
-    }],
-    "criteria": [{
-      "criterion_id": "<criterion UUID>",
-      "test_keys": ["<the same TestCase UUID>"]
-    }]
-  }
+  "criterion_id": "<criterion UUID>",
+  "tests": [{"test_case_id": "<TestCase UUID>", "result": "pass"}]
 }
 ```
 
-Select existing tests explicitly. The server resolves scope, current test revision
-and actual code relationships. One result per executed TestCase records `pass`,
-`fail`, `error`, `skip` or `inconclusive`. FAIL means an actual failed assertion;
-setup/build failures are ERROR. The producer must classify real execution
-correctly; the server does not infer it from a report. Do not upload commands,
-runner data, procedures, assertion arrays, output or environment.
+Use `modernpath evidence record --file result.json`. A batch uses
+`{"items":[<criterion update>, ...]}` with at most 50 criteria and 500 distinct
+TestCases per criterion. The request is atomic. Each TestCase needs a verifies
+Trace to the criterion and a scoped source Trace. Outcomes are `pass`, `fail`,
+`error`, `skip` or `inconclusive`; distinguish failed assertions from setup errors.
 
-Required tests come from TestCase-to-criterion links. Actual result-to-test and
-result-to-criterion Traces establish executed mappings. All required tests must
-pass at applicable revisions for complete coverage; no separate criterion result
-or stored full/partial flag is created. The same test supporting several criteria
-has one identity and one result per run. Project checks use their approved
-plan's TestCase identity. Missing, stale, skipped, incomplete or changed-definition
-proof cannot establish pass; newer relevant failures cannot expose an older pass.
+Each result has one criterion Trace and one TestCase Trace. A later committed
+outcome replaces the earlier outcome for that pair, including a failure.
+Identical retries preserve result and Trace identities. Updates to one criterion
+do not change another criterion, even when they share a TestCase. Read current
+facts with `modernpath evidence latest`. No proof history, executed-version
+comparison, raw output or separate project-check proof is stored. Verification
+changes no requirement lifecycle; human acceptance and completion remain separate.
 
-Each request uses current tenant/System permission and Epic ownership. No
-per-run actor pinning or complete submission is stored. Finalized outcomes and
-result mappings are immutable. Identical retries return the same identities;
-conflicting outcomes, revisions or mappings refuse atomically. Later edits can
-invalidate applicability without rewriting historical outcomes or recorded test
-revisions. Raw output, full definitions and historical reconciliation are removed.
+### Modernization test history
 
-`evidence runs --full` reads surviving run/result/Trace facts. Use existing
-TestCase and Trace identities for current detail. Historical definitions are
-never filled from current content. Full traceability distinguishes linked test
-files, actual test outcomes and complete criterion verification. Verification
-changes no requirement lifecycle; explicit existing-behavior acceptance remains
-separate and submits requirement identities, source and reason, not a review body.
+Modernization test history is separate from current criterion proof. After a
+test execution, capture its commit and actual outcomes in one request, scoped to
+an open Modernization Release:
+
+```json
+{
+  "sha": "<commit>",
+  "tests": [{
+    "test_case_id": "<TestCase UUID>",
+    "result": "pass",
+    "criterion_ids": ["<criterion UUID>"]
+  }]
+}
+```
+
+```sh
+modernpath modernization record --release-id <release-id> --file modernization-results.json
+```
+
+The request records the run, results and their criterion/TestCase Traces
+atomically. Failed outcomes remain recorded. A failed request stores none of the
+capture. The Release supplies the legacy System and scope; the caller lists the
+criteria each executed TestCase covered (up to 500 test cases and 50 distinct
+criteria per capture). This command does not register an
+empty run or offer progress/finalization steps. Reading or capturing this
+history does not change current `CriterionTestResult` proof or ordinary
+readiness. The Release's reference commit selects historical outcomes, and
+multiple runs can contribute results at that commit.
 
 ## Personal focus on Backlog records
 

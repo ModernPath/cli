@@ -35,17 +35,17 @@ func TestDecodeObjectValidatesShapeAndRetainsNumbers(t *testing.T) {
 	}
 }
 
-func TestTraceListReadsNativeEvidenceResultInBoundSystem(t *testing.T) {
+func TestTraceListReadsNativeCriterionTestResultInBoundSystem(t *testing.T) {
 	const resultID = "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("entity_type") != "evidence_result" || r.URL.Query().Get("entity_id") != resultID || r.URL.Query().Get("system_id") != "4" {
+		if r.URL.Query().Get("entity_type") != "criterion_test_result" || r.URL.Query().Get("entity_id") != resultID || r.URL.Query().Get("system_id") != "4" {
 			t.Errorf("unscoped result trace request: %s", r.URL)
 		}
-		_, _ = w.Write([]byte(`{"data":{"items":[{"source":{"type":"evidence_result","id":"11111111-1111-4111-8111-111111111111"},"relation":"relates","target":{"type":"test_case","id":"22222222-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
+		_, _ = w.Write([]byte(`{"data":{"items":[{"source":{"type":"criterion_test_result","id":"11111111-1111-4111-8111-111111111111"},"relation":"relates","target":{"type":"test_case","id":"22222222-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
 	}))
 	defer server.Close()
 	root := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
-	root.SetArgs([]string{"--entity-type", "evidence_result", "--entity-id", resultID, "--json"})
+	root.SetArgs([]string{"--entity-type", "criterion_test_result", "--entity-id", resultID, "--json"})
 	var out bytes.Buffer
 	root.SetOut(&out)
 	if err := root.Execute(); err != nil {
@@ -53,6 +53,70 @@ func TestTraceListReadsNativeEvidenceResultInBoundSystem(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), resultID) {
 		t.Fatalf("missing result trace: %s", out.String())
+	}
+}
+
+func TestCLIHasAtomicReleaseScopedModernizationCapture(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"modernization", "record"})
+	if err != nil || command == rootCmd {
+		t.Fatalf("modernization record command missing: command=%v error=%v", command, err)
+	}
+	if strings.Contains(command.CommandPath(), "run start") || strings.Contains(command.CommandPath(), "finalize") {
+		t.Fatalf("capture must be a single atomic operation, got %s", command.CommandPath())
+	}
+}
+
+func TestModernizationHistoryReadsExplicitLegacySystemAndCommit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/compliance/modernization/history" ||
+			r.URL.Query().Get("system_id") != "41" || r.URL.Query().Get("commit") != "failed123" {
+			t.Errorf("history request = %s %s", r.Method, r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"data":{"commit":"failed123","results":{"recorded":1,"passed":0,"not_passed":[{"id":"tc-1","title":"Legacy check"}]}}}`))
+	}))
+	defer server.Close()
+	command := newModernizationCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"history", "--system-id", "41", "--commit", "failed123", "--json"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"recorded": 1`) || !strings.Contains(output.String(), `"Legacy check"`) {
+		t.Fatalf("history response = %s", output.String())
+	}
+}
+
+func TestModernizationRecordPostsSingleAtomicReleaseCapture(t *testing.T) {
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/compliance/releases/17/modernization/test-runs" || r.URL.Query().Get("system_id") != "4" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"data":{"run":{"id":"run-1","sha":"abc123","system_id":4},"results":[{"id":"result-1","test_case_id":"22222222-2222-4222-8222-222222222222","result":"fail","criterion_ids":["11111111-1111-4111-8111-111111111111"]}]}}`))
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "capture.json")
+	input := `{"sha":"abc123","tests":[{"test_case_id":"22222222-2222-4222-8222-222222222222","result":"fail","criterion_ids":["11111111-1111-4111-8111-111111111111"]}]}`
+	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := newModernizationCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"record", "--release-id", "17", "--file", file, "--json"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if received["system_id"] != float64(4) || received["sha"] != "abc123" || len(received) != 3 {
+		t.Fatalf("capture payload = %#v", received)
+	}
+	if !strings.Contains(output.String(), `"run"`) || !strings.Contains(output.String(), `"results"`) {
+		t.Fatalf("capture receipt = %s", output.String())
 	}
 }
 
@@ -330,11 +394,11 @@ func TestTestCaseUpdateAcceptsListedNativeIdentity(t *testing.T) {
 
 func TestEvidenceRecordReturnsNativeReceipt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{"run":{"id":"11111111-1111-4111-8111-111111111111"},"results":[{"id":"22222222-2222-4222-8222-222222222222"}],"test_cases":[{"id":"33333333-3333-4333-8333-333333333333"}],"traces":[{"id":"44444444-4444-4444-8444-444444444444"}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"results":[{"id":"22222222-2222-4222-8222-222222222222"}],"test_cases":[{"id":"33333333-3333-4333-8333-333333333333"}],"traces":[{"id":"44444444-4444-4444-8444-444444444444"}]}}`))
 	}))
 	defer server.Close()
 	root := newEvidenceCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
-	root.SetIn(strings.NewReader(`{"status":"running","native_verification":{"tests":[],"criteria":[]}}`))
+	root.SetIn(strings.NewReader(`{"criterion_id":"criterion","tests":[{"test_case_id":"test","result":"pass"}]}`))
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetArgs([]string{"record", "--file", "-", "--json"})
@@ -344,28 +408,6 @@ func TestEvidenceRecordReturnsNativeReceipt(t *testing.T) {
 	for _, id := range []string{"22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"} {
 		if !strings.Contains(output.String(), id) {
 			t.Errorf("native identity %s missing from receipt: %s", id, output.String())
-		}
-	}
-}
-
-func TestEvidenceFullReadKeepsExecutionCoverageTraces(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("include_results") != "true" || r.URL.Query().Get("system_id") != "4" {
-			t.Errorf("full read is not scoped: %s", r.URL)
-		}
-		_, _ = w.Write([]byte(`{"data":{"runs":[{"id":"run","results":[{"id":"result","target_id":"test","detail":{"executed_test_case":{"revision":0}}}],"traces":[{"source_id":"result","target_type":"criterion","target_id":"clause"}]}],"next_cursor":null}}`))
-	}))
-	defer server.Close()
-	root := newEvidenceCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
-	var output bytes.Buffer
-	root.SetOut(&output)
-	root.SetArgs([]string{"runs", "--full", "--json"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{"clause", "test", "executed_test_case", "revision"} {
-		if !strings.Contains(output.String(), expected) {
-			t.Errorf("full proof lost %s: %s", expected, output.String())
 		}
 	}
 }

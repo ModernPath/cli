@@ -92,15 +92,14 @@ the review that follows them. Before the new review of a requested revision:
    expected RED assertions, focused and proportional regression checks,
    operational and security risks, and the requirement content that completion would publish.
 6. Create or reuse test definitions before readiness review. Declare
-   every active criterion and required project check as a verification obligation,
+   every active criterion as a verification obligation,
    with test identity, boundary and expected observation. Identify changed
    criteria requiring RED, applicable boundaries and exclusion reasons, author
    context, and required human decisions using IDs issued through the CLI.
    Retain each declared question beside its effective human answer.
    This creates test definitions, not executable tests before approval.
-   A criterion planned for a new TestCase needs a new criterion id: an
-   existing test link keeps the old TestCase required until completion, so
-   plan-ready refuses a kept criterion planned for an unlinked TestCase.
+   Retain criterion identities when their behavior remains the same; link the
+   TestCases required to verify each criterion.
    Write criteria as observable behavior, with kit or prompt wording checked
    by phrase tests. Gate only on deterministic tests; plan a model-dependent
    run as a measurement reported at the end.

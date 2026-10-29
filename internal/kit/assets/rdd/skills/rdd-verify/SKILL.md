@@ -5,57 +5,31 @@ description: Verify implementation under an approved Epic plan, including curren
 
 # Verify approved work
 
-For a small change, read back the governed requirements, criteria, source/test
-Traces, TestCase revisions and actual RED/GREEN results and regression
-checks under `PROCESS.md` §Small changes. Verify every changed criterion has
-applicable coverage; PR output alone is insufficient. Present exact content and
-evidence for separate human requirement completion through a supported CLI
-operation. Missing support leaves completion blocked; never substitute
-existing-behavior acceptance for changed behavior. The Epic candidate, obligation
-registration and Epic completion steps below do not apply.
+Read `PROCESS.md`, the approved plan and its requirement, code and test Traces.
+For each criterion, verify that every required TestCase has a current passing
+`CriterionTestResult` linked to that criterion and a scoped source Trace. Record
+actual direct outcomes with `modernpath evidence record` and read back the
+current results and Traces. Revision differences and prior outcomes do not
+determine proof applicability.
 
-For an approved existing-behavior Epic, read its mode, reason and current
-implementation Traces. Register the selected tests without a source revision or
-candidate declaration, execute them and record each result and its relationships.
-Check completed passing results against the current requirements, criteria,
-TestCases and code links. Do not compare historical runs, source revisions or
-RED/GREEN ordering. Review the selected results and current behavior, then use
-`rdd-completion-review` for separate human completion. If behavior or tests need
-to change, return the active Epic to planning for ordinary implementation.
+`ModernizationTestRun` and `ModernizationTestResult` are historical outcomes
+captured with `modernpath modernization record` under a Modernization Release.
+They do not satisfy, replace or invalidate current criterion proof or ordinary
+readiness.
 
-For ordinary implementation Epic work, read `PROCESS.md`, the approved plan and proposed content and
-its requirement, code and test links. Confirm the tested content is the current candidate
-revision and the work remains within approved scope.
+Run focused tests after cleanup, proportional boundary and regression checks,
+and affected user scenarios. Report runtime observations and limits. A run whose outcome depends on a language model is a measurement; report its result
+without presenting it as a deterministic test outcome. Do not reconstruct results or mark skipped tests
+as passing. Keep commands and output in PR notes.
 
-1. Confirm each changed behavior has a recorded expected RED and passing
-   result, with RED finalized before GREEN registration. If GREEN started too
-   early, finalize valid original RED and register and execute a new GREEN.
-   A build error or unrelated failure does not count as RED.
+For existing behavior, verify the selected current facts without changing code or
+fabricating failures. Route missing behavior or tests to normal development. A
+material scope change requires an explicit return to planning and fresh approval.
+Retest each published criterion whose approved meaning differed from its published
+meaning after reapproval; its current proof was cleared on return to planning.
+Finish evidence collection before independent implementation review. A material current criterion outcome change in review scope outdates the Epic review; an identical retry does not.
+Changes to reviewed content, code or structural relationships require renewed review.
 
-2. Confirm the declared candidate and authorized registration account. Register
-   each focused, boundary, regression and user-flow execution before running it,
-   including CI; finalize its returned identity with actual evidence and read back.
-   Run focused tests after cleanup and proportional boundary/regression gates.
-   Choose checks appropriate to the boundary: unit/property, component and
-   browser, endpoint/contract, persistence/integration, schema conformance, or
-   operations harness/smoke.
-3. Rerun affected user acceptance scenarios and report runtime/browser
-   observations. UI evidence requires the live stack, loaded assets and
-   inspected output.
-4. A run whose outcome depends on a language model is a measurement: report
-   its result, never record it as RED or GREEN evidence. Link each result to
-   its requirement, test identity and exact code revision. Broad suite output proves only exercised assertions. Do not
-   reconstruct evidence or mark a skipped test as passing.
-5. Report failures within approved behavior as implementation work. For a
-   material scope or acceptance change, keep the active approved plan and
-   owned requirements read-only until an explicit human return to planning
-   under `PROCESS.md` is applied. Revised scope needs fresh review, human
-   implementation approval and registered verification. Earlier executions
-   remain history; returning to planning waives no RED or GREEN requirement.
-
-Finish evidence collection before independent implementation review. A rerun
-that changes reviewed evidence requires renewing that review.
-
-Do not claim completion here. Hand the passing candidate and evidence to
-`rdd-completion-review`; if the CLI cannot store or read back
-required evidence, report the tooling gap and its effect.
+Do not claim completion here. Hand current results and limits to
+`rdd-completion-review`; report a tooling gap if required evidence cannot be
+stored or read back.

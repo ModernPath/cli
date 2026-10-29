@@ -57,49 +57,24 @@ func TestTestCaseGetUsesNativeIdentityAndSelectedSummary(t *testing.T) {
 	}
 }
 
-func TestEvidenceRunsPageRetainsNativeFactsAndForwardsFilters(t *testing.T) {
+func TestEvidenceLatestForwardsFiltersAndPreservesCurrentPair(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("page") != "true" || r.URL.Query().Get("target_id") != "abc" || r.URL.Query().Get("outcome") != "pass" {
+		if r.URL.Path != "/api/v1/sync/evidence/latest" || r.URL.Query().Get("system_id") != "4" || r.URL.Query().Get("target_id") != "abc" || r.URL.Query().Get("outcome") != "pass" {
 			t.Errorf("request=%s", r.URL)
 		}
-		_, _ = w.Write([]byte(`{"data":{"runs":[{"id":"run","sha":"tested-code","status":"complete","results":[{"id":"result-id","run_id":"run","target_id":"abc","result":"pass","validity":"current","detail":{"executed_test_case":{"revision":3}}}],"traces":[{"source_id":"result-id","target_type":"criterion","target_id":"criterion"}]}],"next_cursor":null}}`))
+		_, _ = w.Write([]byte(`{"data":{"targets":[{"id":"result-id","criterion_id":"criterion","target_id":"abc","result":"pass"}],"next_cursor":null}}`))
 	}))
 	defer server.Close()
 	root := newEvidenceCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
-	root.SetArgs([]string{"runs", "--target-id", "abc", "--outcome", "pass", "--full", "--json"})
+	root.SetArgs([]string{"latest", "--target-id", "abc", "--outcome", "pass", "--json"})
 	var out bytes.Buffer
 	root.SetOut(&out)
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"abc", "next_cursor", "tested-code", "executed_test_case", "revision", "result-id", "criterion"} {
+	for _, want := range []string{"abc", "next_cursor", "result-id", "criterion", "pass"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %s: %s", want, out.String())
 		}
-	}
-}
-
-func TestEvidenceRunsDefaultKeepsCompactProjection(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("include_results") != "" {
-			t.Errorf("default runs requested full results: %s", r.URL)
-		}
-		_, _ = w.Write([]byte(`{"data":{"runs":[{"id":"run","kind":"ci","status":"complete","source_revision":"RUN_ENV_FULL","environment":{"RUN_ENV_FULL":"linux"},"raw_evidence":"full report","results":[{"id":"result-id","run_id":"run","target_type":"criterion","target_id":"abc","test_case_ref":"TC-2-1","result":"pass","validity":"current","revision":"commit-result","detail":{"command":"mix test"},"environment":{"RESULT_ENV_FULL":"test"},"raw_evidence":"full result report","metadata":{"source":"ci"}}]}],"next_cursor":null}}`))
-	}))
-	defer server.Close()
-	root := newEvidenceCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
-	root.SetArgs([]string{"runs", "--json"})
-	var out bytes.Buffer
-	root.SetOut(&out)
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	for _, fullOnly := range []string{"RUN_ENV_FULL", "RESULT_ENV_FULL", "raw_evidence", "metadata"} {
-		if strings.Contains(out.String(), fullOnly) {
-			t.Errorf("default evidence output included full-only field %q: %s", fullOnly, out.String())
-		}
-	}
-	if !strings.Contains(out.String(), "result-id") {
-		t.Fatalf("default compact result lost native identity: %s", out.String())
 	}
 }

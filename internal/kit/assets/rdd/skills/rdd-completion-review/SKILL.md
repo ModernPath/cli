@@ -6,7 +6,7 @@ description: Review implemented Epic work and present its exact approved proposa
 # Review and complete the Epic
 
 For a small change, use `PROCESS.md` §Small changes: review exact requirement
-content, criteria, source/test Traces and recorded RED/GREEN results;
+content, criteria, source/test Traces and current criterion outcomes;
 obtain explicit human requirement completion and apply only a supported
 requirement-level completion operation. Read back accepted versions and approval
 attribution. Missing capability leaves completion blocked. The Epic gates and
@@ -16,12 +16,12 @@ Read `PROCESS.md`, the Epic's approved plan and exact proposed content, the
 still-published requirements, ownership, implementation, traces and evidence.
 
 1. Inspect each approved requirement and its actual evidence. Run the owning
-   checks with registration before execution and finalized evidence afterward;
-   record outcomes and limits before obtaining the implementation review.
+   checks and record current criterion outcomes and limits before obtaining the
+   implementation review.
    Explicitly authorized deletion
    can leave affected paths broken; disclose those failures without restoring
    deleted machinery or claiming unproven behavior works.
-2. Fetch and retain the authoritative review bundle after evidence is finalized.
+2. Fetch and retain the authoritative review bundle after current results are recorded.
    Supply its current facts to a review context independent of the author. Record the
    implementation review with coverage of every criterion and obligation and
    confirmation whether all approved scope is implemented. Context labels attest
@@ -29,8 +29,10 @@ still-published requirements, ownership, implementation, traces and evidence.
    Resolve and explicitly record resolutions for material correctness,
    security, data-loss, contract, traceability and testability findings. Keep
    source, test, code-revision and PR links as evidence, not approval tokens.
-   If reviewed content or evidence changes, renew the independent review before
-   submission. Keep the earlier review findings; do not attach a saved presentation.
+   If reviewed content, code or structural relationships change, renew the
+   independent review before submission. A material current criterion outcome
+   change in review scope outdates that review. Identical retries and modernization
+   history do not affect review applicability. Keep the earlier review findings; do not attach a saved presentation.
 3. Run the `completion-review` Epic gate check and inspect its recorded result
    and blockers. Resolve blockers before submitting completed implementation
    for review. Read back

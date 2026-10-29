@@ -185,7 +185,7 @@ func TestReverseReviewResolvesSharedEvidenceIdentities(t *testing.T) {
 	if err := validateReverseReview(fixture(), 4, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, collection := range []string{"test_cases", "runs", "evidence"} {
+	for _, collection := range []string{"test_cases", "evidence"} {
 		data := fixture()
 		data[collection] = []any{}
 		if err := validateReverseReview(data, 4, nil); err == nil {

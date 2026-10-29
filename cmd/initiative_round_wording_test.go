@@ -172,9 +172,9 @@ func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecis
 			[]string{"only the implementation approver can submit"}},
 		{"rendered CLI reference loop", reference,
 			[]string{
-				"the signed-in account of the epic's implementation approver or its assignee must declare candidates and register executions",
+				"the epic’s implementation approver or assignee may record its proof and submit",
 				"(the approver or the assignee runs it)",
-				"candidate declaration, execution registration or `submit-review` by someone other than the implementation approver or the epic's assignee",
+				"criterion proof update or `submit-review` by someone other than the implementation approver or the epic's assignee",
 				"`return-to-planning` or `recover-legacy` by someone other than the implementation approver",
 			},
 			[]string{
@@ -197,7 +197,7 @@ func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecis
 			name, text      string
 			present, absent []string
 		}{"docs/13-planning-delivery.md", string(body),
-			[]string{"the account of the epic's implementation approver or its assignee registers candidates and executions"},
+			[]string{"the epic’s implementation approver or assignee may record proof and submit"},
 			[]string{"the implementation approver's account registers candidates"}})
 	}
 	for _, document := range documents {

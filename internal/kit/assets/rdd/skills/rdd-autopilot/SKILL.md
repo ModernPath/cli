@@ -20,10 +20,9 @@ grant is missing, expired or ambiguous.
    explicitly authorized, stop for hard-to-reverse decisions: existing-data
    deletion or migration, security or authorization, billing or legal terms,
    or an external-party contract.
-3. Follow `rdd-build` and `rdd-verify` for every slice: register before execution,
-   finalize RED before registering GREEN, declare the candidate before GREEN,
-   finalize actual results and read back. Use the authorized registration account;
-   the grant does not confer another account's authority. Work red-first in
+3. Follow `rdd-build` and `rdd-verify` for every slice. Record actual current
+   criterion outcomes and read them back using an authorized account. The grant
+   does not confer another account's authority. Work red-first in
    bounded slices. Each new behavior gets an expected
    failing assertion before implementation, then focused and proportional
    regression checks after cleanup. Keep security, tenant isolation and data

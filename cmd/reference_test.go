@@ -160,7 +160,7 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 		"epics plan submit-review", "epics plan approve-completion", "epics plan history",
 		"requirements create", "requirements update", "requirements get", "requirements obsolete", "requirements set-context",
 		"reverse-engineer record", "reverse-engineer check", "reverse-engineer review", "reverse-engineer accept",
-		"evidence record", "evidence latest", "evidence runs", "traces list",
+		"evidence record", "evidence latest", "traces list",
 		"test-cases create", "backlog create", "backlog update", "epics create", "epics update",
 	} {
 		if !strings.Contains(loop, "`"+path) && !strings.Contains(loop, "`"+strings.TrimPrefix(path, "epics plan ")) {
@@ -175,14 +175,14 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 			"modernpath reverse-engineer schema", "server JSON Schema", "existing_requirement_conflict",
 		},
 		"modernpath reverse-engineer review": {
-			`"requirements"`, "current", "eligible",
+			`"requirements"`, "current",
 		},
 		"modernpath reverse-engineer accept":           {`"requirements"`, `"source"`, `"reason"`, "current"},
 		"modernpath epics plan":                        {`"body"`, `"requirements"`, `"traces"`, "current", "ownership"},
 		"modernpath epics plan approve-implementation": {"USER:", "IN_PROGRESS"},
 		"modernpath epics plan approve-completion":     {"USER:", "DONE"},
 		"modernpath evidence record": {
-			"native_verification", "test_case_id", "executed_test_case", "criterion", "revision",
+			"test_case_id", "criterion", "result",
 		},
 		"modernpath traces list": {"implements, verifies, derives or relates"},
 	} {
@@ -319,8 +319,7 @@ func TestUR271_5LifecycleAndCompletionRowNameTheReturn(t *testing.T) {
 	}
 }
 
-// SR-1636.2: epics plan --help states the trace rule and that a reactivated
-// stale trace counts as a change.
+// SR-1636.2: epics plan --help states the trace rule and stale trace behavior.
 func TestSR1636_2PlanHelpStatesTheTraceRule(t *testing.T) {
 	out, err := runRoot(t, "epics", "plan", "--help")
 	help := strings.Join(strings.Fields(out), " ")
@@ -329,7 +328,9 @@ func TestSR1636_2PlanHelpStatesTheTraceRule(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Adding, changing or removing a trace needs every touched requirement in the plan",
-		"A reactivated stale trace counts as a change",
+		"Listing a stale trace does not implicitly revive it",
+		"remove_traces names undeleted active or stale traces",
+		"Deleted, unknown, foreign-System and out-of-plan IDs are refused",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("epics plan --help does not state %q", want)

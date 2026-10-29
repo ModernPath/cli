@@ -33,6 +33,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"hooks", "install"}, {"hooks", "uninstall"}, {"hooks", "status"}, {"hooks", "doctor"},
 		{"import"}, {"init"}, {"init", "workspace"}, {"install"}, {"new"},
 		{"source", "push"},
+		{"source-files", "relocate"},
 		{"read-doc"}, {"read-file"}, {"scan"}, {"search"}, {"status"}, {"prepare"},
 		{"system-docs", "push"}, {"system-docs", "pull"}, {"system-docs", "list"}, {"system-docs", "get"},
 		{"reverse-engineer", "record"},
@@ -40,7 +41,7 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"dev", "review"}, {"epics", "list"}, {"epics", "get"}, {"epics", "create"},
 		{"epics", "specs", "generate"}, {"epics", "specs", "status"}, {"epics", "specs", "list"}, {"epics", "specs", "pull"}, {"epics", "specs", "push"},
 		{"requirements", "get"}, {"requirements", "create"}, {"requirements", "update"}, {"requirements", "obsolete"}, {"requirements", "set-context"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
-		{"evidence", "record"}, {"evidence", "runs"}, {"evidence", "latest"},
+		{"evidence", "record"}, {"evidence", "latest"},
 		{"initiative", "list"}, {"initiative", "get"}, {"initiative", "create"}, {"initiative", "link"}, {"initiative", "unlink"},
 		{"initiative", "review-bundle"}, {"initiative", "review"}, {"initiative", "check"}, {"initiative", "approve-implementation"},
 		{"initiative", "submit-review"}, {"initiative", "presentation"}, {"initiative", "approve-completion"},
@@ -424,8 +425,6 @@ var leafDispositions = map[string]disposition{
 	"epics gates check":                 {kind: dispExecute, args: []string{"epics", "gates", "check", "42"}},
 	"epics gates review-bundle":         {kind: dispExecute, args: []string{"epics", "gates", "review-bundle", "42"}},
 	"epics gates presentation":          {kind: dispExecute, args: []string{"epics", "gates", "presentation", "42"}},
-	"epics gates candidate":             {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "candidate", "42"}},
-	"epics gates start-execution":       {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "start-execution", "42"}},
 	"epics gates review":                {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "review", "42"}},
 	"epics gates resolve":               {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "resolve", "42"}},
 	"epics gates decision":              {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "decision", "42"}},
@@ -463,6 +462,7 @@ var leafDispositions = map[string]disposition{
 	"scan":                              {kind: dispExecute},
 	"search":                            {kind: dispExecute, args: []string{"search", "smoke query"}},
 	"source push":                       {kind: dispExecute},
+	"source-files relocate":             {kind: dispExecute, args: []string{"source-files", "relocate", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"status":                            {kind: dispExecute},
 	"prepare":                           {kind: dispExecute},
 	"system-docs get":                   {kind: dispExecute, args: []string{"system-docs", "get", "1"}},
@@ -490,7 +490,8 @@ var leafDispositions = map[string]disposition{
 	"test-cases update":                 {kind: dispNoCall, reason: "needs-precondition"},
 	"evidence record":                   {kind: dispNoCall, reason: "needs-precondition"},
 	"evidence latest":                   {kind: dispExecute},
-	"evidence runs":                     {kind: dispExecute},
+	"modernization record":              {kind: dispExecute, args: []string{"modernization", "record", "--release-id", "2", "--file", "-", "--json"}},
+	"modernization history":             {kind: dispExecute, args: []string{"modernization", "history", "--system-id", "4", "--commit", "abc123", "--json"}},
 
 	// Epic 292: the human's "not yet" at completion review. Like
 	// approve-completion it stops before the call without the completion
@@ -615,6 +616,12 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		}
 		if name == "initiative create" {
 			rootCmd.SetIn(strings.NewReader(`{"text":"Smoke initiative"}`))
+		}
+		if name == "modernization record" {
+			rootCmd.SetIn(strings.NewReader(`{"sha":"abc123","tests":[{"test_case_id":"10000000-0000-4000-8000-000000000001","result":"pass","criterion_ids":["10000000-0000-4000-8000-000000000002"]}]}`))
+		}
+		if name == "source-files relocate" {
+			rootCmd.SetIn(strings.NewReader(`{"expected_path":"lib/old.ex","path":"lib/new.ex","reason":"smoke"}`))
 		}
 		if name == "initiative review" {
 			rootCmd.SetIn(strings.NewReader(`{"phase":"plan","reviewer_context":"smoke","reason":"smoke","members":[]}`))

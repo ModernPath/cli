@@ -38,6 +38,14 @@ func TestReturnToPlanningHelpCLIReferenceReferenceLoopAndPROCESSMdStateTheCarryR
 		{"kit asset internal/kit/assets/rdd/PROCESS.md", string(asset)},
 		{"kit asset internal/kit/assets/cli-guide/cli.md", string(guide)},
 	}
+	for _, document := range documents {
+		text := strings.ToLower(strings.Join(strings.Fields(document.text), " "))
+		for _, phrase := range []string{"approved meaning differs from its published meaning", "unchanged criterion proof remains current", "retest"} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must state %q", document.name, phrase)
+			}
+		}
+	}
 	// The installed copies exist only in the monorepo checkout; a module built
 	// alone (the core image's go test stage) has the documents above.
 	installed := filepath.Join("..", "..", "..", "..", ".modernpath")
@@ -52,22 +60,9 @@ func TestReturnToPlanningHelpCLIReferenceReferenceLoopAndPROCESSMdStateTheCarryR
 		phrases []string
 	}{
 		{"listed decisions carry", []string{"carry_decisions", "--carry-decision"}},
-		{"the plan review is renewed", []string{"a new plan review"}},
-		{"RED stands for an unchanged criterion and TestCase", []string{
-			"red stands",
-			"red for a criterion and testcase unchanged since the return",
-		}},
-		{"a rewritten test needs a renamed TestCase or a changed criterion", []string{
-			"a rewritten test needs a renamed testcase, or a changed criterion, to require a new red",
-		}},
-		{"a criterion planned for a new TestCase needs a new criterion id (Epic 353)", []string{
-			"a criterion planned for a new testcase needs a new criterion id",
-		}},
-		{"approval, candidate, GREEN and implementation review are renewed", []string{
-			"are always renewed",
-			"collect green on a new candidate and a new implementation review",
-		}},
+		{"plan review is renewed", []string{"a new plan review"}},
 	}
+
 	obsolete := []string{"fresh review, human approval and executions", "plan-phase digest", "plan review stands", "renamed or new testcase"}
 	for _, document := range documents {
 		t.Run(document.name, func(t *testing.T) {
@@ -88,18 +83,5 @@ func TestReturnToPlanningHelpCLIReferenceReferenceLoopAndPROCESSMdStateTheCarryR
 				}
 			}
 		})
-	}
-}
-
-// TestCase 5d479343 (criterion a17434d0, Epic 353): the packaged rdd-plan skill
-// says a criterion planned for a new TestCase needs a new criterion id.
-func TestRddPlanSkillSaysANewTestCaseNeedsANewCriterionID(t *testing.T) {
-	body, err := fs.ReadFile(kit.Assets(), "assets/rdd/skills/rdd-plan/SKILL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := strings.ToLower(strings.Join(strings.Fields(string(body)), " "))
-	if !strings.Contains(text, "a criterion planned for a new testcase needs a new criterion id") {
-		t.Error("rdd-plan SKILL.md must say a criterion planned for a new TestCase needs a new criterion id")
 	}
 }

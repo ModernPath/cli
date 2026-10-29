@@ -70,8 +70,6 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		{"decision", "/answer-decision", "Record an explicit answer to a declared human decision", true},
 		{"declare-decision", "/declare-decision", "Retain a decision question and issue its identity for the plan", true},
 		{"recover-legacy", "/recover-legacy", "Apply an explicit human decision to return an active legacy plan to planning", true},
-		{"candidate", "/candidates", "Declare a new candidate revision, requiring fresh verification and review", true},
-		{"start-execution", "/executions", "Register candidate obligations before executing tests", true},
 	} {
 		op := op
 		c := &cobra.Command{Use: op.name + " <epic-id>", Short: op.help, Args: cobra.ExactArgs(1)}
@@ -97,14 +95,6 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 				// {"items":[...]} declares or answers a batch in one call (Epic 321).
 				if _, batch := object["items"]; batch && (op.name == "decision" || op.name == "declare-decision") {
 					suffix += "s"
-				}
-			}
-			if op.name == "start-execution" {
-				// Epic 323: {"items":[...]} registers several executions in one call.
-				if object, ok := payload.(map[string]any); ok {
-					if _, batch := object["items"]; batch {
-						suffix += "/batch"
-					}
 				}
 			}
 			if op.name == "review-bundle" {
@@ -187,98 +177,30 @@ func epicCheckGitProvenance(override string, explicit bool) (map[string]any, err
 	return provenance, nil
 }
 
-const epicGatesHelp = `Named Epic transition checks, tied to the RDD delivery skills.
+const epicGatesHelp = `Check Epic readiness and record independent reviews and human decisions.
 
-check <id> --phase plan-ready|implementation|completion-review|completion [--git-sha <full-sha>] [--json]
-records the result and blockers in the Audit Trail without changing Epic lifecycle.
-The record includes the signed-in actor, server time and caller-supplied Git SHA.
-By default the CLI sends checkout HEAD and known dirty status. --git-sha supplies
-an explicit full SHA with unknown dirty status. Outside Git, SHA is unavailable.
-A SHA is trace information; the server does not verify it against a repository.
-Passing and blocked checks are recorded; a blocked check exits nonzero.
-A passing check grants no permission: each transition rechecks in its transaction.
+check <id> --phase plan-ready|implementation|completion-review|completion records
+current readiness in the Audit Trail. A passing check does not authorize an
+implementation or completion transition; each is a separate human decision.
 
-Before approval, plan.verification declares author_context, decisions (UUIDs), criteria
-({id, changed, test_case_id, boundary}), checks ({id, name, test_case_id, boundary}),
-and boundaries ({name, applicable, reason when false}). Criteria/checks need distinct IDs;
-check IDs are allocated on save when omitted. Obligations refer to test cases.
-Optional verification.mode defaults to implementation. Explicit existing_behavior
-requires only existing_behavior_reason. It requires current implementation Traces
-before approval and selected completed passing test results. It requires no source
-revision or candidate, and compares no historical runs or RED/GREEN ordering.
-Read epics plan --help for the declaration. Current reviews and both human
-approvals remain required.
+Record actual outcomes with evidence record. Each criterion is ready when its
+required TestCases have passing current results and scoped source and test
+Traces. Builds and regression suites remain development checks. A changed result
+within review scope requires a renewed implementation review.
 
-Legacy active plans without obligations fail closed; preserve their approved scope.
-For any active approved plan, an explicit human decision lets the current approver
-run epics plan return-to-planning --reason "USER:...".
-It withdraws approval and releases ownership. Listed --carry-decision decisions
-and RED for an unchanged criterion and TestCase carry; a new plan review,
-approval, the candidate, GREEN and the implementation review are renewed.
-DONE stays closed; changed work uses a follow-up Epic.
-For an explicit human recovery decision, the current approver can run recover-legacy
-with {"source":"USER:...","reason":"..."}. This returns
-only a legacy active plan without verification to PROPOSED, releases requirement
-ownership and retains the old approval in audit. It does not publish content;
-planning, review and fresh human implementation approval must follow.
-
-All record commands take --file <JSON>, or standard input by default:
-  candidate: {"revision":"tested-code-revision"}
-  start-execution: {"revision":"tested-code-revision","obligation_ids":["uuid"]}
-  existing-behavior execution: {"obligation_ids":["uuid"]}
-  or several at once: {"items":[{"revision":"...","obligation_ids":["uuid"]}]}
-Register before executing. With several obligations, register the batch, run
-the tests, finalize the batch. A batch holds at most 50 items, is all-or-nothing,
-and its items cannot share an obligation or a test case; never register RED and
-GREEN for the same obligation in one batch. Finalize the returned run_id through evidence record --file:
-  {"id":"<returned run_id>","status":"complete","native_verification":{
-    "tests":[{"test_case_id":"<TestCase UUID>","result":"pass",
-      "detail":{"executed_test_case":{"revision":0}}}],
-    "criteria":[{"criterion_id":"<criterion UUID>","test_keys":["<TestCase UUID>"]}]}}
-One actual outcome is stored per executed test. Project checks select their
-TestCase through the approved plan; no extra criterion conclusion is
-stored. Required test coverage comes from the links. A failed assertion
-is fail; setup/build failures are error, never RED. In ordinary implementation, failure finalization must
-precede registration of the passing run. A newer incomplete or nonpassing
-execution blocks older passes. Passing evidence must belong to the current
-candidate identity and revision. Same-SHA redeclaration needs new evidence.
-Existing-behavior verification uses selected results without comparing runs or
-requiring a candidate or source revision.
-No candidate author context, role, procedure snapshot, runner, command,
-environment or raw output is uploaded.
-
-Ordinary implementation planning accepts implements traces or plan-only planned declarations for
-files that do not yet exist. Completion requires scoped real code endpoints.
-review-bundle and presentation are current reads, with each test and execution
-included once by record ID. Normal review history retains findings,
-coverage and resolutions without saved presentations. Record the actual
-separately performed review:
+Record a separate review with --file:
   review: {"phase":"plan|implementation","reviewer_context":"separate context",
     "criteria":["uuid"],"obligations":["uuid"],"reason":"review conclusion",
     "findings":[],"scope_implemented":false}
-Implementation reviews set scope_implemented=true. Findings have severity
-material|note and description; the server assigns identities.
   resolve: {"review_id":"uuid","finding_id":"uuid","reason":"resolution"}
   declare-decision: {"question":"Question requiring a human decision","addressee":"name@example.com"}
 addressee is optional: the email of the workspace member the question waits for,
 matched without regard to case or surrounding spaces; the reply names them as
 addressee {id, name}. An email of no workspace member is refused and nothing is written.
   decision: {"decision_id":"declared UUID","answer":"human decision","source":"USER:..."}
-declare-decision and decision also take a batch, {"items":[<object>, ...]}: 1 to 200
-distinct items written in input order in one call, all or nothing. A batch declare
-prints {"items":[{"index","id","question"}]}. A refused batch writes nothing and
-names the failing item: <code> — item <index> (<identity>) — <message>.
 
-Review context attests to a separately performed review. Comparing context
-strings cannot prove independent work. The candidate has no author context.
-Changes to requirements, tests, results or Traces invalidate review applicability through existing records
-and server ordering. Unknown applicability blocks. No fingerprints, ETags or
-reviewed-state fields are introduced.
-
-Human implementation and completion decisions remain separate. Apply them with
-epics plan approve-implementation or approve-completion --reason "USER:...".
-Use return-to-implementation --reason for a not-yet decision even when readiness
-fails. These commands check current database state under locks and upload no
-plan or presentation. They do not merge or deploy. To change active scope, the
-current approver explicitly returns it to planning and obtains fresh approval.
+Returning active work to planning requires the current approver's explicit
+human decision. It releases requirement ownership and retains draft content,
+prior decisions and proof for retained criterion identities. A new plan review
+and implementation approval are required. Completion approval is separate.
 `

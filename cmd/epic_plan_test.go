@@ -240,13 +240,17 @@ func TestEpicReturnToPlanningRetainsHumanDecisionAndExactPlan(t *testing.T) {
 	}))
 	defer server.Close()
 	command := newEpicPlanCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
-	command.SetArgs([]string{"return-to-planning", "287", "--reason", "USER: correct verification scope"})
+	command.SetArgs([]string{"return-to-planning", "287", "--reason", "USER: correct verification scope", "--json"})
 	command.SetIn(strings.NewReader(`{"body":"Exact approved scope"}`))
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&bytes.Buffer{})
 	if err := command.Execute(); err != nil || requests != 1 || !strings.Contains(output.String(), "PROPOSED") {
 		t.Fatalf("return to planning: err=%v requests=%d output=%s", err, requests, output.String())
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal(output.Bytes(), &receipt); err != nil || receipt["operation"] != "returned-to-planning" {
+		t.Fatalf("return receipt operation = %v; err=%v; output=%s", receipt["operation"], err, output.String())
 	}
 }
 

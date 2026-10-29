@@ -70,7 +70,7 @@ func TestKitStatesThePlanReviewRules(t *testing.T) {
 		},
 		"assets/rdd/skills/rdd-build/SKILL.md": {
 			"Read the plan review notes the human left to the build",
-			"Change a test title before that test's first recorded result",
+			"TestCase title and revision changes do not invalidate existing criterion proof",
 		},
 	}
 	for path, phrases := range rules {

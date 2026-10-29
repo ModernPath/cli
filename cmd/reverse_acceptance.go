@@ -27,15 +27,10 @@ func newReverseEngineerReviewCommand(load func() (*cliEnv, error)) *cobra.Comman
 	command := &cobra.Command{
 		Use:   "review",
 		Short: "Check current verification before running existing tests",
-		Long: `Check current requirement status, required test identities and current execution
-results before running tests. Selection: {"requirements":[{"kind":"system_requirement","id":"<UUID>"}]}.
-Each unresolved requirement uses one current run; shared tests and results appear once.
-Reuse applicable passing results and skip DONE requirements. Missing, changed or
-nonpassing evidence blocks acceptance. Keep a reserved run's ID for submission retries;
-never reserve a second run merely to retry finalization. This read writes no evidence
-or approval and returns eligible/problems without content snapshots, historical versions
-or old execution lists.
-Read requirement content separately when needed. Human acceptance remains separate`,
+		Long: `Check current criterion proof before running existing tests.
+Selection: {"requirements":[{"kind":"system_requirement","id":"<UUID>"}]}.
+Every required TestCase needs a current passing outcome linked to its criterion.
+The read writes no evidence or approval; human acceptance remains separate`,
 		Args: cobra.NoArgs,
 	}
 	command.Flags().String("file", "", "JSON selection file; - reads stdin (required)")
@@ -285,7 +280,7 @@ func validateReverseReview(data map[string]any, systemID int, expected []reverse
 		return fmt.Errorf("problems must be an array")
 	}
 	records := make(map[string]map[string]map[string]any)
-	for _, name := range []string{"runs", "evidence", "test_cases"} {
+	for _, name := range []string{"evidence", "test_cases"} {
 		rows, ok := data[name].([]any)
 		if !ok {
 			return fmt.Errorf("%s must be an array", name)
@@ -300,28 +295,14 @@ func validateReverseReview(data map[string]any, systemID int, expected []reverse
 			records[name][id] = row
 		}
 	}
-	for _, row := range records["test_cases"] {
-		if rev, ok := numberAsInt(row["revision"]); !ok || rev < 0 {
-			return fmt.Errorf("test revision is missing")
-		}
-	}
-	for _, row := range records["runs"] {
-		if _, ok := row["sha"].(string); !ok {
-			return fmt.Errorf("tested code revision is missing")
-		}
-		if row["status"] != "running" && row["status"] != "complete" && row["status"] != "error" {
-			return fmt.Errorf("invalid run status")
-		}
-	}
 	for _, row := range records["evidence"] {
-		if records["runs"][strings.ToLower(str(row, "run_id"))] == nil || records["test_cases"][strings.ToLower(str(row, "target_id"))] == nil {
-			return fmt.Errorf("result references an unknown run or test")
+		if records["test_cases"][strings.ToLower(str(row, "target_id"))] == nil {
+			return fmt.Errorf("result references an unknown TestCase")
 		}
-		if _, ok := row["result"].(string); !ok {
-			return fmt.Errorf("result outcome is missing")
-		}
-		if _, ok := row["validity"].(string); !ok {
-			return fmt.Errorf("result validity is missing")
+		switch row["result"] {
+		case "pass", "fail", "error", "skip", "inconclusive":
+		default:
+			return fmt.Errorf("invalid result outcome")
 		}
 	}
 	rows, ok := data["requirements"].([]any)
@@ -376,9 +357,7 @@ func validateReverseReview(data map[string]any, systemID int, expected []reverse
 					}
 				}
 			}
-			if id := str(criterion, "run_id"); id != "" && records["runs"][strings.ToLower(id)] == nil {
-				return fmt.Errorf("criterion references an unknown run")
-			}
+
 		}
 	}
 	return nil

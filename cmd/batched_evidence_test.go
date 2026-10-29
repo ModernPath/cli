@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// TestCase (Epic 323): "CLI items form for start-execution and evidence record,
-// index in refusal, single form unchanged".
+// Epic 370: direct current proof batch requests retain atomic refusal handling
+// and single-criterion input compatibility.
 
 type batchedCall struct {
 	method, path string
@@ -33,18 +33,6 @@ func batchedServer(t *testing.T, status int, reply string, calls *[]batchedCall)
 	}))
 	t.Cleanup(server.Close)
 	return server
-}
-
-func runBatchedStartExecution(t *testing.T, server *httptest.Server, input string) (string, error) {
-	t.Helper()
-	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
-	command.SetArgs([]string{"start-execution", "287", "--file", "-", "--json"})
-	command.SetIn(strings.NewReader(input))
-	var out bytes.Buffer
-	command.SetOut(&out)
-	command.SetErr(&out)
-	err := command.Execute()
-	return out.String(), err
 }
 
 func runBatchedEvidenceRecord(t *testing.T, server *httptest.Server, input string) (string, error) {
@@ -82,111 +70,35 @@ func assertBatchedOrder(t *testing.T, output string, values ...string) {
 	}
 }
 
-const (
-	batchedRegisterInput = `{"items":[{"revision":"code","obligation_ids":["o-1"]},{"revision":"code","obligation_ids":["o-2","o-3"]}]}`
-	batchedFinalizeInput = `{"items":[{"id":"11111111-1111-4111-8111-111111111111","status":"complete","native_verification":{"tests":[],"criteria":[]}},{"id":"22222222-2222-4222-8222-222222222222","status":"error"}]}`
-)
+const batchedInput = `{"items":[{"criterion_id":"first","tests":[{"test_case_id":"test","result":"pass"}]},{"criterion_id":"second","tests":[{"test_case_id":"test","result":"fail"}]}]}`
 
-func TestCLIItemsFormForStartExecutionAndEvidenceRecordIndexInRefusalSingleFormUnchanged(t *testing.T) {
-	t.Run("CLI items form: start-execution posts items to /executions/batch and prints one result per item in input order", func(t *testing.T) {
+func TestEvidenceRecordBatchAndSingleContract(t *testing.T) {
+	t.Run("batch preserves items and ordered receipts", func(t *testing.T) {
 		var calls []batchedCall
-		server := batchedServer(t, 200, `{"data":{"items":[{"index":0,"run_id":"run-first","execution":{}},{"index":1,"run_id":"run-second","execution":{}}]}}`, &calls)
-		output, err := runBatchedStartExecution(t, server, batchedRegisterInput)
-		if len(calls) != 1 || calls[0].method != "POST" || calls[0].path != "/api/work/epics/287/executions/batch" {
-			t.Fatalf("items form must post once to the register batch route: %#v", calls)
+		server := batchedServer(t, 200, `{"data":{"items":[{"criterion_id":"first"},{"criterion_id":"second"}]}}`, &calls)
+		output, err := runBatchedEvidenceRecord(t, server, batchedInput)
+		if err != nil || len(calls) != 1 || calls[0].path != "/api/v1/sync/evidence/batch" || calls[0].body["system_id"] != json.Number("4") || !reflect.DeepEqual(calls[0].body["items"], decodeBatchedInput(t, batchedInput)["items"]) {
+			t.Fatalf("batch: %v %#v %s", err, calls, output)
 		}
-		if !reflect.DeepEqual(calls[0].body, decodeBatchedInput(t, batchedRegisterInput)) {
-			t.Fatalf("items payload changed: %#v", calls[0].body)
-		}
-		if err != nil {
-			t.Fatalf("items form failed: %v %s", err, output)
-		}
-		assertBatchedOrder(t, output, "run-first", "run-second")
+		assertBatchedOrder(t, output, "first", "second")
 	})
-
-	t.Run("CLI items form: evidence record posts system_id and items to /api/v1/sync/evidence/batch and prints one result per item in input order", func(t *testing.T) {
+	t.Run("refusal identifies criterion and index", func(t *testing.T) {
 		var calls []batchedCall
-		server := batchedServer(t, 200, `{"data":{"items":[{"index":0,"result":"updated","run":{"id":"11111111-1111-4111-8111-111111111111"},"traces":[],"results":[]},{"index":1,"result":"replayed","run":{"id":"22222222-2222-4222-8222-222222222222"},"traces":[],"results":[]}]}}`, &calls)
-		output, err := runBatchedEvidenceRecord(t, server, batchedFinalizeInput)
-		if len(calls) != 1 || calls[0].method != "POST" || calls[0].path != "/api/v1/sync/evidence/batch" {
-			t.Fatalf("items form must post once to the finalize batch route: %#v", calls)
-		}
-		if calls[0].body["system_id"] != json.Number("4") {
-			t.Fatalf("batch must carry the bound System: %#v", calls[0].body)
-		}
-		if !reflect.DeepEqual(calls[0].body["items"], decodeBatchedInput(t, batchedFinalizeInput)["items"]) {
-			t.Fatalf("finalize items changed: %#v", calls[0].body["items"])
-		}
-		if err != nil {
-			t.Fatalf("items form failed: %v %s", err, output)
-		}
-		assertBatchedOrder(t, output, "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222")
-	})
-
-	t.Run("index in refusal: a register batch refusal prints code, item index, obligations and message", func(t *testing.T) {
-		var calls []batchedCall
-		server := batchedServer(t, 422, `{"error":{"code":"overlapping_obligations","message":"Two items share an obligation or a test case."},"index":1,"item":{"obligation_ids":["o-2","o-3"]}}`, &calls)
-		_, err := runBatchedStartExecution(t, server, batchedRegisterInput)
-		if len(calls) != 1 || calls[0].path != "/api/work/epics/287/executions/batch" {
-			t.Errorf("items form must post to the register batch route: %#v", calls)
-		}
-		want := "overlapping_obligations — item 1 (obligations o-2,o-3) — Two items share an obligation or a test case."
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("refusal must name the failing item:\nwant %q\ngot  %v", want, err)
+		server := batchedServer(t, 422, `{"error":{"code":"invalid_verification_endpoint","message":"TestCase is not in this System."},"index":1,"item":{"criterion_id":"second"}}`, &calls)
+		_, err := runBatchedEvidenceRecord(t, server, batchedInput)
+		if err == nil || !strings.Contains(err.Error(), "invalid_verification_endpoint — item 1 (criterion second) — TestCase is not in this System.") {
+			t.Fatalf("refusal: %v", err)
 		}
 	})
-
-	t.Run("index in refusal: a finalize batch refusal prints code, item index, run and message", func(t *testing.T) {
+	t.Run("single criterion uses single route", func(t *testing.T) {
 		var calls []batchedCall
-		server := batchedServer(t, 422, `{"error":{"code":"invalid_verification_endpoint","message":"An executed TestCase is not in this System."},"index":1,"item":{"run_id":"22222222-2222-4222-8222-222222222222"}}`, &calls)
-		_, err := runBatchedEvidenceRecord(t, server, batchedFinalizeInput)
-		if len(calls) != 1 || calls[0].path != "/api/v1/sync/evidence/batch" {
-			t.Errorf("items form must post to the finalize batch route: %#v", calls)
-		}
-		want := "invalid_verification_endpoint — item 1 (run 22222222-2222-4222-8222-222222222222) — An executed TestCase is not in this System."
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("refusal must name the failing item:\nwant %q\ngot  %v", want, err)
-		}
-	})
-
-	t.Run("index in refusal: a refusal without a message leaves out the message part", func(t *testing.T) {
-		var calls []batchedCall
-		server := batchedServer(t, 403, `{"error":{"code":"not_change_owner"},"index":0,"item":{"run_id":"11111111-1111-4111-8111-111111111111"}}`, &calls)
-		_, err := runBatchedEvidenceRecord(t, server, batchedFinalizeInput)
-		want := "not_change_owner — item 0 (run 11111111-1111-4111-8111-111111111111)"
-		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), want+" —") {
-			t.Fatalf("refusal without a message:\nwant %q\ngot  %v", want, err)
-		}
-	})
-
-	t.Run("single form unchanged: start-execution posts the single object to /executions", func(t *testing.T) {
-		var calls []batchedCall
-		single := `{"revision":"code","obligation_ids":["o-1"]}`
-		server := batchedServer(t, 200, `{"data":{"run_id":"single-run","execution":{}}}`, &calls)
-		output, err := runBatchedStartExecution(t, server, single)
-		if err != nil || len(calls) != 1 || calls[0].path != "/api/work/epics/287/executions" || !reflect.DeepEqual(calls[0].body, decodeBatchedInput(t, single)) || !strings.Contains(output, "single-run") {
-			t.Fatalf("single registration changed: err=%v calls=%#v output=%s", err, calls, output)
-		}
-	})
-
-	t.Run("single form unchanged: evidence record posts the single object to /api/v1/sync/evidence", func(t *testing.T) {
-		var calls []batchedCall
-		single := `{"id":"11111111-1111-4111-8111-111111111111","status":"error"}`
-		server := batchedServer(t, 200, `{"data":{"result":"updated","run":{"id":"11111111-1111-4111-8111-111111111111"},"traces":[],"results":[]}}`, &calls)
-		_, err := runBatchedEvidenceRecord(t, server, single)
-		want := decodeBatchedInput(t, single)
+		input := `{"criterion_id":"first","tests":[{"test_case_id":"test","result":"pass"}]}`
+		server := batchedServer(t, 200, `{"data":{"results":[{"id":"result"}],"traces":[]}}`, &calls)
+		_, err := runBatchedEvidenceRecord(t, server, input)
+		want := decodeBatchedInput(t, input)
 		want["system_id"] = json.Number("4")
 		if err != nil || len(calls) != 1 || calls[0].path != "/api/v1/sync/evidence" || !reflect.DeepEqual(calls[0].body, want) {
-			t.Fatalf("single finalization changed: err=%v calls=%#v", err, calls)
-		}
-	})
-
-	t.Run("single form unchanged: a string error from the single register route prints as before", func(t *testing.T) {
-		var calls []batchedCall
-		server := batchedServer(t, 409, `{"error":"not change owner"}`, &calls)
-		_, err := runBatchedStartExecution(t, server, `{"revision":"code","obligation_ids":["o-1"]}`)
-		if err == nil || !strings.Contains(err.Error(), "not change owner") {
-			t.Fatalf("single refusal changed: %v", err)
+			t.Fatalf("single: %v %#v", err, calls)
 		}
 	})
 }

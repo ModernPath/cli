@@ -158,8 +158,8 @@ func batchItemIdentity(value any) string {
 	if item["kind"] != nil && item["id"] != nil {
 		return fmt.Sprint(item["kind"]) + " " + fmt.Sprint(item["id"])
 	}
-	if item["run_id"] != nil {
-		return "run " + fmt.Sprint(item["run_id"])
+	if item["criterion_id"] != nil {
+		return "criterion " + fmt.Sprint(item["criterion_id"])
 	}
 	if item["epic_id"] != nil {
 		return "Epic " + fmt.Sprint(item["epic_id"])

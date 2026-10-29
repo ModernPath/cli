@@ -126,14 +126,14 @@ func TestEpicRecoveryAndDecisionCommandsRetainInput(t *testing.T) {
 	}
 }
 
-func TestEpicExecutionHelpNamesExecutableFinalization(t *testing.T) {
-	if strings.Contains(epicGatesHelp, "evidence report") || !strings.Contains(epicGatesHelp, "evidence record --file") || !strings.Contains(epicGatesHelp, `"status":"complete"`) || !strings.Contains(epicGatesHelp, `"id":"<returned run_id>"`) {
-		t.Fatal("execution help must show executable finalization of the registered run")
+func TestEpicGatesHelpDescribesCurrentProof(t *testing.T) {
+	if !strings.Contains(epicGatesHelp, "evidence record") || strings.Contains(epicGatesHelp, "start-execution") {
+		t.Fatal("gate help must describe direct evidence recording")
 	}
 }
 
 func TestEpicGateBlockersAndRegistrationContract(t *testing.T) {
-	for _, operation := range []string{"check", "start-execution"} {
+	for _, operation := range []string{"check"} {
 		t.Run(operation, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if operation == "check" {

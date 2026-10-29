@@ -10,13 +10,13 @@ import (
 	"github.com/modernpath/cli/internal/kit"
 )
 
-// TestCase (Epic 323): "PROCESS.md and reference loop carry the batched
-// register/run/finalize wording".
+// Epic 370: PROCESS.md and the reference loop describe current direct proof
+// separately from historical modernization captures.
 
 // batchedWordingRepoRoot is the monorepo root, four levels above this package.
 var batchedWordingRepoRoot = filepath.Join("..", "..", "..", "..")
 
-func TestPROCESSMdAndReferenceLoopCarryTheBatchedRegisterRunFinalizeWording(t *testing.T) {
+func TestPROCESSMdAndReferenceLoopDescribeCurrentDirectProof(t *testing.T) {
 	read := func(t *testing.T, path string) string {
 		t.Helper()
 		body, err := os.ReadFile(path)
@@ -48,11 +48,10 @@ func TestPROCESSMdAndReferenceLoopCarryTheBatchedRegisterRunFinalizeWording(t *t
 		rule    string
 		phrases []string
 	}{
-		{"batched loop", []string{"register the batch, run the tests, finalize the batch"}},
-		{"no RED and GREEN in one batch", []string{"never register red and green for the same obligation in one batch"}},
-		{"registration before executing", []string{"before running", "before executing", "before execution"}},
-		{"RED finalization before GREEN registration", []string{"before registering green", "before green registration"}},
+		{"actual test execution", []string{"test"}},
+		{"current outcome recording", []string{"current proof", "current outcome"}},
 	}
+
 	for _, document := range documents {
 		t.Run(document.name, func(t *testing.T) {
 			// Markdown wraps lines, so compare lowercased text with collapsed whitespace.

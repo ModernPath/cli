@@ -23,7 +23,7 @@ func init() {
 
 func newNativeComplianceCommands(load func() (*cliEnv, error)) []*cobra.Command {
 	requirementsCmd.AddCommand(newRequirementGetCommand(load))
-	return []*cobra.Command{newTraceCommands(load), newTestCasesCommand(load), newEvidenceCommand(load)}
+	return []*cobra.Command{newTraceCommands(load), newTestCasesCommand(load), newEvidenceCommand(load), newModernizationCommand(load), newSourceFilesCommand(load)}
 }
 
 func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
@@ -133,7 +133,7 @@ written by reverse-engineer record and by an Epic plan at implementation and
 completion approval; only an Epic plan writes a modernizes trace, and there is
 no direct trace write.`}
 	entityType, entityID := "", ""
-	cmd.Flags().StringVar(&entityType, "entity-type", "", "entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, evidence_result)")
+	cmd.Flags().StringVar(&entityType, "entity-type", "", "entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, criterion_test_result, modernization_test_result)")
 	cmd.Flags().StringVar(&entityID, "entity-id", "", "entity id")
 	cmd.Flags().Bool("json", false, "emit JSON")
 	cmd.Flags().Int("limit", 20, "page size (1–200)")
@@ -142,7 +142,7 @@ no direct trace write.`}
 	cmd.MarkFlagRequired("entity-type")
 	cmd.MarkFlagRequired("entity-id")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		allowed := map[string]bool{"user_requirement": true, "system_requirement": true, "test_case": true, "system_document": true, "source_file": true, "file_analysis": true, "subsystem": true, "epic": true, "criterion": true, "evidence_result": true}
+		allowed := map[string]bool{"user_requirement": true, "system_requirement": true, "test_case": true, "system_document": true, "source_file": true, "file_analysis": true, "subsystem": true, "epic": true, "criterion": true, "criterion_test_result": true, "modernization_test_result": true}
 		if !allowed[entityType] {
 			return fmt.Errorf("unsupported --entity-type %q", entityType)
 		}
@@ -370,7 +370,7 @@ func validateTestCaseWrite(payload map[string]any, creating bool) error {
 
 func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 	root := &cobra.Command{Use: "evidence", Short: "Record and read evidence observations"}
-	root.AddCommand(&cobra.Command{Use: "record", Short: "Record an evidence run and per-target observations", Args: cobra.NoArgs, Long: evidenceRecordHelp, RunE: func(cmd *cobra.Command, _ []string) error {
+	root.AddCommand(&cobra.Command{Use: "record", Short: "Record current outcomes for a criterion", Args: cobra.NoArgs, Long: evidenceRecordHelp, RunE: func(cmd *cobra.Command, _ []string) error {
 		f, _ := cmd.Flags().GetString("file")
 		payload, err := readObjectInput(cmd, f)
 		if err != nil {
@@ -383,7 +383,7 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 		payload["system_id"] = env.SystemID
 		route := "/api/v1/sync/evidence"
 		if _, batch := payload["items"]; batch {
-			// Epic 323: {"items":[...]} finalizes several runs in one all-or-nothing call.
+			// A batch updates several criteria in one transaction.
 			route += "/batch"
 		}
 		status, body, err := env.write("POST", route, payload)
@@ -402,122 +402,56 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 	root.Commands()[0].Flags().String("file", "", "evidence JSON file (required)")
 	root.Commands()[0].MarkFlagRequired("file")
 	root.Commands()[0].Flags().Bool("json", false, "emit JSON")
-	for _, name := range []string{"latest", "runs"} {
-		name := name
-		c := &cobra.Command{Use: name, Short: "Read evidence " + name, Args: cobra.NoArgs}
-		c.Flags().Bool("json", false, "emit JSON")
-		if name == "runs" {
-			c.Flags().Bool("full", false, "include matching per-target result rows")
+	c := &cobra.Command{Use: "latest", Short: "Read current criterion proof", Args: cobra.NoArgs}
+	c.Flags().Bool("json", false, "emit JSON")
+	c.Flags().Int("limit", 20, "page size (1–200)")
+	c.Flags().String("cursor", "", "continue from a previous page")
+	c.Flags().String("target-type", "", "filter criterion, requirement, or TestCase")
+	c.Flags().String("target-id", "", "filter target ID")
+	c.Flags().String("outcome", "", "filter outcome: pass, fail, error, inconclusive, skip")
+	c.Flags().String("since", "", "include results recorded at or after RFC3339 time")
+	c.Flags().String("until", "", "include results recorded before RFC3339 time")
+	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		env, err := load()
+		if err != nil {
+			return err
 		}
-		c.Flags().Int("limit", 20, "page size (1–200)")
-		c.Flags().String("cursor", "", "continue from a previous page")
-		c.Flags().String("target-type", "", "filter target type")
-		c.Flags().String("target-id", "", "filter target ID")
-		c.Flags().String("outcome", "", "filter outcome: pass, fail, error, inconclusive, skip")
-		c.Flags().String("since", "", "include observations at or after RFC3339 time")
-		c.Flags().String("until", "", "include observations before RFC3339 time")
-		c.RunE = func(cmd *cobra.Command, _ []string) error {
-			env, err := load()
-			if err != nil {
-				return err
-			}
-			p := url.Values{"system_id": {fmt.Sprint(env.SystemID)}}
-			route := "/api/v1/sync/evidence/" + name
-			limit, _ := cmd.Flags().GetInt("limit")
-			if limit < 1 || limit > 200 {
-				return fmt.Errorf("--limit must be between 1 and 200")
-			}
-			p.Set("page", "true")
-			p.Set("limit", fmt.Sprint(limit))
-			for flag, param := range map[string]string{"cursor": "cursor", "target-type": "target_type", "target-id": "target_id", "outcome": "outcome", "since": "since", "until": "until"} {
-				value, _ := cmd.Flags().GetString(flag)
-				if value != "" {
-					p.Set(param, value)
-				}
-			}
-			fullRuns := false
-			if name == "runs" {
-				fullRuns, _ = cmd.Flags().GetBool("full")
-				if fullRuns {
-					p.Set("include_results", "true")
-				}
-			}
-			body, err := nativeGetData(env, route+"?"+p.Encode(), "evidence "+name, false)
-			if err != nil {
-				return err
-			}
-			data, _ := body["data"].(map[string]any)
-			if name == "latest" {
-				return writeNativePage(cmd, data, "targets", func(item map[string]any) (map[string]any, error) {
-					return selectKeys(item, []string{"id", "target_id", "result", "validity", "state", "sha", "status", "run_id", "detail", "inserted_at"}), nil
-				})
-			}
-			return writeNativePage(cmd, data, "runs", func(item map[string]any) (map[string]any, error) {
-				selected := selectKeys(item, []string{"id", "sha", "status", "inserted_at"})
-				if fullRuns {
-					mergeSelectedKeys(selected, item, []string{"traces"})
-				}
-				if rawResults, exists := item["results"]; exists {
-					results, _ := rawResults.([]any)
-					compact := make([]any, 0, len(results))
-					for _, raw := range results {
-						row, ok := raw.(map[string]any)
-						if !ok {
-							return nil, fmt.Errorf("evidence run contains an invalid result")
-						}
-						result := selectKeys(row, []string{"id", "run_id", "target_id", "result", "validity", "detail"})
-						if fullRuns {
-							mergeSelectedKeys(result, row, []string{"id", "run_id"})
-						}
-						compact = append(compact, result)
-					}
-					selected["results"] = compact
-				}
-				return selected, nil
-			})
+		p := url.Values{"system_id": {fmt.Sprint(env.SystemID)}, "page": {"true"}}
+		limit, _ := cmd.Flags().GetInt("limit")
+		if limit < 1 || limit > 200 {
+			return fmt.Errorf("--limit must be between 1 and 200")
 		}
-		root.AddCommand(c)
+		p.Set("limit", fmt.Sprint(limit))
+		for flag, param := range map[string]string{"cursor": "cursor", "target-type": "target_type", "target-id": "target_id", "outcome": "outcome", "since": "since", "until": "until"} {
+			value, _ := cmd.Flags().GetString(flag)
+			if value != "" {
+				p.Set(param, value)
+			}
+		}
+		body, err := nativeGetData(env, "/api/v1/sync/evidence/latest?"+p.Encode(), "evidence latest", false)
+		if err != nil {
+			return err
+		}
+		data, _ := body["data"].(map[string]any)
+		return writeNativePage(cmd, data, "targets", func(item map[string]any) (map[string]any, error) {
+			return selectKeys(item, []string{"id", "criterion_id", "target_id", "result", "state", "updated_by_id", "updated_at"}), nil
+		})
 	}
+	root.AddCommand(c)
+
 	return root
 }
 
-// evidenceRecordHelp is the run file as Core.Evidence and the evidence
-// schemas accept it, with the fields the acceptance review later requires,
-// so a verification pass records what the review will read.
-const evidenceRecordHelp = `Record actual TestCase outcomes and their criterion relationships.
+const evidenceRecordHelp = `Record actual TestCase outcomes for one requirement criterion.
 
-Reserve: {"sha":"<tested code revision>","status":"running"}.
-For an active Epic, use epics gates start-execution first and reuse its run_id.
-Finalize with the returned run identity:
-  {"id":"<run UUID>","status":"complete","native_verification":{
-    "tests":[{"test_case_id":"<TestCase UUID>","result":"pass",
-      "detail":{"executed_test_case":{"revision":0}}}],
-    "criteria":[{"criterion_id":"<criterion UUID>","test_keys":["<TestCase UUID>"]}]}}
-Finalize several registered runs at once with {"items":[<finalize object>, ...]}:
-at most 50 items with distinct ids, all-or-nothing, one result per item in input
-order. A refusal names the failing item and its run. Reservations are not batched.
+  {"criterion_id":"<criterion UUID>","tests":[{"test_case_id":"<TestCase UUID>","result":"pass"}]}
 
-Select existing tests explicitly. Their title/revision identify the test;
-requirements and executable code define expected behavior. Code relationships
-must resolve through scoped Traces. Before executing, each TestCase must
-have an active Trace to a source_file or file_analysis in the same System.
-Use reverse-engineer record to establish missing code relationships first.
-Outcomes are pass, fail, error, skip
-or inconclusive. Only an actual assertion failure is fail; setup/build failures
-are error. All required tests must have applicable passing results to verify a
-criterion. The server derives completeness from current links.
-
-Runs retain only identity, scope, tested SHA, status and server timestamps.
-Results retain run/test identity, actual outcome, validity and the executed test
-revision. Registrations bind declared obligations to the current candidate when
-applicable. Failure finalization must precede registration of the passing run.
-No procedure, role, runner, command, environment or raw report is uploaded.
-
-Finalized outcomes and result mappings are immutable. An identical retry reuses
-stored identities; a conflict refuses atomically. Adding a Trace preserves
-recorded results. Meaningful test/criterion edits and changes to existing
-relationships can invalidate applicability without rewriting the outcome or revision.
-Historical reads expose surviving facts, never reconstructed definitions.
+A batch uses {"items":[<criterion update>, ...]} with at most 50 distinct
+criteria and 500 distinct tests per criterion. The write is atomic. Each
+TestCase must verify the criterion and have a scoped source Trace. Outcomes are
+pass, fail, error, skip or inconclusive. The latest committed outcome for each
+criterion and TestCase is current, including failures; identical retries retain
+result and Trace identities. Read current proof with evidence latest.
 `
 
 func lenAny(value any) int { rows, _ := value.([]any); return len(rows) }

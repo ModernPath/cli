@@ -237,9 +237,7 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
 verification.mode is optional: omitted or "implementation" retains ordinary
 implementation rules. To verify behavior already present, use
 "mode":"existing_behavior" and "existing_behavior_reason":"<explanation>".
-No source revision, candidate declaration, RED result or comparison with
-historical runs is required. Verify the selected completed test results against
-the current requirements, criteria, tests and code links. Every required test
+Verify current criterion results against the requirements, tests and code links. Every required test
 must pass. Keep changed:true when criterion text differs from its baseline.
 Existing-behavior entry requires current stored implements Traces for every
 requirement. Reviews and separate human completion remain required. Product or
@@ -267,13 +265,14 @@ are covered by the implementation review and retained at completion.
 A document trace is relates. Adding, changing or removing a trace
 needs every touched requirement in the plan, or save refuses the edit as
 trace requirement outside plan (trace criterion has other epic for a
-criterion another Epic owns). A reactivated stale trace counts as a change.
+criterion another Epic owns). Listing a stale trace does not implicitly revive it.
 Criteria left out of the plan are retired at completion. A trace left out of
 traces is kept: it is removed only when the plan lists its ID in remove_traces.
 A kept trace does not by itself satisfy the planning gate's implements-or-planned
-trace rule, which reads only traces. remove_traces names active traces of this
-System on a plan requirement or criterion, or save refuses it as trace removal
-not found; an ID may not be in both lists. Approval records the list, and
+trace rule, which reads only traces. remove_traces names undeleted active or
+stale traces of this System on a plan requirement or criterion. Deleted, unknown,
+foreign-System and out-of-plan IDs are refused as trace removal not found; an
+ID may not be in both lists. Approval records the list, and
 completion removes exactly those traces. Code and test links added during
 implementation survive.
 
@@ -314,9 +313,10 @@ presentation. It moves the Epic and requirements to IN_PROGRESS and acquires
 requirement ownership atomically. The active approved plan and owned content stay
 read-only. return-to-planning takes the explicit USER: reason, withdraws approval,
 releases ownership and starts a new planning cycle. Each --carry-decision keeps
-a decision of the current plan and its answer, and RED stands for a criterion
-and TestCase unchanged since the return; a new plan review, implementation
-approval, the candidate, GREEN and the implementation review are always renewed.
+a decision of the current plan and its answer. Return clears current proof for
+each published criterion whose approved meaning differs from its published meaning;
+unchanged criterion proof remains current. Obtain a new plan review and implementation
+approval, then retest each changed published criterion.
 
 submit-review checks current completion-review readiness and moves work to
 IN_REVIEW. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
@@ -345,7 +345,7 @@ var epicPlanOperationHelp = map[string]string{
 	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields, such as plan or modernization, with --fields or --full.",
 	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval.",
 	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
-	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision of the current plan and its answer. In the new planning cycle RED stands only for a criterion and TestCase unchanged since the return; a new plan review, implementation approval, the candidate, GREEN and the implementation review are always renewed. A rewritten test needs a renamed TestCase, or a changed criterion, to require a new RED; a criterion planned for a new TestCase needs a new criterion id. DONE stays closed.",
+	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision and its answer. Return clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. Obtain a new plan review and implementation approval, then retest each changed published criterion. DONE stays closed.",
 	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Only the implementation approver or the Epic's assignee can submit.",
 	"return-to-implementation": "Apply the human's not-yet decision to an IN_REVIEW Epic. --reason is required. Current completion readiness may fail. The plan, approval and ownership remain in effect.",
 	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once.",
