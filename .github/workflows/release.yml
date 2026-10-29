@@ -1,15 +1,47 @@
 # Release workflow for ModernPath CLI
 #
-# Triggered when a tag like v0.1.0 is pushed:
-#   git tag v0.1.0
-#   git push origin v0.1.0
+# Source of truth: modernpath-v1 modernpath-core/tools/modernpath/.github/
+# workflows/release.yml. Copybara exports it here with the CLI source
+# (export-cli.yml); an edit made in ModernPath/cli is overwritten by the next
+# export. GitHub runs it only here: a workflow below the repository root does
+# not run in the monorepo.
+#
+# Triggered when release-cli.yml (in the monorepo) tags an exported commit
+# v<VERSION>; only the monorepo-pusher App may create v* tags here.
 #
 # This workflow:
 # 1. Builds binaries for all platforms
-# 2. Creates tar.gz archives
-# 3. Generates SHA256 checksums
+# 2. Signs the Windows binary with Azure Artifact Signing, when configured
+# 3. Creates tar.gz/zip archives and SHA256 checksums
 # 4. Creates a GitHub release with all artifacts
-# 5. Triggers the homebrew-tap update workflow
+# 5. Triggers the homebrew-tap and scoop-bucket update workflows
+#
+# Windows signing: unsigned Go binaries are often flagged by Microsoft
+# Defender's machine-learning detections, and Windows then refuses to run
+# them. Signing runs on a Windows runner (the signing action supports only
+# Windows) and authenticates to Azure with GitHub OIDC through the `release`
+# environment, so no Azure secret is stored here. It is enabled by setting
+# these repository variables:
+#
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#     The user-assigned managed identity with a federated credential for
+#     repo:ModernPath/cli:environment:release and the "Artifact Signing
+#     Certificate Profile Signer" role on the signing account.
+#   ARTIFACT_SIGNING_ENDPOINT   e.g. https://neu.codesigning.azure.net/
+#   ARTIFACT_SIGNING_ACCOUNT    the Artifact Signing account name
+#   ARTIFACT_SIGNING_PROFILE    the Public Trust certificate profile name
+#
+# Without ARTIFACT_SIGNING_ACCOUNT the Windows binary ships unsigned, as
+# before. With it, a failed signature fails the release: nothing unsigned is
+# published once signing is on.
+#
+# Dry run: start the workflow by hand (workflow_dispatch) on main. It builds
+# and signs, and uploads the signed modernpath.exe as the `windows-signed`
+# workflow artifact; it publishes nothing. The release environment admits only
+# v* tags and main, so a dispatch from another branch cannot sign.
+# The environment and the variables are managed in live-infrastructure
+# (github-monorepo-pusher, the cli destination's release_environment); the
+# identity and the certificate profile there too (cli-code-signing).
 
 name: Release
 
@@ -17,12 +49,13 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,13 +66,13 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
       - name: Build binaries
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dryrun+${GITHUB_SHA::7}"
+          fi
           BINARY_NAME="modernpath"
 
           mkdir -p dist
@@ -56,26 +89,106 @@ jobs:
           for platform in "${platforms[@]}"; do
             IFS='/' read -r os arch <<< "$platform"
 
-            binary="${BINARY_NAME}"
+            echo "Building ${os}/${arch}..."
             if [ "$os" = "windows" ]; then
-              binary="${BINARY_NAME}.exe"
+              # Left unarchived: it is signed before it is zipped.
+              GOOS=$os GOARCH=$arch go build \
+                -ldflags="-s -w -X github.com/modernpath/cli/cmd.Version=${VERSION}" \
+                -o "dist/${BINARY_NAME}.exe" .
+              continue
             fi
 
-            echo "Building ${os}/${arch}..."
             GOOS=$os GOARCH=$arch go build \
               -ldflags="-s -w -X github.com/modernpath/cli/cmd.Version=${VERSION}" \
-              -o "dist/${binary}" .
-
-            # Create archive
-            archive_name="${BINARY_NAME}-${os}-${arch}"
-            if [ "$os" = "windows" ]; then
-              (cd dist && zip "${archive_name}.zip" "${binary}")
-              rm "dist/${binary}"
-            else
-              (cd dist && tar -czf "${archive_name}.tar.gz" "${binary}")
-              rm "dist/${binary}"
-            fi
+              -o "dist/${BINARY_NAME}" .
+            (cd dist && tar -czf "${BINARY_NAME}-${os}-${arch}.tar.gz" "${BINARY_NAME}")
+            rm "dist/${BINARY_NAME}"
           done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  sign-windows:
+    needs: build
+    if: vars.ARTIFACT_SIGNING_ACCOUNT != ''
+    runs-on: windows-2025
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign modernpath.exe
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\modernpath.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature dist\modernpath.exe
+          $sig | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+          if ($sig.Status -ne 'Valid') { throw "modernpath.exe signature is $($sig.Status)" }
+          if (-not $sig.TimeStamperCertificate) { throw "modernpath.exe signature has no timestamp" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed
+          path: dist/modernpath.exe
+          if-no-files-found: error
+
+  release:
+    needs: [build, sign-windows]
+    # sign-windows is skipped while signing is not configured; a failed
+    # signature stops the release. A dry run never publishes.
+    if: >-
+      always() && github.event_name == 'push' && needs.build.result == 'success' &&
+      (needs.sign-windows.result == 'success' || needs.sign-windows.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Download the signed Windows binary
+        if: needs.sign-windows.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-signed
+          path: signed
+
+      - name: Use the signed Windows binary
+        if: needs.sign-windows.result == 'success'
+        run: mv -f signed/modernpath.exe dist/modernpath.exe
+
+      - name: Archive Windows binary
+        run: |
+          cd dist
+          zip modernpath-windows-amd64.zip modernpath.exe
+          rm modernpath.exe
 
       - name: Generate checksums
         id: checksums
@@ -104,10 +217,11 @@ jobs:
         if: ${{ !contains(github.ref, '-') }}
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
         run: |
           gh workflow run update-formula.yml \
             -R modernpath/homebrew-tap \
-            -f version=${{ steps.version.outputs.VERSION }} \
+            -f version="${VERSION#v}" \
             -f darwin_arm64_sha256=${{ steps.checksums.outputs.DARWIN_ARM64 }} \
             -f darwin_amd64_sha256=${{ steps.checksums.outputs.DARWIN_AMD64 }} \
             -f linux_arm64_sha256=${{ steps.checksums.outputs.LINUX_ARM64 }} \
@@ -117,10 +231,11 @@ jobs:
         if: ${{ !contains(github.ref, '-') }}
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
         continue-on-error: true
         run: |
           gh workflow run update-formula.yml \
             -R ModernPath/scoop-bucket \
-            -f version=${{ steps.version.outputs.VERSION }} \
+            -f version="${VERSION#v}" \
             -f windows_sha256=${{ steps.checksums.outputs.WINDOWS_AMD64 }} || \
           echo "Scoop bucket update skipped (create ModernPath/scoop-bucket repo and re-run)"

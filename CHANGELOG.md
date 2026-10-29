@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Release builds sign the Windows binary, `modernpath.exe`, with Azure
+  Artifact Signing once signing is configured in the release repository.
+  Microsoft Defender blocked the unsigned binary on some machines ("contains a
+  virus or potentially unwanted software"). The release workflow's source
+  moves into this repository and is exported with the CLI.
 - The Epic's assignee may carry on an approved build (Epic 377). Requires a
   server that includes it. The implementation approver or the Epic's assignee
   may declare candidates, register executions, record their evidence and submit
