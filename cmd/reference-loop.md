@@ -115,8 +115,8 @@ remain required. Product or test changes use ordinary implementation.
 Use epics retire <id> to retire an unnecessary Epic while preserving requirements
 and history; the server refuses an Epic that owns approved requirement changes.
 
-The implementation approver's signed-in account must declare candidates and
-register executions. Another workspace using that account is allowed; a runner
+The signed-in account of the Epic's implementation approver or its assignee
+must declare candidates and register executions. Another workspace using that account is allowed; a runner
 attribution or CI `kind` does not authorize a different account. CI must arrange
 registration through that authorized account before execution. Unregistered
 results for any criterion or project check declared by an active Epic are refused,
@@ -189,7 +189,7 @@ epics create             -> Epic PROPOSED
 epics plan save          -> saved plan (PROPOSED only; repeat to revise; `epics plan history` lists every revision)
 plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic and the approver
 plan return-to-planning  -> active Epic and selected requirements PROPOSED; approval withdrawn; ownership released; listed decisions and unchanged RED carry
-plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver runs it)
+plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver or the assignee runs it)
 epics gates presentation -> the completion bundle the human answers (read-only, Epic IN_REVIEW)
 plan return-to-implementation --reason "USER:..." -> Epic and owned requirements IN_PROGRESS (the human's "not yet"); plan, approval and ownership kept
 
@@ -221,7 +221,8 @@ and `IN_REVIEW`; the human-authorized return ends approval before edits.
 | `unsupported Epic fields` | server 422 | `epics update` naming a server-assigned field (tenant_id, system_id, process_status, plan, metadata, …); nothing was written | send only title, description, scope, non_goals, outcome_source, impact_assessment, shared_context or the date, severity, category, profile, assignee and release fields |
 | `references and accepted_context_revision are server-owned` | server 422 | `epics update` shared_context whose references or accepted_context_revision differ from the stored values | read `epics get <id> --fields shared_context --json`; send those values unchanged and edit decisions, assumptions, open_questions |
 | `requirement owned` | server 409 | the approval names a requirement another Epic owns, or acceptance names an owned one | finish or release the owning Epic; plan without it |
-| `not change owner` | server 409 | candidate declaration, execution registration, `submit-review` or `return-to-planning` by someone other than the implementation approver | use the implementation approver's signed-in account; runner attribution does not confer permission |
+| `not change owner` | server 409 | candidate declaration, execution registration or `submit-review` by someone other than the implementation approver or the Epic's assignee | use the signed-in account of the implementation approver or the Epic's assignee; runner attribution does not confer permission |
+| `not change owner` | server 409 | `return-to-planning` or `recover-legacy` by someone other than the implementation approver | use the implementation approver's signed-in account; the assignee cannot return the Epic to planning |
 | `invalid_planning_return` | server 422 | an unknown field or no explicit `USER:` decision in `--reason` | supply only the human's actual return decision |
 | `planning_return_write_failed` | server 500 | the atomic return could not be written; approval and ownership are unchanged | retry after the write failure is resolved |
 | `planning_return_outcome_unknown` / `return may already have completed` | server 500 | the connection was lost before the result could be confirmed; the return may have committed | read `epics plan show <id> --full --json` and `epics plan history <id> --full --json` before deciding whether to retry |

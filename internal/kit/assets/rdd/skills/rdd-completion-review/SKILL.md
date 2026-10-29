@@ -50,8 +50,8 @@ still-published requirements, ownership, implementation, traces and evidence.
    `modernpath initiative presentation <initiative-id> --epics <ids>`, present
    every Epic in the round, and apply the human's one answer with
    `modernpath initiative approve-completion`. A round submission needs the
-   caller to be each Epic's implementation approver; any one person may approve
-   a round's completion, which writes each Epic's own completion records, all
+   caller to be each Epic's implementation approver or its assignee; any one
+   person may approve a round's completion, which writes each Epic's own completion records, all
    or nothing. A refusal changes no Epic.
 5. Apply only the human's explicit current-state approval and reason through the
    CLI. Upload no plan or presentation. The server rechecks current eligible

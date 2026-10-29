@@ -356,8 +356,8 @@ Epic of the round; the human's one answer names the round. A round review
 covers every criterion and obligation of every Epic in it. A round review
 records the Initiative and the Epic list it covered as ordinary review content.
 A round submission needs the
-caller to be each Epic's implementation approver; any one person may approve a
-round's completion. Each Epic keeps its own approvals, reviews, gate checks and
+caller to be each Epic's implementation approver or its assignee; any one
+person may approve a round's completion. Each Epic keeps its own approvals, reviews, gate checks and
 completion, and can still be returned alone.
 
 For existing-behavior acceptance, present the exact PROPOSED content and its

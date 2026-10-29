@@ -259,7 +259,10 @@ separately performed review:
 Implementation reviews set scope_implemented=true. Findings have severity
 material|note and description; the server assigns identities.
   resolve: {"review_id":"uuid","finding_id":"uuid","reason":"resolution"}
-  declare-decision: {"question":"Question requiring a human decision"}
+  declare-decision: {"question":"Question requiring a human decision","addressee":"name@example.com"}
+addressee is optional: the email of the workspace member the question waits for,
+matched without regard to case or surrounding spaces; the reply names them as
+addressee {id, name}. An email of no workspace member is refused and nothing is written.
   decision: {"decision_id":"declared UUID","answer":"human decision","source":"USER:..."}
 declare-decision and decision also take a batch, {"items":[<object>, ...]}: 1 to 200
 distinct items written in input order in one call, all or nothing. A batch declare

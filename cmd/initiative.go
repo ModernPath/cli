@@ -24,8 +24,8 @@ with --epics (at most 10 distinct Epic IDs); nothing stores it. A round command
 writes each Epic's own records, all or nothing: the same records as the
 single-Epic commands, in one transaction, so every Epic passes or nothing is
 written, and a refusal names the Epic by index and ID ("item 1 (Epic 7)").
-A round submission needs the caller to be each Epic's implementation approver;
-any one person may approve a round's completion. Each Epic keeps its own
+A round submission needs the caller to be each Epic's implementation approver
+or its assignee; any one person may approve a round's completion. Each Epic keeps its own
 approvals, reviews, gate checks and completion, and can still be returned to
 planning or to implementation alone with the single-Epic commands.
 A round runs in one transaction bounded at two minutes. After an uncertain
@@ -333,7 +333,7 @@ Exits nonzero when any Epic of the round is not ready.`},
 transaction.`},
 		{use: "submit-review", short: "Submit every Epic of a round for completion review", method: "POST", suffix: "/submit-review", reason: true,
 			long: `Submit every Epic of the round for completion review. The caller must be each
-Epic's implementation approver; every Epic's completion-review gate is
+Epic's implementation approver or its assignee; every Epic's completion-review gate is
 rechecked in one transaction.`},
 		{use: "presentation", short: "Read each Epic's completion presentation of a round", method: "GET", suffix: "/completion-presentation", read: true,
 			long: `Read each Epic's completion presentation, ordered by Epic ID. review.current is

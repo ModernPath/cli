@@ -38,7 +38,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 	helpAndGuide := []string{
 		"explicit list of the initiative's epics",
 		"each epic's own records, all or nothing",
-		"each epic's implementation approver",
+		"each epic's implementation approver or its assignee",
 		"any one person may approve a round's completion",
 	}
 	documents := []struct {
@@ -50,7 +50,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 		{"kit asset rdd/PROCESS.md", asset(t, "assets/rdd/PROCESS.md"), []string{
 			"a round is the explicit list of the initiative's epics that one command names",
 			"a round command writes the same records as the single-epic commands for every epic in the round, in one transaction: every epic passes or nothing is written",
-			"a round submission needs the caller to be each epic's implementation approver",
+			"a round submission needs the caller to be each epic's implementation approver or its assignee",
 			"any one person may approve a round's completion",
 		}},
 		{"kit asset rdd-cold-review", asset(t, "assets/rdd/skills/rdd-cold-review/SKILL.md"), []string{
@@ -60,7 +60,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 			"an initiative round is the explicit list of the initiative's epics given to the command; one round approval writes each epic's own approval records, all or nothing",
 		}},
 		{"kit asset rdd-completion-review", asset(t, "assets/rdd/skills/rdd-completion-review/SKILL.md"), []string{
-			"a round submission needs the caller to be each epic's implementation approver; any one person may approve a round's completion",
+			"a round submission needs the caller to be each epic's implementation approver or its assignee; any one person may approve a round's completion",
 		}},
 	}
 	// docs/cli.md is identical to the kit copy (reference_test.go); it is read
@@ -123,4 +123,112 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 			}
 		})
 	}
+}
+
+// TestCase 77e921f0 (Epic 377, criterion 7a7fa367): the Epic's implementation
+// approver or its assignee carries on an approved build, so every text that
+// said only the approver now says both, and none keeps the approver-only
+// sentence; returning to planning stays the approver's. The help of epics
+// gates declare-decision names the question's addressee.
+func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecisionNamesTheAddressee(t *testing.T) {
+	asset := func(t *testing.T, path string) string {
+		t.Helper()
+		body, err := fs.ReadFile(kit.Assets(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	help := func(t *testing.T, path ...string) string {
+		t.Helper()
+		cmd, _, err := rootCmd.Find(path)
+		if err != nil || cmd == nil || cmd.Name() != path[len(path)-1] {
+			t.Fatalf("command %v not found: %v", path, err)
+		}
+		return cmd.Short + "\n" + cmd.Long
+	}
+	// The old round sentence: "... each Epic's implementation approver; any
+	// one person may approve ..." — the new phrase contains the old one's
+	// beginning, so its end is what must be gone.
+	roundGone := []string{"implementation approver; any one person may approve"}
+	reference := renderCLIReference(rootCmd)
+	documents := []struct {
+		name, text      string
+		present, absent []string
+	}{
+		{"kit asset rdd/PROCESS.md", asset(t, "assets/rdd/PROCESS.md"),
+			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+		{"kit asset rdd-completion-review", asset(t, "assets/rdd/skills/rdd-completion-review/SKILL.md"),
+			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+		{"kit asset cli-guide/cli.md", asset(t, "assets/cli-guide/cli.md"),
+			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+		{"initiative round rules help", help(t, "initiative"),
+			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+		{"initiative submit-review help", help(t, "initiative", "submit-review"),
+			[]string{"the caller must be each epic's implementation approver or its assignee"},
+			[]string{"implementation approver; every epic's completion-review gate"}},
+		{"epics plan submit-review help", help(t, "epics", "plan", "submit-review"),
+			[]string{"only the implementation approver or the epic's assignee can submit"},
+			[]string{"only the implementation approver can submit"}},
+		{"rendered CLI reference loop", reference,
+			[]string{
+				"the signed-in account of the epic's implementation approver or its assignee must declare candidates and register executions",
+				"(the approver or the assignee runs it)",
+				"candidate declaration, execution registration or `submit-review` by someone other than the implementation approver or the epic's assignee",
+				"`return-to-planning` or `recover-legacy` by someone other than the implementation approver",
+			},
+			[]string{
+				"the implementation approver's signed-in account must declare candidates",
+				"(the approver runs it)",
+				"`submit-review` or `return-to-planning` by someone other than the implementation approver",
+			}},
+	}
+	// docs/cli.md is identical to the kit copy; docs/13-planning-delivery.md
+	// exists only in the monorepo checkout.
+	if body, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "cli.md")); err == nil {
+		documents = append(documents, struct {
+			name, text      string
+			present, absent []string
+		}{"docs/cli.md", string(body),
+			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone})
+	}
+	if body, err := os.ReadFile(filepath.Join(roundWordingRepoRoot, "docs", "13-planning-delivery.md")); err == nil {
+		documents = append(documents, struct {
+			name, text      string
+			present, absent []string
+		}{"docs/13-planning-delivery.md", string(body),
+			[]string{"the account of the epic's implementation approver or its assignee registers candidates and executions"},
+			[]string{"the implementation approver's account registers candidates"}})
+	}
+	for _, document := range documents {
+		t.Run(document.name, func(t *testing.T) {
+			text := roundWordingText(document.text)
+			for _, phrase := range document.present {
+				if !strings.Contains(text, phrase) {
+					t.Errorf("%s must state %q", document.name, phrase)
+				}
+			}
+			for _, phrase := range document.absent {
+				if strings.Contains(text, phrase) {
+					t.Errorf("%s must no longer state %q", document.name, phrase)
+				}
+			}
+		})
+	}
+
+	t.Run("epics gates declare-decision help names addressee", func(t *testing.T) {
+		text := roundWordingText(help(t, "epics", "gates"))
+		var line string
+		for _, candidate := range strings.Split(help(t, "epics", "gates"), "\n") {
+			if strings.Contains(candidate, "declare-decision:") {
+				line = candidate
+			}
+		}
+		if !strings.Contains(line, `"addressee"`) {
+			t.Errorf("the declare-decision input example must name \"addressee\", got %q", line)
+		}
+		if !strings.Contains(text, "addressee") || !strings.Contains(text, "workspace member") {
+			t.Errorf("epics gates help must say the addressee is the email of a workspace member")
+		}
+	})
 }

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- The Epic's assignee may carry on an approved build (Epic 377). Requires a
+  server that includes it. The implementation approver or the Epic's assignee
+  may declare candidates, register executions, record their evidence and submit
+  for completion review, alone and in an Initiative round; returning to
+  planning and recovering a legacy plan stay the approver's. The help of `epics
+  plan submit-review` and `initiative submit-review`, the Initiative round
+  rules, the CLI reference loop (the registration paragraph, the submit-review
+  line and the `not change owner` row, now split so that return to planning
+  stays the approver's) and the CLI guide say so.
+- `epics gates declare-decision` takes an optional `addressee`: the email of
+  the workspace member the question waits for, matched without regard to case
+  or surrounding spaces, and answered back as `addressee {id, name}`; an email
+  of no member is refused with `invalid_human_decision` and nothing is written
+  (Epic 377). Requires a server that includes it. The `epics gates` help names
+  the field.
+
 ## v0.25.0 — Roadmap planning, Initiative selection, the modernizes trace and one review per plan
 
 Released before production serves these changes (USER:2026-10-28). Entries

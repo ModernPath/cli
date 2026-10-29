@@ -1800,8 +1800,8 @@ each Epic's own records, all or nothing: the same records as the single-Epic
 commands for every Epic in the round, in one transaction, so every Epic passes
 or nothing is written, and a refusal names the Epic by index and ID
 (`epic_gate_blocked — item 1 (Epic 7)`). A round submission needs the caller to
-be each Epic's implementation approver; any one person may approve a round's
-completion. Each Epic keeps its own approvals, reviews, gate checks and
+be each Epic's implementation approver or its assignee; any one person may
+approve a round's completion. Each Epic keeps its own approvals, reviews, gate checks and
 completion, and can still be returned to planning or to implementation alone
 with the single-Epic commands.
 
