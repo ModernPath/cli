@@ -130,8 +130,9 @@ is not in the list fails as not found.`,
 func newInitiativeCreateCommand(load func() (*cliEnv, error)) *cobra.Command {
 	create := &cobra.Command{Use: "create", Short: "Create an Initiative in the bound System", Args: cobra.NoArgs,
 		Long: `Create an Initiative in the bound System from a JSON object using --file or
---file - for stdin. Allowed fields: text (required), horizon, release_id,
-goal_label, line_type, source and notes; any other field is refused before the
+--file - for stdin. Allowed fields: text (required), horizon (required: now,
+next or later), release_id, goal_label, line_type, source and notes; any other
+field is refused before the
 workspace loads. The System is the bound System.
 Example: {"text":"Pay in one step","horizon":"now","release_id":7}.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
