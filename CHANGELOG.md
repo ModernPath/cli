@@ -13,6 +13,35 @@
   tell agents to give each question a one-line title naming the choice, its
   alternatives as options with the recommended one marked, and its background
   in the question text.
+- `modernpath auth` is one sign-in (EPIC-MCP-001, SR-MCP-001-015). A person
+  in several workspaces picks one on the sign-in page; the CLI stores the
+  workspace the token names. Before, the CLI listed the workspaces after the
+  sign-in, asked in the terminal and signed in a second time. A bare
+  `modernpath auth` no longer reuses the stored workspace, so the sign-in
+  page asks every time. `--choose-workspace` is removed. `--workspace <id>`
+  still signs in to one workspace without asking, and still refuses a token
+  that lands elsewhere. The device flow has no workspace step, so without
+  `--workspace` it keeps reusing the workspace stored by the last sign-in at
+  the same server, forced or fallen back to
+  (USER:2026-10-29:device-flow-reuses-stored-workspace); a stored workspace
+  you no longer have access to is refused, naming `--device-flow --workspace
+  <id>` and `--logout`. With none stored it keeps the workspace the sign-in
+  lands in. Requires the
+  forked login (`zitadel-login/`) on the server; against the stock login a
+  bare sign-in lands in the workspace ZITADEL picks, usually your own.
+  **Release blocker:** do not release a CLI that contains this change until
+  the forked login runs in production with the CLI's client id in
+  `WORKSPACE_STEP_CLIENT_IDS`.
+- The sign-in no longer asks for ZITADEL's own project audience
+  (`urn:zitadel:iam:org:project:id:zitadel:aud`), in the browser and the device
+  flow. Only the workspace list used it, and that is gone; the CLI calls no
+  ZITADEL API with its access token, so the token's `aud` now holds only the
+  CLI client and the platform project (USER:2026-10-29:drop-zitadel-audience-scope).
+- `auth.json` no longer stores `workspace_name`, and `auth status` no longer
+  reports it in text or `--json`; `auth status` and `env` show the workspace
+  id. The name came from the workspace list, which is gone, and the token
+  does not carry it. A `workspace_name` left in an older `auth.json` is
+  ignored.
 
 ## v0.26.0 — Signed Windows binary
 

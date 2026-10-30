@@ -39,13 +39,13 @@ func TestLoginScopes_IncludeProjectAudience(t *testing.T) {
 
 // A profile with no project id must never produce a malformed
 // `...:project:id::aud`, which Zitadel would reject and which would break the
-// login that works now. The exact scope count moved to REQ-CROSS-334's
-// TestLoginScopesWithoutAProjectIDOmitOnlyTheProjectAudience.
+// login that works now. The exact scope set is REQ-CROSS-334's
+// TestLoginScopesAreTheSignInSet.
 func TestLoginScopes_NoProjectID_OmitsTheProjectAudience(t *testing.T) {
 	scopes := loginScopes(Profile{})
 
 	for _, s := range scopes {
-		if strings.HasPrefix(s, "urn:zitadel:iam:org:project:id:") && s != zitadelAudienceScope {
+		if strings.HasPrefix(s, "urn:zitadel:iam:org:project:id:") {
 			t.Errorf("scopes %v contain a project-audience scope with no project id", scopes)
 		}
 	}

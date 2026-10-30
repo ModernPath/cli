@@ -111,6 +111,7 @@ func DeviceLogin(ctx context.Context, profile Profile, out io.Writer, opts Optio
 		return nil, err
 	}
 	withOrganizationFilter(conf, opts)
+	withDeviceFlowOrganizationFilter(conf, opts)
 	return deviceLogin(ctx, conf, out)
 }
 
@@ -143,37 +144,41 @@ func deviceLogin(ctx context.Context, conf *oauth2.Config, out io.Writer) (*Toke
 // succeeds and every call after it is refused. Core's own service tokens
 // request the same scope.
 //
-// A profile with no project id asks for exactly the four scopes it asked for
-// before this existed: an empty id would produce `...:project:id::aud`, which
-// Zitadel rejects, breaking a login that works today.
+// A profile with no project id asks for no project audience: an empty id
+// would produce `...:project:id::aud`, which Zitadel rejects, breaking a
+// login that works today.
 //
-// Two more reserved scopes join every login (REQ-CROSS-334): ZITADEL's own
-// project audience, without which its authenticated-user API — the
-// workspace list — refuses the token; and the resource-owner claims, without
-// which core cannot tell a granted organization from a home one and applies
-// its domain guard to a sign-in that ZITADEL already authorized.
+// The resource-owner claims join every login (REQ-CROSS-334): without them
+// core cannot tell a granted organization from a home one and applies its
+// domain guard to a sign-in that ZITADEL already authorized. ZITADEL's own
+// project audience is not asked for: the CLI calls no ZITADEL API with the
+// access token (USER:2026-10-29:drop-zitadel-audience-scope).
 func loginScopes(profile Profile) []string {
-	scopes := []string{"openid", "profile", "email", "offline_access", zitadelProjectAudienceScope, resourceOwnerClaimsScope}
+	scopes := []string{"openid", "profile", "email", "offline_access", resourceOwnerClaimsScope}
 	if profile.ProjectID != "" {
 		scopes = append(scopes, projectAudienceScope(profile.ProjectID))
 	}
 	return scopes
 }
 
-const (
-	// zitadelProjectAudienceScope puts ZITADEL's own project id in the
-	// token's audience, which its authenticated-user API requires.
-	zitadelProjectAudienceScope = "urn:zitadel:iam:org:project:id:zitadel:aud"
-	// resourceOwnerClaimsScope adds the home organization's id, name and
-	// primary domain to the token.
-	resourceOwnerClaimsScope = "urn:zitadel:iam:user:resourceowner"
-)
+// resourceOwnerClaimsScope adds the home organization's id, name and primary
+// domain to the token.
+const resourceOwnerClaimsScope = "urn:zitadel:iam:user:resourceowner"
 
 // withOrganizationFilter returns conf's scopes plus the organization filter
 // when opts names a workspace, so the token the issuer mints acts there.
 func withOrganizationFilter(conf *oauth2.Config, opts Options) {
 	if opts.OrganizationID != "" {
 		conf.Scopes = append(conf.Scopes, organizationFilterScope(opts.OrganizationID))
+	}
+}
+
+// withDeviceFlowOrganizationFilter adds the device-only filter (the stored
+// workspace) when no workspace was named. Called only on the device-flow
+// paths, so the browser request never carries it.
+func withDeviceFlowOrganizationFilter(conf *oauth2.Config, opts Options) {
+	if opts.OrganizationID == "" && opts.DeviceFlowOrganizationID != "" {
+		conf.Scopes = append(conf.Scopes, organizationFilterScope(opts.DeviceFlowOrganizationID))
 	}
 }
 

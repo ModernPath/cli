@@ -13,7 +13,7 @@ import (
 
 func TestAuthWorkspaceFieldsRoundTrip(t *testing.T) {
 	chdirTemp(t)
-	in := &Auth{Token: "t0ken", RefreshToken: "r", WorkspaceID: "org-b", WorkspaceName: "Beta", Issuer: "https://id.example.test"}
+	in := &Auth{Token: "t0ken", RefreshToken: "r", WorkspaceID: "org-b", Issuer: "https://id.example.test"}
 	if err := WriteAuth(in); err != nil {
 		t.Fatal(err)
 	}
@@ -21,11 +21,11 @@ func TestAuthWorkspaceFieldsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.WorkspaceID != in.WorkspaceID || out.WorkspaceName != in.WorkspaceName || out.Issuer != in.Issuer {
+	if out.WorkspaceID != in.WorkspaceID || out.Issuer != in.Issuer {
 		t.Fatalf("read back %+v, want %+v", out, in)
 	}
 	raw, _ := os.ReadFile(filepath.Join(ConfigDir, AuthFile))
-	for _, key := range []string{`"workspace_id"`, `"workspace_name"`, `"issuer"`} {
+	for _, key := range []string{`"workspace_id"`, `"issuer"`} {
 		if !strings.Contains(string(raw), key) {
 			t.Fatalf("auth.json %s lacks %s", raw, key)
 		}
@@ -38,7 +38,7 @@ func TestAuthWorkspaceFieldsAreOmittedWhenEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(ConfigDir, AuthFile))
-	for _, key := range []string{"workspace_id", "workspace_name", "issuer"} {
+	for _, key := range []string{"workspace_id", "issuer"} {
 		if strings.Contains(string(raw), key) {
 			t.Fatalf("auth.json %s must omit %s when empty", raw, key)
 		}

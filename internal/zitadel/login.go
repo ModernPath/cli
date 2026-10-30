@@ -27,6 +27,12 @@ type Options struct {
 	// reserved `urn:zitadel:iam:org:roles:id:<org>` scope joins the request
 	// (REQ-CROSS-334), so the issued token acts in that workspace.
 	OrganizationID string
+	// DeviceFlowOrganizationID narrows the sign-in to one organization only when
+	// it runs as the device flow (forced, or fallen back to) and
+	// OrganizationID is empty: the stored workspace, which the device flow
+	// cannot choose otherwise (USER:2026-10-29:device-flow-reuses-stored-workspace).
+	// The browser flow ignores it; the sign-in page asks there.
+	DeviceFlowOrganizationID string
 }
 
 // Login signs in against a baked-in profile. Authorization code with PKCE on
@@ -56,6 +62,7 @@ func Login(ctx context.Context, profile Profile, out io.Writer, opts Options) (*
 	var unavailable *LoopbackUnavailableError
 	if errors.As(err, &unavailable) {
 		fmt.Fprintf(out, "Using the device flow: %s.\n", unavailable.Error())
+		withDeviceFlowOrganizationFilter(conf, opts)
 		return deviceLogin(ctx, conf, out)
 	}
 	return tok, err

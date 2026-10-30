@@ -46,8 +46,8 @@ script without parsing output:
   modernpath auth status >/dev/null 2>&1 || modernpath auth
 
 --json prints a single JSON object on stdout and nothing else, for tools:
-actor, workspace_id, workspace_name, system_id, expires_at,
-expires_in_seconds, and reason when not authenticated.
+actor, workspace_id, system_id, expires_at, expires_in_seconds, and
+reason when not authenticated.
 
 Examples:
   modernpath auth status            # Check the credential against the server
@@ -76,7 +76,6 @@ type authStatus struct {
 	Server        string `json:"server"`
 	Environment   string `json:"environment"`
 	WorkspaceID   string `json:"workspace_id,omitempty"`
-	WorkspaceName string `json:"workspace_name,omitempty"`
 	Issuer        string `json:"issuer,omitempty"`
 	TokenPresent  bool   `json:"token_present"`
 	CheckedOnline bool   `json:"checked_online"`
@@ -92,7 +91,7 @@ type authStatus struct {
 }
 
 func runAuthStatus(cmd *cobra.Command, args []string) error {
-	allowed := []string{"authenticated", "server", "environment", "workspace_id", "workspace_name", "issuer", "token_present", "checked_online", "detail", "actor", "system_id", "expires_at", "expires_in_seconds", "reason"}
+	allowed := []string{"authenticated", "server", "environment", "workspace_id", "issuer", "token_present", "checked_online", "detail", "actor", "system_id", "expires_at", "expires_in_seconds", "reason"}
 	if err := validateRecordSelection(cmd, allowed); err != nil {
 		return err
 	}
@@ -154,7 +153,7 @@ func flagIsTrue(cmd *cobra.Command, name string) bool {
 
 func authStatusRecord(st authStatus) map[string]any {
 	data := map[string]any{"authenticated": st.Authenticated, "server": st.Server, "environment": st.Environment, "token_present": st.TokenPresent, "checked_online": st.CheckedOnline, "detail": st.Detail}
-	for key, value := range map[string]string{"workspace_id": st.WorkspaceID, "workspace_name": st.WorkspaceName, "issuer": st.Issuer, "actor": st.Actor, "expires_at": st.ExpiresAt, "reason": st.Reason} {
+	for key, value := range map[string]string{"workspace_id": st.WorkspaceID, "issuer": st.Issuer, "actor": st.Actor, "expires_at": st.ExpiresAt, "reason": st.Reason} {
 		if value != "" {
 			data[key] = value
 		}
@@ -189,7 +188,6 @@ func evaluateAuthStatusAt(apiURL string, systemID int, auth *config.Auth, offlin
 	var token string
 	if auth != nil {
 		st.WorkspaceID = auth.WorkspaceID
-		st.WorkspaceName = auth.WorkspaceName
 		st.Issuer = auth.Issuer
 		st.Actor = auth.Actor
 		token = auth.Token
@@ -349,7 +347,7 @@ func renderAuthStatusHuman(st authStatus) {
 			fmt.Println("not recorded — sign in again to record it")
 		}
 	}
-	if line := workspaceStatusLine(&config.Auth{WorkspaceID: st.WorkspaceID, WorkspaceName: st.WorkspaceName}); line != "" {
+	if line := workspaceStatusLine(&config.Auth{WorkspaceID: st.WorkspaceID}); line != "" {
 		cyan.Printf("  Organization: ")
 		fmt.Printf("%s\n", line)
 	}

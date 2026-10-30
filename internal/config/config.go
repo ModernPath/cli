@@ -100,13 +100,12 @@ type Auth struct {
 	// sign-in — so a status read can name the signed-in person without a
 	// round trip (REQ-CROSS-388).
 	Actor string `json:"actor,omitempty"`
-	// WorkspaceID and WorkspaceName say which workspace — ZITADEL
-	// organization — the token was issued for; Issuer says who issued it, so a
-	// later sign-in on the same plane can apply the choice and one on another
-	// plane can leave it alone (REQ-CROSS-337).
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	WorkspaceName string `json:"workspace_name,omitempty"`
-	Issuer        string `json:"issuer,omitempty"`
+	// WorkspaceID says which workspace — ZITADEL organization — the token
+	// was issued for; Issuer says who issued it, so a later sign-in on the
+	// same plane can apply the choice and one on another plane can leave it
+	// alone (REQ-CROSS-337).
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Issuer      string `json:"issuer,omitempty"`
 	// Stash keeps the credential of every identity provider this workspace
 	// has been switched away from, keyed by issuer, so `env --set` restores
 	// it instead of leaving a foreign-plane token under the new URL
@@ -116,12 +115,11 @@ type Auth struct {
 
 // AuthMaterial is one stashed credential.
 type AuthMaterial struct {
-	Token         string `json:"token,omitempty"`
-	RefreshToken  string `json:"refresh_token,omitempty"`
-	ExpiresAt     string `json:"expires_at,omitempty"`
-	Actor         string `json:"actor,omitempty"`
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	WorkspaceName string `json:"workspace_name,omitempty"`
+	Token        string `json:"token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+	Actor        string `json:"actor,omitempty"`
+	WorkspaceID  string `json:"workspace_id,omitempty"`
 	// Issuer is kept with the material so a credential restored for a host
 	// whose identity provider the CLI cannot name still refreshes and still
 	// carries its "issued for" basis (F-CLI019-PR-04).

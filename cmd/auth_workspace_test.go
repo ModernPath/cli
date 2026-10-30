@@ -52,7 +52,7 @@ const testIssuer = "https://id.example.test"
 func TestSaveTokensRefusesATokenThatLandedInAnotherWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	chosen := workspaceChoice{ID: "org-b", Name: "Beta", Issuer: testIssuer, Chosen: true}
+	chosen := workspaceChoice{ID: "org-b", Issuer: testIssuer, Chosen: true}
 
 	err := saveTokens(zitadel.TestProfile.APIURL, platformJWT(t, testIssuer, "org-home", "org-home"), "rt", chosen)
 	if err == nil {
@@ -71,14 +71,14 @@ func TestSaveTokensRefusesATokenThatLandedInAnotherWorkspace(t *testing.T) {
 func TestSaveTokensRecordsTheChosenWorkspaceWhenTheTokenNamesIt(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	chosen := workspaceChoice{ID: "org-b", Name: "Beta", Issuer: testIssuer, Chosen: true}
+	chosen := workspaceChoice{ID: "org-b", Issuer: testIssuer, Chosen: true}
 
 	if err := saveTokens(zitadel.TestProfile.APIURL, platformJWT(t, testIssuer, "org-home", "org-b"), "rt", chosen); err != nil {
 		t.Fatalf("saveTokens: %v", err)
 	}
 	got := readAuthFile(t, dir)
-	if got["workspace_id"] != "org-b" || got["workspace_name"] != "Beta" || got["issuer"] != testIssuer {
-		t.Fatalf("auth.json = %v, want workspace org-b named Beta from %s", got, testIssuer)
+	if got["workspace_id"] != "org-b" || got["issuer"] != testIssuer {
+		t.Fatalf("auth.json = %v, want workspace org-b from %s", got, testIssuer)
 	}
 }
 
@@ -86,17 +86,17 @@ func TestSaveTokensRecordsTheTokensOwnWorkspaceWhenNoneWasChosen(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	if err := saveTokens(zitadel.TestProfile.APIURL, platformJWT(t, testIssuer, "org-home", "org-home"), "rt", workspaceChoice{Name: "Home Org", Issuer: testIssuer}); err != nil {
+	if err := saveTokens(zitadel.TestProfile.APIURL, platformJWT(t, testIssuer, "org-home", "org-home"), "rt", workspaceChoice{Issuer: testIssuer}); err != nil {
 		t.Fatalf("saveTokens: %v", err)
 	}
 	got := readAuthFile(t, dir)
-	if got["workspace_id"] != "org-home" || got["workspace_name"] != "Home Org" || got["issuer"] != testIssuer {
+	if got["workspace_id"] != "org-home" || got["issuer"] != testIssuer {
 		t.Fatalf("auth.json = %v, want the token's own workspace recorded", got)
 	}
 }
 
 // The pasted-token path has no profile: a JWT carrying the claim records its
-// organization and its own issuer, with no name (EPIC-CLI-009 D7, CR-12).
+// organization and its own issuer (EPIC-CLI-009 D7, CR-12).
 func TestSaveTokensRecordsAPastedJWTsOwnIssuerAndOrganization(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -108,15 +108,12 @@ func TestSaveTokensRecordsAPastedJWTsOwnIssuerAndOrganization(t *testing.T) {
 	if got["workspace_id"] != "org-local" || got["issuer"] != "https://local-issuer.test" {
 		t.Fatalf("auth.json = %v, want the claim's organization and the token's issuer", got)
 	}
-	if _, named := got["workspace_name"]; named {
-		t.Fatalf("auth.json = %v, want no name for a pasted token", got)
-	}
 }
 
 func TestSaveTokensStoresANonJWTWithNoWorkspaceAndClearsAnOldOne(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := config.WriteAuth(&config.Auth{Token: "old", WorkspaceID: "org-b", WorkspaceName: "Beta", Issuer: testIssuer}); err != nil {
+	if err := config.WriteAuth(&config.Auth{Token: "old", WorkspaceID: "org-b", Issuer: testIssuer}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,7 +124,7 @@ func TestSaveTokensStoresANonJWTWithNoWorkspaceAndClearsAnOldOne(t *testing.T) {
 	if got["token"] != "opaque-token" {
 		t.Fatalf("auth.json = %v, want the new token", got)
 	}
-	for _, key := range []string{"workspace_id", "workspace_name", "issuer"} {
+	for _, key := range []string{"workspace_id", "issuer"} {
 		if _, present := got[key]; present {
 			t.Fatalf("auth.json = %v, want %q gone: the file is written whole", got, key)
 		}
@@ -156,7 +153,7 @@ func TestSaveTokensRefusesAChosenWorkspaceItCannotConfirm(t *testing.T) {
 func TestSaveTokensRefusesAChosenWorkspaceWhenTheTokenNamesNone(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	chosen := workspaceChoice{ID: "org-b", Name: "Beta", Issuer: testIssuer, Chosen: true}
+	chosen := workspaceChoice{ID: "org-b", Issuer: testIssuer, Chosen: true}
 
 	err := saveTokens(zitadel.TestProfile.APIURL, platformJWT(t, testIssuer, "org-home", ""), "rt", chosen)
 	if err == nil {
@@ -179,7 +176,6 @@ func TestWorkspaceStatusLineNamesTheStoredWorkspace(t *testing.T) {
 		auth *config.Auth
 		want string
 	}{
-		{&config.Auth{Token: "t", WorkspaceID: "org-b", WorkspaceName: "Beta"}, "Beta (org-b)"},
 		{&config.Auth{Token: "t", WorkspaceID: "org-b"}, "org-b"},
 		{&config.Auth{Token: "t"}, ""},
 		{nil, ""},

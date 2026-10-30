@@ -54,7 +54,7 @@ func TestEnvSetRestoresTheStashedBindingAndCredential(t *testing.T) {
 	test := testPlaneToken(t)
 	writeJSON(t, root, ".modernpath/auth.json", map[string]any{
 		"token": test, "issuer": zitadel.TestProfile.Issuer, "actor": "jane@example.com", "workspace_id": "org-test",
-		"stash": map[string]any{zitadel.ProdProfile.Issuer: map[string]any{"token": prod, "actor": "jane@example.com", "workspace_id": "org-prod", "workspace_name": "Acme"}},
+		"stash": map[string]any{zitadel.ProdProfile.Issuer: map[string]any{"token": prod, "actor": "jane@example.com", "workspace_id": "org-prod"}},
 	})
 	cfg, _ := config.ReadConfig()
 

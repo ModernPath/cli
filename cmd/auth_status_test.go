@@ -21,15 +21,14 @@ func TestAuthStatusReportsAuthenticatedAgainstThePlatformEdge(t *testing.T) {
 	server, records := platformEdge(t, projectID)
 
 	st := evaluateAuthStatus(server.URL, &config.Auth{
-		Token:         jwtWithAudience(t, projectID),
-		WorkspaceID:   "org-1",
-		WorkspaceName: "Acme",
+		Token:       jwtWithAudience(t, projectID),
+		WorkspaceID: "org-1",
 	}, false)
 
 	if !st.Authenticated || !st.CheckedOnline {
 		t.Fatalf("want authenticated online, got %+v", st)
 	}
-	if st.WorkspaceID != "org-1" || st.WorkspaceName != "Acme" {
+	if st.WorkspaceID != "org-1" {
 		t.Errorf("workspace identity not carried into the report: %+v", st)
 	}
 	probes := records()
@@ -224,7 +223,7 @@ func TestAuthStatusDoesNotLeakToken(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	st := evaluateAuthStatus(srv.URL, &config.Auth{Token: secret, WorkspaceID: "org-9", WorkspaceName: "Acme"}, false)
+	st := evaluateAuthStatus(srv.URL, &config.Auth{Token: secret, WorkspaceID: "org-9"}, false)
 
 	blob, _ := json.Marshal(st)
 	if strings.Contains(string(blob), secret) {
@@ -238,8 +237,8 @@ func TestAuthStatusDoesNotLeakToken(t *testing.T) {
 		t.Fatalf("token leaked into the human render:\n%s", human)
 	}
 	// The renderer still shows the useful identity and a status.
-	if !strings.Contains(human, "Acme") {
-		t.Errorf("human render dropped the workspace name:\n%s", human)
+	if !strings.Contains(human, "org-9") {
+		t.Errorf("human render dropped the workspace id:\n%s", human)
 	}
 }
 

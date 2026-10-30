@@ -277,17 +277,27 @@ and prints a URL to open on any device; `modernpath auth --device-flow` forces
 that path. `BROWSER` names the program that opens the URL and, when set, also
 tells the CLI the browser is reachable.
 
-If you have access to more than one workspace, the browser sign-in lists them
-by name once you have signed in and asks which one to use, then signs you in
-to it; the choice is kept beside the credential and applied on the next bare
-`modernpath auth` on the same plane. `modernpath auth --workspace <id>` names
-the workspace outright — for scripts and headless hosts — and
-`--choose-workspace` asks again. The device flow cannot list your workspaces
-(ZITADEL refuses the list to its token), so it never asks: a bare
-`--device-flow` keeps the workspace the sign-in lands in — your own, for most
-people — and says how to reach another, `--workspace <id>` names one, and
-`--choose-workspace` is refused with it. The CLI never stores
-a credential for a workspace other than the one you named: if the sign-in
+If you have access to more than one workspace, the sign-in page asks which
+one to use, after you have signed in and before the browser returns to the
+CLI. It is one sign-in: the CLI reads the workspace from the token and stores
+it beside the credential. Every bare `modernpath auth` asks again; the CLI
+does not reuse an earlier choice. `modernpath auth --workspace <id>` names
+the workspace outright — for scripts and headless hosts — and the sign-in
+page does not ask. The sign-in page's workspace step comes with our fork of
+ZITADEL's login (`zitadel-login/`); against a server that still runs the
+stock login, a bare sign-in lands in the workspace ZITADEL picks, usually
+your own. The device flow has no workspace step: its sign-in is completed
+outside the login's pages, so the sign-in page cannot ask. A bare
+`--device-flow` (or the device flow the CLI falls back to when no browser can
+reach this machine) signs you in to the workspace stored by your last sign-in
+at the same server, and says so; with none stored it keeps the workspace the
+sign-in lands in — your own, for most people — and says how to reach another.
+`--workspace <id>` names one. If you no longer have access to the stored
+workspace, the sign-in is refused: name another with
+`modernpath auth --device-flow --workspace <id>`, or run
+`modernpath auth --logout` and sign in again. The browser sign-in never
+reuses the stored workspace; its sign-in page asks. The CLI never stores a
+credential for a workspace other than the one you named: if the sign-in
 lands elsewhere the command fails and the previous credential stays. A
 failed sign-in exits non-zero. `modernpath env` shows the workspace the
 credential is for.

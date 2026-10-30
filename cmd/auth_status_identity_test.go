@@ -36,12 +36,11 @@ var statusNow = time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
 func TestAuthStatusReportsActorSystemAndExpiry(t *testing.T) {
 	expires := statusNow.Add(30 * time.Minute)
 	auth := &config.Auth{
-		Token:         jwtWithClaims(t, map[string]any{"sub": "u1", "email": "jane@example.com", "exp": expires.Unix()}),
-		Actor:         "jane@example.com",
-		ExpiresAt:     expires.Format(time.RFC3339),
-		WorkspaceID:   "371594261646278691",
-		WorkspaceName: "Acme",
-		Issuer:        "https://id.example.test",
+		Token:       jwtWithClaims(t, map[string]any{"sub": "u1", "email": "jane@example.com", "exp": expires.Unix()}),
+		Actor:       "jane@example.com",
+		ExpiresAt:   expires.Format(time.RFC3339),
+		WorkspaceID: "371594261646278691",
+		Issuer:      "https://id.example.test",
 	}
 
 	st := evaluateAuthStatusAt("https://api.example.test", 7, auth, true, statusNow)
@@ -62,7 +61,7 @@ func TestAuthStatusReportsActorSystemAndExpiry(t *testing.T) {
 	var out []byte
 	_ = captureStdout(t, func() error { renderAuthStatusHuman(st); return nil }, &out)
 	human := string(out)
-	for _, want := range []string{"Actor:", "jane@example.com", "Organization:", "Acme (371594261646278691)", "System:", "7", "Expires:", "in 30m"} {
+	for _, want := range []string{"Actor:", "jane@example.com", "Organization:", "371594261646278691", "System:", "7", "Expires:", "in 30m"} {
 		if !strings.Contains(human, want) {
 			t.Errorf("human render lacks %q:\n%s", want, human)
 		}

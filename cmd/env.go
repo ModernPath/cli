@@ -458,7 +458,7 @@ func switchEnvironment(cfg *config.Config, newURL string) error {
 		}
 		auth.Stash[credentialKeyFor(auth, oldURL)] = config.AuthMaterial{
 			Token: auth.Token, RefreshToken: auth.RefreshToken, ExpiresAt: auth.ExpiresAt,
-			Actor: auth.Actor, WorkspaceID: auth.WorkspaceID, WorkspaceName: auth.WorkspaceName,
+			Actor: auth.Actor, WorkspaceID: auth.WorkspaceID,
 			Issuer: auth.Issuer,
 		}
 	}
@@ -538,24 +538,20 @@ func credentialKeyFor(auth *config.Auth, apiURL string) string {
 
 func activateCredential(auth *config.Auth, m config.AuthMaterial, issuer string) {
 	auth.Token, auth.RefreshToken, auth.ExpiresAt = m.Token, m.RefreshToken, m.ExpiresAt
-	auth.Actor, auth.WorkspaceID, auth.WorkspaceName = m.Actor, m.WorkspaceID, m.WorkspaceName
+	auth.Actor, auth.WorkspaceID = m.Actor, m.WorkspaceID
 	if issuer == "" {
 		issuer = m.Issuer
 	}
 	auth.Issuer = issuer
 }
 
-// workspaceStatusLine says which workspace the stored credential is for:
-// name and id, the id alone when no name is stored, nothing when none is.
+// workspaceStatusLine says which workspace the stored credential is for: its
+// id, or nothing when none is stored.
 func workspaceStatusLine(auth *config.Auth) string {
-	switch {
-	case auth == nil || auth.WorkspaceID == "":
+	if auth == nil {
 		return ""
-	case auth.WorkspaceName == "":
-		return auth.WorkspaceID
-	default:
-		return fmt.Sprintf("%s (%s)", auth.WorkspaceName, auth.WorkspaceID)
 	}
+	return auth.WorkspaceID
 }
 
 func displayEnvironmentStatus(cfg *config.Config) {

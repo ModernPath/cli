@@ -7,43 +7,47 @@ import (
 	"testing"
 )
 
-// REQ-CROSS-334 — every profile login asks for the two scopes that make a
-// workspace choice possible, and carries the organization filter when a
-// workspace is set.
-//
-// `urn:zitadel:iam:org:project:id:zitadel:aud` puts ZITADEL's own project in
-// the token's audience, which its authenticated-user API (the organization
-// list, REQ-CROSS-335) requires. `urn:zitadel:iam:user:resourceowner` adds
-// the home organization's id, name and domain, which core's domain guard
-// needs to recognise a granted organization (EPIC-CLI-009 R4).
+// REQ-CROSS-334 — every profile login asks for the resource-owner claims,
+// and carries the organization filter when a workspace is set.
+// `urn:zitadel:iam:user:resourceowner` adds the home organization's id, name
+// and domain, which core's domain guard needs to recognise a granted
+// organization (EPIC-CLI-009 R4). ZITADEL's own project audience is not
+// asked for: the CLI calls no ZITADEL API with the access token
+// (USER:2026-10-29:drop-zitadel-audience-scope).
 
-const (
-	zitadelAudienceScope = "urn:zitadel:iam:org:project:id:zitadel:aud"
-	resourceOwnerScope   = "urn:zitadel:iam:user:resourceowner"
-)
+const resourceOwnerScope = "urn:zitadel:iam:user:resourceowner"
 
-func TestLoginScopesIncludeTheWorkspaceListingAndResourceOwnerScopes(t *testing.T) {
-	for _, p := range []Profile{{ProjectID: "123456"}, {}} {
-		scopes := loginScopes(p)
-		for _, want := range []string{zitadelAudienceScope, resourceOwnerScope} {
-			if !contains(scopes, want) {
-				t.Errorf("ProjectID=%q: scopes %v missing %q", p.ProjectID, scopes, want)
-			}
-		}
+// signInScopes is the whole scope set a login asks for, without the filter.
+func signInScopes(projectID string) []string {
+	scopes := []string{"openid", "profile", "email", "offline_access", resourceOwnerScope}
+	if projectID != "" {
+		scopes = append(scopes, "urn:zitadel:iam:org:project:id:"+projectID+":aud")
 	}
+	return scopes
 }
 
-// REQ-CROSS-291's rule stands beside the new scopes: no project id, no
-// project-audience scope — a malformed `...:project:id::aud` would be
-// rejected by ZITADEL.
-func TestLoginScopesWithoutAProjectIDOmitOnlyTheProjectAudience(t *testing.T) {
-	scopes := loginScopes(Profile{})
-	if len(scopes) != 6 {
-		t.Errorf("scopes = %v, want the four existing scopes plus the two new ones", scopes)
+// sameScopes compares two scope lists as sets.
+func sameScopes(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
 	}
-	for _, s := range scopes {
-		if strings.HasPrefix(s, "urn:zitadel:iam:org:project:id:") && s != zitadelAudienceScope {
-			t.Errorf("scopes %v contain a project-audience scope with no project id", scopes)
+	seen := map[string]int{}
+	for _, s := range got {
+		seen[s]++
+	}
+	for _, s := range want {
+		if seen[s] == 0 {
+			return false
+		}
+		seen[s]--
+	}
+	return true
+}
+
+func TestLoginScopesAreTheSignInSet(t *testing.T) {
+	for _, projectID := range []string{"123456", ""} {
+		if got, want := loginScopes(Profile{ProjectID: projectID}), signInScopes(projectID); !sameScopes(got, want) {
+			t.Errorf("ProjectID=%q: scopes = %v, want %v", projectID, got, want)
 		}
 	}
 }
@@ -69,10 +73,8 @@ func TestLoginCarriesTheOrganizationFilterOnTheAuthorizeRequest(t *testing.T) {
 	if !strings.Contains(scope, organizationFilterScope("org-b")) {
 		t.Fatalf("authorize scope = %q, want the filter for org-b", scope)
 	}
-	for _, want := range []string{zitadelAudienceScope, resourceOwnerScope, projectAudienceScope("proj-1"), "openid"} {
-		if !strings.Contains(scope, want) {
-			t.Fatalf("authorize scope = %q, missing %q", scope, want)
-		}
+	if got, want := strings.Fields(scope), append(signInScopes("proj-1"), organizationFilterScope("org-b")); !sameScopes(got, want) {
+		t.Fatalf("authorize scope = %v, want %v", got, want)
 	}
 }
 
@@ -125,9 +127,11 @@ func assertDeviceScope(t *testing.T, issuer *fakeIssuer, filtered bool) {
 	if has := strings.Contains(scope, organizationFilterScope("org-b")); has != filtered {
 		t.Fatalf("device-authorization scope = %q, filter present = %v, want %v", scope, has, filtered)
 	}
-	for _, want := range []string{zitadelAudienceScope, resourceOwnerScope} {
-		if !strings.Contains(scope, want) {
-			t.Fatalf("device-authorization scope = %q, missing %q", scope, want)
-		}
+	want := signInScopes("proj-1")
+	if filtered {
+		want = append(want, organizationFilterScope("org-b"))
+	}
+	if got := strings.Fields(scope); !sameScopes(got, want) {
+		t.Fatalf("device-authorization scope = %v, want %v", got, want)
 	}
 }
