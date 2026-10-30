@@ -60,6 +60,11 @@ func refusalBodyText(body map[string]any) string {
 		if text, ok := batchRefusalText(body, errVal); ok {
 			return text
 		}
+		// Epic 388 (SR-4625-2): a refused single declare-decision names the
+		// field at fault: "<code> — <field>: <message>".
+		if code, field := str(errVal, "code"), str(errVal, "field"); code != "" && field != "" {
+			return code + " — " + field + ": " + str(errVal, "message")
+		}
 		if details, ok := errVal["details"].(map[string]any); ok && len(details) > 0 {
 			return detailLines(details)
 		}
@@ -143,7 +148,8 @@ func completionBlockers(value any) []string {
 
 // batchRefusalText renders a refused batch item (Epics 321-323): the body
 // carries {error:{code,message}, index, item} and reads
-// "<code> — item <index> (<identity>) — <message>".
+// "<code> — item <index> (<identity>) — <message>". Epic 388: an error.field
+// reads "<code> — item <index> (<identity>) — <field>: <message>".
 func batchRefusalText(body, errVal map[string]any) (string, bool) {
 	code := str(errVal, "code")
 	var index string
@@ -160,7 +166,11 @@ func batchRefusalText(body, errVal map[string]any) (string, bool) {
 	if identity := batchItemIdentity(body["item"]); identity != "" {
 		text += " (" + identity + ")"
 	}
-	if message := str(errVal, "message"); message != "" {
+	field, message := str(errVal, "field"), str(errVal, "message")
+	switch {
+	case field != "":
+		text += " — " + field + ": " + message
+	case message != "":
 		text += " — " + message
 	}
 	return text, true

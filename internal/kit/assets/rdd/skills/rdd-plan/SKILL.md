@@ -95,6 +95,8 @@ the review that follows them. Before the new review of a requested revision:
 5. Define behavior boundaries, acceptance scenarios, code/test targets,
    expected RED assertions, focused and proportional regression checks,
    operational and security risks, and the requirement content that completion would publish.
+   A removal Epic retires published requirements through `retire` and
+   removes their traces through `remove_traces`.
 6. Create or reuse test definitions before readiness review. Declare
    every active criterion as a verification obligation,
    with test identity, boundary and expected observation. Identify changed

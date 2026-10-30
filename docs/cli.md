@@ -729,6 +729,10 @@ rejects requirements owned by active Epic work or requirements with a published
 accepted version. Obsoletion preserves the requirement content, criteria and
 traces.
 
+A published requirement is retired through an Epic plan's `retire` instead,
+confirmed by its domain owner. Completion of that Epic publishes it as a new
+OBSOLETE version (see Epic gates and human approvals).
+
 ```sh
 modernpath requirements obsolete <uuid> --kind system --reason "The interface was removed"
 ```
@@ -1251,6 +1255,7 @@ modernpath epics plan approve-completion <epic-id> --reason "USER:<source>: acce
 modernpath epics plan return-to-implementation <epic-id> --reason "USER:<source>: continue work"
 modernpath epics plan return-to-planning <epic-id> --reason "USER:<source>: replan" --carry-decision <decision-id>
 modernpath epics plan history <epic-id> --full --json
+modernpath epics gates confirm-removal <epic-id> --file confirm.json
 ```
 
 The saved plan has `body`, `requirements`, `traces`, optional `remove_traces`
@@ -1264,6 +1269,22 @@ requirement or criterion. Save refuses deleted, unknown, foreign-System and
 out-of-plan IDs as `trace_removal_not_found`. Listing a stale trace does not
 implicitly revive it. Approval records the list and completion removes exactly
 those traces.
+A removal Epic ends published behavior with the optional `retire` list:
+1 to 200 distinct entries `{kind, id, reason}`, each a published
+`user_requirement` or `system_requirement` and a reason of 1 to 2000
+characters. A plan may hold only `retire` entries, with `requirements: []`.
+Save refuses an OBSOLETE or unpublished requirement, and one the plan also
+lists in `requirements`. The plan removes every active implements trace of a
+retired requirement and its criteria through `remove_traces`; the gates block
+with `retire_trace_not_removed` until it does. Each entry needs its domain
+owner's confirmation, Confirm removal on Your move or
+`epics gates confirm-removal` with `{requirement_kind, requirement_id, source, reason?}`,
+where `source` is the `USER:` source and `reason` the confirmer's comment. It
+records a `removal_confirmation` and prints the record. A confirmation counts
+while the saved plan holds the entry with the same reason in the current
+planning cycle; until then the gates block with `removal_confirmation_required`.
+Completion publishes each retired requirement as a new OBSOLETE version,
+accepted as a retirement with the entry's reason.
 `verification` declares the plan `author_context`, decision UUIDs, criterion
 obligations `{id, changed, test_case_id, boundary}`, project checks
 `{id, name, test_case_id, boundary}`, and boundaries `{name, applicable, reason}`.
@@ -1336,9 +1357,12 @@ nothing is written; the answer stays free text.
 `epics gates declare-decision` and `epics gates decision` also take a batch,
 `{"items":[...]}` of the single objects: 1 to 200 distinct items, written in
 input order in one call, all or nothing. A batch declare returns
-`{"items":[{"index","id","question","title","options"}]}`, with `title` null
-and `options` empty for a question declared without them. A refused batch
-writes nothing and names the item: `<code> — item <index> (<identity>) — <message>`.
+`{"items":[{"index","id","question","title","options","addressee"}]}`, with `title` null
+and `options` empty for a question declared without them, and `addressee {id, name}`
+only for an item that names one. A refused batch writes nothing and names the
+item: `<code> — item <index> (<identity>) — <field>: <message>`, the `<field>:`
+part only when the refusal names one. A refused single declare-decision reads
+`<code> — <field>: <message>`.
 
 Return to planning carries selected decisions. It clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. A new plan review and implementation approval are required, followed by retesting each changed published criterion.
 

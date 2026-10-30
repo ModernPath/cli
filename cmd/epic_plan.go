@@ -227,6 +227,9 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
               | {"source_type": "user_requirement" | "system_requirement", "source_id",
                  "link_kind": "planned"}],
    "remove_traces"?: ["<id of an existing trace this plan removes>"],
+   "retire"?: [{"kind": "user_requirement" | "system_requirement",
+                "id": "<uuid of a published requirement this Epic retires>",
+                "reason": "<why the behavior ends, 1 to 2000 characters>"}],
    "verification": {"author_context": "<authoring context>", "decisions": ["<issued decision UUID>"],
                     "criteria": [{"id": "<criterion UUID>", "changed": true,
                                   "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
@@ -276,6 +279,17 @@ ID may not be in both lists. Approval records the list, and
 completion removes exactly those traces. Code and test links added during
 implementation survive.
 
+retire ends published behavior: a requirement that is DONE, past revision 0 or
+has an accepted version. requirements obsolete refuses those. List 1 to 200
+distinct entries. A plan may hold only retire entries, with "requirements": []
+and empty verification criteria. An entry may not also be in requirements, and
+an OBSOLETE or unpublished requirement is refused. List in remove_traces every
+active implements trace of the requirement and its criteria; save refuses a
+new trace to it. Each entry needs its domain owner's confirmation, recorded with
+epics gates confirm-removal, before implementation approval. A changed reason
+needs a new confirmation. Completion publishes each retired requirement as a
+new OBSOLETE version; its criteria and verifies traces are kept.
+
 A modernizes trace links a new requirement of the plan, its source, to the
 legacy requirement it modernizes in another System, its target:
   {"source_type":"user_requirement","source_id":"<plan requirement UUID>",
@@ -320,7 +334,8 @@ approval, then retest each changed published criterion.
 
 submit-review checks current completion-review readiness and moves work to
 IN_REVIEW. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
-one accepted requirement version and releases ownership. Repeating completion on
+one accepted requirement version and releases ownership. Each retired requirement becomes a
+new OBSOLETE version. Repeating completion on
 DONE publishes nothing twice. return-to-implementation needs a non-empty human
 reason and the current IN_REVIEW lifecycle; it also works when completion readiness
 fails. It keeps the plan and implementation approval. Both use small decision
@@ -343,12 +358,12 @@ and audit after an uncertain nonterminal response.
 
 var epicPlanOperationHelp = map[string]string{
 	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields, such as plan or modernization, with --fields or --full.",
-	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval.",
+	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval. A removal Epic lists the published requirements it retires as \"retire\": [{\"kind\", \"id\", \"reason\"}] and removes their traces through remove_traces (see epics plan --help).",
 	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
 	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision and its answer. Return clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. Obtain a new plan review and implementation approval, then retest each changed published criterion. DONE stays closed.",
 	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Only the implementation approver or the Epic's assignee can submit.",
 	"return-to-implementation": "Apply the human's not-yet decision to an IN_REVIEW Epic. --reason is required. Current completion readiness may fail. The plan, approval and ownership remain in effect.",
-	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once.",
+	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once. Each requirement the plan retires becomes a new OBSOLETE version, accepted as a retirement with the entry's reason.",
 	"history":                  "Read attributable saves, approvals, returns and content edits. --full includes surviving audit details. Removed presentations and copied plans cannot be reconstructed.",
 }
 

@@ -429,6 +429,7 @@ var leafDispositions = map[string]disposition{
 	"epics gates resolve":               {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "resolve", "42"}},
 	"epics gates decision":              {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "decision", "42"}},
 	"epics gates declare-decision":      {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "declare-decision", "42"}},
+	"epics gates confirm-removal":       {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "confirm-removal", "42"}},
 	"epics gates recover-legacy":        {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "gates", "recover-legacy", "42"}},
 	"epics plan show":                   {kind: dispExecute, args: []string{"epics", "plan", "show", "42"}},
 	"epics plan history":                {kind: dispExecute, args: []string{"epics", "plan", "history", "42"}},

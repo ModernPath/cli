@@ -184,3 +184,29 @@ func TestA4CLIGuideSaysWhatEpicCreationRefuses(t *testing.T) {
 		}
 	}
 }
+
+// Epic 380, SR-4653-0 criterion d3c8893a: the CLI guide's obsolete section
+// says a published requirement is retired through an Epic plan's retire and
+// confirmed by its domain owner, and its plan section documents retire and
+// epics gates confirm-removal. Both copies of the guide are checked.
+func TestCLIGuideDocumentsRetireAndConfirmRemoval(t *testing.T) {
+	for name, guide := range a4Guides(t) {
+		text := string(guide)
+		normalize := func(section string) string { return strings.Join(strings.Fields(section), " ") }
+		obsolete := normalize(guideSectionRunning(text, "modernpath requirements obsolete"))
+		requirePhrases(t, name+" obsolete section", obsolete, []string{
+			"A published requirement is retired through an Epic plan's `retire`",
+			"confirmed by its domain owner",
+		})
+		plan := normalize(guideSectionRunning(text, "modernpath epics plan save"))
+		requirePhrases(t, name+" plan section", plan, []string{
+			"`retire`",
+			"`{kind, id, reason}`",
+			"modernpath epics gates confirm-removal <epic-id> --file confirm.json",
+			"`{requirement_kind, requirement_id, source, reason?}`",
+			"`removal_confirmation`",
+			"`remove_traces`",
+			"OBSOLETE version",
+		})
+	}
+}

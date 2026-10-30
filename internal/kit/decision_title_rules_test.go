@@ -49,3 +49,25 @@ func TestKitSaysEachDecisionHasAOneLineTitleOptionsAndItsBackgroundInTheQuestion
 		}
 	}
 }
+
+// Epic 388 (SR-4625-2, criterion f8d17252, test case f1f06ddd): the CLI guide
+// shows the batch declare reply with its addressee and a refused item with
+// the field at fault, as the help does.
+func TestCLIGuideShowsTheBatchReplyAddresseeAndTheRefusedField(t *testing.T) {
+	guide, err := assets.ReadFile("assets/cli-guide/cli.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(kitWhitespaceNormalised(guide), "`", "")
+	for _, phrase := range []string{
+		`{"items":[{"index","id","question","title","options","addressee"}]}`,
+		"addressee {id, name} only for an item that names one",
+		"<code> — item <index> (<identity>) — <field>: <message>",
+		"<code> — <field>: <message>",
+		"<field>: part only when the refusal names one",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("cli-guide/cli.md does not say %q", phrase)
+		}
+	}
+}

@@ -252,7 +252,24 @@ func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecis
 			`"key"`, `"text"`, `"recommended"`,
 			"1 to 120 characters",
 			"2 to 6 options",
-			`{"items":[{"index","id","question","title","options"}]}`,
+			`{"items":[{"index","id","question","title","options","addressee"}]}`,
+		} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("epics gates help must state %q", phrase)
+			}
+		}
+	})
+
+	// Epic 388 (SR-4625-2, criterion f8d17252): the batch reply names the
+	// addressee only for an item that names one, and a refused item names its
+	// field only when the refusal names one.
+	t.Run("epics gates declare-decision help shows the addressee in the batch reply and the refused field", func(t *testing.T) {
+		text := roundWordingText(help(t, "epics", "gates"))
+		for _, phrase := range []string{
+			`{"items":[{"index","id","question","title","options","addressee"}]}`,
+			"addressee {id, name} only for an item that names one",
+			"<code> — item <index> (<identity>) — <field>: <message>",
+			"<field>: part only when the refusal names one",
 		} {
 			if !strings.Contains(text, phrase) {
 				t.Errorf("epics gates help must state %q", phrase)

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A refused `epics gates declare-decision` now names the field at fault
+  (Epic 388): `<code> — <field>: <message>` for a single question and
+  `<code> — item <index> (<identity>) — <field>: <message>` for a batch item.
+  Scripts that match the exact refusal text see the added `<field>:` part.
 - `epics gates declare-decision` takes an optional one-line `title` and
   optional `options` (Epic 382). Requires a server that includes it. The title
   is 1 to 120 characters after trimming, with no control character; options are

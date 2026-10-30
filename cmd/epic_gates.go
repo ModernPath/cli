@@ -69,6 +69,7 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		{"resolve", "/resolve-finding", "Record the resolution of a material review finding", true},
 		{"decision", "/answer-decision", "Record an explicit answer to a declared human decision", true},
 		{"declare-decision", "/declare-decision", "Retain a decision question and issue its identity for the plan", true},
+		{"confirm-removal", "/confirm-removal", "Record the domain owner's confirmation of a requirement the saved plan retires", true},
 		{"recover-legacy", "/recover-legacy", "Apply an explicit human decision to return an active legacy plan to planning", true},
 	} {
 		op := op
@@ -204,10 +205,18 @@ case-sensitive), "text" (1 to 1000 characters) and an optional boolean
 "recommended", true on at most one. Keep the background in the question text.
 Any other shape is refused with invalid_human_decision and nothing is written.
   decision: {"decision_id":"declared UUID","answer":"human decision","source":"USER:..."}
+  confirm-removal: {"requirement_kind":"user_requirement|system_requirement","requirement_id":"uuid","source":"USER:...","reason":"optional comment"}
+confirm-removal records a removal_confirmation for one retire entry of the
+saved plan of a PROPOSED Epic and prints the record. It counts while the saved
+plan holds that entry with the same reason in the current planning cycle; a
+changed reason or a return to planning needs a new confirmation.
 declare-decision and decision also take a batch, {"items":[<object>, ...]}: 1 to 200
 distinct items written in input order in one call, all or nothing. A batch declare
-prints {"items":[{"index","id","question","title","options"}]}. A refused batch writes nothing and
-names the failing item: <code> — item <index> (<identity>) — <message>.
+prints {"items":[{"index","id","question","title","options","addressee"}]}, with
+addressee {id, name} only for an item that names one. A refused batch writes nothing and
+names the failing item: <code> — item <index> (<identity>) — <field>: <message>,
+the <field>: part only when the refusal names one. A refused single declare-decision
+reads <code> — <field>: <message>.
 
 Returning active work to planning requires the current approver's explicit
 human decision. It releases requirement ownership and retains draft content,

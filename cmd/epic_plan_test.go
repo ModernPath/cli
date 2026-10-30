@@ -540,3 +540,39 @@ func TestReturnToPlanningSendsRepeatedCarryDecisionIdsAsCarryDecisions(t *testin
 		}
 	})
 }
+
+// Epic 380, SR-4653-0 criterion d3c8893a: the save help shows the plan's
+// retire key with its {kind, id, reason} shape, and the approve-completion
+// help says a retired requirement becomes an OBSOLETE version.
+func TestEpicPlanSaveHelpShowsRetireAndCompletionHelpNamesTheObsoleteVersion(t *testing.T) {
+	normalize := func(text string) string { return strings.Join(strings.Fields(text), " ") }
+	shape := `"retire"?: [{"kind": "user_requirement" | "system_requirement", "id": "<uuid of a published requirement`
+	for _, args := range [][]string{{"epics", "plan", "--help"}, {"epics", "plan", "save", "--help"}} {
+		help, err := runRoot(t, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := normalize(help)
+		for _, want := range []string{`"retire"`, `"kind"`, `"id"`, `"reason"`} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not show %s", strings.Join(args, " "), want)
+			}
+		}
+		if !strings.Contains(text, "retire") || !strings.Contains(text, "remove_traces") {
+			t.Errorf("%s does not name retire and remove_traces", strings.Join(args, " "))
+		}
+	}
+	if !strings.Contains(normalize(epicPlanHelp), shape) {
+		t.Errorf("the plan help does not show the retire shape %q", shape)
+	}
+	if !strings.Contains(normalize(epicPlanOperationHelp["save"]), `"retire": [{"kind", "id", "reason"}]`) {
+		t.Errorf("the save help does not show retire as {kind, id, reason}: %q", epicPlanOperationHelp["save"])
+	}
+	completion, err := runRoot(t, "epics", "plan", "approve-completion", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(normalize(completion), "Each requirement the plan retires becomes a new OBSOLETE version") {
+		t.Errorf("approve-completion help does not say retired requirements become OBSOLETE versions:\n%s", completion)
+	}
+}

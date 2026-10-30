@@ -254,3 +254,25 @@ func TestRequirementObsoletePositionalAndFileExclusion(t *testing.T) {
 		}
 	})
 }
+
+// Epic 380, SR-4653-0 criterion d3c8893a: requirements obsolete's help, as
+// modernpath install renders it into the reference, says a published
+// requirement is retired through an Epic plan's retire and confirmed by its
+// domain owner. The command's behaviour is unchanged.
+func TestRequirementObsoleteHelpPointsPublishedRequirementsToAnEpicsRetire(t *testing.T) {
+	ref := renderCLIReference(rootCmd)
+	for name, text := range map[string]string{
+		"requirements obsolete --help":               newRequirementObsoleteCommand(cliEnvLoad).Long,
+		"the rendered requirements obsolete section": referenceSection(t, ref, "modernpath requirements obsolete"),
+	} {
+		normalized := strings.Join(strings.Fields(text), " ")
+		for _, want := range []string{
+			"A published requirement is retired through an Epic plan's `retire`",
+			"confirmed by its domain owner",
+		} {
+			if !strings.Contains(normalized, want) {
+				t.Errorf("%s does not say %q", name, want)
+			}
+		}
+	}
+}

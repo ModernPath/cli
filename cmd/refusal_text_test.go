@@ -60,3 +60,38 @@ func TestRefusalTextBatchItem(t *testing.T) {
 		}
 	})
 }
+
+// Epic 388 (SR-4625-2, criterion d51dbcec, test case f1f06ddd): a refused
+// declare-decision names the field at fault, for a batch item and for a single
+// question; a refusal without a field reads as before.
+func TestRefusalTextNamesTheDeclareDecisionField(t *testing.T) {
+	const message = "Use a declared decision ID, the human answer and its USER: source."
+	decode := func(fixture string) map[string]any {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal([]byte(fixture), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	for _, c := range []struct{ name, fixture, want string }{
+		{"a batch item with its field",
+			`{"error":{"code":"invalid_human_decision","message":"` + message + `","field":"options"},"index":1,"item":{"question":"Second?"}}`,
+			"invalid_human_decision — item 1 (question) — options: " + message},
+		{"a single question with its field",
+			`{"error":{"code":"invalid_human_decision","message":"` + message + `","field":"title"}}`,
+			"invalid_human_decision — title: " + message},
+		{"a batch item without a field",
+			`{"error":{"code":"invalid_human_decision","message":"` + message + `"},"index":1,"item":{"question":"Second?"}}`,
+			"invalid_human_decision — item 1 (question) — " + message},
+		{"a single refusal without a field",
+			`{"error":{"code":"invalid_human_decision","message":"` + message + `"}}`,
+			message},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := refusalText(decode(c.fixture)); got != c.want {
+				t.Fatalf("refusalText =\n  %q\nwant\n  %q", got, c.want)
+			}
+		})
+	}
+}

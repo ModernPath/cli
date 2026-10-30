@@ -374,3 +374,84 @@ func TestEpicSingleObjectDecisionCommandsRetainTheirInputAndRoute(t *testing.T) 
 		})
 	}
 }
+
+// Epic 380, SR-4653-0 criterion d3c8893a: epics gates confirm-removal --file
+// posts the file body unchanged to the Epic's confirm-removal route and
+// prints the record the server answers.
+func TestEpicConfirmRemovalPostsTheFileAndPrintsTheRecord(t *testing.T) {
+	input := map[string]any{
+		"requirement_kind": "system_requirement",
+		"requirement_id":   "66666666-6666-4666-8666-666666666666",
+		"source":           "USER:2026-10-29: the export is gone",
+		"reason":           "Checked the callers",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/confirm-removal" || !reflect.DeepEqual(got, input) {
+			t.Errorf("confirm-removal must post the unchanged file to /confirm-removal: %s %s %#v", r.Method, r.URL.Path, got)
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":"77777777-7777-4777-8777-777777777777","sequence":3,"phase":"removal_confirmation","content":{"requirement_kind":"system_requirement","requirement_id":"66666666-6666-4666-8666-666666666666","reason":"The export was removed","source":"USER:2026-10-29: the export is gone","comment":"Checked the callers"},"actor_id":9,"actor":{"id":9,"name":"Domain Owner"},"inserted_at":"2026-10-29T10:00:00Z"}}`))
+	}))
+	defer server.Close()
+	body, _ := json.Marshal(input)
+	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"confirm-removal", "287", "--file", "-", "--json"})
+	command.SetIn(bytes.NewReader(body))
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	if err := command.Execute(); err != nil {
+		t.Fatalf("confirm-removal failed: %v %s", err, out.String())
+	}
+	if requests != 1 {
+		t.Fatalf("confirm-removal must send exactly one request, sent %d", requests)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal(out.Bytes(), &printed); err != nil {
+		t.Fatalf("confirm-removal must print the record as JSON: %v\n%s", err, out.String())
+	}
+	if printed["phase"] != "removal_confirmation" || printed["id"] != "77777777-7777-4777-8777-777777777777" {
+		t.Fatalf("confirm-removal printed another record: %s", out.String())
+	}
+}
+
+func TestEpicGatesListsConfirmRemovalAndItsShape(t *testing.T) {
+	group := newEpicGatesCommand(cliEnvLoad)
+	command, _, err := group.Find([]string{"confirm-removal"})
+	if err != nil || command == group || command.Name() != "confirm-removal" {
+		t.Fatalf("epics gates has no confirm-removal command: err=%v", err)
+	}
+	if command.Flags().Lookup("file") == nil || command.Flags().Lookup("json") == nil {
+		t.Fatal("confirm-removal must take --file and --json like declare-decision")
+	}
+	help := strings.Join(strings.Fields(epicGatesHelp), " ")
+	for _, want := range []string{
+		`confirm-removal: {"requirement_kind":"user_requirement|system_requirement","requirement_id":"uuid","source":"USER:...","reason":"optional comment"}`,
+		"removal_confirmation",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("epics gates help does not say %q", want)
+		}
+	}
+}
+
+// Epic 380: the rendered reference's loop names retire in the plan row,
+// confirm-removal in the lifecycle, and the retire refusals in the glossary.
+func TestReferenceLoopNamesRetireAndConfirmRemoval(t *testing.T) {
+	loop := strings.Join(strings.Fields(referenceLoop), " ")
+	for _, want := range []string{
+		"a removal Epic lists each published requirement it retires in the plan's `retire`",
+		"epics gates confirm-removal <id> --file",
+		"`retire_trace_not_removed`",
+		"`removal_confirmation_required`",
+	} {
+		if !strings.Contains(loop, want) {
+			t.Errorf("reference-loop.md does not say %q", want)
+		}
+	}
+}

@@ -21,6 +21,8 @@ func newRequirementObsoleteCommand(load func() (*cliEnv, error)) *cobra.Command 
 		Args:  cobra.MaximumNArgs(1),
 		Long: `Mark a PROPOSED, BLOCKED, or DEFERRED requirement obsolete. The server records the authenticated actor and reason, and rejects active Epic ownership or published requirements.
 
+A published requirement is retired through an Epic plan's ` + "`retire`" + ` entry instead, confirmed by its domain owner (Confirm removal on Your move, or epics gates confirm-removal). Completion publishes it as an OBSOLETE version.
+
 With --file, obsolete up to 200 requirements in one all-or-nothing request. The file holds
 {"reason"?: string, "items": [{"kind": "user"|"system", "id": <uuid>, "reason"?: string}]};
 an item's own reason overrides the batch reason, and one of them is required. Either every
