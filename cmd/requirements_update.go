@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -14,7 +16,7 @@ func init() {
 
 func newRequirementUpdateCommand(load func() (*cliEnv, error)) *cobra.Command {
 	command := &cobra.Command{
-		Use: "update <uuid|display-ref>", Short: "Edit requirement draft content or current grouping context", Args: cobra.ExactArgs(1),
+		Use: "update <uuid|display-ref>", Short: "Update requirement content, grouping or verified completion", Args: cobra.ExactArgs(1),
 		Long: `Update draft content from a JSON object using --file or --file - for stdin.
 Accepts every content field supported by requirements create, including context;
 omitted fields, criteria and traces are preserved. Content edits require unowned,
@@ -29,13 +31,20 @@ Active Epic-owned work must return to planning first.
 On editable drafts, unchanged content fields alongside a grouping change also
 preserve evidence; requests containing content fields still require a draft.
 Any workspace member may edit. --reason optionally records why in the Audit Trail.
-Unchanged values write nothing. This operation does not publish content or change
-lifecycle or revision. Published content changes need a follow-up Epic.
+Unchanged values write nothing. Published content changes need a follow-up Epic.
+For verified completion, send work_status DONE. New completion requires a
+USER: source and --reason; a refused update reports its blockers. The requirement must be confirmed, unowned, never-published
+PROPOSED with at least one active criterion, active scoped implementation/test source
+traces and complete current passing proof for every active criterion. Independently recorded passing pairs combine;
+revision numbers and historical outcomes do not determine readiness. Changed content
+must be saved before completion.
+Completion publishes an immutable version and increments revision once. Retrying an
+unowned DONE UUID returns unchanged without new approval or fabricated history.
 UUIDs require --kind user or system; an exact display reference infers its kind.`,
 	}
 	command.Flags().String("kind", "", "requirement kind for UUIDs: user or system")
 	command.Flags().String("file", "", "requirement content JSON file, or - for stdin (required)")
-	command.Flags().String("reason", "", "optional explanation recorded in the Audit Trail")
+	command.Flags().String("reason", "", "explanation recorded in the Audit Trail (required for new completion)")
 	command.Flags().Bool("json", false, "emit the update receipt as JSON")
 	_ = command.MarkFlagRequired("file")
 	command.RunE = func(cmd *cobra.Command, args []string) error {
@@ -62,7 +71,8 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 		if err != nil {
 			return err
 		}
-		if err := validateRequirementContent(payload, kind, false); err != nil {
+		completion := payload["work_status"] == "DONE"
+		if err := validateRequirementUpdate(payload, kind, completion); err != nil {
 			return err
 		}
 		if err := validateRequirementGrouping(payload); err != nil {
@@ -100,6 +110,12 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 		if !ok {
 			return fmt.Errorf("requirement update response is missing its data object")
 		}
+		if completion {
+			if err := validateCompletionReceipt(data, kind, args[0], env.SystemID, payload); err != nil {
+				return err
+			}
+			return writeRecord(cmd, data)
+		}
 		sid, _ := numberAsInt(data["system_id"])
 		revision, validRevision := numberAsInt(data["revision"])
 		state := str(data, "work_status")
@@ -126,4 +142,77 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 		return writeRecord(cmd, data)
 	}
 	return command
+}
+
+// Completion metadata belongs only to updates; creation retains its content contract.
+func validateRequirementUpdate(payload map[string]any, kind string, completion bool) error {
+	if !completion {
+		return validateRequirementContent(payload, kind, false)
+	}
+	content := make(map[string]any)
+	for key, value := range payload {
+		switch key {
+		case "work_status":
+		case "source":
+			source, ok := value.(string)
+			if !ok || !strings.HasPrefix(source, "USER:") || strings.TrimSpace(strings.TrimPrefix(source, "USER:")) == "" {
+				return fmt.Errorf("source must name a USER decision")
+			}
+		default:
+			content[key] = value
+		}
+	}
+	if len(content) > 0 {
+		return validateRequirementContent(content, kind, false)
+	}
+	return nil
+}
+
+func validateCompletionReceipt(data map[string]any, kind, requested string, systemID int, submitted map[string]any) error {
+	invalid := fmt.Errorf("requirement update response does not confirm the requested completion identity and state")
+	sid, _ := numberAsInt(data["system_id"])
+	revision, validRevision := numberAsInt(data["revision"])
+	ref := str(data, "display_ref")
+	inferred, validRef := requirementKindFromDisplayRef(ref)
+	parts := strings.Split(ref, "-")
+	if !validRef || inferred != kind || len(parts) != 3 {
+		return invalid
+	}
+	refRevision, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || refRevision != revision || !validRevision || revision < 0 || sid != int64(systemID) || data["requirement_kind"] != kind+"_requirement" || !requirementUUIDPattern.MatchString(str(data, "id")) || strings.TrimSpace(str(data, "title")) == "" {
+		return invalid
+	}
+	result := str(data, "result")
+	if requirementUUIDPattern.MatchString(requested) {
+		if !strings.EqualFold(str(data, "id"), requested) {
+			return invalid
+		}
+	} else {
+		requestedParts := strings.Split(requested, "-")
+		oldRevision, _ := strconv.ParseInt(requestedParts[2], 10, 64)
+		expectedRevision := oldRevision
+		if result == "completed" {
+			expectedRevision++
+		}
+		if !strings.EqualFold(parts[0], requestedParts[0]) || parts[1] != requestedParts[1] || revision != expectedRevision {
+			return invalid
+		}
+	}
+	if str(data, "work_status") != "DONE" || (result != "completed" && result != "unchanged") {
+		return invalid
+	}
+	if result == "completed" {
+		source, decision := str(submitted, "source"), str(submitted, "reason")
+		if !strings.HasPrefix(source, "USER:") || strings.TrimSpace(strings.TrimPrefix(source, "USER:")) == "" || strings.TrimSpace(decision) == "" || str(data, "reason") != strings.TrimSpace(decision) {
+			return invalid
+		}
+		actor, _ := numberAsInt(data["approved_by_id"])
+		_, dateErr := time.Parse(time.RFC3339Nano, str(data, "approved_at"))
+		if revision != 1 || !requirementUUIDPattern.MatchString(str(data, "version_id")) || actor <= 0 || dateErr != nil || strings.TrimSpace(str(data, "reason")) == "" {
+			return invalid
+		}
+	} else if data["version_id"] != nil && !requirementUUIDPattern.MatchString(str(data, "version_id")) {
+		return invalid
+	}
+	return nil
 }

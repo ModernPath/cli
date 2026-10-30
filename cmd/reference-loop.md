@@ -233,3 +233,17 @@ to obtain independent code review and record its verdict and coverage. Record
 current outcomes per criterion and TestCase with `evidence record`; use
 `evidence latest` to read them back. The latest committed pair outcome wins,
 including failures. No raw output or historical proof presentation is stored.
+
+### Requirement completion without an Epic
+
+After reading complete current criterion proof and scoped source/test Traces,
+present that current content and evidence for separate human completion approval, then
+use `requirements update <uuid|display-ref> --file completion.json --reason
+"<human completion decision>"` with
+`{"work_status":"DONE","source":"USER:<decision>"}`. A blocked update reports
+requirement and criterion blockers without writes. Read back DONE, revision,
+version and approval attribution. Clients do not supply the classification; the
+server records `requirement_completion` in the existing NOT NULL `acceptance_kind`
+column, with no Epic.
+Active Epic-owned requirements use their Epic's completion gate. UUID retries
+of unowned DONE requirements are unchanged; exact stale display references fail.

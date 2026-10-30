@@ -102,7 +102,7 @@ func TestRequirementUpdateOptionalReasonAndPublishedContext(t *testing.T) {
 }
 
 func TestRequirementUpdateValidatesContentBeforeLoadingWorkspace(t *testing.T) {
-	for _, payload := range []string{`{}`, `null`, `[]`, `{"title":" "}`, `{"title":null}`, `{"description":42}`, `{"work_status":"DONE"}`, `{"revision":1}`, `{"criteria":[]}`, `{"tenant_id":4}`, `{"system_id":4}`, `{"change_epic_id":3}`, `{"release_id":3}`, `{"actor":"wrong kind"}`, `{"expected_ref":"SR-3-0"}`, `{"context":null}`, `{"context_name":"Orphan"}`, `{"context":" "}`, `{"context":"Billing","context_name":" "}`} {
+	for _, payload := range []string{`{}`, `null`, `[]`, `{"title":" "}`, `{"title":null}`, `{"description":42}`, `{"work_status":"IN_PROGRESS"}`, `{"revision":1}`, `{"criteria":[]}`, `{"tenant_id":4}`, `{"system_id":4}`, `{"change_epic_id":3}`, `{"release_id":3}`, `{"actor":"wrong kind"}`, `{"expected_ref":"SR-3-0"}`, `{"context":null}`, `{"context_name":"Orphan"}`, `{"context":" "}`, `{"context":"Billing","context_name":" "}`} {
 		t.Run(payload, func(t *testing.T) {
 			command := newRequirementUpdateCommand(func() (*cliEnv, error) { t.Fatal("invalid input loaded workspace"); return nil, nil })
 			command.SetArgs([]string{"SR-3-0", "--file", "-"})

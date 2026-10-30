@@ -76,6 +76,9 @@ func refusalBodyText(body map[string]any) string {
 				parts = append(parts, unfinishedWorkRefusal(errVal))
 			}
 		}
+		if str(errVal, "reason") == "completion_not_ready" {
+			parts = append(parts, completionBlockers(errVal["blockers"])...)
+		}
 		if message := str(errVal, "message"); message != "" {
 			parts = append(parts, message)
 		}
@@ -111,6 +114,31 @@ func refusalBodyText(body map[string]any) string {
 	default:
 		return fmt.Sprint(errVal)
 	}
+}
+
+// completionBlockers displays the existing scoped readiness details without changing other refusals.
+func completionBlockers(value any) []string {
+	blockers, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	var lines []string
+	for _, value := range blockers {
+		blocker, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		var fields []string
+		for _, key := range []string{"requirement_kind", "requirement_id", "criterion_id", "reason"} {
+			if text := str(blocker, key); text != "" {
+				fields = append(fields, key+": "+text)
+			}
+		}
+		if len(fields) > 0 {
+			lines = append(lines, strings.Join(fields, ", "))
+		}
+	}
+	return lines
 }
 
 // batchRefusalText renders a refused batch item (Epics 321-323): the body

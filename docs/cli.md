@@ -644,7 +644,8 @@ modernpath requirements update <uuid> --kind user --file correction.json --reaso
 For example, `{"description":"Clarified behavior"}` changes only the
 description. Omitted fields are preserved; optional content fields can be cleared
 with `null`. A supplied title must not be blank. Criteria, traces, ownership,
-release membership and lifecycle fields cannot be edited with this command.
+release membership cannot be edited with this command. The only supported lifecycle
+assignment is the verified DONE update described below.
 The server resolves an exact display reference under the mutation locks in one
 request; UUIDs require `--kind user` or `--kind system`.
 
@@ -679,6 +680,45 @@ writing an audit entry, updating timestamps or notifying subscribers. Changed
 values return `result: "updated"`, with notifications sent after commit.
 Use `requirements get` to read back the changed content. This requires a
 server serving `PATCH /api/v1/systems/:system_id/requirements/:kind/:id`.
+
+### Complete a verified requirement
+
+Use the same update command to set `work_status` to `DONE` after reviewing the
+current requirement, criteria, test results and source traces and obtaining human approval:
+
+```sh
+# completion.json: {"work_status":"DONE","source":"USER:<completion decision>"}
+modernpath requirements update SR-12-0 --file completion.json --reason "<human completion decision>" --json
+```
+
+A blocked update reports requirement and criterion blockers without writes. A new completion requires a
+confirmed, unowned, never-published `PROPOSED` requirement, an implementation
+source trace, executable test traces, and current native passing evidence for
+every active criterion. Each required active TestCase must have a passing current
+result and scoped source/test Traces. Independently recorded pairs combine.
+Missing or nonpassing pairs block completion. Revision numbers and historical
+outcomes do not determine readiness. Shared requirement readiness is also used
+by Epic gates and existing-behavior acceptance.
+
+A new completion requires a `USER:` source and a nonblank reason. It atomically sets DONE,
+records completion time, increments revision once, and publishes an immutable
+version containing content, criteria, structural traces and human approval
+attribution. Current proof remains separate from the accepted version. The Audit Trail records
+`completion_approved`. The server records `requirement_completion` in the existing NOT NULL
+`acceptance_kind` field, with no Epic. Clients do not supply the classification.
+Existing publication classifications and defaults remain unchanged.
+
+Content and grouping fields may accompany DONE only when unchanged. Save
+changes first and verify them before completion. Active Epic ownership or
+membership blocks this update. Existing content/grouping update behavior stays
+unchanged; other lifecycle assignments and server-owned fields are refused.
+
+A native UUID retry of an unowned DONE requirement returns unchanged with its
+existing version reference when available, without a new approval or audit.
+Legacy DONE rows without versions stay unchanged. An old exact display
+reference remains stale after publication; read the new reference or retry by
+UUID with `--kind`.
+
 
 ### Obsolete an unpublished requirement
 
