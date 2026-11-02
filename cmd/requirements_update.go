@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -18,8 +19,10 @@ func newRequirementUpdateCommand(load func() (*cliEnv, error)) *cobra.Command {
 	command := &cobra.Command{
 		Use: "update <uuid|display-ref>", Short: "Update requirement content, grouping or verified completion", Args: cobra.ExactArgs(1),
 		Long: `Update draft content from a JSON object using --file or --file - for stdin.
-Accepts every content field supported by requirements create, including context;
-omitted fields, criteria and traces are preserved. Content edits require unowned,
+Accepts every content field supported by requirements create, including context,
+and optional criteria and traces arrays. Omission preserves each array; a supplied
+array replaces its editable set, and [] clears it. Trace relations are implements,
+verifies, derives and relates; proof and modernizes traces cannot be edited. Content edits require unowned,
 never-published PROPOSED, BLOCKED or DEFERRED requirements. Drafts in planning
 Epics can be edited, but need a fresh plan review before implementation approval.
 Context-only edits follow set-context rules: context is required, and without
@@ -146,17 +149,24 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 
 // Completion metadata belongs only to updates; creation retains its content contract.
 func validateRequirementUpdate(payload map[string]any, kind string, completion bool) error {
-	if !completion {
-		return validateRequirementContent(payload, kind, false)
-	}
 	content := make(map[string]any)
 	for key, value := range payload {
 		switch key {
 		case "work_status":
+			if !completion {
+				return fmt.Errorf("unsupported %s requirement field %q", kind, key)
+			}
 		case "source":
+			if !completion {
+				return fmt.Errorf("unsupported %s requirement field %q", kind, key)
+			}
 			source, ok := value.(string)
 			if !ok || !strings.HasPrefix(source, "USER:") || strings.TrimSpace(strings.TrimPrefix(source, "USER:")) == "" {
 				return fmt.Errorf("source must name a USER decision")
+			}
+		case "criteria", "traces":
+			if err := validateUpdateArray(key, value); err != nil {
+				return err
 			}
 		default:
 			content[key] = value
@@ -164,6 +174,71 @@ func validateRequirementUpdate(payload map[string]any, kind string, completion b
 	}
 	if len(content) > 0 {
 		return validateRequirementContent(content, kind, false)
+	}
+	if len(payload) == 0 {
+		return fmt.Errorf("requirement content must contain at least one editable field")
+	}
+	return nil
+}
+
+func validateUpdateArray(field string, value any) error {
+	items, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("%s must be an array", field)
+	}
+	allowed := "id kind position status given when then statement"
+	if field == "traces" {
+		allowed = "id source_type source_id source_integer_id target_type target_id target_integer_id link_kind repository_key path revision"
+	}
+	seen := map[string]bool{}
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok || len(item) == 0 {
+			return fmt.Errorf("%s entries must be nonempty objects", field)
+		}
+		for key, val := range item {
+			if !strings.Contains(" "+allowed+" ", " "+key+" ") {
+				return fmt.Errorf("unsupported %s field %q", field, key)
+			}
+			if val == nil && ((field == "criteria" && (key == "given" || key == "when" || key == "then" || key == "statement")) || (field == "traces" && key == "revision")) {
+				continue
+			}
+			if key == "position" || key == "source_integer_id" || key == "target_integer_id" {
+				n, ok := val.(json.Number)
+				if !ok {
+					return fmt.Errorf("%s must be an integer", key)
+				}
+				i, err := n.Int64()
+				if err != nil || i < 0 || (key != "position" && i == 0) {
+					return fmt.Errorf("%s must be a valid integer", key)
+				}
+				continue
+			}
+			text, ok := val.(string)
+			if !ok {
+				return fmt.Errorf("%s must be a string", key)
+			}
+			if key == "source_id" || key == "target_id" {
+				if !requirementUUIDPattern.MatchString(text) {
+					return fmt.Errorf("%s must be a UUID", key)
+				}
+			}
+			if key == "id" {
+				if !requirementUUIDPattern.MatchString(text) || seen[strings.ToLower(text)] {
+					return fmt.Errorf("%s has an invalid or duplicate id", field)
+				}
+				seen[strings.ToLower(text)] = true
+			}
+			if key == "kind" && text != "scenario" && text != "criterion" {
+				return fmt.Errorf("invalid criterion kind")
+			}
+			if key == "status" && text != "active" && text != "superseded" && text != "retired" {
+				return fmt.Errorf("invalid criterion status")
+			}
+			if key == "link_kind" && text != "implements" && text != "verifies" && text != "derives" && text != "relates" {
+				return fmt.Errorf("invalid trace relation")
+			}
+		}
 	}
 	return nil
 }

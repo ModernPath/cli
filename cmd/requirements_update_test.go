@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,7 +104,7 @@ func TestRequirementUpdateOptionalReasonAndPublishedContext(t *testing.T) {
 }
 
 func TestRequirementUpdateValidatesContentBeforeLoadingWorkspace(t *testing.T) {
-	for _, payload := range []string{`{}`, `null`, `[]`, `{"title":" "}`, `{"title":null}`, `{"description":42}`, `{"work_status":"IN_PROGRESS"}`, `{"revision":1}`, `{"criteria":[]}`, `{"tenant_id":4}`, `{"system_id":4}`, `{"change_epic_id":3}`, `{"release_id":3}`, `{"actor":"wrong kind"}`, `{"expected_ref":"SR-3-0"}`, `{"context":null}`, `{"context_name":"Orphan"}`, `{"context":" "}`, `{"context":"Billing","context_name":" "}`} {
+	for _, payload := range []string{`{}`, `null`, `[]`, `{"title":" "}`, `{"title":null}`, `{"description":42}`, `{"work_status":"IN_PROGRESS"}`, `{"revision":1}`, `{"tenant_id":4}`, `{"system_id":4}`, `{"change_epic_id":3}`, `{"release_id":3}`, `{"actor":"wrong kind"}`, `{"expected_ref":"SR-3-0"}`, `{"context":null}`, `{"context_name":"Orphan"}`, `{"context":" "}`, `{"context":"Billing","context_name":" "}`} {
 		t.Run(payload, func(t *testing.T) {
 			command := newRequirementUpdateCommand(func() (*cliEnv, error) { t.Fatal("invalid input loaded workspace"); return nil, nil })
 			command.SetArgs([]string{"SR-3-0", "--file", "-"})
@@ -204,5 +206,84 @@ func TestRequirementUpdateGroupingOnlyStillRefusesAnotherContextOrABlankName(t *
 			t.Errorf("receipt %s: error = %v; want the receipt refused", receipt, err)
 		}
 		server.Close()
+	}
+}
+
+func TestRequirementUpdateForwardsCriteriaAndTraces(t *testing.T) {
+	for _, input := range []string{`{"criteria":[],"traces":[]}`, `{"criteria":[{"kind":"criterion","statement":"works","position":1}],"traces":[{"source_type":"system_requirement","source_id":"11111111-1111-4111-8111-111111111111","target_type":"source_file","repository_key":"app","path":"src/a.go","link_kind":"implements"}]}`} {
+		t.Run(input, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var got, want map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal([]byte(input), &want); err != nil {
+					t.Fatal(err)
+				}
+				a, _ := json.Marshal(got)
+				b, _ := json.Marshal(want)
+				if string(a) != string(b) {
+					t.Errorf("payload = %s, want %s", a, b)
+				}
+				fmt.Fprint(w, `{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Existing","work_status":"PROPOSED","revision":0}}`)
+			}))
+			defer server.Close()
+			command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+			command.SetArgs([]string{"SR-3-0", "--file", "-"})
+			command.SetIn(strings.NewReader(input))
+			if err := command.Execute(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRequirementUpdateRejectsInvalidCollections(t *testing.T) {
+	for _, input := range []string{
+		`{"criteria":null}`, `{"traces":{}}`, `{"criteria":[null]}`,
+		`{"criteria":[{"id":"bad"}]}`, `{"criteria":[{"kind":"bad"}]}`, `{"criteria":[{"id":null}]}`, `{"criteria":[{"kind":null}]}`, `{"criteria":[{"status":null}]}`, `{"criteria":[{"position":null}]}`, `{"traces":[{"source_id":null}]}`,
+		`{"criteria":[{"status":"bad"}]}`, `{"criteria":[{"position":1.5}]}`,
+		`{"criteria":[{"owner_id":1}]}`, `{"traces":[{"link_kind":"modernizes"}]}`,
+		`{"traces":[{"source_id":"bad"}]}`, `{"traces":[{"approved_by_id":1}]}`,
+		`{"criteria":[{"id":"11111111-1111-4111-8111-111111111111"},{"id":"11111111-1111-4111-8111-111111111111"}]}`,
+		`{"boundary":"x","actor":"wrong kind"}`, `{"criteria":[`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			command := newRequirementUpdateCommand(func() (*cliEnv, error) { t.Fatal("invalid input loaded workspace"); return nil, nil })
+			command.SetArgs([]string{"SR-3-0", "--file", "-"})
+			command.SetIn(strings.NewReader(input))
+			if err := command.Execute(); err == nil {
+				t.Fatal("invalid input accepted")
+			}
+		})
+	}
+}
+
+func TestRequirementUpdateForwardsNullableCriterionTextFromFile(t *testing.T) {
+	input := `{"criteria":[{"id":"11111111-1111-4111-8111-111111111111","kind":"criterion","given":null,"when":null,"then":null,"statement":"works"},{"kind":"scenario","given":"context","when":"action","then":"outcome","statement":null}]}`
+	path := filepath.Join(t.TempDir(), "update.json")
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got, want map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(input), &want); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := json.Marshal(got)
+		b, _ := json.Marshal(want)
+		if string(a) != string(b) {
+			t.Errorf("payload = %s, want %s", a, b)
+		}
+		fmt.Fprint(w, `{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Existing","work_status":"PROPOSED","revision":0}}`)
+	}))
+	defer server.Close()
+	command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"SR-3-0", "--file", path})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
 	}
 }

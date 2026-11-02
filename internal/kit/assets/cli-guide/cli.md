@@ -643,11 +643,55 @@ modernpath requirements update <uuid> --kind user --file correction.json --reaso
 
 For example, `{"description":"Clarified behavior"}` changes only the
 description. Omitted fields are preserved; optional content fields can be cleared
-with `null`. A supplied title must not be blank. Criteria, traces, ownership,
-release membership cannot be edited with this command. The only supported lifecycle
-assignment is the verified DONE update described below.
-The server resolves an exact display reference under the mutation locks in one
-request; UUIDs require `--kind user` or `--kind system`.
+with `null`. A supplied title must not be blank. Optional `criteria` and `traces`
+arrays replace their editable sets; omit either to preserve it or send `[]` to
+clear it. Common scalar fields are `title`, `description`, `context`,
+`context_name`, `release_note` and `detail_md`. User requirements also accept
+`actor` and `intended_use`; system requirements accept `boundary`, `rationale`
+and `verification_method`.
+
+Criterion entries accept optional UUID `id`, `kind`, `position`, `status`,
+`given`, `when`, `then` and `statement`. Keep an existing ID to update that
+criterion; supply a new UUID to reference a new criterion in the same request,
+or omit it for a server-assigned UUID. Send `null` for `given`, `when`, `then`
+or `statement` to clear that criterion text.
+
+Trace entries accept an optional `id`, `source_type`, `source_id` or
+`source_integer_id`, `target_type`, `target_id` or `target_integer_id`, and
+`link_kind` (`implements`, `verifies`, `derives`, or `relates`). A source-file
+endpoint may use an existing scoped `source_file` UUID. Alternatively, omit its
+ID and provide `repository_key` and a relative `path`, optionally `revision`,
+to resolve or create it. Do not combine the file ID and descriptor. A revision
+that conflicts with an existing shared source file is refused; it does not
+rewrite that file's provenance. Traces must touch this requirement or one of
+its criteria and have scoped endpoints; proof and `modernizes` traces are
+protected. For a trace between requirements, both requirement endpoints are
+checked: additions, removals and endpoint changes involving an active Epic-owned
+or published requirement are refused. An unchanged protected edge can be retained. Ownership and release membership cannot be edited with this command.
+The only supported lifecycle assignment is the verified DONE update described
+below. The server resolves an exact display reference under the mutation locks
+in one request; UUIDs require `--kind user` or `--kind system`.
+
+For example, with the requirement UUID and a scoped TestCase UUID substituted,
+this file updates a criterion and its authoring traces in one request:
+
+```json
+{
+  "description": "Return the catalog item",
+  "criteria": [
+    {"id": "11111111-1111-4111-8111-111111111111", "kind": "criterion", "statement": "The item is returned", "given": null, "when": null, "then": null}
+  ],
+  "traces": [
+    {"source_type": "test_case", "source_id": "22222222-2222-4222-8222-222222222222", "target_type": "criterion", "target_id": "11111111-1111-4111-8111-111111111111", "link_kind": "verifies"},
+    {"source_type": "system_requirement", "source_id": "33333333-3333-4333-8333-333333333333", "target_type": "source_file", "repository_key": "catalog", "path": "src/catalog.go", "link_kind": "implements"}
+  ]
+}
+```
+
+The criterion UUID can be an existing criterion's ID or a new UUID. Replace the
+example IDs with the intended identities, including the UUID of the requirement
+being updated. The arrays replace the editable sets, so include links and criteria
+to retain.
 
 Content edits require unowned `PROPOSED`, `BLOCKED` or `DEFERRED` requirements
 with revision 0 and no accepted version. Drafts in planning Epics can be edited;
