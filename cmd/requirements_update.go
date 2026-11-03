@@ -23,7 +23,9 @@ Accepts every content field supported by requirements create, including context,
 and optional criteria and traces arrays. Omission preserves each array; a supplied
 array replaces its editable set, and [] clears it. Trace relations are implements,
 verifies, derives and relates; proof and modernizes traces cannot be edited. Content edits require unowned,
-never-published PROPOSED, BLOCKED or DEFERRED requirements. Drafts in planning
+never-published PROPOSED, BLOCKED, DEFERRED or standalone IN_PROGRESS
+requirements. Standalone IN_PROGRESS drafts have revision 0 and no active Epic
+ownership. Drafts in planning
 Epics can be edited, but need a fresh plan review before implementation approval.
 Context-only edits follow set-context rules: context is required, and without
 context_name the requirement takes the name the System's list gives that context
@@ -35,9 +37,16 @@ On editable drafts, unchanged content fields alongside a grouping change also
 preserve evidence; requests containing content fields still require a draft.
 Any workspace member may edit. --reason optionally records why in the Audit Trail.
 Unchanged values write nothing. Published content changes need a follow-up Epic.
+For a standalone start, send only work_status IN_PROGRESS in the JSON file; it
+cannot be combined with content, criteria, traces or source. The optional
+--reason flag records why the start was requested. If the server prompts for
+Release placement, review the prompt and retry with --release-choice <file>.
+The server owns mandatory moves; an optional Keep choice applies only to
+requirements already in another delivery Release. Start leaves revision 0 and
+does not publish content. IN_REVIEW is not supported here.
 For verified completion, send work_status DONE. New completion requires a
 USER: source and --reason; a refused update reports its blockers. The requirement must be confirmed, unowned, never-published
-PROPOSED with at least one active criterion, active scoped implementation/test source
+PROPOSED or standalone IN_PROGRESS with at least one active criterion, active scoped implementation/test source
 traces and complete current passing proof for every active criterion. Independently recorded passing pairs combine;
 revision numbers and historical outcomes do not determine readiness. Changed content
 must be saved before completion.
@@ -48,6 +57,7 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 	command.Flags().String("kind", "", "requirement kind for UUIDs: user or system")
 	command.Flags().String("file", "", "requirement content JSON file, or - for stdin (required)")
 	command.Flags().String("reason", "", "explanation recorded in the Audit Trail (required for new completion)")
+	addReleaseChoiceFlag(command)
 	command.Flags().Bool("json", false, "emit the update receipt as JSON")
 	_ = command.MarkFlagRequired("file")
 	command.RunE = func(cmd *cobra.Command, args []string) error {
@@ -75,8 +85,15 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 			return err
 		}
 		completion := payload["work_status"] == "DONE"
+		starting := payload["work_status"] == "IN_PROGRESS"
+		if starting && len(payload) != 1 {
+			return fmt.Errorf("standalone start must contain only work_status IN_PROGRESS")
+		}
 		if err := validateRequirementUpdate(payload, kind, completion); err != nil {
 			return err
+		}
+		if status, exists := payload["work_status"]; exists && status != "DONE" && status != "IN_PROGRESS" {
+			return fmt.Errorf("unsupported requirement lifecycle update %q", status)
 		}
 		if err := validateRequirementGrouping(payload); err != nil {
 			return err
@@ -94,6 +111,16 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 			}
 			payload["reason"] = strings.TrimSpace(reason)
 		}
+		choice, err := readReleaseChoice(cmd)
+		if err != nil {
+			return err
+		}
+		if choice != nil && !starting {
+			return fmt.Errorf("--release-choice is only valid when starting a requirement IN_PROGRESS")
+		}
+		if choice != nil {
+			payload["release_choice"] = choice
+		}
 		env, err := load()
 		if err != nil {
 			return err
@@ -107,6 +134,11 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 			return err
 		}
 		if status < 200 || status >= 300 {
+			if status == 409 {
+				if err := releaseChoiceRequired(body); err != nil {
+					return err
+				}
+			}
 			return serverRefusal("requirement update refused", status, body)
 		}
 		data, ok := body["data"].(map[string]any)
@@ -115,6 +147,12 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 		}
 		if completion {
 			if err := validateCompletionReceipt(data, kind, args[0], env.SystemID, payload); err != nil {
+				return err
+			}
+			return writeRecord(cmd, data)
+		}
+		if starting {
+			if err := validateStartReceipt(data, kind, args[0], env.SystemID); err != nil {
 				return err
 			}
 			return writeRecord(cmd, data)
@@ -128,9 +166,9 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 		} else {
 			validIdentity = validIdentity && strings.EqualFold(str(data, "display_ref"), args[0])
 		}
-		validState := revision == 0 && (state == "PROPOSED" || state == "BLOCKED" || state == "DEFERRED")
+		validState := revision == 0 && (state == "PROPOSED" || state == "BLOCKED" || state == "DEFERRED" || state == "IN_PROGRESS")
 		if groupingOnly {
-			validState = revision >= 0 && (state == "PROPOSED" || state == "BLOCKED" || state == "DEFERRED" || state == "DONE" || state == "OBSOLETE")
+			validState = revision >= 0 && (state == "PROPOSED" || state == "BLOCKED" || state == "DEFERRED" || state == "DONE" || state == "OBSOLETE" || (revision == 0 && state == "IN_PROGRESS"))
 			// Without context_name the server answers with the list's name; any
 			// nonblank name confirms the request then.
 			returned, _ := data["context_name"].(string)
@@ -153,7 +191,7 @@ func validateRequirementUpdate(payload map[string]any, kind string, completion b
 	for key, value := range payload {
 		switch key {
 		case "work_status":
-			if !completion {
+			if value != "IN_PROGRESS" && !completion {
 				return fmt.Errorf("unsupported %s requirement field %q", kind, key)
 			}
 		case "source":
@@ -177,6 +215,33 @@ func validateRequirementUpdate(payload map[string]any, kind string, completion b
 	}
 	if len(payload) == 0 {
 		return fmt.Errorf("requirement content must contain at least one editable field")
+	}
+	return nil
+}
+
+func validateStartReceipt(data map[string]any, kind, requested string, systemID int) error {
+	invalid := fmt.Errorf("requirement update response does not confirm the requested start identity and state")
+	sid, _ := numberAsInt(data["system_id"])
+	revision, validRevision := numberAsInt(data["revision"])
+	ref := str(data, "display_ref")
+	inferred, validRef := requirementKindFromDisplayRef(ref)
+	refParts := strings.Split(ref, "-")
+	refRevision, refErr := strconv.ParseInt(refParts[len(refParts)-1], 10, 64)
+	if !validRevision || revision != 0 || sid != int64(systemID) || !validRef || inferred != kind ||
+		refErr != nil || refRevision != 0 ||
+		data["requirement_kind"] != kind+"_requirement" || !requirementUUIDPattern.MatchString(str(data, "id")) ||
+		strings.TrimSpace(str(data, "title")) == "" || str(data, "work_status") != "IN_PROGRESS" {
+		return invalid
+	}
+	if result := str(data, "result"); result != "updated" && result != "unchanged" {
+		return invalid
+	}
+	if requirementUUIDPattern.MatchString(requested) {
+		if !strings.EqualFold(str(data, "id"), requested) {
+			return invalid
+		}
+	} else if !strings.EqualFold(ref, requested) {
+		return invalid
 	}
 	return nil
 }

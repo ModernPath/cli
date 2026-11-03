@@ -104,7 +104,7 @@ func TestRequirementUpdateOptionalReasonAndPublishedContext(t *testing.T) {
 }
 
 func TestRequirementUpdateValidatesContentBeforeLoadingWorkspace(t *testing.T) {
-	for _, payload := range []string{`{}`, `null`, `[]`, `{"title":" "}`, `{"title":null}`, `{"description":42}`, `{"work_status":"IN_PROGRESS"}`, `{"revision":1}`, `{"tenant_id":4}`, `{"system_id":4}`, `{"change_epic_id":3}`, `{"release_id":3}`, `{"actor":"wrong kind"}`, `{"expected_ref":"SR-3-0"}`, `{"context":null}`, `{"context_name":"Orphan"}`, `{"context":" "}`, `{"context":"Billing","context_name":" "}`} {
+	for _, payload := range []string{`{}`, `null`, `[]`, `{"title":" "}`, `{"title":null}`, `{"description":42}`, `{"revision":1}`, `{"tenant_id":4}`, `{"system_id":4}`, `{"change_epic_id":3}`, `{"release_id":3}`, `{"actor":"wrong kind"}`, `{"expected_ref":"SR-3-0"}`, `{"context":null}`, `{"context_name":"Orphan"}`, `{"context":" "}`, `{"context":"Billing","context_name":" "}`} {
 		t.Run(payload, func(t *testing.T) {
 			command := newRequirementUpdateCommand(func() (*cliEnv, error) { t.Fatal("invalid input loaded workspace"); return nil, nil })
 			command.SetArgs([]string{"SR-3-0", "--file", "-"})
@@ -121,6 +121,121 @@ func TestRequirementUpdateValidatesContentBeforeLoadingWorkspace(t *testing.T) {
 		if err := command.Execute(); err == nil {
 			t.Fatal("invalid identity accepted")
 		}
+	}
+}
+
+func TestRequirementUpdateStandaloneStartForwardsOnlyStateAndReviewedReleaseChoice(t *testing.T) {
+	choice := `{"action":"keep","target_release_id":8,"requirements":[{"kind":"system_requirement","id":"11111111-1111-4111-8111-111111111111","expected_release_id":7}]}`
+	choicePath := filepath.Join(t.TempDir(), "choice.json")
+	if err := os.WriteFile(choicePath, []byte(choice), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		if len(got) != 2 || got["work_status"] != "IN_PROGRESS" || got["release_choice"] == nil {
+			t.Errorf("payload = %#v", got)
+		}
+		fmt.Fprint(w, `{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Draft","work_status":"IN_PROGRESS","revision":0,"result":"updated"}}`)
+	}))
+	defer server.Close()
+	command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"SR-3-0", "--file", "-", "--release-choice", choicePath})
+	command.SetIn(strings.NewReader(`{"work_status":"IN_PROGRESS"}`))
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRequirementUpdateRejectsMixedOrUnsupportedLifecycleStart(t *testing.T) {
+	for _, input := range []string{`{"work_status":"IN_PROGRESS","title":"Mixed"}`, `{"work_status":"IN_PROGRESS","source":"marker"}`, `{"work_status":"IN_REVIEW"}`, `{"work_status":"PROPOSED"}`} {
+		command := newRequirementUpdateCommand(func() (*cliEnv, error) { t.Fatal("invalid start loaded workspace"); return nil, nil })
+		command.SetArgs([]string{"SR-3-0", "--file", "-"})
+		command.SetIn(strings.NewReader(input))
+		if err := command.Execute(); err == nil {
+			t.Errorf("accepted %s", input)
+		}
+	}
+}
+
+func TestRequirementUpdateStartRefusalRendersReleaseChoicePrompt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"error":"release_choice_required","release_choice":{"target_release":{"id":8,"name":"Active"},"requirements":[{"id":"11111111-1111-4111-8111-111111111111","display_ref":"SR-3-0","release_id":null,"release_name":"Base","move_required":true}]}}`)
+	}))
+	defer server.Close()
+	command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"SR-3-0", "--file", "-"})
+	command.SetIn(strings.NewReader(`{"work_status":"IN_PROGRESS"}`))
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "mandatory move") || !strings.Contains(err.Error(), "--release-choice") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRequirementUpdateStartRejectsFalseOrMismatchedReceipt(t *testing.T) {
+	for i, receipt := range []string{
+		`{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Draft","work_status":"PROPOSED","revision":0,"result":"updated"}}`,
+		`{"data":{"id":"22222222-2222-4222-8222-222222222222","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Draft","work_status":"IN_PROGRESS","revision":0,"result":"updated"}}`,
+		`{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Draft","work_status":"IN_PROGRESS","revision":1,"result":"updated"}}`,
+		`{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Draft","work_status":"IN_PROGRESS","revision":0,"result":"proposed"}}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, receipt) }))
+		command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		args := []string{"SR-3-0", "--file", "-"}
+		if i == 1 {
+			args = []string{"33333333-3333-4333-8333-333333333333", "--kind", "system", "--file", "-"}
+		}
+		command.SetArgs(args)
+		command.SetIn(strings.NewReader(`{"work_status":"IN_PROGRESS"}`))
+		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "start identity") {
+			t.Errorf("receipt error = %v", err)
+		}
+		server.Close()
+	}
+}
+
+func TestRequirementUpdateStartForwardsOptionalReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		if got["work_status"] != "IN_PROGRESS" || got["reason"] != "Reviewed start" {
+			t.Errorf("payload = %#v", got)
+		}
+		fmt.Fprint(w, `{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Draft","work_status":"IN_PROGRESS","revision":0,"result":"updated"}}`)
+	}))
+	defer server.Close()
+	command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"SR-3-0", "--file", "-", "--reason", "Reviewed start"})
+	command.SetIn(strings.NewReader(`{"work_status":"IN_PROGRESS"}`))
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRequirementUpdateAcceptsContentEditReceiptInProgress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-0","system_id":4,"title":"Edited draft","work_status":"IN_PROGRESS","revision":0,"result":"updated"}}`)
+	}))
+	defer server.Close()
+	command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"SR-3-0", "--file", "-"})
+	command.SetIn(strings.NewReader(`{"description":"Edited"}`))
+	if err := command.Execute(); err != nil {
+		t.Fatalf("IN_PROGRESS draft edit receipt rejected: %v", err)
+	}
+}
+
+func TestRequirementUpdateAcceptsCompletionReceiptFromInProgressDraft(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","display_ref":"SR-3-1","system_id":4,"title":"Verified","work_status":"DONE","revision":1,"result":"completed","source":"USER:approved","reason":"Approved","version_id":"22222222-2222-4222-8222-222222222222","approved_by_id":5,"approved_at":"2026-10-26T12:00:00Z"}}`)
+	}))
+	defer server.Close()
+	command := newRequirementUpdateCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	command.SetArgs([]string{"SR-3-0", "--file", "-", "--reason", "Approved"})
+	command.SetIn(strings.NewReader(`{"work_status":"DONE","source":"USER:approved"}`))
+	if err := command.Execute(); err != nil {
+		t.Fatalf("completion from IN_PROGRESS draft rejected: %v", err)
 	}
 }
 

@@ -668,8 +668,19 @@ its criteria and have scoped endpoints; proof and `modernizes` traces are
 protected. For a trace between requirements, both requirement endpoints are
 checked: additions, removals and endpoint changes involving an active Epic-owned
 or published requirement are refused. An unchanged protected edge can be retained. Ownership and release membership cannot be edited with this command.
-The only supported lifecycle assignment is the verified DONE update described
-below. The server resolves an exact display reference under the mutation locks
+The supported lifecycle assignments are the verified DONE update described
+below and a standalone start to `IN_PROGRESS`. Start an unowned, never-published
+`PROPOSED` requirement with a file containing only
+`{"work_status":"IN_PROGRESS"}`. It keeps revision 0, publishes no content,
+and does not establish Epic ownership. The optional `--reason` flag records
+why the start was requested. If the server returns
+`release_choice_required`, review its target and every prompted placement,
+then retry with `--release-choice <file>` containing the prompted choice
+(`action`, `target_release_id`, and each requirement's `kind`, `id` and
+`expected_release_id`). The server moves Base/unassigned rows as required;
+`keep` is available only for rows already in another delivery Release.
+Stale choices prompt again. `IN_REVIEW` and combined start/content updates are
+not supported. The server resolves an exact display reference under the mutation locks
 in one request; UUIDs require `--kind user` or `--kind system`.
 
 For example, with the requirement UUID and a scoped TestCase UUID substituted,
@@ -693,8 +704,8 @@ example IDs with the intended identities, including the UUID of the requirement
 being updated. The arrays replace the editable sets, so include links and criteria
 to retain.
 
-Content edits require unowned `PROPOSED`, `BLOCKED` or `DEFERRED` requirements
-with revision 0 and no accepted version. Drafts in planning Epics can be edited;
+Content edits require unowned `PROPOSED`, `BLOCKED`, `DEFERRED` or standalone
+`IN_PROGRESS` requirements with revision 0 and no accepted version. Drafts in planning Epics can be edited;
 the changed content makes their plan reviews outdated, requiring a fresh review
 before implementation approval. Content edits also make previous acceptance
 evidence stale, including edits within the same second.
@@ -736,7 +747,8 @@ modernpath requirements update SR-12-0 --file completion.json --reason "<human c
 ```
 
 A blocked update reports requirement and criterion blockers without writes. A new completion requires a
-confirmed, unowned, never-published `PROPOSED` requirement, an implementation
+confirmed, unowned, never-published `PROPOSED` or standalone `IN_PROGRESS`
+requirement, an implementation
 source trace, executable test traces, and current native passing evidence for
 every active criterion. Each required active TestCase must have a passing current
 result and scoped source/test Traces. Independently recorded pairs combine.

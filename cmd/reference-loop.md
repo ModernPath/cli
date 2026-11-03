@@ -252,3 +252,17 @@ server records `requirement_completion` in the existing NOT NULL `acceptance_kin
 column, with no Epic.
 Active Epic-owned requirements use their Epic's completion gate. UUID retries
 of unowned DONE requirements are unchanged; exact stale display references fail.
+
+### Starting a requirement without an Epic
+
+An eligible unowned, never-published PROPOSED UR/SR can start with
+`requirements update <uuid|display-ref> --file start.json`, where
+`start.json` contains only `{"work_status":"IN_PROGRESS"}`. If the server
+returns `release_choice_required`, review the target and placements and retry
+with `--release-choice choice.json`. Base/unassigned rows are mandatory moves;
+`keep` applies only to rows already in another delivery Release. The server
+rechecks stale choices. The CLI accepts only a receipt confirming the requested
+identity, System, kind, revision 0 and IN_PROGRESS state. Start does not publish
+content or create Epic ownership. IN_REVIEW and mixed start/content requests
+are refused. Ordinary draft editing, proof and verified DONE completion remain
+available after start.
