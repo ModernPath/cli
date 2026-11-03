@@ -1,7 +1,58 @@
 # Changelog
 
-## Unreleased
+## v0.27.0 - Criterion proof, requirement lifecycle and workspace sign-in
 
+Requires the matching Core release for the criterion-proof, requirement lifecycle
+and Release-placement contracts below. Publish after production serves those
+contracts and the workspace sign-in prerequisite below is satisfied.
+
+- `evidence record` records current outcomes for one criterion with
+  `{"criterion_id":"<UUID>","tests":[{"test_case_id":"<UUID>","result":"pass"}]}`.
+  A batch takes `{"items":[<criterion update>, ...]}` with at most 50 distinct
+  criteria and 500 distinct tests per criterion. `evidence latest` reads current
+  criterion proof. This replaces run reservation and finalization;
+  `evidence runs`, `epics gates candidate` and `epics gates start-execution`
+  are removed.
+  Reverse-engineering verification reads current criterion proof rather than
+  run identities, tested revisions or historical applicability.
+- `modernization record --release-id <id> --file <file>` captures a completed
+  execution as immutable modernization history, separately from current proof.
+  The file contains `sha` and `tests`, each with `test_case_id`, `result` and
+  `criterion_ids`. `modernization history --system-id <id> [--commit <sha>]`
+  reads a legacy System's bounded history without requiring a Modernization
+  Release. Trace reads accept `criterion_test_result` and
+  `modernization_test_result` instead of `evidence_result`.
+- `requirements update` supports standalone start with only
+  `{"work_status":"IN_PROGRESS"}` and verified completion with
+  `work_status: DONE`, a `USER:` source and `--reason`. Start leaves revision 0;
+  completion requires confirmed, unowned, never-published work with current
+  passing criterion proof and publishes its accepted version. Unpublished
+  standalone IN_PROGRESS drafts may also be edited. Optional `criteria` and
+  `traces` arrays replace their editable sets; omission preserves them and
+  `[]` clears them.
+- Epic implementation approval, review submission and return to implementation,
+  Initiative implementation approval and review submission, and standalone
+  requirement start accept `--release-choice <file>`. When the server returns
+  `release_choice_required`, the CLI displays the current placements and the
+  move-or-keep choice. The reviewed file echoes `action`, `target_release_id`
+  and each requirement's `kind`, `id` and `expected_release_id`. Base and
+  unassigned requirements must move to the active Release; Keep is available
+  for requirements in another delivery Release. The CLI never chooses an
+  action automatically. Requirement reads no longer include `release_exempt`.
+- Epic plan help documents `retire` entries for published requirements and
+  their implementation-Trace removals. `epics gates confirm-removal` records
+  the domain owner's confirmation for an entry in the saved plan. Completion
+  publishes an OBSOLETE version; direct `requirements obsolete` refuses
+  published behavior. Returning to planning preserves unchanged current proof
+  and clears proof for changed published criteria.
+- `source-files relocate <source-file-id> --file <file>` moves a traced
+  SourceFile within its repository using `expected_path`, `path` and `reason`.
+  A destination collision requires its `destination_id`; both identities and
+  their Traces remain, and path resolution selects the oldest record.
+- The bundled process, delivery skills, reference loop and CLI guide describe
+  current criterion proof, separate modernization history, requirement
+  retirement and reviewed Release placement. Run `modernpath install` after
+  upgrading to refresh installed agent instructions.
 - A refused `epics gates declare-decision` now names the field at fault
   (Epic 388): `<code> — <field>: <message>` for a single question and
   `<code> — item <index> (<identity>) — <field>: <message>` for a batch item.
