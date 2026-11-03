@@ -110,7 +110,7 @@ func requirementDetailFields(kind string) []string {
 		"id", "requirement_kind", "display_ref", "title", "description", "revision", "display_number",
 		"embedding_model", "context", "context_name", "work_status", "release_note",
 		"detail_md", "delivered_revision", "process_metadata", "completed_at",
-		"release_exempt", "internal_only", "deleted_at", "tenant_id", "system_id", "created_by_id",
+		"internal_only", "deleted_at", "tenant_id", "system_id", "created_by_id",
 		"change_epic_id", "release_id", "inserted_at", "updated_at",
 		"created_by", "criteria", "traces_from", "traces_to", "audit_events",
 	}

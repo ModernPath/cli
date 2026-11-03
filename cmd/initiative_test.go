@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -293,6 +295,27 @@ func TestInitiativeRoundCommandsSendTheirRequestBodiesAndQueryStringsCheckExitsN
 				t.Fatalf("%v sent %d requests before refusing", tc.args, len(*seen))
 			}
 		})
+	}
+}
+
+func TestInitiativeRoundForwardsExplicitReleaseChoice(t *testing.T) {
+	server, seen := iniServer(t, iniOK(map[string]any{"items": []any{}}))
+	cobraWorkspace(t, server, 1)
+	file := filepath.Join(t.TempDir(), "release-choice.json")
+	input := `{"action":"keep","target_release_id":111,"requirements":[{"kind":"system_requirement","id":"66666666-6666-4666-8666-666666666666","expected_release_id":null}]}`
+	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runRoot(t, "initiative", "submit-review", iniLine, "--epics", "3,7", "--reason", "Ready", "--release-choice", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("requests = %#v", *seen)
+	}
+	choice, ok := (*seen)[0].body["release_choice"].(map[string]any)
+	if !ok || choice["action"] != "keep" || choice["target_release_id"] != float64(111) {
+		t.Fatalf("release choice = %#v", (*seen)[0].body)
 	}
 }
 

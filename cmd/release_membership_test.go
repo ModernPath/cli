@@ -26,11 +26,11 @@ func TestMembershipFailureIdentifiesRefusedRequirement(t *testing.T) {
 		}
 		posts++
 		w.WriteHeader(422)
-		json.NewEncoder(w).Encode(map[string]any{"error": "release_exempt", "requirement": map[string]any{"kind": "user_requirement", "id": membershipUR, "reason": "release_exempt"}})
+		json.NewEncoder(w).Encode(map[string]any{"error": "requirement_source_changed", "requirement": map[string]any{"kind": "user_requirement", "id": membershipUR, "reason": "requirement_source_changed"}})
 	}))
 	defer s.Close()
 	_, err := runMembership(t, s, "move-requirements", "next", "--file", membershipInput(t, map[string]any{"requirements": membershipSelection()}), "--json")
-	if err == nil || !strings.Contains(err.Error(), "user_requirement:"+membershipUR) || !strings.Contains(err.Error(), "release_exempt") {
+	if err == nil || !strings.Contains(err.Error(), "user_requirement:"+membershipUR) || !strings.Contains(err.Error(), "requirement_source_changed") {
 		t.Fatalf("missing refused requirement: %v", err)
 	}
 	if posts != 1 {

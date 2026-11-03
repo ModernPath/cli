@@ -236,6 +236,17 @@ func TestRequirementGetRejectsPriorityField(t *testing.T) {
 	}
 }
 
+func TestRequirementGetRejectsReleaseExemptField(t *testing.T) {
+	root := newRequirementGetCommand(func() (*cliEnv, error) {
+		t.Fatal("removed release_exempt field must fail before loading the environment")
+		return nil, nil
+	})
+	root.SetArgs([]string{"UR-3-2", "--fields", "release_exempt"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("release_exempt field error = %v", err)
+	}
+}
+
 func TestTraceListScopesNativeRequirementBeforeReadingTraces(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -81,6 +81,69 @@ func TestReturnPostsOnlyTheHumanDecision(t *testing.T) {
 	}
 }
 
+func TestReleaseChoiceIsForwardedForEpicLifecycleAnd409ExplainsChoice(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/systems" {
+			healthyProbe(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"release_choice_required","release_choice":{"target_release":{"id":111,"name":"Active"},"requirements":[{"kind":"user_requirement","id":"10000000-0000-4000-8000-000000000001","display_ref":"UR-1","release_id":null,"release_name":null}]}}`))
+	}))
+	defer server.Close()
+	cobraWorkspace(t, server)
+	file := filepath.Join(t.TempDir(), "choice.json")
+	input := `{"action":"move","target_release_id":111,"requirements":[{"kind":"user_requirement","id":"10000000-0000-4000-8000-000000000001","expected_release_id":null}]}`
+	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRoot(t, "epics", "plan", "approve-implementation", "42", "--reason", "USER: approve", "--release-choice", file)
+	if err == nil || !strings.Contains(err.Error(), "UR-1") || !strings.Contains(err.Error(), "--release-choice") {
+		t.Fatalf("expected useful release choice prompt, output=%q err=%v", out, err)
+	}
+	choice, ok := body["release_choice"].(map[string]any)
+	if !ok || choice["action"] != "move" || choice["target_release_id"] != float64(111) {
+		t.Fatalf("choice not forwarded: %#v", body)
+	}
+}
+
+func TestReleaseChoicePromptExplainsMandatoryAndOptionalRows(t *testing.T) {
+	body := map[string]any{"error": "release_choice_required", "release_choice": map[string]any{
+		"target_release": map[string]any{"id": 111, "name": "Active"},
+		"requirements": []any{
+			map[string]any{"kind": "user_requirement", "id": "10000000-0000-4000-8000-000000000001", "display_ref": "UR-1", "release_id": nil, "release_name": nil, "move_required": true},
+			map[string]any{"kind": "system_requirement", "id": "20000000-0000-4000-8000-000000000002", "display_ref": "SR-2", "release_id": 12, "release_name": "Other", "move_required": false},
+		},
+	}}
+	err := releaseChoiceRequired(body)
+	if err == nil {
+		t.Fatal("expected prompt error")
+	}
+	for _, want := range []string{"UR-1", "mandatory", "SR-2", "optional", "keep", `"action":"move"|"keep"`, "every prompted requirement", "move_required"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("prompt missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestMandatoryOnlyReleaseChoicePromptDoesNotOfferKeep(t *testing.T) {
+	body := map[string]any{"error": "release_choice_required", "release_choice": map[string]any{
+		"target_release": map[string]any{"id": 111, "name": "Active"},
+		"requirements":   []any{map[string]any{"kind": "user_requirement", "id": "10000000-0000-4000-8000-000000000001", "display_ref": "UR-1", "release_id": nil, "move_required": true}},
+	}}
+	err := releaseChoiceRequired(body)
+	if err == nil {
+		t.Fatal("expected prompt error")
+	}
+	if !strings.Contains(err.Error(), `"action":"move"`) || strings.Contains(err.Error(), `"action":"move"|"keep"`) {
+		t.Fatalf("mandatory-only guidance must offer move only: %v", err)
+	}
+}
+
 func TestReturnRejectsRemovedBundleFlagBeforeAnyRequest(t *testing.T) {
 	bodies := planServer(t, "IN_PROGRESS")
 	_, err := runRoot(t, "epics", "plan", "return-to-implementation", "42", "--file", "obsolete.json", "--reason", "USER: continue")

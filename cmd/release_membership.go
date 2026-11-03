@@ -261,7 +261,7 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 func membershipFailure(status int, body map[string]any) error {
 	code, _ := body["error"].(string)
 	switch code {
-	case "not_found", "forbidden", "no_creator", "items_required", "too_many_items", "duplicate_items", "invalid_item", "invalid_release_id", "expected_release_required", "release_not_open", "release_exempt", "requirement_source_changed":
+	case "not_found", "forbidden", "no_creator", "items_required", "too_many_items", "duplicate_items", "invalid_item", "invalid_release_id", "expected_release_required", "release_not_open", "requirement_source_changed":
 		if item, ok := body["requirement"].(map[string]any); ok {
 			kind, _ := item["kind"].(string)
 			id, _ := item["id"].(string)

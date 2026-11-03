@@ -46,6 +46,15 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					if agent, _ := cmd.Flags().GetString("agent"); agent != "" {
 						payload["actor"] = map[string]any{"kind": "agent", "agent_slug": agent}
 					}
+					if op.name == "approve-implementation" || op.name == "submit-review" || op.name == "return-to-implementation" {
+						choice, err := readReleaseChoice(cmd)
+						if err != nil {
+							return err
+						}
+						if choice != nil {
+							payload["release_choice"] = choice
+						}
+					}
 				}
 				if op.name == "return-to-planning" {
 					// Epic 344: decisions of the current plan that keep their
@@ -84,6 +93,9 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return err
 				}
 				if status < 200 || status >= 300 {
+					if err := releaseChoiceRequired(response); err != nil {
+						return err
+					}
 					if problem, ok := response["error"].(map[string]any); ok && problem["gate"] != nil {
 						_ = writeCommandJSON(cmd, problem["gate"])
 					}
@@ -127,6 +139,9 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 			}
 			command.Flags().String("reason", "", reasonHelp)
 			command.Flags().String("agent", "", "Slug of the agent that ran this command; the signed-in person is the human behind it")
+			if op.name == "approve-implementation" || op.name == "submit-review" || op.name == "return-to-implementation" {
+				addReleaseChoiceFlag(command)
+			}
 		}
 		if op.name == "return-to-planning" {
 			command.Flags().Lookup("reason").Usage = "Required human return decision and reason beginning USER:"
@@ -333,7 +348,14 @@ unchanged criterion proof remains current. Obtain a new plan review and implemen
 approval, then retest each changed published criterion.
 
 submit-review checks current completion-review readiness and moves work to
-IN_REVIEW. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
+IN_REVIEW. If a transitioning requirement is outside the active Release, the server
+refuses with its current placement prompt and writes nothing. Base/unassigned
+rows are mandatory moves; KEEP is offered only for other-Release rows. Review
+those rows, then retry with --release-choice <file>; the file contains the prompt's target
+Release, action move or keep, and every prompted requirement with its expected
+current release_id (null when unassigned). The server owns move_required; do not
+include it in the file. A stale choice prompts again. The CLI never selects an
+action automatically. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
 one accepted requirement version and releases ownership. Each retired requirement becomes a
 new OBSOLETE version. Repeating completion on
 DONE publishes nothing twice. return-to-implementation needs a non-empty human

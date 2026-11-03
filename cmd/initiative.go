@@ -28,6 +28,14 @@ A round submission needs the caller to be each Epic's implementation approver
 or its assignee; any one person may approve a round's completion. Each Epic keeps its own
 approvals, reviews, gate checks and completion, and can still be returned to
 planning or to implementation alone with the single-Epic commands.
+approve-implementation and submit-review may return release_choice_required
+when a transitioning requirement is outside the active Release. Base/unassigned
+requirements are mandatory moves; KEEP applies only to requirements in another
+delivery Release. No transition is written until the person reviews the prompted
+placements and retries with --release-choice <file>. The file echoes action,
+target_release_id and every prompted requirement's kind, id and expected_release_id.
+The server owns move_required; do not send it. The CLI never chooses
+automatically; stale choices prompt again.
 A round runs in one transaction bounded at two minutes. After an uncertain
 answer (a timeout or a lost connection), read an Epic of the round back before
 retrying; split a large round if it times out.`
@@ -413,6 +421,15 @@ Epic's completion gate is rechecked in one transaction.`},
 					if agent, _ := cmd.Flags().GetString("agent"); agent != "" {
 						payload["actor"] = map[string]any{"kind": "agent", "agent_slug": agent}
 					}
+					if r.use == "approve-implementation" || r.use == "submit-review" {
+						choice, err := readReleaseChoice(cmd)
+						if err != nil {
+							return err
+						}
+						if choice != nil {
+							payload["release_choice"] = choice
+						}
+					}
 				}
 				if len(query) > 0 {
 					suffix += "?" + query.Encode()
@@ -442,6 +459,9 @@ Epic's completion gate is rechecked in one transaction.`},
 		if r.reason {
 			c.Flags().String("reason", "", "The human's answer, such as USER:<date> (required)")
 			c.Flags().String("agent", "", "Slug of the agent that ran this command; the signed-in person is the human behind it")
+			if r.use == "approve-implementation" || r.use == "submit-review" {
+				addReleaseChoiceFlag(c)
+			}
 		}
 		c.Flags().Bool("json", false, "Emit JSON (the default output for round reads)")
 		commands = append(commands, c)
@@ -496,6 +516,9 @@ func initiativeRoundCall(cmd *cobra.Command, load func() (*cliEnv, error), line,
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
+		if choiceErr := releaseChoiceRequired(body); choiceErr != nil {
+			return nil, choiceErr
+		}
 		// A blocked gate prints that Epic's report first, as epics plan does.
 		if problem, ok := body["error"].(map[string]any); ok && problem["gate"] != nil {
 			_ = writeCommandJSON(cmd, problem["gate"])

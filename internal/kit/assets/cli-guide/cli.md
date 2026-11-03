@@ -41,7 +41,7 @@ entry points for these operations. A compatible server must expose
 Move an exact selection of user and system requirements through the supported
 CLI. Sources may have no release, be in Base or be in an open delivery release.
 The destination must be a planned or active non-Base release in the bound System. Closed,
-release-exempt, deleted or foreign requirements refuse the entire request.
+deleted or foreign requirements refuse the entire request.
 
 Create `selection.json` with kinds and UUIDs:
 

@@ -162,11 +162,11 @@ normal replanning uses `epics plan return-to-planning`.
 epics create             -> Epic PROPOSED
 epics plan save          -> saved plan (PROPOSED only; repeat to revise; `epics plan history` lists every revision)
 epics gates confirm-removal -> removal_confirmation for one retire entry (PROPOSED only; a changed reason needs a new one)
-plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic and the approver
+plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic and the approver; outside-active-Release requirements require a reviewed --release-choice file
 plan return-to-planning  -> active Epic and selected requirements PROPOSED; approval withdrawn; ownership released; listed decisions and unchanged RED carry
-plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver or the assignee runs it)
+plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver or the assignee runs it); outside-active-Release requirements require a reviewed --release-choice file
 epics gates presentation -> the completion bundle the human answers (read-only, Epic IN_REVIEW)
-plan return-to-implementation --reason "USER:..." -> Epic and owned requirements IN_PROGRESS (the human's "not yet"); plan, approval and ownership kept
+plan return-to-implementation --reason "USER:..." -> Epic and owned requirements IN_PROGRESS (the human's "not yet"); plan, approval and ownership kept; outside-active-Release requirements require a reviewed --release-choice file
 
 plan approve-completion  -> approved content published: revision +1, immutable version; Epic DONE; ownership released
 reverse-engineer record  -> requirements PROPOSED at revision 0, with their traces
@@ -185,6 +185,7 @@ and `IN_REVIEW`; the human-authorized return ends approval before edits.
 | `connect this workspace to a system` / `no system_id` | cli | no binding, or a nested `.modernpath/config.json` | run from the workspace root; `modernpath init` binds |
 | `below an already bound workspace` / `linked git worktree` | cli | `install`, `init` or `init workspace` run in a directory under a bound workspace root, or `init` at a linked worktree root | run it from the workspace root the refusal names (the main checkout for a worktree); `modernpath init --force` binds a nested workspace deliberately |
 | `requirement_in_progress` / `requirement_owned` | server 409 | `update`, `set-context` or `obsolete` targets approved or Epic-owned work; existing-behavior acceptance also refuses owned work | finish through the owning Epic, or ask its implementation approver to return it to planning; then apply the requested operation's lifecycle rules |
+| `release_choice_required` | server 409 | a requirement entering IN_PROGRESS or IN_REVIEW is outside the active Release; no transition or membership write occurred | Base/unassigned rows are mandatory moves; `keep` applies only to other-Release rows. Review the placements and target, then retry with `--release-choice <file>` containing action, target Release ID, and every prompted requirement with its expected current Release ID or null. The server owns `move_required`; omit it. Stale choices prompt again |
 | `requirement_already_published` | server 409 | a content `update` or `obsolete` targets DONE, a nonzero revision or an accepted version | use a follow-up Epic for published content; grouping-only updates may still be allowed |
 | `invalid_requirement_status` | server 409 | a content edit or obsoletion targets an ineligible state | content edits and new obsoletions require unowned, unpublished PROPOSED, BLOCKED or DEFERRED requirements; repeated obsoletion is unchanged |
 | `items_required` / `too_many_items` / `duplicate_items` / `invalid_item` | server 422 | a `requirements obsolete --file` batch is empty, holds more than 200 items, repeats an item or names an item without kind `user`/`system` and a UUID; nothing was written | fix the file; a refusal naming `item <index> (<kind> <id>)` points at the failing entry, and the whole batch is retried after the fix |
