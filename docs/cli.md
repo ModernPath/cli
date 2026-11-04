@@ -1513,6 +1513,18 @@ modernpath test-cases get <uuid> --full --json
 modernpath evidence latest --target-type criterion --target-id <criterion-uuid> --json
 ```
 
+To link an existing TestCase to the source file implementing its test, including
+for a new small-change test, write `test-source.json` with a trace-only request:
+
+```json
+{"requirements":[],"traces":[{"source_type":"test_case","source_id":"<test-case-uuid>","target_type":"source_file","repository_key":"<repository-key>","path":"test/example_test.exs","link_kind":"verifies"}]}
+```
+
+Run `modernpath reverse-engineer record --file test-source.json`, then read it
+back with `modernpath traces list --entity-type test_case --entity-id <test-case-uuid>`.
+Recording the trace does not accept or publish a requirement. Use an actual
+scoped TestCase and source path.
+
 Current results and typed relationships remain inspectable
 through these existing identities. Historical definitions and raw output are not
 retained or reconstructed. See [Verification evidence](#verification-evidence).

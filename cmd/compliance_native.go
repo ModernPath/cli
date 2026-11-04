@@ -190,7 +190,19 @@ func newTraceCommands(load func() (*cliEnv, error)) *cobra.Command {
 }
 
 func newTestCasesCommand(load func() (*cliEnv, error)) *cobra.Command {
-	root := &cobra.Command{Use: "test-cases", Short: "Read and update test identities"}
+	root := &cobra.Command{
+		Use: "test-cases", Short: "Read and update test identities",
+		Long: `Create, read and update TestCase identities in the bound System.
+
+To link an existing TestCase to its test source, use a trace-only request with
+modernpath reverse-engineer record --file trace.json. This also works for new
+small-change tests; it does not accept or publish a requirement. For example:
+
+  {"requirements":[],"traces":[{"source_type":"test_case","source_id":"<test-case-uuid>","target_type":"source_file","repository_key":"<repository-key>","path":"test/example_test.exs","link_kind":"verifies"}]}
+
+Read the scoped links with modernpath traces list --entity-type test_case
+--entity-id <test-case-uuid>.`,
+	}
 	create := &cobra.Command{Use: "create", Short: "Create a test identity in the bound System", Args: cobra.NoArgs}
 	createFile := ""
 	create.Flags().StringVar(&createFile, "file", "", "JSON object with title (required)")

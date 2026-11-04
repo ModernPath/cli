@@ -422,3 +422,15 @@ func TestEvidenceRecordReturnsNativeReceipt(t *testing.T) {
 		}
 	}
 }
+
+func TestTestCaseHelpExplainsSourceTraceForSmallChanges(t *testing.T) {
+	root := newTestCasesCommand(func() (*cliEnv, error) {
+		t.Fatal("help must not access the server")
+		return nil, nil
+	})
+	for _, text := range []string{"reverse-engineer record --file trace.json", `"requirements":[]`, `"source_type":"test_case"`, `"target_type":"source_file"`, "does not accept or publish"} {
+		if !strings.Contains(root.Long, text) {
+			t.Errorf("test-cases help does not explain %q", text)
+		}
+	}
+}
