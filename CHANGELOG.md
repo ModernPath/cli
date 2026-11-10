@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `analysis start` and `analysis reanalyze` recover stale or unprepared source
+  materials through the existing preparation API and event stream, then retry
+  once. Preparation failures remain errors; no UI preparation step is needed.
+  Recovery of changed sources during reanalysis requires the matching Core
+  response contract: HTTP 409 with `source_materials_changed`.
+- Automatic preparation preserves a System’s mode when `analysis start` omits
+  `--mode`. A mismatch returns the original refusal with the explicit mode to
+  pass, without replacing preparation. Explicit mode selections still apply.
+- The analysis retry uses its normal request budget after preparation finishes,
+  while retaining caller cancellation and deadlines. Preparation errors separate
+  the reason code and message without repeating the generic failure prefix.
+
 ## v0.27.0 - Criterion proof, requirement lifecycle and workspace sign-in
 
 Requires the matching Core release for the criterion-proof, requirement lifecycle

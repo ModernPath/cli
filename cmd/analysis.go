@@ -66,6 +66,7 @@ bound to, through the same lifecycle the UI uses.
   reset       delete the analysis results and start again
   status      the repository's status, its source and the current run
 
+If sources need preparation, start and reanalyze prepare them and retry once.
 A server refusal prints its error code and message and exits non-zero, so a
 script fails loudly. Only reset asks for a confirmation; without a terminal it
 needs --yes. Mutating commands accept --json for response data and
@@ -81,9 +82,10 @@ Start analysis button sends. It creates no repository.
 --mode is independent_repos (each repository is analysed on its own, the
 default) or unified_workspace (the repositories are analysed as one
 workspace). When an analysis is already running, its run is printed and no
-second one starts. A refusal (the analysis is already complete, the sources
-are not ready, the system has no repository) prints its error code and
-message and exits non-zero. The command never prompts.
+second one starts. If sources need preparation, the command waits up to
+10 minutes for it and retries once. If the system uses another mode, pass
+--mode explicitly. Other refusals print their error code and message and exit
+non-zero. The command never prompts.
 
 Examples:
   modernpath analysis start
@@ -100,10 +102,9 @@ var analysisReanalyzeCmd = &cobra.Command{
 UI's Re-analyze action sends. 'modernpath analysis status' prints the bound
 repository's id.
 
-A refusal (the repository is not in the system, it is a member of a unified
-workspace whose root must be re-analysed instead, the sources are not ready)
-prints its error code and message and exits non-zero. The command never
-prompts.
+If sources need preparation, the command waits up to 10 minutes for it and
+retries once. Other refusals print their error code and message and exit
+non-zero. The command never prompts.
 
 Example:
   modernpath analysis reanalyze 7`,
@@ -253,17 +254,25 @@ func startAnalysis(cfg *config.Config, mode string) (*lifecycleAnswer, error) {
 // postLifecycle posts body to the bound system's git-sources/<route> and
 // returns the answer, or the refusal by its error code and message.
 func postLifecycle(cfg *config.Config, route string, body map[string]string) (*lifecycleAnswer, error) {
+	return postLifecycleContext(context.Background(), cfg, route, body)
+}
+
+func postLifecycleContext(ctx context.Context, cfg *config.Config, route string, body map[string]string) (*lifecycleAnswer, error) {
 	client := newAuthenticatedClient(cfg)
 	payload, _ := json.Marshal(body)
 	url := fmt.Sprintf("%s/api/systems/%d/git-sources/%s", client.baseURL, cfg.SystemID, route)
-	resp, err := client.Post(url, "application/json", bytes.NewReader(payload))
+	resp, err := preparationRequest(ctx, client, http.MethodPost, url, bytes.NewReader(payload), "application/json")
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, pushRefusal(resp, raw)
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &refusal)
+		return nil, lifecycleRefusal{code: refusal.Error, status: resp.StatusCode, err: pushRefusal(resp, raw)}
 	}
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
@@ -421,7 +430,7 @@ func runAnalysisStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	answer, err := startAnalysis(cfg, analysisStartMode)
+	answer, err := lifecycleWithPreparationTimeout(cmd.Context(), cfg, "analyze", map[string]string{"analysis_mode": analysisStartMode}, analysisStartMode, defaultAnalysisTimeout, !cmd.Flags().Changed("mode"))
 	if err != nil {
 		return reportFailure(err)
 	}
@@ -440,7 +449,7 @@ func runAnalysisReanalyze(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return reportFailure(err)
 	}
-	answer, err := postLifecycle(cfg, fmt.Sprintf("%d/reanalyze", repositoryID), map[string]string{})
+	answer, err := lifecycleWithPreparation(cmd.Context(), cfg, fmt.Sprintf("%d/reanalyze", repositoryID), map[string]string{}, "")
 	if err != nil {
 		return reportFailure(err)
 	}

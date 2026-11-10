@@ -481,6 +481,25 @@ the server answers with, or the server's refusal once by its error code and
 message (`analysis_already_complete`, `sources_required`,
 `source_materials_not_ready`, …) and exits non-zero.
 
+If `start` or `reanalyze` finds outdated or missing analysis preparation, it
+requests preparation, waits up to ten minutes for that job to finish, then
+retries the original request once. `start` honors an explicit `--mode`;
+`reanalyze` uses the System’s stored mode. When `start` omits `--mode`, recovery
+first checks the System’s mode. If it differs from the default
+`independent_repos`, the command preserves the existing preparation and reports
+which explicit `--mode` to pass.
+
+The ten-minute limit applies to preparation. The retry uses the command’s
+original context and normal HTTP request timeout, so preparation cannot consume
+its request budget. Caller cancellation and deadlines still apply. Preparation
+failure, timeout, cancellation or another source change returns an error without
+further retries. The server still validates the prepared source revision before
+starting analysis. `reset` does not perform this recovery.
+
+`source push` queues an asynchronous refresh. Wait for an active refresh to
+finish before starting analysis; a busy System still returns its existing
+refusal. Source-preparation recovery does not cancel that work.
+
 `analysis status` prints the bound repository's analysis, documentation and
 embedding status, its current source revision and how the last refresh of that
 source ended, then the current analysis run: its status, mode, phase and

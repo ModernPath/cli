@@ -201,6 +201,7 @@ func TestAnalysisStartPostsTheModeAndPrintsTheRun(t *testing.T) {
 		mode string
 	}{
 		{[]string{"analysis", "start"}, "independent_repos"},
+		{[]string{"analysis", "start", "--mode", "independent_repos"}, "independent_repos"},
 		{[]string{"analysis", "start", "--mode", "unified_workspace"}, "unified_workspace"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -219,7 +220,10 @@ func TestAnalysisStartPostsTheModeAndPrintsTheRun(t *testing.T) {
 			if req.body["analysis_mode"] != tc.mode {
 				t.Errorf("analysis_mode = %v, want %s", req.body["analysis_mode"], tc.mode)
 			}
-			for _, want := range []string{"run 15", "queued", tc.mode} {
+			if posts := s.posts(); len(posts) != 1 || posts[0] != analyzePath {
+				t.Errorf("start must only POST its lifecycle route, got %v", posts)
+			}
+			for _, want := range []string{"run 15", "queued", tc.mode, "1927f502c38d", "Legacy Estate (7)"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output must name %q:\n%s", want, out)
 				}
@@ -278,7 +282,7 @@ func TestAnalysisStartPrintsARefusalOnceByName(t *testing.T) {
 			if n := strings.Count(out, tc.code); n != 1 {
 				t.Errorf("the refusal must be printed once by its code %q, printed %d times:\n%s", tc.code, n, out)
 			}
-			if !strings.Contains(out, tc.message) {
+			if strings.Count(out, tc.message) != 1 {
 				t.Errorf("the refusal must carry the server's message %q:\n%s", tc.message, out)
 			}
 		})
@@ -296,17 +300,19 @@ func TestAnalysisReanalyzePostsTheRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analysis reanalyze 7: %v\n%s", err, out)
 	}
-	if s.requested(http.MethodPost, reanalyzePath) == nil {
-		t.Fatalf("reanalyze must POST %s, posted %v", reanalyzePath, s.posts())
+	if posts := s.posts(); len(posts) != 1 || posts[0] != reanalyzePath {
+		t.Fatalf("reanalyze must only POST %s, posted %v", reanalyzePath, posts)
 	}
-	if !strings.Contains(out, "run 16") {
-		t.Errorf("output must name the run:\n%s", out)
+	for _, want := range []string{"run 16", "queued", "independent_repos", "Legacy Estate (7)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output must contain %q: %s", want, out)
+		}
 	}
 
-	s.answer(http.MethodPost, reanalyzePath, http.StatusConflict, refusal("source_materials_not_ready", "prepare the source materials before starting analysis"))
+	s.answer(http.MethodPost, reanalyzePath, http.StatusNotFound, refusal("repository_not_found", "repository not found"))
 	out, err = runVerb(t, "analysis", "reanalyze", "7")
-	if err == nil || strings.Count(out, "source_materials_not_ready") != 1 {
-		t.Errorf("a 409 must exit non-zero and print its code once, err=%v:\n%s", err, out)
+	if err == nil || strings.Count(out, "repository_not_found") != 1 || strings.Count(out, "repository not found") != 1 {
+		t.Errorf("a 404 must exit non-zero and print its code once, err=%v:\n%s", err, out)
 	}
 }
 
@@ -560,6 +566,61 @@ func TestAnalysisReanalyzeAndResetAcceptJSON(t *testing.T) {
 			}
 			if strings.TrimSpace(stderr) != "" {
 				t.Fatalf("JSON mode must not print progress to stderr: %q", stderr)
+			}
+		})
+	}
+}
+
+// Both lifecycle verbs require a bound system before contacting the server.
+func TestAnalysisLifecycleRequiresBoundSystem(t *testing.T) {
+	for _, args := range [][]string{{"analysis", "start"}, {"analysis", "reanalyze", "7"}} {
+		t.Run(args[1], func(t *testing.T) {
+			s := newLifecycleStub(t)
+			dir := bindLifecycleWorkspace(t, s, 7)
+			writeJSON(t, dir, ".modernpath/config.json", map[string]any{"api_url": s.server.URL})
+			out, err := runVerb(t, args...)
+			if err == nil || !strings.Contains(out, "no system is bound") {
+				t.Fatalf("expected bound-system refusal, got %v: %s", err, out)
+			}
+			s.mu.Lock()
+			n := len(s.requests)
+			s.mu.Unlock()
+			if n != 0 {
+				t.Errorf("made %d HTTP requests without a bound system", n)
+			}
+		})
+	}
+}
+
+func TestAnalysisStartRejectsInvalidModeBeforeHTTP(t *testing.T) {
+	s := newLifecycleStub(t)
+	bindLifecycleWorkspace(t, s, 7)
+	out, err := runVerb(t, "analysis", "start", "--mode", "invalid")
+	if err == nil || !strings.Contains(out, "unknown --mode") {
+		t.Fatalf("expected invalid-mode refusal, got %v: %s", err, out)
+	}
+	s.mu.Lock()
+	n := len(s.requests)
+	s.mu.Unlock()
+	if n != 0 {
+		t.Errorf("made %d HTTP requests for an invalid mode", n)
+	}
+}
+
+func TestAnalysisReanalyzeRejectsInvalidRepositoryIDBeforeHTTP(t *testing.T) {
+	for _, id := range []string{"0", "-1", "abc"} {
+		t.Run(id, func(t *testing.T) {
+			s := newLifecycleStub(t)
+			bindLifecycleWorkspace(t, s, 7)
+			out, err := runVerb(t, "analysis", "reanalyze", "--", id)
+			if err == nil || !strings.Contains(out, "repository id must be a positive number") {
+				t.Fatalf("expected invalid-id refusal, got %v: %s", err, out)
+			}
+			s.mu.Lock()
+			n := len(s.requests)
+			s.mu.Unlock()
+			if n != 0 {
+				t.Errorf("made %d HTTP requests for id %q", n, id)
 			}
 		})
 	}
