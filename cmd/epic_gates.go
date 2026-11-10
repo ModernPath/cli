@@ -218,7 +218,7 @@ names the failing item: <code> — item <index> (<identity>) — <field>: <messa
 the <field>: part only when the refusal names one. A refused single declare-decision
 reads <code> — <field>: <message>.
 
-Returning active work to planning requires the current approver's explicit
+Returning active work to planning requires an authorized workspace member’s explicit
 human decision. It releases requirement ownership and retains draft content,
 prior decisions and proof for retained criterion identities. A new plan review
 and implementation approval are required. Completion approval is separate.

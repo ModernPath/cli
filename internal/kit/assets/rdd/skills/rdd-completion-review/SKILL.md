@@ -51,8 +51,7 @@ still-published requirements, ownership, implementation, traces and evidence.
    For a round, submit with `modernpath initiative submit-review`, fetch
    `modernpath initiative presentation <initiative-id> --epics <ids>`, present
    every Epic in the round, and apply the human's one answer with
-   `modernpath initiative approve-completion`. A round submission needs the
-   caller to be each Epic's implementation approver or its assignee; any one
+   `modernpath initiative approve-completion`. Any authorized workspace member may submit a round; any one
    person may approve a round's completion, which writes each Epic's own completion records, all
    or nothing. A refusal changes no Epic.
 5. Apply only the human's explicit current-state approval and reason through the

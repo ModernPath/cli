@@ -18,6 +18,12 @@ func TestRDDEpicActionsSendOnlyDecisionFields(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 					t.Fatal(err)
 				}
+				if action == "approve-implementation" || action == "approve-completion" {
+					if payload["focus_source"] != "cli" {
+						t.Errorf("missing CLI focus source: %v", payload)
+					}
+					delete(payload, "focus_source")
+				}
 				if len(payload) != 1 || payload["reason"] != "USER: explicit decision" {
 					t.Errorf("action uploaded more than the decision: %v", payload)
 				}

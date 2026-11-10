@@ -117,8 +117,7 @@ Material current criterion outcome changes in review scope outdate the Epic
 review. Identical retries change nothing. Modernization history leaves the
 review current. Reviewed content, code or structural relationship changes also
 require renewed review. Record finding resolutions.
-The Epic’s implementation approver or assignee may record its proof and submit
-it for review; the approver alone can return it to planning.
+Any authorized workspace member may record proof, submit review or return work to planning with an explicit human decision.
 
 The session records independent review as phase, reviewer context, criterion and
 obligation IDs, findings, scope implementation confirmation and reason. Store no
@@ -126,7 +125,7 @@ presentation. The server derives applicability from current state and existing
 semantic changes. Context and reason attest separate review work.
 
 To revise an IN_PROGRESS or IN_REVIEW Epic, obtain the human's explicit return
-to planning decision. The current implementation approver runs:
+to planning decision. Any authorized workspace member runs:
 
 ```sh
 modernpath epics plan return-to-planning <id> --reason "USER:<actual decision and reason>" [--carry-decision <decision-id> ...]
@@ -140,8 +139,7 @@ The operation atomically
 returns the Epic and its selected requirements to PROPOSED, withdraws approval
 and releases ownership. The Audit Trail retains the actor, time, reason, prior
 state, withdrawn approval attribution, the criteria snapshot and the carried
-decisions (`carry_decisions`). Published content, revisions and accepted requirement versions remain intact. Stale content, another approver,
-ownership conflicts and failed writes leave everything unchanged. DONE stays
+decisions (`carry_decisions`). Published content, revisions and accepted requirement versions remain intact. Stale content, ownership conflicts and failed writes leave everything unchanged. DONE stays
 closed; create a follow-up Epic.
 
 Return clears current proof for each published criterion whose approved meaning
@@ -162,9 +160,9 @@ normal replanning uses `epics plan return-to-planning`.
 epics create             -> Epic PROPOSED
 epics plan save          -> saved plan (PROPOSED only; repeat to revise; `epics plan history` lists every revision)
 epics gates confirm-removal -> removal_confirmation for one retire entry (PROPOSED only; a changed reason needs a new one)
-plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic and the approver; outside-active-Release requirements require a reviewed --release-choice file
+plan approve-implementation -> Epic IN_PROGRESS; named requirements IN_PROGRESS, owned by the Epic with approval attributed to the person; outside-active-Release requirements require a reviewed --release-choice file
 plan return-to-planning  -> active Epic and selected requirements PROPOSED; approval withdrawn; ownership released; listed decisions and unchanged RED carry
-plan submit-review       -> Epic and owned requirements IN_REVIEW (the approver or the assignee runs it); outside-active-Release requirements require a reviewed --release-choice file
+plan submit-review       -> Epic and owned requirements IN_REVIEW (any authorized workspace member runs it); outside-active-Release requirements require a reviewed --release-choice file
 epics gates presentation -> the completion bundle the human answers (read-only, Epic IN_REVIEW)
 plan return-to-implementation --reason "USER:..." -> Epic and owned requirements IN_PROGRESS (the human's "not yet"); plan, approval and ownership kept; outside-active-Release requirements require a reviewed --release-choice file
 
@@ -184,7 +182,7 @@ and `IN_REVIEW`; the human-authorized return ends approval before edits.
 |---|---|---|---|
 | `connect this workspace to a system` / `no system_id` | cli | no binding, or a nested `.modernpath/config.json` | run from the workspace root; `modernpath init` binds |
 | `below an already bound workspace` / `linked git worktree` | cli | `install`, `init` or `init workspace` run in a directory under a bound workspace root, or `init` at a linked worktree root | run it from the workspace root the refusal names (the main checkout for a worktree); `modernpath init --force` binds a nested workspace deliberately |
-| `requirement_in_progress` / `requirement_owned` | server 409 | `update`, `set-context` or `obsolete` targets approved or Epic-owned work; existing-behavior acceptance also refuses owned work | finish through the owning Epic, or ask its implementation approver to return it to planning; then apply the requested operation's lifecycle rules |
+| `requirement_in_progress` / `requirement_owned` | server 409 | `update`, `set-context` or `obsolete` targets approved or Epic-owned work; existing-behavior acceptance also refuses owned work | finish through the owning Epic; any authorized user can record an explicit human decision to return an active Epic to planning, then apply the requested operation's lifecycle rules |
 | `release_choice_required` | server 409 | a requirement entering IN_PROGRESS or IN_REVIEW is outside the active Release; no transition or membership write occurred | Base/unassigned rows are mandatory moves; `keep` applies only to other-Release rows. Review the placements and target, then retry with `--release-choice <file>` containing action, target Release ID, and every prompted requirement with its expected current Release ID or null. The server owns `move_required`; omit it. Stale choices prompt again |
 | `requirement_already_published` | server 409 | a content `update` or `obsolete` targets DONE, a nonzero revision or an accepted version | use a follow-up Epic for published content; grouping-only updates may still be allowed |
 | `invalid_requirement_status` | server 409 | a content edit or obsoletion targets an ineligible state | content edits and new obsoletions require unowned, unpublished PROPOSED, BLOCKED or DEFERRED requirements; repeated obsoletion is unchanged |
@@ -197,8 +195,6 @@ and `IN_REVIEW`; the human-authorized return ends approval before edits.
 | `unsupported Epic fields` | server 422 | `epics update` naming a server-assigned field (tenant_id, system_id, process_status, plan, metadata, …); nothing was written | send only title, description, scope, non_goals, outcome_source, impact_assessment, shared_context or the date, severity, category, profile, assignee and release fields |
 | `references and accepted_context_revision are server-owned` | server 422 | `epics update` shared_context whose references or accepted_context_revision differ from the stored values | read `epics get <id> --fields shared_context --json`; send those values unchanged and edit decisions, assumptions, open_questions |
 | `requirement owned` | server 409 | the approval names a requirement another Epic owns, or acceptance names an owned one | finish or release the owning Epic; plan without it |
-| `not change owner` | server 403 or 409 | criterion proof update or `submit-review` by someone other than the implementation approver or the Epic's assignee | use the signed-in account of the implementation approver or the Epic's assignee |
-| `not change owner` | server 409 | `return-to-planning` or `recover-legacy` by someone other than the implementation approver | use the implementation approver's signed-in account; the assignee cannot return the Epic to planning |
 | `invalid_planning_return` | server 422 | an unknown field or no explicit `USER:` decision in `--reason` | supply only the human's actual return decision |
 | `planning_return_write_failed` | server 500 | the atomic return could not be written; approval and ownership are unchanged | retry after the write failure is resolved |
 | `planning_return_outcome_unknown` / `return may already have completed` | server 500 | the connection was lost before the result could be confirmed; the return may have committed | read `epics plan show <id> --full --json` and `epics plan history <id> --full --json` before deciding whether to retry |

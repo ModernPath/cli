@@ -38,7 +38,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 	helpAndGuide := []string{
 		"explicit list of the initiative's epics",
 		"each epic's own records, all or nothing",
-		"each epic's implementation approver or its assignee",
+		"any authorized workspace member may submit a round",
 		"any one person may approve a round's completion",
 	}
 	documents := []struct {
@@ -50,7 +50,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 		{"kit asset rdd/PROCESS.md", asset(t, "assets/rdd/PROCESS.md"), []string{
 			"a round is the explicit list of the initiative's epics that one command names",
 			"a round command writes the same records as the single-epic commands for every epic in the round, in one transaction: every epic passes or nothing is written",
-			"a round submission needs the caller to be each epic's implementation approver or its assignee",
+			"any authorized workspace member may submit a round",
 			"any one person may approve a round's completion",
 		}},
 		{"kit asset rdd-cold-review", asset(t, "assets/rdd/skills/rdd-cold-review/SKILL.md"), []string{
@@ -60,7 +60,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 			"an initiative round is the explicit list of the initiative's epics given to the command; one round approval writes each epic's own approval records, all or nothing",
 		}},
 		{"kit asset rdd-completion-review", asset(t, "assets/rdd/skills/rdd-completion-review/SKILL.md"), []string{
-			"a round submission needs the caller to be each epic's implementation approver or its assignee; any one person may approve a round's completion",
+			"any authorized workspace member may submit a round; any one person may approve a round's completion",
 		}},
 	}
 	// docs/cli.md is identical to the kit copy (reference_test.go); it is read
@@ -125,12 +125,10 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 	}
 }
 
-// TestCase 77e921f0 (Epic 377, criterion 7a7fa367): the Epic's implementation
-// approver or its assignee carries on an approved build, so every text that
-// said only the approver now says both, and none keeps the approver-only
-// sentence; returning to planning stays the approver's. The help of epics
-// gates declare-decision names the question's addressee.
-func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecisionNamesTheAddressee(t *testing.T) {
+// Epic 419: authorized workspace users may continue an approved build and
+// record an explicit return-to-planning decision. Help also names the
+// addressee of a declared human decision.
+func TestAuthorizedMembersCollaborateInEveryDocumentAndDeclareDecisionNamesTheAddressee(t *testing.T) {
 	asset := func(t *testing.T, path string) string {
 		t.Helper()
 		body, err := fs.ReadFile(kit.Assets(), path)
@@ -150,36 +148,35 @@ func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecis
 	// The old round sentence: "... each Epic's implementation approver; any
 	// one person may approve ..." — the new phrase contains the old one's
 	// beginning, so its end is what must be gone.
-	roundGone := []string{"implementation approver; any one person may approve"}
+	roundGone := []string{"implementation approver; any one person may approve", "asking the epic's approver", "ask its implementation approver"}
 	reference := renderCLIReference(rootCmd)
 	documents := []struct {
 		name, text      string
 		present, absent []string
 	}{
 		{"kit asset rdd/PROCESS.md", asset(t, "assets/rdd/PROCESS.md"),
-			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+			[]string{"any authorized workspace member may submit a round"}, roundGone},
 		{"kit asset rdd-completion-review", asset(t, "assets/rdd/skills/rdd-completion-review/SKILL.md"),
-			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+			[]string{"any authorized workspace member may submit a round"}, roundGone},
 		{"kit asset cli-guide/cli.md", asset(t, "assets/cli-guide/cli.md"),
-			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+			[]string{"any authorized workspace member may submit a round"}, roundGone},
 		{"initiative round rules help", help(t, "initiative"),
-			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone},
+			[]string{"any authorized workspace member may submit a round"}, roundGone},
 		{"initiative submit-review help", help(t, "initiative", "submit-review"),
-			[]string{"the caller must be each epic's implementation approver or its assignee"},
+			[]string{"any authorized workspace member may submit"},
 			[]string{"implementation approver; every epic's completion-review gate"}},
 		{"epics plan submit-review help", help(t, "epics", "plan", "submit-review"),
-			[]string{"only the implementation approver or the epic's assignee can submit"},
+			[]string{"any authorized workspace member can submit"},
 			[]string{"only the implementation approver can submit"}},
 		{"rendered CLI reference loop", reference,
 			[]string{
-				"the epic’s implementation approver or assignee may record its proof and submit",
-				"(the approver or the assignee runs it)",
-				"criterion proof update or `submit-review` by someone other than the implementation approver or the epic's assignee",
-				"`return-to-planning` or `recover-legacy` by someone other than the implementation approver",
+				"any authorized workspace member may record proof",
+				"(any authorized workspace member runs it)",
 			},
 			[]string{
 				"the implementation approver's signed-in account must declare candidates",
 				"(the approver runs it)",
+				"ask its implementation approver",
 				"`submit-review` or `return-to-planning` by someone other than the implementation approver",
 			}},
 	}
@@ -190,14 +187,14 @@ func TestTheApproverOrTheAssigneeCarriesOnTheBuildInEveryDocumentAndDeclareDecis
 			name, text      string
 			present, absent []string
 		}{"docs/cli.md", string(body),
-			[]string{"a round submission needs the caller to be each epic's implementation approver or its assignee"}, roundGone})
+			[]string{"any authorized workspace member may submit a round"}, roundGone})
 	}
 	if body, err := os.ReadFile(filepath.Join(roundWordingRepoRoot, "docs", "13-planning-delivery.md")); err == nil {
 		documents = append(documents, struct {
 			name, text      string
 			present, absent []string
 		}{"docs/13-planning-delivery.md", string(body),
-			[]string{"the epic’s implementation approver or assignee may record proof and submit"},
+			[]string{"any authorized workspace member may record proof"},
 			[]string{"the implementation approver's account registers candidates"}})
 	}
 	for _, document := range documents {

@@ -43,6 +43,9 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					// SR-1641: --agent names the agent that ran the command;
 					// without it the server attributes the write to the signed-in
 					// person, so the payload carries no actor at all.
+					if op.name == "approve-implementation" || op.name == "approve-completion" {
+						payload["focus_source"] = "cli"
+					}
 					if agent, _ := cmd.Flags().GetString("agent"); agent != "" {
 						payload["actor"] = map[string]any{"kind": "agent", "agent_slug": agent}
 					}
@@ -382,8 +385,8 @@ var epicPlanOperationHelp = map[string]string{
 	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields, such as plan or modernization, with --fields or --full.",
 	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval. A removal Epic lists the published requirements it retires as \"retire\": [{\"kind\", \"id\", \"reason\"}] and removes their traces through remove_traces (see epics plan --help).",
 	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
-	"return-to-planning":       "Withdraw implementation approval and release ownership under the current approver's account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision and its answer. Return clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. Obtain a new plan review and implementation approval, then retest each changed published criterion. DONE stays closed.",
-	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Only the implementation approver or the Epic's assignee can submit.",
+	"return-to-planning":       "Withdraw implementation approval and release ownership under any authorized workspace member’s account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision and its answer. Return clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. Obtain a new plan review and implementation approval, then retest each changed published criterion. DONE stays closed.",
+	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Any authorized workspace member can submit.",
 	"return-to-implementation": "Apply the human's not-yet decision to an IN_REVIEW Epic. --reason is required. Current completion readiness may fail. The plan, approval and ownership remain in effect.",
 	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once. Each requirement the plan retires becomes a new OBSOLETE version, accepted as a retirement with the entry's reason.",
 	"history":                  "Read attributable saves, approvals, returns and content edits. --full includes surviving audit details. Removed presentations and copied plans cannot be reconstructed.",

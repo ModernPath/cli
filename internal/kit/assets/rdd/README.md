@@ -15,7 +15,7 @@ SR -> CODE -> TEST_CASE -> TEST_RESULT
 
 Normal delivery uses the human-selected Epic, saves and independently reviews
 its plan and proposed content, and obtains implementation approval. That approval
-locks requirements to one user and Epic and starts implementation. Review keeps
+locks requirements to one Epic and starts implementation. Review keeps
 the published content and lock unchanged. Human completion approval atomically
 publishes approved content, raises revisions, retains immutable accepted versions,
 records audit and releases ownership. Reverse engineering records requirements

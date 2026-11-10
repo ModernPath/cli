@@ -66,7 +66,7 @@ RED/GREEN results. Explicit human requirement completion remains separate;
 missing CLI support leaves completion blocked. For other changed behavior or
 tests, the human selects an Epic and approves its exact saved plan and proposed content for implementation,
 atomically locking its
-requirements to one user and that Epic, and separately approves completion.
+requirements to that Epic, and separately approves completion.
 For an explicit existing-behavior acceptance pass, the human accepts the exact
 PROPOSED requirements and complete passing evidence through the supported
 atomic operation; active Epic-owned requirements stay on the Epic path. Agents

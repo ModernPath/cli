@@ -383,7 +383,7 @@ func TestEpicImplementationApprovalSendsOnlyDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(*bodies) != 1 || len((*bodies)[0]) != 1 || (*bodies)[0]["reason"] != "USER: implement" {
+	if len(*bodies) != 1 || len((*bodies)[0]) != 2 || (*bodies)[0]["focus_source"] != "cli" || (*bodies)[0]["reason"] != "USER: implement" {
 		t.Fatalf("decision=%#v", *bodies)
 	}
 }

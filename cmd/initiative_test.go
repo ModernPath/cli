@@ -100,6 +100,9 @@ func TestInitiativeRoundCommandsSendTheirRequestBodiesAndQueryStringsCheckExitsN
 				t.Fatalf("request = %s %s", got.method, got.path)
 			}
 			want := map[string]any{"epic_ids": []any{float64(7), float64(3)}, "reason": "USER:2026-10-25 round"}
+			if action != "submit-review" {
+				want["focus_source"] = "cli"
+			}
 			if iniJSON(t, got.body) != iniJSON(t, want) {
 				t.Fatalf("body = %s; want %s", iniJSON(t, got.body), iniJSON(t, want))
 			}
@@ -220,6 +223,9 @@ func TestInitiativeRoundCommandsSendTheirRequestBodiesAndQueryStringsCheckExitsN
 			want := map[string]any{
 				"epic_ids": []any{float64(7), float64(3)}, "reason": "USER:2026-10-25 round",
 				"actor": map[string]any{"kind": "agent", "agent_slug": "claude-code"},
+			}
+			if action != "submit-review" {
+				want["focus_source"] = "cli"
 			}
 			if iniJSON(t, (*seen)[0].body) != iniJSON(t, want) {
 				t.Fatalf("body = %s; want %s", iniJSON(t, (*seen)[0].body), iniJSON(t, want))

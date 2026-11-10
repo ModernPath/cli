@@ -13,8 +13,8 @@ import (
 // Criterion 928a5d6c: PROCESS.md says a planning context locks when the
 // business owner agrees it and at the first approval of an Epic that reads
 // it, that it changes only through Open for change, by a team member with a
-// reason, that the next agreement locks it again, and that only the approver
-// of an approved Epic that reads it returns the Epic to planning, and only if
+// reason, that the next agreement locks it again, and that an authorized user
+// can return an active Epic to planning with an explicit human decision when
 // the change needs a new plan. rdd-build reads the changes since approval with
 // `epics gates presentation` before building and tells the approver about one
 // the plan did not know.
@@ -89,7 +89,7 @@ func TestA6BD44C890ProcessSaysHowAPlanningContextLocksAndOpens(t *testing.T) {
 		"the next agreement locks it again",
 		// What an approved Epic that reads it does with the change.
 		"each approved epic that reads a changed planning context lists the change",
-		"only its approver returns it to planning, and only if the change needs a new plan",
+		"any authorized workspace member returns it to planning, and only if the change needs a new plan",
 	})
 }
 

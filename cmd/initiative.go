@@ -24,8 +24,7 @@ with --epics (at most 10 distinct Epic IDs); nothing stores it. A round command
 writes each Epic's own records, all or nothing: the same records as the
 single-Epic commands, in one transaction, so every Epic passes or nothing is
 written, and a refusal names the Epic by index and ID ("item 1 (Epic 7)").
-A round submission needs the caller to be each Epic's implementation approver
-or its assignee; any one person may approve a round's completion. Each Epic keeps its own
+Any authorized workspace member may submit a round; any one person may approve a round's completion. Each Epic keeps its own
 approvals, reviews, gate checks and completion, and can still be returned to
 planning or to implementation alone with the single-Epic commands.
 approve-implementation and submit-review may return release_choice_required
@@ -341,8 +340,7 @@ Exits nonzero when any Epic of the round is not ready.`},
 (--reason "USER:..."). Every Epic's implementation gate is rechecked in one
 transaction.`},
 		{use: "submit-review", short: "Submit every Epic of a round for completion review", method: "POST", suffix: "/submit-review", reason: true,
-			long: `Submit every Epic of the round for completion review. The caller must be each
-Epic's implementation approver or its assignee; every Epic's completion-review gate is
+			long: `Submit every Epic of the round for completion review. Any authorized workspace member may submit; every Epic's completion-review gate is
 rechecked in one transaction.`},
 		{use: "presentation", short: "Read each Epic's completion presentation of a round", method: "GET", suffix: "/completion-presentation", read: true,
 			long: `Read each Epic's completion presentation, ordered by Epic ID. review.current is
@@ -418,6 +416,9 @@ Epic's completion gate is rechecked in one transaction.`},
 					}
 					payload = map[string]any{"epic_ids": ids, "reason": reason}
 					// As the single commands: --agent names the agent that ran the command.
+					if r.use == "approve-implementation" || r.use == "approve-completion" {
+						payload["focus_source"] = "cli"
+					}
 					if agent, _ := cmd.Flags().GetString("agent"); agent != "" {
 						payload["actor"] = map[string]any{"kind": "agent", "agent_slug": agent}
 					}

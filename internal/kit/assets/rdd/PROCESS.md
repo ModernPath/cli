@@ -161,8 +161,10 @@ it again.
 `PROPOSED` is a draft. Human implementation approval moves the Epic and its
 named requirements directly to `IN_PROGRESS`, retaining the exact approved plan
 and proposed requirement content separately from published content. It atomically
-locks the whole requirement set to that Epic and one user. A conflicting owner
-must leave the whole approval unchanged.
+locks the whole requirement set to that Epic. A conflicting Epic owner
+must leave the whole approval unchanged. Human implementation and completion
+approval also add the Epic to the approver’s declared focus atomically. Focus
+preserves other lanes and grants no exclusive permission to work on the Epic.
 
 The approved Epic plan, its scope and the owned requirement content are read-only
 through `IN_PROGRESS` and `IN_REVIEW`. Do not revise an active approval in place
@@ -215,7 +217,7 @@ applicable; none authorizes publication or erases an accepted version.
 ### Returning to planning
 
 An `IN_PROGRESS` or `IN_REVIEW` Epic can return to `PROPOSED` through the
-supported CLI operation with the human's explicit decision and reason. The current implementation approver records the decision.
+supported CLI operation with the human's explicit decision and reason. Any authorized workspace member records the decision.
 If the CLI cannot perform the return, report the tooling gap; do not change
 the process store through another channel.
 This applies whether or not verification declarations already exist. `DONE`
@@ -240,8 +242,7 @@ human completion approval.
 A change to a planning context returns no Epic by itself. Each approved Epic
 that reads a changed planning context lists the change on its page and in its
 completion presentation (`epics gates presentation`): the opening with who
-opened it and why, each edit, and the lock that followed. Only its approver
-returns it to planning, and only if the change needs a new plan; otherwise
+opened it and why, each edit, and the lock that followed. Any authorized workspace member returns it to planning, and only if the change needs a new plan; otherwise
 the build continues within the approved plan.
 
 Pin the base: build an Epic on the main revision it started from, and do not
@@ -333,8 +334,7 @@ Epic passes or nothing is written, and a refusal names the Epic. Present every
 Epic of the round; the human's one answer names the round. A round review
 covers every criterion and obligation of every Epic in it. A round review
 records the Initiative and the Epic list it covered as ordinary review content.
-A round submission needs the
-caller to be each Epic's implementation approver or its assignee; any one
+Any authorized workspace member may submit a round; any one
 person may approve a round's completion. Each Epic keeps its own approvals, reviews, gate checks and
 completion, and can still be returned alone.
 

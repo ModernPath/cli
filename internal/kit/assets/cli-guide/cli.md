@@ -729,9 +729,10 @@ the changed content makes their plan reviews outdated, requiring a fresh review
 before implementation approval. Content edits also make previous acceptance
 evidence stale, including edits within the same second.
 
-Approved requirements return a refusal asking the Epic's approver to return it
-to planning. Published or `DONE` content requires a follow-up Epic; `OBSOLETE`
-content stays closed. The server checks these conditions under the planning,
+Approved or Epic-owned requirements refuse direct edits. Any authorized user
+can return the active Epic to planning with an explicit human decision, then
+apply the operation's lifecycle rules. Published or `DONE` content requires a
+follow-up Epic; `OBSOLETE` content stays closed. The server checks these conditions under the planning,
 System and requirement locks.
 
 For grouping-only changes, send `{"context":"BILLING"}` or include
@@ -1947,8 +1948,7 @@ Epic IDs`), each linked to the Initiative and in its System. Nothing stores a ro
 each Epic's own records, all or nothing: the same records as the single-Epic
 commands for every Epic in the round, in one transaction, so every Epic passes
 or nothing is written, and a refusal names the Epic by index and ID
-(`epic_gate_blocked — item 1 (Epic 7)`). A round submission needs the caller to
-be each Epic's implementation approver or its assignee; any one person may
+(`epic_gate_blocked — item 1 (Epic 7)`). Any authorized workspace member may submit a round; any one person may
 approve a round's completion. Each Epic keeps its own approvals, reviews, gate checks and
 completion, and can still be returned to planning or to implementation alone
 with the single-Epic commands.
