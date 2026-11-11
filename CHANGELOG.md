@@ -1,18 +1,30 @@
 # Changelog
 
-## Unreleased
+## v0.28.0 - Analysis preparation and team collaboration
 
-- `analysis start` and `analysis reanalyze` recover stale or unprepared source
-  materials through the existing preparation API and event stream, then retry
-  once. Preparation failures remain errors; no UI preparation step is needed.
-  Recovery of changed sources during reanalysis requires the matching Core
-  response contract: HTTP 409 with `source_materials_changed`.
+Publish after production serves the Core changes for
+[analysis preparation](https://github.com/ModernPath/modernpath-v1/pull/1210) and
+[Epic collaboration](https://github.com/ModernPath/modernpath-v1/pull/1209).
+
+- After uploaded or selected sources change, `analysis start` and
+  `analysis reanalyze` automatically prepare the current materials and retry
+  once. They also prepare materials that are not yet ready. No UI preparation
+  step is needed. An active upload refresh must finish first; if preparation
+  fails, analysis does not retry. Recovery of changed sources during reanalysis
+  requires Core to return HTTP 409 with `source_materials_changed`.
 - Automatic preparation preserves a System’s mode when `analysis start` omits
   `--mode`. A mismatch returns the original refusal with the explicit mode to
   pass, without replacing preparation. Explicit mode selections still apply.
-- The analysis retry uses its normal request budget after preparation finishes,
-  while retaining caller cancellation and deadlines. Preparation errors separate
-  the reason code and message without repeating the generic failure prefix.
+- The analysis retry uses its normal request timeout after preparation finishes.
+  Caller cancellation and deadlines still apply. Preparation errors show the
+  reason code and message without repeating the generic failure prefix.
+- Implementation and completion approvals through Epic and Initiative commands
+  add the approved Epics to the approver's declared focus. The bundled process
+  and command help explain that authorized workspace members can submit reviews
+  and return Epics to planning. Run `modernpath install` after upgrading to
+  refresh the installed instructions.
+- `test-cases --help` explains how to link a TestCase to its source file with a
+  trace-only `reverse-engineer record` request.
 
 ## v0.27.0 - Criterion proof, requirement lifecycle and workspace sign-in
 
