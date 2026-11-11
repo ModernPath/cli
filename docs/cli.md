@@ -2186,3 +2186,12 @@ record ID and title. `--requirement-kind` remains for requirement UUIDs and cann
 be combined with `--ref-kind`. Backlog focus is explicit only and remains until
 dropped, including after the record disposition changes. These operations do
 not assign ownership or change the record's disposition.
+
+### Backlog Initiative grouping
+
+`backlog update` accepts `initiative_id`: an active Initiative UUID assigns or moves the record, and null removes its association.
+Omission preserves the association. The Initiative must belong to the record's System.
+This field does not change disposition or Epic routing.
+`backlog get --full --json` serves the association and Initiative name.
+`backlog list --initiative INITIATIVE-UUID --json` lists the Initiative's records.
+`INITIATIVE-UUID` is the Initiative's native UUID.

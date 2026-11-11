@@ -410,3 +410,35 @@ func TestBacklogCreateFocusUsesOneAuthenticatedRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestBacklogInitiativeUpdateAndFilter(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	initiative := "22222222-2222-4222-8222-222222222222"
+	for _, value := range []any{initiative, nil} {
+		if err := validateBacklogUpdate(map[string]any{"initiative_id": value}); err != nil {
+			t.Fatalf("valid association refused: %v", err)
+		}
+	}
+	for _, value := range []any{"", "invalid", 42} {
+		if err := validateBacklogUpdate(map[string]any{"initiative_id": value}); err == nil {
+			t.Fatalf("invalid association accepted: %v", value)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("initiative_id") != initiative || r.URL.Query().Get("system_id") != "4" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"backlog": []any{map[string]any{"id": id, "system_id": 4, "initiative_id": initiative, "initiative": map[string]any{"id": initiative, "title": "Grouped"}}}}})
+	}))
+	defer server.Close()
+	cmd := newBacklogCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	cmd.SetArgs([]string{"list", "--initiative", initiative, "--json"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Grouped") {
+		t.Fatal(out.String())
+	}
+}

@@ -10,15 +10,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var backlogFields = strings.Fields("id display_number display_ref system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links gap_kind consequence metadata")
+var backlogFields = strings.Fields("id display_number display_ref system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links initiative_id initiative gap_kind consequence metadata")
 
 func init() { rootCmd.AddCommand(newBacklogCommand(cliEnvLoad)) }
 
 func newBacklogCommand(load func() (*cliEnv, error)) *cobra.Command {
 	parent := &cobra.Command{Use: "backlog", Short: "Create, read and update Backlog discoveries in the bound System"}
-	update := &cobra.Command{Use: "update <uuid>", Short: "Update Backlog notes and disposition", Args: cobra.ExactArgs(1),
+	update := &cobra.Command{Use: "update <uuid>", Short: "Update Backlog notes, disposition or Initiative", Args: cobra.ExactArgs(1),
 		Long: `Update a Backlog record from a JSON object using --file or --file - for stdin.
-Allowed fields: notes_md, disposition, disposition_ref. Omitted fields are preserved.
+Allowed fields: notes_md, disposition, disposition_ref, initiative_id.
+initiative_id groups the record under one active Initiative of the same System, independently
+of disposition or routing. Send a UUID to assign or move, null to clear.
+Omitted fields are preserved.
 Disposition uses OPEN, DEFERRED, ROUTED to <id>, REJECTED with <source>,
 CLOSED by <id>, or ACCEPTED with <source>. Use an empty disposition_ref to clear it,
 except on an assumed default after its first routing (below).
@@ -178,16 +181,24 @@ target's title, display_ref and available on each link.`,
 	list := &cobra.Command{Use: "list", Short: "List Backlog records in the bound System", Args: cobra.NoArgs,
 		Long: `List the Backlog records of the bound System, one row per record: <display_ref>  <kind>  <disposition>  <title>.
 A routing or closure target with a served title prints as ROUTED to 288 — <title>; --json serves
-the records as stored.`,
+the records as stored. Use --initiative <uuid> to list records grouped under one Initiative.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := page.validate(); err != nil {
 				return err
+			}
+			initiative, _ := cmd.Flags().GetString("initiative")
+			if cmd.Flags().Changed("initiative") && !requirementUUIDPattern.MatchString(initiative) {
+				return fmt.Errorf("--initiative must be a UUID")
 			}
 			env, err := load()
 			if err != nil {
 				return err
 			}
-			data, err := backlogGet(env, "/api/v1/backlog?system_id="+fmt.Sprint(env.SystemID))
+			path := "/api/v1/backlog?system_id=" + fmt.Sprint(env.SystemID)
+			if initiative != "" {
+				path += "&initiative_id=" + url.QueryEscape(initiative)
+			}
+			data, err := backlogGet(env, path)
 			if err != nil {
 				return err
 			}
@@ -234,6 +245,7 @@ the records as stored.`,
 		}}
 	addPageFlags(list, &page)
 	list.Flags().Bool("json", false, "Emit JSON")
+	list.Flags().String("initiative", "", "List records grouped under this Initiative UUID")
 	parent.AddCommand(list)
 	return parent
 }
@@ -342,9 +354,19 @@ func validateBacklogCreate(payload map[string]any) error {
 
 func validateBacklogUpdate(payload map[string]any) error {
 	if len(payload) == 0 {
-		return fmt.Errorf("Backlog update requires notes_md, disposition or disposition_ref")
+		return fmt.Errorf("Backlog update requires notes_md, disposition, disposition_ref or initiative_id")
 	}
 	for key, value := range payload {
+		if key == "initiative_id" {
+			if value == nil {
+				continue
+			}
+			id, ok := value.(string)
+			if !ok || !requirementUUIDPattern.MatchString(id) {
+				return fmt.Errorf("initiative_id must be a UUID or null")
+			}
+			continue
+		}
 		if key != "notes_md" && key != "disposition" && key != "disposition_ref" {
 			return fmt.Errorf("unsupported Backlog update field %q", key)
 		}

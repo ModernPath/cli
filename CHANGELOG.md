@@ -44,6 +44,9 @@ Publish after production serves the Core changes for
   step is needed. An active upload refresh must finish first; if preparation
   fails, analysis does not retry. Recovery of changed sources during reanalysis
   requires Core to return HTTP 409 with `source_materials_changed`.
+- `backlog update` accepts `initiative_id` (UUID or null) to group a record
+  independently of routing. `backlog list --initiative <uuid>` filters that
+  association. These operations require the matching Core API.
 - Automatic preparation preserves a System’s mode when `analysis start` omits
   `--mode`. A mismatch returns the original refusal with the explicit mode to
   pass, without replacing preparation. Explicit mode selections still apply.
