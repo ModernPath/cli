@@ -135,24 +135,24 @@ func TestRequirementsListUserFlow(t *testing.T) {
 	}
 }
 
-func TestRequirementsListUnsupportedServerDoesNotFallback(t *testing.T) {
-	legacyRequests := 0
+// SR-4873-0: a 404 reaches the operator as the server's refusal with the
+// binding hint.
+func TestRequirementsList404ReportsTheServerRefusal(t *testing.T) {
 	mux := http.NewServeMux()
-	addDiscoveryTestSystems(mux)
-	mux.HandleFunc("/api/v1/sync/requirements", func(w http.ResponseWriter, _ *http.Request) {
-		legacyRequests++
-		w.WriteHeader(http.StatusOK)
+	mux.HandleFunc("/api/v1/sync/requirements/discovery", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"system_not_found","message":"system not found"}}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	cobraWorkspace(t, srv)
 
 	_, err := runRoot(t, "requirements", "list", "--json")
-	if err == nil || !strings.Contains(err.Error(), "does not support requirement discovery") {
-		t.Fatalf("unsupported endpoint error = %v, want clear discovery support error", err)
+	if err == nil {
+		t.Fatal("a 404 must fail the command")
 	}
-	if legacyRequests != 0 {
-		t.Fatalf("legacy requirements endpoint requests = %d, want none", legacyRequests)
+	if want := "server 404: system not found\nRun 'modernpath status' to check the System binding."; err.Error() != want {
+		t.Fatalf("error =\n  %q\nwant\n  %q", err.Error(), want)
 	}
 }
 

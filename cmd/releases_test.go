@@ -359,3 +359,44 @@ func (w releasePINPromptWriter) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// SR-4873-0: a release 404 names the System code and the binding hint, and
+// prints nothing else of the response body.
+func TestReleaseFailure404NamesTheSystemAndTheBindingHint(t *testing.T) {
+	const refusal = `{"error":"system_not_found","detail":"body text 7731"}`
+	for _, scenario := range []struct {
+		name       string
+		listStatus int
+		args       []string
+	}{
+		{"list", 404, []string{"list", "--json"}},
+		{"activate", 200, []string{"activate", "next", "--close-current", "--pin-stdin", "--json"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" && scenario.listStatus == 200 {
+					fmt.Fprint(w, `{"data":{"items":[{"id":1,"system_id":4,"slug":"current","status":"active"},{"id":2,"system_id":4,"slug":"next","status":"planned"}]}}`)
+					return
+				}
+				w.WriteHeader(404)
+				fmt.Fprint(w, refusal)
+			}))
+			defer server.Close()
+			cmd := newReleasesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+			cmd.SetArgs(scenario.args)
+			cmd.SetIn(strings.NewReader("482913\n"))
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SilenceErrors = true
+			cmd.SilenceUsage = true
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("a 404 must fail the command")
+			}
+			if want := "release operation refused (HTTP 404): system_not_found\nRun 'modernpath status' to check the System binding."; err.Error() != want {
+				t.Fatalf("error =\n  %q\nwant\n  %q", err.Error(), want)
+			}
+		})
+	}
+}

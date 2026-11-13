@@ -2,7 +2,7 @@ package cmd
 
 // REQ-CROSS-282 — one shared implementation of "is the configured system_id
 // reachable by the authenticated credential", used identically by every
-// surface that needs it (auth's three variants, cliEnvLoad, status).
+// surface that needs it (auth's three variants, status, prepare).
 // A single copy, not one per surface: four near-identical implementations
 // are four independent chances for one of them to drift from the others —
 // a shared function can't.

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Store commands no longer list your Systems before each request. When the
+  server answers 404, the refusal ends with `Run 'modernpath status' to check
+  the System binding.`
+- `requirements list`, `requirements search` and `epics search` report a 404
+  as the server's refusal. The release commands name `system_not_found` when
+  the bound System is not reachable. The "server does not support" and
+  "endpoint unavailable" messages are removed. Requires the matching Core
+  change for the `system_not_found` code.
+
 ## v0.28.0 - Analysis preparation and team collaboration
 
 Publish after production serves the Core changes for

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fatih/color"
-	"github.com/modernpath/cli/internal/api"
 	"github.com/modernpath/cli/internal/config"
 	"github.com/modernpath/cli/internal/zitadel"
 	"io"
@@ -337,7 +336,7 @@ func captureStderr(t *testing.T, fn func(), sink *[]byte) {
 
 // expiryWorkspace binds a workspace to apiURL/system 7 with a credential
 // carrying the given expiry and refresh token, issued by the test plane so a
-// refresh profile resolves. The reachability probe is stubbed to system 7.
+// refresh profile resolves.
 func expiryWorkspace(t *testing.T, apiURL string, expiry time.Time, refreshToken string) string {
 	t.Helper()
 	root := enterTestWorkspace(t)
@@ -353,18 +352,6 @@ func expiryWorkspace(t *testing.T, apiURL string, expiry time.Time, refreshToken
 	blob, _ := json.Marshal(auth)
 	writeTestFile(t, root, ".modernpath/auth.json", string(blob))
 	return root
-}
-
-func stubSystems(t *testing.T) *atomic.Int32 {
-	t.Helper()
-	var calls atomic.Int32
-	saved := listSystemsFn
-	listSystemsFn = func(apiURL, token string) ([]api.System, error) {
-		calls.Add(1)
-		return []api.System{{ID: 7}}, nil
-	}
-	t.Cleanup(func() { listSystemsFn = saved })
-	return &calls
 }
 
 func stubRefresh(t *testing.T, delay time.Duration, newExpiry time.Time) *atomic.Int32 {
@@ -391,7 +378,6 @@ func TestNearExpiryCredentialIsRefreshedBeforeTheCall(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	root := expiryWorkspace(t, srv.URL, time.Now().Add(5*time.Minute), "rt-1")
-	stubSystems(t)
 	refreshes := stubRefresh(t, 0, time.Now().Add(12*time.Hour))
 
 	env, err := cliEnvLoad()
@@ -422,7 +408,6 @@ func TestNearExpiryCredentialIsRefreshedBeforeTheCall(t *testing.T) {
 func TestNearExpiryWithoutRefreshWarnsOnce(t *testing.T) {
 	srv, _ := testSystemsServer(t, http.StatusOK, 7)
 	expiryWorkspace(t, srv.URL, time.Now().Add(5*time.Minute), "")
-	stubSystems(t)
 
 	var out []byte
 	captureStderr(t, func() {
@@ -442,13 +427,12 @@ func TestNearExpiryWithoutRefreshWarnsOnce(t *testing.T) {
 	}
 }
 
-// (c) An expired credential is refused before any request — not the
-// reachability probe, not the call — naming the expiry and the remedy.
+// (c) An expired credential is refused before any request, naming the
+// expiry and the remedy.
 func TestExpiredCredentialIsRefusedBeforeAnyRequest(t *testing.T) {
 	srv, hits := testSystemsServer(t, http.StatusOK, 7)
 	expired := time.Now().Add(-time.Minute)
 	expiryWorkspace(t, srv.URL, expired, "")
-	probes := stubSystems(t)
 
 	env, err := cliEnvLoad()
 	if err == nil || env != nil {
@@ -460,8 +444,8 @@ func TestExpiredCredentialIsRefusedBeforeAnyRequest(t *testing.T) {
 	if !strings.Contains(err.Error(), authRepairCommand(srv.URL)) {
 		t.Errorf("the refusal must name the remedy, got %v", err)
 	}
-	if probes.Load() != 0 || hits.Load() != 0 {
-		t.Errorf("no request may leave before the refusal: probes=%d hits=%d", probes.Load(), hits.Load())
+	if hits.Load() != 0 {
+		t.Errorf("no request may leave before the refusal: hits=%d", hits.Load())
 	}
 }
 
@@ -470,7 +454,6 @@ func TestExpiredCredentialIsRefusedBeforeAnyRequest(t *testing.T) {
 func TestConcurrentLoadsRefreshOnce(t *testing.T) {
 	srv, _ := testSystemsServer(t, http.StatusOK, 7)
 	expiryWorkspace(t, srv.URL, time.Now().Add(5*time.Minute), "rt-1")
-	stubSystems(t)
 	refreshes := stubRefresh(t, 200*time.Millisecond, time.Now().Add(12*time.Hour))
 
 	var wg sync.WaitGroup

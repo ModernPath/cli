@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,11 +21,22 @@ import (
 // and sync sites used. REQ-CROSS-380 (EPIC-CLI-018): every site routes here,
 // so a bodyless refusal reads "no body" plus the request reference the
 // transport kept, never <nil>.
+// SR-4871-0: the server answers 404 for a System the credential cannot
+// reach, so a 404 refusal ends with the command that checks the binding.
 func serverRefusal(what string, status int, body map[string]any) error {
-	if what == "" {
-		return serverRefusalError{status: status, msg: fmt.Sprintf("server %d: %s", status, refusalText(body))}
+	msg := fmt.Sprintf("server %d: %s", status, refusalText(body))
+	if what != "" {
+		msg = fmt.Sprintf("%s (server %d): %s", what, status, refusalText(body))
 	}
-	return serverRefusalError{status: status, msg: fmt.Sprintf("%s (server %d): %s", what, status, refusalText(body))}
+	return serverRefusalError{status: status, msg: withBindingHint(status, msg)}
+}
+
+// withBindingHint adds the binding hint as the last line of a 404 refusal.
+func withBindingHint(status int, msg string) string {
+	if status == http.StatusNotFound {
+		return msg + "\nRun 'modernpath status' to check the System binding."
+	}
+	return msg
 }
 
 // serverRefusalError keeps the status, so outage replay can tell a server

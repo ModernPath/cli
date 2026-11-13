@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -258,10 +259,15 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 	return nil
 }
 
+// membershipFailure prints the refusal code and nothing else of the body. The
+// Ledger read behind `releases members` carries its code under error.code.
 func membershipFailure(status int, body map[string]any) error {
 	code, _ := body["error"].(string)
+	if errVal, ok := body["error"].(map[string]any); ok {
+		code = str(errVal, "code")
+	}
 	switch code {
-	case "not_found", "forbidden", "no_creator", "items_required", "too_many_items", "duplicate_items", "invalid_item", "invalid_release_id", "expected_release_required", "release_not_open", "requirement_source_changed":
+	case "not_found", "system_not_found", "forbidden", "no_creator", "items_required", "too_many_items", "duplicate_items", "invalid_item", "invalid_release_id", "expected_release_required", "release_not_open", "requirement_source_changed":
 		if item, ok := body["requirement"].(map[string]any); ok {
 			kind, _ := item["kind"].(string)
 			id, _ := item["id"].(string)
@@ -269,14 +275,11 @@ func membershipFailure(status int, body map[string]any) error {
 				return fmt.Errorf("requirement membership refused (HTTP %d): %s for %s:%s", status, code, kind, id)
 			}
 		}
-		return fmt.Errorf("requirement membership refused (HTTP %d): %s", status, code)
+		return errors.New(withBindingHint(status, fmt.Sprintf("requirement membership refused (HTTP %d): %s", status, code)))
 	case "selected_requirement_held":
 		return heldRequirementFailure(status, body)
 	}
-	if status == 404 {
-		return fmt.Errorf("requirement membership endpoint unavailable; server support is required (HTTP 404)")
-	}
-	return fmt.Errorf("requirement membership refused (HTTP %d)", status)
+	return errors.New(withBindingHint(status, fmt.Sprintf("requirement membership refused (HTTP %d)", status)))
 }
 
 // heldRequirementFailure names a requirement that an in-place Epic took and

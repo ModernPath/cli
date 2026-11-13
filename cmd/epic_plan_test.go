@@ -433,7 +433,7 @@ func TestEpicPlanHistorySummarizesRevisionsAndForwardsPaging(t *testing.T) {
 	if err != nil {
 		t.Fatalf("history: %s %v", out, err)
 	}
-	if gotQuery != "limit=5&offset=10" {
+	if gotQuery != "limit=5&offset=10&system_id=1" {
 		t.Fatalf("paging not forwarded: %q", gotQuery)
 	}
 	var page struct {
@@ -637,5 +637,36 @@ func TestEpicPlanSaveHelpShowsRetireAndCompletionHelpNamesTheObsoleteVersion(t *
 	}
 	if !strings.Contains(normalize(completion), "Each requirement the plan retires becomes a new OBSOLETE version") {
 		t.Errorf("approve-completion help does not say retired requirements become OBSOLETE versions:\n%s", completion)
+	}
+}
+
+// An Epic route holds only the Epic id, so each plan and gate request names
+// the bound System and the server refuses an Epic of another System.
+func TestEpicPlanAndGateRequestsNameTheBoundSystem(t *testing.T) {
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path+" system_id="+r.URL.Query().Get("system_id"))
+		_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":7,"process_status":"IN_REVIEW","items":[]}}`))
+	}))
+	t.Cleanup(server.Close)
+	cobraWorkspace(t, server, 7)
+	for _, args := range [][]string{
+		{"epics", "plan", "show", "42"},
+		{"epics", "plan", "submit-review", "42", "--reason", "Ready"},
+		{"epics", "plan", "history", "42"},
+		{"epics", "gates", "review-bundle", "42", "--phase", "plan-ready"},
+	} {
+		if _, err := runRoot(t, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	want := []string{
+		"GET /api/work/epics/42/plan system_id=7",
+		"POST /api/work/epics/42/submit-review system_id=7",
+		"GET /api/work/epics/42/plan/history system_id=7",
+		"GET /api/work/epics/42/review-bundle system_id=7",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 }

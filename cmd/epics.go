@@ -50,7 +50,7 @@ func runEpicsSearch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	data, err := syncSearchWithEnv(env, args, epicsSearchLimit, "/api/v1/sync/epics/search", "epic search", "epics search")
+	data, err := syncSearchWithEnv(env, args, epicsSearchLimit, "/api/v1/sync/epics/search")
 	if err != nil {
 		return err
 	}

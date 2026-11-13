@@ -545,3 +545,37 @@ func TestC1_6487fdc2_MoveRequirementsPrintsTheHeldRequirementSentence(t *testing
 		})
 	}
 }
+
+// SR-4873-0: a membership 404 names the System code and the binding hint, and
+// prints nothing else of the response body. The Ledger read behind
+// `releases members` carries the code under error.code.
+func TestMembershipFailure404NamesTheSystemAndTheBindingHint(t *testing.T) {
+	for _, scenario := range []struct {
+		name, refusal string
+		args          []string
+	}{
+		{"move-requirements", `{"error":"system_not_found","detail":"body text 7731"}`,
+			[]string{"move-requirements", "next", "--file", membershipInput(t, map[string]any{"requirements": membershipSelection()}), "--json"}},
+		{"members", `{"error":{"code":"system_not_found","message":"Ledger scope not found."}}`,
+			[]string{"members", "next", "--json"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/compliance/releases" {
+					listMembershipReleases(w)
+					return
+				}
+				w.WriteHeader(404)
+				fmt.Fprint(w, scenario.refusal)
+			}))
+			defer s.Close()
+			_, err := runMembership(t, s, scenario.args...)
+			if err == nil {
+				t.Fatal("a 404 must fail the command")
+			}
+			if want := "requirement membership refused (HTTP 404): system_not_found\nRun 'modernpath status' to check the System binding."; err.Error() != want {
+				t.Fatalf("error =\n  %q\nwant\n  %q", err.Error(), want)
+			}
+		})
+	}
+}

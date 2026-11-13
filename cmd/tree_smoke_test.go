@@ -438,7 +438,7 @@ var leafDispositions = map[string]disposition{
 	"epics plan approve-implementation": {kind: dispExecute, args: []string{"epics", "plan", "approve-implementation", "42", "--reason", "smoke"}},
 	"epics plan submit-review":          {kind: dispExecute, args: []string{"epics", "plan", "submit-review", "42", "--reason", "smoke"}},
 	"epics plan approve-completion":     {kind: dispExecute, args: []string{"epics", "plan", "approve-completion", "42", "--reason", "smoke"}},
-	"focus":                             {kind: dispExecute, args: []string{"focus", "10000000-0000-4000-8000-000000000001"}},
+	"focus":                             {kind: dispExecute, args: []string{"focus", "10000000-0000-4000-8000-000000000001", "--requirement-kind", "system_requirement"}},
 	"github":                            {kind: dispUnrun, reason: "interactive"},
 	"hooks doctor":                      {kind: dispNoCall, reason: "local-only"},
 	"hooks install":                     {kind: dispNoCall, reason: "local-only"},

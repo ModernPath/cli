@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -84,7 +85,7 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				path := fmt.Sprintf("/api/work/epics/%d%s", id, op.suffix)
+				path := epicScopedPath(env, id, op.suffix)
 				var status int
 				var response map[string]any
 				if op.method == "GET" {
@@ -177,7 +178,7 @@ func epicPlanHistoryCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path := fmt.Sprintf("/api/work/epics/%d/plan/history?limit=%d&offset=%d", id, limit, offset)
+			path := epicScopedPath(env, id, fmt.Sprintf("/plan/history?limit=%d&offset=%d", limit, offset))
 			status, response, err := env.get(path)
 			if err != nil {
 				return err
@@ -407,4 +408,15 @@ func readEpicPlan(input io.Reader) (map[string]any, error) {
 		return nil, fmt.Errorf("standard input must contain exactly one proposed plan")
 	}
 	return plan, nil
+}
+
+// epicScopedPath is an Epic plan or gate route with the bound System named.
+// The route holds only the Epic id, so the server uses system_id to refuse an
+// Epic of another System.
+func epicScopedPath(env *cliEnv, id int64, suffix string) string {
+	separator := "?"
+	if strings.Contains(suffix, "?") {
+		separator = "&"
+	}
+	return fmt.Sprintf("/api/work/epics/%d%s%ssystem_id=%d", id, suffix, separator, env.SystemID)
 }

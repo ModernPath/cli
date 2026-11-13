@@ -57,9 +57,6 @@ func (e credentialError) Unwrap() error { return e.err }
 // line — ask errors.As for it (REQ-CROSS-434; BACKLOG-TOOL-74).
 type bindingError struct {
 	err error
-	// why is the short reason a caller that degrades names; empty means the
-	// workspace names no system.
-	why string
 }
 
 func (e bindingError) Error() string { return e.err.Error() }
@@ -149,10 +146,9 @@ func commandConfig() (*config.Config, error) {
 
 // cliCredentialLoad is the binding plus the three credential statements —
 // no binding, no or unreadable bearer, expired token — and nothing sent. The
-// CLI commands add the reachability probe (cliEnvLoad); the api-client
-// verbs (`docs sync`, `search`, `ask`, `read-doc`, `read-file`) stop here
-// (REQ-CROSS-405): the same refusals, the same repair command, before any
-// request.
+// store commands (cliEnvLoad) and the api-client verbs (`docs sync`,
+// `search`, `ask`, `read-doc`, `read-file`) share it (REQ-CROSS-405): the
+// same refusals, the same repair command, before any request.
 func cliCredentialLoad() (*cliEnv, error) { return credentialLoad(true) }
 
 // credentialLoad is cliCredentialLoad with the refresh made optional. A
@@ -180,7 +176,7 @@ func credentialLoad(refresh bool) (*cliEnv, error) {
 		}
 	}
 	// REQ-CROSS-389: refresh, warn or refuse on the credential's own expiry
-	// before anything leaves the process — the reachability probe included.
+	// before anything leaves the process.
 	if refresh {
 		auth, err = ensureFreshCredential(env, auth, time.Now())
 		if err != nil {
@@ -228,15 +224,5 @@ func apiClientLoad(refresh bool) (*cliEnv, error) {
 	return credentialLoad(refresh)
 }
 
-// cliEnvLoad loads the authenticated workspace and checks its system binding.
-func cliEnvLoad() (*cliEnv, error) {
-	env, err := cliCredentialLoad()
-	if err != nil {
-		return nil, err
-	}
-	systems, err := listSystemsFn(env.APIURL, env.token)
-	if err == nil && !systemReachable(systems, env.SystemID) {
-		return nil, bindingError{err: fmt.Errorf("%s", systemMismatchMessage(env.SystemID, systems)), why: "the bound system is not reachable"}
-	}
-	return env, nil
-}
+// cliEnvLoad loads the authenticated workspace of a store command.
+func cliEnvLoad() (*cliEnv, error) { return cliCredentialLoad() }

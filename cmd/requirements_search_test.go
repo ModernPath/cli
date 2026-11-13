@@ -82,35 +82,6 @@ func TestRequirementsSearchCallsTheRouteAndRenders(t *testing.T) {
 	}
 }
 
-// The 404 body tells an unknown system apart from a server without the route.
-func TestRequirementsSearchTellsUnknownSystemFromMissingRoute(t *testing.T) {
-	unknownSystem := true
-	mux := http.NewServeMux()
-	addDiscoveryTestSystems(mux)
-	mux.HandleFunc("/api/v1/sync/requirements/search", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		if unknownSystem {
-			_, _ = w.Write([]byte(`{"error":{"message":"system not found"}}`))
-		} else {
-			_, _ = w.Write([]byte(`{"errors":{"detail":"Not Found"}}`))
-		}
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	cobraWorkspace(t, srv)
-
-	_, err := runRoot(t, "requirements", "search", "keys")
-	if err == nil || !strings.Contains(err.Error(), "system 1 is not known") {
-		t.Fatalf("unknown system error = %v, want it to name the system", err)
-	}
-	unknownSystem = false
-	_, err = runRoot(t, "requirements", "search", "keys")
-	if err == nil || !strings.Contains(err.Error(), "does not support requirement search") {
-		t.Fatalf("missing route error = %v, want an update-the-server message", err)
-	}
-}
-
 func TestRequirementsSearchRejectsBadArgumentsBeforeRequest(t *testing.T) {
 	requests := 0
 	mux := http.NewServeMux()
@@ -128,5 +99,30 @@ func TestRequirementsSearchRejectsBadArgumentsBeforeRequest(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("search requests = %d, want none", requests)
+	}
+}
+
+// SR-4873-0: a 404 on either search reaches the operator as the server's
+// refusal with the binding hint.
+func TestSearch404ReportsTheServerRefusal(t *testing.T) {
+	mux := http.NewServeMux()
+	for _, route := range []string{"/api/v1/sync/requirements/search", "/api/v1/sync/epics/search"} {
+		mux.HandleFunc(route, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"system_not_found","message":"system not found"}}`))
+		})
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	cobraWorkspace(t, srv)
+
+	for _, args := range [][]string{{"requirements", "search", "keys"}, {"epics", "search", "teams"}} {
+		_, err := runRoot(t, args...)
+		if err == nil {
+			t.Fatalf("%v: a 404 must fail the command", args)
+		}
+		if want := "server 404: system not found\nRun 'modernpath status' to check the System binding."; err.Error() != want {
+			t.Fatalf("%v: error =\n  %q\nwant\n  %q", args, err.Error(), want)
+		}
 	}
 }

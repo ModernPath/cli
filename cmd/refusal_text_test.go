@@ -95,3 +95,26 @@ func TestRefusalTextNamesTheDeclareDecisionField(t *testing.T) {
 		})
 	}
 }
+
+// SR-4871-0: a 404 answer to a store command often means the bound System is
+// not reachable, so the refusal ends with the command that checks the binding.
+func TestServerRefusalOf404AddsTheSystemBindingHint(t *testing.T) {
+	const hint = "Run 'modernpath status' to check the System binding."
+	body := map[string]any{"error": "not_found", "request_id": "req-1"}
+
+	got := serverRefusal("epic plan history", 404, body).Error()
+	if want := "epic plan history (server 404): not_found (ref req-1)\n" + hint; got != want {
+		t.Fatalf("serverRefusal 404 =\n  %q\nwant\n  %q", got, want)
+	}
+	got = serverRefusal("", 404, body).Error()
+	if want := "server 404: not_found (ref req-1)\n" + hint; got != want {
+		t.Fatalf("serverRefusal 404 =\n  %q\nwant\n  %q", got, want)
+	}
+
+	for _, status := range []int{403, 409, 422} {
+		got := serverRefusal("epic plan history", status, body).Error()
+		if want := fmt.Sprintf("epic plan history (server %d): not_found (ref req-1)", status); got != want {
+			t.Fatalf("serverRefusal %d =\n  %q\nwant\n  %q", status, got, want)
+		}
+	}
+}

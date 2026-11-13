@@ -97,32 +97,3 @@ func TestEpicsSearchCallsTheRouteAndRenders(t *testing.T) {
 	}
 
 }
-
-// The 404 body tells an unknown system apart from a server without the route.
-func TestEpicsSearchTellsUnknownSystemFromMissingRoute(t *testing.T) {
-	unknownSystem := true
-	mux := http.NewServeMux()
-	addDiscoveryTestSystems(mux)
-	mux.HandleFunc("/api/v1/sync/epics/search", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		if unknownSystem {
-			_, _ = w.Write([]byte(`{"error":{"message":"system not found"}}`))
-		} else {
-			_, _ = w.Write([]byte(`{"errors":{"detail":"Not Found"}}`))
-		}
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	cobraWorkspace(t, srv)
-
-	_, err := runRoot(t, "epics", "search", "teams")
-	if err == nil || !strings.Contains(err.Error(), "system 1 is not known") {
-		t.Fatalf("unknown system error = %v, want it to name the system", err)
-	}
-	unknownSystem = false
-	_, err = runRoot(t, "epics", "search", "teams")
-	if err == nil || !strings.Contains(err.Error(), "does not support epic search") {
-		t.Fatalf("missing route error = %v, want an update-the-server message", err)
-	}
-}

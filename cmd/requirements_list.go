@@ -104,9 +104,6 @@ func runRequirementsList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if status == 404 {
-		return fmt.Errorf("server does not support requirement discovery (HTTP 404); update the server before using requirements list")
-	}
 	if status != 200 {
 		return serverRefusal("", status, body)
 	}

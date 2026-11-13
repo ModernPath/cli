@@ -131,7 +131,7 @@ func epicGateCall(cmd *cobra.Command, load func() (*cliEnv, error), address, met
 	}
 	var status int
 	var response map[string]any
-	path := fmt.Sprintf("/api/work/epics/%d%s", id, suffix)
+	path := epicScopedPath(env, id, suffix)
 	if method == "GET" {
 		status, response, err = env.get(path)
 	} else {

@@ -58,7 +58,7 @@ func TestEpicReviewBundleRefusesSinceReviewAsAnUnknownFlagAndSendsOnlyPhase(t *t
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.Method != "GET" || r.URL.Path != "/api/work/epics/287/review-bundle" || r.URL.RawQuery != "phase=plan-ready" {
+		if r.Method != "GET" || r.URL.Path != "/api/work/epics/287/review-bundle" || r.URL.RawQuery != "phase=plan-ready&system_id=105" {
 			t.Errorf("unexpected read: %s %s", r.Method, r.URL)
 		}
 		_, _ = w.Write([]byte(`{"data":{"epic":{"id":287},"review":{"plan":{}},"reviews":[],"readiness":{"phase":"plan-ready","ready":false,"blockers":[]}}}`))

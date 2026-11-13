@@ -923,8 +923,7 @@ the UUID and requirement kind. Pages are live reads, so concurrent
 changes may affect a later page. Continue with the returned cursor
 and the same filters; the cursor does not provide a snapshot. `--json` prints
 `items` and `next_cursor` for scripts. The command returns compact summaries
-only. A server that does not support discovery returns an explicit error; the
-CLI does not fall back to downloading the full corpus.
+only. The CLI does not fall back to downloading the full corpus.
 
 ### Find requirements and epics by name or meaning
 

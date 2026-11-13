@@ -49,7 +49,7 @@ func runRequirementsSearch(cmd *cobra.Command, args []string) error {
 	if err := validateRecordSelection(cmd, allowed); err != nil {
 		return err
 	}
-	data, err := syncSearch(args, requirementsSearchLimit, "/api/v1/sync/requirements/search", "requirement search", "requirements search")
+	data, err := syncSearch(args, requirementsSearchLimit, "/api/v1/sync/requirements/search")
 	if err != nil {
 		return err
 	}
@@ -65,14 +65,12 @@ func runRequirementsSearch(cmd *cobra.Command, args []string) error {
 }
 
 // syncSearch validates the query and limit, calls one search route for the
-// bound system and returns the response's data object. A 404 whose body says
-// "system not found" is an unknown system; any other 404 is a server without
-// the route.
-func syncSearch(args []string, limit int, route, what, command string) (map[string]any, error) {
-	return syncSearchWithEnv(nil, args, limit, route, what, command)
+// bound system and returns the response's data object.
+func syncSearch(args []string, limit int, route string) (map[string]any, error) {
+	return syncSearchWithEnv(nil, args, limit, route)
 }
 
-func syncSearchWithEnv(env *cliEnv, args []string, limit int, route, what, command string) (map[string]any, error) {
+func syncSearchWithEnv(env *cliEnv, args []string, limit int, route string) (map[string]any, error) {
 	query := strings.TrimSpace(strings.Join(args, " "))
 	if query == "" {
 		return nil, fmt.Errorf("the search text must not be empty")
@@ -98,23 +96,10 @@ func syncSearchWithEnv(env *cliEnv, args []string, limit int, route, what, comma
 	if err != nil {
 		return nil, err
 	}
-	if status == 404 {
-		if searchErrorMessage(body) == "system not found" {
-			return nil, fmt.Errorf("system %d is not known to the server (HTTP 404); check the workspace binding with modernpath status", env.SystemID)
-		}
-		return nil, fmt.Errorf("server does not support %s (HTTP 404); update the server before using %s", what, command)
-	}
 	if status != 200 {
 		return nil, serverRefusal("", status, body)
 	}
 	return dataOf(body), nil
-}
-
-func searchErrorMessage(body map[string]any) string {
-	if errVal, ok := body["error"].(map[string]any); ok {
-		return str(errVal, "message")
-	}
-	return ""
 }
 
 func searchItems(data map[string]any) []map[string]any {

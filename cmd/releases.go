@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -260,11 +261,8 @@ func readReleasePIN(c *cobra.Command, confirm bool) (pin string, err error) {
 func releaseFailure(status int, body map[string]any) error {
 	code, _ := body["error"].(string)
 	switch code {
-	case "pin_required", "pin_not_set", "invalid_pin", "pin_locked", "locked", "release_open", "incumbent_changed", "incumbent_has_unfinished_work", "not_found", "forbidden", "base_release", "invalid_close_current", "invalid_incumbent", "invalid_reason":
-		return fmt.Errorf("release operation refused (HTTP %d): %s", status, code)
+	case "pin_required", "pin_not_set", "invalid_pin", "pin_locked", "locked", "release_open", "incumbent_changed", "incumbent_has_unfinished_work", "not_found", "system_not_found", "forbidden", "base_release", "invalid_close_current", "invalid_incumbent", "invalid_reason":
+		return errors.New(withBindingHint(status, fmt.Sprintf("release operation refused (HTTP %d): %s", status, code)))
 	}
-	if status == 404 {
-		return fmt.Errorf("release endpoint unavailable (HTTP 404); deploy a server supporting release activation")
-	}
-	return fmt.Errorf("release operation refused (HTTP %d)", status)
+	return errors.New(withBindingHint(status, fmt.Sprintf("release operation refused (HTTP %d)", status)))
 }
