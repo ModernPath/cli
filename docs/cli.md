@@ -2062,6 +2062,84 @@ facts with `modernpath evidence latest`. No proof history, executed-version
 comparison, raw output or separate project-check proof is stored. Verification
 changes no requirement lifecycle; human acceptance and completion remain separate.
 
+### Record a built Epic
+
+After a delegated build, one command records the build's implements traces
+from the plan's requirements to the changed files, verifies traces from
+TestCases to their test files, the plan's criterion outcomes read from the
+test result files, and the build's assumed defaults, in one write:
+
+```sh
+modernpath epics build record <epic-id> --file build.json --dry-run
+modernpath epics build record <epic-id> --file build.json
+```
+
+The build handoff names the commit and the files; paths are relative to the
+repository root, and an unknown field is refused:
+
+```json
+{
+  "epic_id": 427,
+  "head": "<full checkout HEAD SHA>",
+  "base": "<commit the build started from>",
+  "repository_key": "<optional default key>",
+  "results": [{"format": "go-test-json", "path": "results/go.json"},
+              {"format": "trx", "path": "results/unit.trx"},
+              {"format": "junit", "path": "results/vitest.xml", "root": "web"}],
+  "requirements": [{"requirement_id": "<plan requirement UUID>", "paths": ["cart/cart.go"],
+                    "unchanged_paths": ["lib/money.go"]}],
+  "tests": [{"test_case_id": "<TestCase UUID>", "file": "tests/CartTests.cs",
+             "names": ["Shop.Tests.CartTests.Totals"]}],
+  "assumed_defaults": [{"title": "The cart holds at most 100 items", "observation": "How many items may the cart hold?"}],
+  "excluded": [{"criterion_id": "<plan criterion UUID>", "reason": "The refund path is not built."}],
+  "regression": [{"criterion_id": "<criterion UUID outside the plan>", "test_case_id": "<TestCase UUID>"}]
+}
+```
+
+`unchanged_paths`, `excluded` and `regression` are optional:
+
+- `unchanged_paths` lists files a requirement uses that the build did not
+  change. Each gets an implements trace and no warning. A path the build
+  changed belongs in `paths`.
+- `excluded` lists plan criteria the build left partly built, each with a
+  reason. Their outcomes are not sent. The server writes a gap record routed to
+  the Epic and replaces the outcomes already stored for that criterion with
+  `inconclusive`, also a stored `fail` or `error`. An earlier pass then no
+  longer counts, and the Epic cannot complete until the criterion is proven
+  again. This is the one outcome the command stores that no test run reported;
+  the gap record and the audit event tell it from an observed outcome.
+- `regression` lists TestCases the build reran for criteria of published
+  requirements that no Epic owns. Their outcomes are matched like the plan's
+  and stored as those criteria's current outcomes. No trace is sent for them,
+  and a regression test file with uncommitted changes is refused. The server
+  refuses a criterion that is in this plan, owned by active work, not published
+  or OBSOLETE; one refused entry refuses the whole build record, so drop the
+  entry and run again.
+
+A test result takes its TestCase from a `test_case_id` trait or property, a
+full TestCase UUID in the test name, or a full TestCase UUID on the line above
+the test's declaration at HEAD (`// TestCase <uuid>` above `func TestX(`, a C#
+`[Fact]` method, an ExUnit `test "name"` or a JavaScript `it("name"`); the
+`tests` list covers other forms. A TRX result names a C# test by the
+`TestMethod` name of its test definition when it carries one, so an xUnit
+`DisplayName` does not matter. Each plan criterion takes its TestCase's
+outcome; a criterion without a result is listed as not recorded. A go package
+that fails before its tests run is listed and records nothing; build failures
+are attributed from Go 1.24 output. Capture `go test -json` from standard
+output only (`go test -json ./... > results/go.json`): a line that is not JSON,
+such as stderr mixed in with `2>&1`, makes the file unreadable. The command refuses, sending nothing, a
+handoff for another Epic, a `head` that is not the checkout HEAD, a traced file
+with uncommitted changes, a missing or unreadable result file and results for
+more than 50 criteria. `--dry-run` prints the server's answer without writing;
+`--json` prints it with the local lists; `--agent <slug>` names the agent. A
+re-run of the same handoff keeps what is already written.
+
+In a linked git worktree without its own `.modernpath` folder, store commands
+use the main checkout's binding and credential, and `epics build record`
+compares `head` with the worktree's HEAD. `docs sync`, `search`, `ask`,
+`read-doc`, `read-file`, `status` and `prepare` still need a `.modernpath`
+folder at or above the current directory.
+
 ### Modernization test history
 
 Modernization test history is separate from current criterion proof. After a

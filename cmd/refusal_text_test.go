@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+// Epic 428. TestCase f557fc05-ff7b-4d53-acb8-d3b0a9f37549
+// evidence record's refusal of an unknown outcome prints the server's
+// message, which names the allowed outcomes.
+func TestRefusalTextNamesTheAllowedOutcomes(t *testing.T) {
+	const message = "Send one to 500 actual test outcomes, each pass, fail, error, skip or inconclusive."
+	for name, fixture := range map[string]string{
+		"single": `{"error":{"code":"invalid_results","message":"` + message + `"}}`,
+		"batch":  `{"error":{"code":"invalid_results","message":"` + message + `"},"index":0,"item":{"criterion_id":"11111111-1111-4111-8111-111111111111"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var body map[string]any
+			if err := json.Unmarshal([]byte(fixture), &body); err != nil {
+				t.Fatal(err)
+			}
+			if err := serverRefusal("evidence record refused", 422, body); !strings.Contains(err.Error(), message) {
+				t.Fatalf("serverRefusal = %q; want the server message", err.Error())
+			}
+		})
+	}
+}
+
 // Every server refusal reaches the operator through one formatter. A raw
 // `%v` of body["error"] prints <nil> on an empty body and a Go map dump on a
 // structured one; none may remain in the command package.

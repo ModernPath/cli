@@ -43,10 +43,25 @@ For each changed behavior in ordinary implementation:
 2. Implement the smallest passing change. Run focused checks and proportional
    boundary and regression checks.
 3. Record each actual outcome for the criterion and TestCase as current direct
-   proof with `modernpath evidence record`, then read back CriterionTestResults
-   and Traces. A later outcome replaces the previous outcome for that pair.
+   proof. After a delegated build, run
+   `modernpath epics build record <id> --file <handoff>` with `--dry-run`
+   first, then without it. It records the build's code and test-file traces,
+   its outcomes, read from the test result files, and its assumed defaults in
+   one write. Otherwise use `modernpath evidence record`. Then read back
+   CriterionTestResults and Traces. A later outcome replaces the previous
+   outcome for that pair.
 4. Clean up, rerun affected checks and record current outcomes. Keep commands
    and output in PR notes; do not upload procedures or raw reports.
+
+A delegated build agent puts each TestCase's full UUID in its test's name or in
+a comment just above the test (for a Go test function, in a comment above it),
+or lists the test names per TestCase in the build handoff's `tests`. It ends by
+writing the build handoff: the result files it produced, the paths that
+implement each requirement and its assumed defaults. A criterion it built only
+in part goes in the build handoff's `excluded` with the reason, a TestCase it
+reran for a criterion of a published requirement that no Epic owns goes in
+`regression`, and a file a requirement uses but the build did not change goes
+in `unchanged_paths`. It never writes to the store.
 
 Build on the main revision the Epic started from and rebase once, before the
 implementation review (`PROCESS.md` §Returning to planning). Never disable or

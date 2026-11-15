@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- `epics build record <id> --file <build handoff>` records a delegated build
+  in one write: implements traces to the changed files, verifies traces to the
+  test files, the plan's criterion outcomes read from TRX, JUnit XML and
+  `go test -json` result files, and the build's assumed defaults. `--dry-run`
+  shows the server's answer without writing. Requires the matching Core
+  `build-record` route.
+- `epics build record` takes three more handoff fields: `excluded` (a plan
+  criterion the build left partly built: a gap record, and its stored outcomes
+  replaced with `inconclusive`), `regression` (a TestCase rerun for a criterion
+  of a published requirement that no Epic owns) and `unchanged_paths` (files a
+  requirement uses that the build did not change). It matches a TRX result by
+  its `TestMethod` name, so xUnit `DisplayName` results match their tests.
+  `excluded` and `regression` need the matching Core `build-record` route.
+- Store commands work in a linked git worktree that has no `.modernpath`
+  folder of its own: they use the main checkout's binding and credential.
+- `evidence record` names the allowed outcomes when it refuses one.
+- The installed `rdd-cold-reviewer` now reviews a plan in a set order: the
+  plan's own completeness first, then the consequences it did not consider,
+  then its proof. It samples the plan's citations instead of confirming each
+  one, and it rates a promised rule with no mechanism as material. Run
+  `modernpath install` to get the new reviewer text.
 - Store commands no longer list your Systems before each request. When the
   server answers 404, the refusal ends with `Run 'modernpath status' to check
   the System binding.`

@@ -1,0 +1,70 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="d188e115-04db-4b37-ae0f-1380fe5089b0" name="@build-host 2026-11-14 22:49:59" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-14T22:49:59.3279590+02:00" queuing="2026-11-14T22:49:59.3279590+02:00" start="2026-11-14T22:49:58.4514540+02:00" finish="2026-11-14T22:49:59.3305440+02:00" />
+  <TestSettings name="default" id="1a9d70a1-e541-4911-bb33-aa25199addbc">
+    <Deployment runDeploymentRoot="_build-host_2026-11-14_22_49_59" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="3e53b918-4009-4ee4-bb81-6caecb8b7885" testId="3f6f4361-4715-84ce-a1d8-bb7be2e1d45b" testName="Sample.Tests.InvoiceTests.Increments(a: 2, b: 3)" computerName="build-host" duration="00:00:00.0000290" startTime="2026-11-14T22:49:59.2632540+02:00" endTime="2026-11-14T22:49:59.2632890+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3e53b918-4009-4ee4-bb81-6caecb8b7885" />
+    <UnitTestResult executionId="4a8c121c-7479-486b-a528-2d04f8e428c0" testId="52bc95e2-c4e7-7454-7c5f-87307425f789" testName="Refund after PaysTheInvoice" computerName="build-host" duration="00:00:00.0000162" startTime="2026-11-14T22:49:59.2636500+02:00" endTime="2026-11-14T22:49:59.2636740+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4a8c121c-7479-486b-a528-2d04f8e428c0" />
+    <UnitTestResult executionId="0e88e74a-f2c2-41cb-8836-33566f1dd279" testId="9ca26118-2699-cfbf-b409-a99eeb9e5973" testName="Pays the invoice" computerName="build-host" duration="00:00:00.0000631" startTime="2026-11-14T22:49:59.2634950+02:00" endTime="2026-11-14T22:49:59.2635640+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0e88e74a-f2c2-41cb-8836-33566f1dd279" />
+    <UnitTestResult executionId="4813888a-c563-48b9-bacb-e7f2feb1d4fa" testId="59627d97-da1e-2e67-d19c-31aabdeefc4c" testName="Sample.Tests.InvoiceTests.Increments(a: 1, b: 2)" computerName="build-host" duration="00:00:00.0000583" startTime="2026-11-14T22:49:59.2633430+02:00" endTime="2026-11-14T22:49:59.2634070+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4813888a-c563-48b9-bacb-e7f2feb1d4fa" />
+    <UnitTestResult executionId="ab3df596-8b81-4c8a-86c3-cafb331c9a68" testId="69ad388d-5797-3ee6-33fc-5f25826ca148" testName="Sample.Tests.InvoiceTests.Adds" computerName="build-host" duration="00:00:00.0095436" startTime="2026-11-14T22:49:59.2467520+02:00" endTime="2026-11-14T22:49:59.2598550+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ab3df596-8b81-4c8a-86c3-cafb331c9a68" />
+    <UnitTestResult executionId="97849942-e636-45d6-b409-71de8884b912" testId="2fd52eeb-1f6e-1cc8-3429-1593fbcc8126" testName="Adds two amounts(a: 1, b: 2, sum: 3)" computerName="build-host" duration="00:00:00.0000624" startTime="2026-11-14T22:49:59.2628930+02:00" endTime="2026-11-14T22:49:59.2629900+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="97849942-e636-45d6-b409-71de8884b912" />
+    <UnitTestResult executionId="373cd12b-ab1d-44bf-b01e-8ed51331e2df" testId="e16cbce1-063b-e262-8068-e09f42e7e90c" testName="Adds two amounts(a: 2, b: 3, sum: 5)" computerName="build-host" duration="00:00:00.0001016" startTime="2026-11-14T22:49:59.2630610+02:00" endTime="2026-11-14T22:49:59.2631710+02:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="373cd12b-ab1d-44bf-b01e-8ed51331e2df" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Pays the invoice" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="9ca26118-2699-cfbf-b409-a99eeb9e5973">
+      <Execution id="0e88e74a-f2c2-41cb-8836-33566f1dd279" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="PaysTheInvoice" />
+    </UnitTest>
+    <UnitTest name="Adds two amounts(a: 1, b: 2, sum: 3)" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="2fd52eeb-1f6e-1cc8-3429-1593fbcc8126">
+      <Execution id="97849942-e636-45d6-b409-71de8884b912" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="AddsAmounts" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.InvoiceTests.Increments(a: 2, b: 3)" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="3f6f4361-4715-84ce-a1d8-bb7be2e1d45b">
+      <Execution id="3e53b918-4009-4ee4-bb81-6caecb8b7885" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="Increments" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.InvoiceTests.Adds" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="69ad388d-5797-3ee6-33fc-5f25826ca148">
+      <Execution id="ab3df596-8b81-4c8a-86c3-cafb331c9a68" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="Adds" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.InvoiceTests.Increments(a: 1, b: 2)" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="59627d97-da1e-2e67-d19c-31aabdeefc4c">
+      <Execution id="4813888a-c563-48b9-bacb-e7f2feb1d4fa" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="Increments" />
+    </UnitTest>
+    <UnitTest name="Refund after PaysTheInvoice" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="52bc95e2-c4e7-7454-7c5f-87307425f789">
+      <Execution id="4a8c121c-7479-486b-a528-2d04f8e428c0" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="RefundsTheInvoice" />
+    </UnitTest>
+    <UnitTest name="Adds two amounts(a: 2, b: 3, sum: 5)" storage="/work/sample.tests/bin/debug/net10.0/sample.tests.dll" id="e16cbce1-063b-e262-8068-e09f42e7e90c">
+      <Execution id="373cd12b-ab1d-44bf-b01e-8ed51331e2df" />
+      <TestMethod codeBase="/work/Sample.Tests/bin/Debug/net10.0/Sample.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.InvoiceTests" name="AddsAmounts" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="3f6f4361-4715-84ce-a1d8-bb7be2e1d45b" executionId="3e53b918-4009-4ee4-bb81-6caecb8b7885" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="52bc95e2-c4e7-7454-7c5f-87307425f789" executionId="4a8c121c-7479-486b-a528-2d04f8e428c0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9ca26118-2699-cfbf-b409-a99eeb9e5973" executionId="0e88e74a-f2c2-41cb-8836-33566f1dd279" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="59627d97-da1e-2e67-d19c-31aabdeefc4c" executionId="4813888a-c563-48b9-bacb-e7f2feb1d4fa" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="69ad388d-5797-3ee6-33fc-5f25826ca148" executionId="ab3df596-8b81-4c8a-86c3-cafb331c9a68" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2fd52eeb-1f6e-1cc8-3429-1593fbcc8126" executionId="97849942-e636-45d6-b409-71de8884b912" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e16cbce1-063b-e262-8068-e09f42e7e90c" executionId="373cd12b-ab1d-44bf-b01e-8ed51331e2df" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="7" executed="7" passed="7" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.3+b1b99bdeb3 (64-bit .NET 10.0.7)
+[xUnit.net 00:00:00.31]   Discovering: Sample.Tests
+[xUnit.net 00:00:00.42]   Discovered:  Sample.Tests
+[xUnit.net 00:00:00.55]   Starting:    Sample.Tests
+[xUnit.net 00:00:00.59]   Finished:    Sample.Tests
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

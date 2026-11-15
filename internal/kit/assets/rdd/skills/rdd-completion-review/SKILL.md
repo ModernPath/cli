@@ -15,9 +15,15 @@ transitions below apply only to Epic work.
 Read `PROCESS.md`, the Epic's approved plan and exact proposed content, the
 still-published requirements, ownership, implementation, traces and evidence.
 
-1. Inspect each approved requirement and its actual evidence. Run the owning
-   checks and record current criterion outcomes and limits before obtaining the
-   implementation review.
+1. Inspect each approved requirement and its actual evidence. Keep a current
+   passing result, without recording it again, when the PR notes list its
+   owning tests as run at the commit the verification checks ran at, the branch
+   has not been rebased since, and nothing in the owning package or app, a
+   package or app it depends on, its lockfiles or its configuration has changed
+   since that commit. `git diff --name-only <commit>` lists committed and
+   uncommitted changes, and `git status --porcelain` lists untracked files. Run
+   the owning checks for every other criterion, and record those outcomes and
+   limits before obtaining the implementation review.
    Explicitly authorized deletion
    can leave affected paths broken; disclose those failures without restoring
    deleted machinery or claiming unproven behavior works.

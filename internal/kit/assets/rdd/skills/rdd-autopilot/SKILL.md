@@ -16,7 +16,9 @@ grant is missing, expired or ambiguous.
    as its observation. It is routed once to the Epic being built and never
    written into the approved plan. The server refuses any later change of its
    disposition without a `USER:` source, and the agent writes that source only
-   from the person's own words, never from a template. Unless already
+   from the person's own words, never from a template. During a delegated
+   build, the assumed defaults go into the build handoff and are recorded with
+   the build. Unless already
    explicitly authorized, stop for hard-to-reverse decisions: existing-data
    deletion or migration, security or authorization, billing or legal terms,
    or an external-party contract.

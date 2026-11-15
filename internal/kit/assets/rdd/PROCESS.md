@@ -746,7 +746,11 @@ browser output; never mutate production-like data to verify rendering.
 
 ### Delegated passes
 
-A cold review or verification pass may run in an independent context. It
+A cold review or verification pass may run in an independent context. A build
+pass may also run in an independent context. It never writes to the store: it
+ends by writing the build handoff, an input file for one command and not a
+record, and returns it to the agent handling the task, who records the build
+with `modernpath epics build record`. A cold review or verification pass
 returns findings, verdict and sources to the agent handling the task, who
 records them through the CLI. Recording a reviewer's verdict does not make that
 agent an independent reviewer. A delegated pass that encounters a permission, authentication or
@@ -773,7 +777,8 @@ execution. Each historical result has criterion and TestCase Traces. Runs have
 no pre-registration or finalization lifecycle. Their reads and reference
 selection do not satisfy, replace or invalidate current criterion proof or
 ordinary readiness. Capture with `modernpath modernization record`; use
-`modernpath evidence record` for current direct proof.
+`modernpath evidence record`, or `modernpath epics build record` after a
+delegated build, for current direct proof.
 
 Choose evidence by boundary: unit/property for domain rules, component and
 browser for UI, endpoint or contract tests for APIs, integration for

@@ -98,7 +98,10 @@ func authRepairCommand(apiURL string) string {
 }
 
 func cliBindingLoad() (*cliEnv, error) {
-	cfgDir, err := config.FindConfigDir()
+	// config.BindingDir, not FindConfigDir: a linked git worktree with no
+	// .modernpath of its own uses the main checkout's binding, which
+	// config.json and auth.json reads already resolve (Epic 428).
+	cfgDir, err := config.BindingDir()
 	if err != nil || cfgDir == "" {
 		return nil, bindingError{err: fmt.Errorf("not connected — run 'modernpath init --system-id <id>' in the workspace root")}
 	}

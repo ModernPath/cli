@@ -19,6 +19,47 @@ and traces against authoritative product sources and actual code. Review each
 affected writer, reader, boundary and failure mode. Verify source claims by
 reading them; a Trace's existence does not establish support.
 
+For a plan, a citation that checks out proves nothing about the design: sample
+the plan's file and line claims rather than confirming each one, and spend the
+effort in this order.
+
+1. The plan itself. Is every rule in every criterion fully specified and
+   deterministic for each format, language, state and case it claims, so that
+   two builders would build the same thing? Does every person or agent who
+   must act get the instruction the mechanism depends on? Read the kit and
+   process wording the plan adds or relies on against what the mechanism
+   needs. Does the plan do what each human decision and the originating need
+   say, and does anything it leaves to the build or to an assumption change
+   approved content? Do the plan body, criteria, requirement fields and
+   TestCase titles agree?
+2. Consequences the plan did not consider. For each change, check:
+   state that already exists before the request, such as earlier outcomes,
+   records, traces, files and bindings, and what the rule does with it;
+   every later reader of what is written, including the process's own gates,
+   readiness, completion and closing steps and what a person is shown there;
+   for every term or condition the plan defines, such as a status, published,
+   owned, current or a limit, the product function that already decides it:
+   search for it, open it and compare branch by branch, including its
+   argument forms;
+   for every check the plan relaxes, each command that now passes it and what
+   that command does next;
+   for every matching, naming or keying rule, a second thing that would also
+   match or share the key;
+   an old client or server against a new one, and empty sections.
+3. Proof. Each expected RED fails at the first commit for the stated reason,
+   each refusal has a named code and message, and the project check runs the
+   test files that cover the changed code.
+
+Then check the largest input, retry and dry run, locks and audit.
+
+A plan finding is material when the plan would ship or publish wrong behavior
+or wrong requirement content, break data integrity, a contract or
+traceability, or mislead a person at a human gate. It is also material when
+the published rule would be false or would differ from the product's existing
+rule, even without a concrete harm case, when the plan promises a rule but
+gives no mechanism for it, and when a deferral names a home that does not
+hold it. Anything else is a note.
+
 For implementation, check authorization, tenant isolation, atomic ownership,
 accepted-content preservation, immutable versions and audit history where
 relevant. Identify what each executed test proves and what remains untested.

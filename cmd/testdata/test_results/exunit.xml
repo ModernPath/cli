@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite errors="0" failures="1" name="Elixir.Shop.CartTest" skipped="1" tests="3" time="1834">
+    <testcase classname="Elixir.Shop.CartTest" name="test adds an item" time="0.000412"/>
+    <testcase classname="Elixir.Shop.CartTest" name="test totals with discount" time="0.000903">
+      <failure message="Assertion with == failed">    test/shop/cart_test.exs:18
+    Assertion with == failed
+    code:  assert Cart.total(cart) == 90
+    left:  100
+    right: 90</failure>
+    </testcase>
+    <testcase classname="Elixir.Shop.CartTest" name="test legacy pricing" time="0">
+      <skipped/>
+    </testcase>
+  </testsuite>
+</testsuites>
