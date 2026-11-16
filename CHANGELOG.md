@@ -31,6 +31,13 @@
   the bound System is not reachable. The "server does not support" and
   "endpoint unavailable" messages are removed. Requires the matching Core
   change for the `system_not_found` code.
+- `traces list --entity-type <type>` without `--entity-id` lists the traces of
+  every entity of the type in the bound System, one request per page. Requires
+  Core to accept the paged `GET /api/compliance/traces` without `entity_id`.
+  An empty `--entity-id` is refused. Both reads list active traces unless
+  `--status stale` or `--status all` asks for stale traces; each row then
+  shows its status. The read of a whole type leaves out an active trace when
+  no entity of the type at its ends exists in the System.
 
 ## v0.28.0 - Analysis preparation and team collaboration
 

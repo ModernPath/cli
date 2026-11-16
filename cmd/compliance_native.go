@@ -121,30 +121,46 @@ func requirementDetailFields(kind string) []string {
 }
 
 func newTraceListCommand(load func() (*cliEnv, error)) *cobra.Command {
-	cmd := &cobra.Command{Use: "list", Short: "List traces touching a entity", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "list", Short: "List traces of one entity, or of every entity of a type", Args: cobra.NoArgs,
 		Long: `List the active traces whose source or target is one entity of the
-bound System. Each row is source, relation and target; an endpoint is its type
-and id (a source_file endpoint shows repository and path). --relation filters
-by link kind: implements, verifies, derives or relates within the System, or
-modernizes, the trace that links a new requirement to the legacy requirement it
-modernizes in another System. A requirement's criteria are entities of their
-own: list a criterion's traces with --entity-type criterion. Traces are
-written by reverse-engineer record and by an Epic plan at implementation and
-completion approval; only an Epic plan writes a modernizes trace, and there is
+bound System; deleted traces are left out. A trace to a source file is stale
+when a later analysis no longer finds the file: --status stale lists the stale
+traces and --status all lists both, and each row then shows its status.
+Without --entity-id, list the traces whose source or target is any entity of
+the type: each request returns one page for the whole type, so a read of many
+entities does not need one request per entity. An active trace is left out
+when no entity of the type at its ends exists in the System, so a page can
+hold fewer rows than --limit. Pass the printed next_cursor to --cursor
+until no cursor is printed. Each row is source, relation and target; an
+endpoint is its type and id (a source_file endpoint shows repository and
+path). --relation filters by link kind:
+implements, verifies, derives or relates within the System, or modernizes, the
+trace that links a new requirement to the legacy requirement it modernizes in
+another System. A requirement's criteria are entities of their own: list a
+criterion's traces with --entity-type criterion. Traces are written by
+reverse-engineer record and by an Epic plan at implementation and completion
+approval; only an Epic plan writes a modernizes trace, and there is
 no direct trace write.`}
 	entityType, entityID := "", ""
 	cmd.Flags().StringVar(&entityType, "entity-type", "", "entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, criterion_test_result, modernization_test_result)")
-	cmd.Flags().StringVar(&entityID, "entity-id", "", "entity id")
+	cmd.Flags().StringVar(&entityID, "entity-id", "", "entity id; omit to list the traces of every entity of the type")
 	cmd.Flags().Bool("json", false, "emit JSON")
 	cmd.Flags().Int("limit", 20, "page size (1–200)")
 	cmd.Flags().String("cursor", "", "continue from a previous page")
 	cmd.Flags().String("relation", "", "filter by trace relation (implements, verifies, derives, relates or modernizes)")
+	cmd.Flags().String("status", "active", "trace status to list (active, stale or all)")
 	cmd.MarkFlagRequired("entity-type")
-	cmd.MarkFlagRequired("entity-id")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		allowed := map[string]bool{"user_requirement": true, "system_requirement": true, "test_case": true, "system_document": true, "source_file": true, "file_analysis": true, "subsystem": true, "epic": true, "criterion": true, "criterion_test_result": true, "modernization_test_result": true}
 		if !allowed[entityType] {
 			return fmt.Errorf("unsupported --entity-type %q", entityType)
+		}
+		if cmd.Flags().Changed("entity-id") && entityID == "" {
+			return fmt.Errorf("--entity-id is empty; omit it to list the traces of every entity of the type")
+		}
+		status, _ := cmd.Flags().GetString("status")
+		if status != "active" && status != "stale" && status != "all" {
+			return fmt.Errorf("--status must be active, stale or all")
 		}
 		env, err := load()
 		if err != nil {
@@ -152,7 +168,7 @@ no direct trace write.`}
 		}
 		// A detail read rejects a UUID-backed compliance entity from another System;
 		// the trace endpoint also filters every type to the bound System.
-		if kind, ok := map[string]string{"user_requirement": "user", "system_requirement": "system", "test_case": "test-case"}[entityType]; ok {
+		if kind, ok := map[string]string{"user_requirement": "user", "system_requirement": "system", "test_case": "test-case"}[entityType]; ok && entityID != "" {
 			detailType := map[string]string{"user": "user-requirements", "system": "system-requirements", "test-case": "test-cases"}[kind]
 			if _, err := nativeGetData(env, "/api/compliance/"+detailType+"/"+url.PathEscape(entityID)+"?system_id="+fmt.Sprint(env.SystemID), "entity detail", true); err != nil {
 				return err
@@ -164,7 +180,10 @@ no direct trace write.`}
 		if limit < 1 || limit > 200 {
 			return fmt.Errorf("--limit must be between 1 and 200")
 		}
-		p := url.Values{"entity_type": {entityType}, "entity_id": {entityID}, "system_id": {fmt.Sprint(env.SystemID)}, "page": {"true"}, "limit": {fmt.Sprint(limit)}}
+		p := url.Values{"entity_type": {entityType}, "system_id": {fmt.Sprint(env.SystemID)}, "page": {"true"}, "limit": {fmt.Sprint(limit)}, "status": {status}}
+		if entityID != "" {
+			p.Set("entity_id", entityID)
+		}
 		if cursor != "" {
 			p.Set("cursor", cursor)
 		}
@@ -177,7 +196,11 @@ no direct trace write.`}
 		}
 		data, _ := body["data"].(map[string]any)
 		return writeNativePage(cmd, data, "items", func(item map[string]any) (map[string]any, error) {
-			return map[string]any{"source": item["source"], "relation": item["relation"], "target": item["target"]}, nil
+			row := map[string]any{"source": item["source"], "relation": item["relation"], "target": item["target"]}
+			if status != "active" {
+				row["status"] = item["status"]
+			}
+			return row, nil
 		})
 	}
 	return cmd

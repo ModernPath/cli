@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -271,6 +273,160 @@ func TestTraceListScopesNativeRequirementBeforeReadingTraces(t *testing.T) {
 	}
 	if len(calls) != 2 {
 		t.Fatalf("requests=%v, want scope read then trace read", calls)
+	}
+}
+
+func TestTraceListWithoutEntityIDReadsEveryEntityOfTheType(t *testing.T) {
+	const page = `{"data":{"items":[` +
+		`{"id":"t1","source":{"type":"source_file","id":"file"},"relation":"implements","target":{"type":"system_requirement","id":"abc"}},` +
+		`{"id":"t2","source":{"type":"system_requirement","id":"def"},"relation":"derives","target":{"type":"user_requirement","id":"ghi"}}` +
+		`],"next_cursor":"next"}}`
+	run := func(t *testing.T, args ...string) (url.Values, string, string) {
+		t.Helper()
+		var requests []*url.URL
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests = append(requests, r.URL)
+			_, _ = w.Write([]byte(page))
+		}))
+		defer server.Close()
+		list := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		list.SetArgs(append([]string{"--entity-type", "system_requirement"}, args...))
+		var out, errOut bytes.Buffer
+		list.SetOut(&out)
+		list.SetErr(&errOut)
+		list.SilenceErrors = true
+		list.SilenceUsage = true
+		if err := list.Execute(); err != nil {
+			t.Fatalf("traces list without --entity-id failed: %v", err)
+		}
+		if len(requests) != 1 || requests[0].Path != "/api/compliance/traces" {
+			t.Fatalf("requests = %v, want one GET /api/compliance/traces and no entity detail read", requests)
+		}
+		query := requests[0].Query()
+		if query.Has("entity_id") {
+			t.Errorf("trace request sent entity_id: %s", requests[0])
+		}
+		if query.Get("entity_type") != "system_requirement" || query.Get("system_id") != "4" || query.Get("page") != "true" {
+			t.Errorf("trace request = %s, want the paged read of system_requirement in System 4", requests[0])
+		}
+		return query, out.String(), errOut.String()
+	}
+
+	t.Run("prints each row as source, relation and target", func(t *testing.T) {
+		query, out, errOut := run(t)
+		if query.Get("limit") != "20" || query.Has("cursor") || query.Has("relation") {
+			t.Errorf("default request = %v, want limit=20 and no cursor or relation", query)
+		}
+		want := "relation=implements  source=source_file:file  target=system_requirement:abc\n" +
+			"relation=derives  source=system_requirement:def  target=user_requirement:ghi\n"
+		if out != want {
+			t.Errorf("rows =\n%s\nwant\n%s", out, want)
+		}
+		if !strings.Contains(errOut, "next_cursor: next") {
+			t.Errorf("next cursor not printed: %q", errOut)
+		}
+	})
+
+	t.Run("sends limit, cursor and relation and emits JSON", func(t *testing.T) {
+		query, out, _ := run(t, "--limit", "200", "--cursor", "previous", "--relation", "derives", "--json")
+		if query.Get("limit") != "200" || query.Get("cursor") != "previous" || query.Get("relation") != "derives" {
+			t.Errorf("request = %v, want limit=200, cursor=previous and relation=derives", query)
+		}
+		var got struct {
+			Items      []map[string]any `json:"items"`
+			NextCursor string           `json:"next_cursor"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("output is not JSON: %v\n%s", err, out)
+		}
+		wantFirst := map[string]any{
+			"source":   map[string]any{"type": "source_file", "id": "file"},
+			"relation": "implements",
+			"target":   map[string]any{"type": "system_requirement", "id": "abc"},
+		}
+		if len(got.Items) != 2 || !reflect.DeepEqual(got.Items[0], wantFirst) || got.NextCursor != "next" {
+			t.Errorf("JSON page = %s", out)
+		}
+	})
+}
+
+func TestTraceListStatusSelectsActiveStaleOrAllTraces(t *testing.T) {
+	const page = `{"data":{"items":[` +
+		`{"id":"t1","status":"active","source":{"type":"source_file","id":"file"},"relation":"implements","target":{"type":"system_requirement","id":"abc"}},` +
+		`{"id":"t2","status":"stale","source":{"type":"system_requirement","id":"def"},"relation":"derives","target":{"type":"user_requirement","id":"ghi"}}` +
+		`],"next_cursor":null}}`
+	run := func(t *testing.T, args ...string) (url.Values, string, error) {
+		t.Helper()
+		var query url.Values
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			query = r.URL.Query()
+			_, _ = w.Write([]byte(page))
+		}))
+		defer server.Close()
+		list := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		list.SetArgs(append([]string{"--entity-type", "system_requirement"}, args...))
+		var out bytes.Buffer
+		list.SetOut(&out)
+		list.SetErr(&bytes.Buffer{})
+		list.SilenceErrors = true
+		list.SilenceUsage = true
+		err := list.Execute()
+		return query, out.String(), err
+	}
+
+	t.Run("reads active traces by default and prints no status", func(t *testing.T) {
+		query, out, err := run(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if query.Get("status") != "active" {
+			t.Errorf("status = %q, want active", query.Get("status"))
+		}
+		if strings.Contains(out, "status=") {
+			t.Errorf("default rows carry a status:\n%s", out)
+		}
+	})
+
+	for _, status := range []string{"stale", "all"} {
+		t.Run("sends "+status+" and prints the status of each row", func(t *testing.T) {
+			query, out, err := run(t, "--status", status)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if query.Get("status") != status {
+				t.Errorf("status = %q, want %s", query.Get("status"), status)
+			}
+			want := "relation=implements  source=source_file:file  status=active  target=system_requirement:abc\n" +
+				"relation=derives  source=system_requirement:def  status=stale  target=user_requirement:ghi\n"
+			if out != want {
+				t.Errorf("rows =\n%s\nwant\n%s", out, want)
+			}
+		})
+	}
+
+	t.Run("refuses an unknown status before any request", func(t *testing.T) {
+		query, _, err := run(t, "--status", "deleted")
+		if err == nil || !strings.Contains(err.Error(), "--status must be active, stale or all") {
+			t.Fatalf("err = %v, want an unknown --status refused", err)
+		}
+		if query != nil {
+			t.Errorf("a request was sent: %v", query)
+		}
+	})
+}
+
+func TestTraceListRefusesAnEmptyEntityID(t *testing.T) {
+	list := newTraceListCommand(func() (*cliEnv, error) {
+		t.Fatal("an empty --entity-id must be refused before any request")
+		return nil, nil
+	})
+	list.SetArgs([]string{"--entity-type", "user_requirement", "--entity-id", ""})
+	list.SetOut(&bytes.Buffer{})
+	list.SetErr(&bytes.Buffer{})
+	list.SilenceErrors = true
+	list.SilenceUsage = true
+	if err := list.Execute(); err == nil || !strings.Contains(err.Error(), "--entity-id is empty") {
+		t.Fatalf("err = %v, want an empty --entity-id refused", err)
 	}
 }
 

@@ -1492,8 +1492,11 @@ modernpath test-cases get <uuid>
 
 Trace entity types use the stored names: `user_requirement`,
 `system_requirement`, `test_case`, `system_document`, `source_file`,
-`file_analysis`, `subsystem`, `epic`, or `criterion`. Trace reads are filtered
-to the System bound to the checkout. Requirement and test-case detail reads
+`file_analysis`, `subsystem`, `epic`, `criterion`, `criterion_test_result`, or
+`modernization_test_result`. Without `--entity-id`, `traces list` reads the
+traces of every entity of the type, one page per request. It lists active
+traces; `--status stale` or `--status all` lists the stale traces too. Trace
+reads are filtered to the System bound to the checkout. Requirement and test-case detail reads
 also verify the entity belongs to that System. `traces list
 --relation` takes `implements`, `verifies`, `derives`, `relates` or
 `modernizes`; a `modernizes` trace's target is a legacy requirement in another
@@ -1555,7 +1558,7 @@ The same terse output contract applies across the command surface:
 | Commands | Discovery and detail |
 |---|---|
 | `test-cases list`, `get` | UUID, title and revision. `get` and `update` use UUIDs. Lists search UUID/title with `--query` and sort with `--order id|title`. |
-| `traces list` | Requires an entity type and ID; supports relation filtering and server continuation. Each row identifies the trace and its endpoints. |
+| `traces list` | Requires an entity type; the entity ID is optional. Supports relation and status filtering and server continuation. Each row gives the relation and both endpoints. |
 | `evidence latest` | Bounded server queries support criterion, requirement, TestCase, outcome and time filters. Each row is current proof for one criterion and TestCase. |
 | `read-doc` without `--id` | Paged metadata discovery with query, tier, angle and ordering. Select content through a direct ID read. |
 | `system-docs list`, `get` | Metadata lists support query, type, order and continuation. `get` summarizes by default; select content with `--fields` or `--full`. |
