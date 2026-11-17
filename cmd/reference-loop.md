@@ -82,8 +82,11 @@ only while PROPOSED. The latest attributable answer for each declared decision
 is in the review bundle. A new answer invalidates the previous independent
 review. Present the change to the human, who directs renewed review before approval. Implementation approval
 freezes answers; changed intent requires separately approved work.
-No command records an autopilot sprint grant; handle that missing capability
-under the System-name rule above.
+Record a human grant with `autopilot create --file grant.json --json`.
+Input requires `epic_ids`, `expires_at` (RFC3339), `exclusions` ([] if none),
+and the human's `USER:` source. The response confirms the saved grant and its
+server-assigned identity, grantor and recording time. A grant is separate from
+implementation/completion approval and never authorizes merge, deployment or release.
 
 The four named server checks use `epics gates check <id> --phase
 plan-ready|implementation|completion-review|completion [--git-sha <full-sha>] [--json]`.

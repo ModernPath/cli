@@ -384,6 +384,7 @@ var leafDispositions = map[string]disposition{
 	"factory pin set":            {kind: dispExecute, args: []string{"factory", "pin", "set", "--pin-stdin"}},
 	"factory release activate":   {kind: dispExecute, args: []string{"factory", "release", "activate", "2", "--pin-stdin"}},
 
+	"autopilot create":                  {kind: dispExecute, args: []string{"autopilot", "create", "--file", "-", "--json"}},
 	"backlog create":                    {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
 	"backlog update":                    {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"backlog list":                      {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
@@ -594,6 +595,9 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		rootCmd.SetArgs(args)
 		if strings.HasSuffix(name, "pin set") {
 			rootCmd.SetIn(strings.NewReader("2468\n"))
+		}
+		if name == "autopilot create" {
+			rootCmd.SetIn(strings.NewReader(grantTestInput))
 		}
 		if name == "backlog create" {
 			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke discovery"}`))

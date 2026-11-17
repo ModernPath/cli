@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `autopilot create --file grant.json` records the human's explicit grant and
+  returns its receipt. Requires the matching Core creation route and grant
+  migrations. Run `modernpath install` to refresh the CLI reference.
+
 - `epics build record <id> --file <build handoff>` records a delegated build
   in one write: implements traces to the changed files, verifies traces to the
   test files, the plan's criterion outcomes read from TRX, JUnit XML and

@@ -2180,3 +2180,17 @@ This field does not change disposition or Epic routing.
 `backlog get --full --json` serves the association and Initiative name.
 `backlog list --initiative INITIATIVE-UUID --json` lists the Initiative's records.
 `INITIATIVE-UUID` is the Initiative's native UUID.
+
+## Create an autopilot grant
+
+Record only the human's explicit terms:
+
+```sh
+modernpath autopilot create --file grant.json --json
+```
+
+Input: `{"epic_ids":[123],"expires_at":"2026-12-01T17:00:00Z","exclusions":[],"source":"USER: <the human's grant words>"}`.
+The server returns the saved grant's identity, signed-in grantor and recording
+time. Implementation/completion approval, merging, deployment and release stay
+separate. Deploy the matching Core creation route and both grant migrations
+before distributing the CLI. No grant is inferred from existing session text.
