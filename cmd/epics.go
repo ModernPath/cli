@@ -19,7 +19,7 @@ var epicsSearchJSON bool
 
 var epicsCmd = &cobra.Command{
 	Use:   "epics",
-	Short: "Read and write Epics, specifications and saved plans",
+	Short: "Read and write Epics and saved plans",
 }
 
 var epicsSearchCmd = &cobra.Command{

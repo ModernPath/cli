@@ -65,8 +65,6 @@ func TestEpicReadsSendNoRequestBody(t *testing.T) {
 		{"epics", "get", "42", "--full", "--json"},
 		{"epics", "list", "--json"},
 		{"epics", "plan", "show", "42", "--full", "--json"},
-		{"epics", "specs", "list", "42", "--json"},
-		{"epics", "specs", "status", "42", "--json"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,65 +158,6 @@ func TestEpicGetDefaultsToSummaryAndSupportsExactProjection(t *testing.T) {
 	}
 	if len(selected) != 2 || selected["title"] != "Explicit" || selected["scope"] != "bounded" {
 		t.Fatalf("fields must return exactly the requested projection: %#v", selected)
-	}
-}
-
-func TestEpicSpecificationContentIsExplicit(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/systems":
-			healthyProbe(w, r)
-		case "/api/work/epics/42":
-			_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1}}`))
-		case "/api/work/epics/42/specs":
-			_, _ = w.Write([]byte(`{"data":{"specs":[{"id":8,"filename":"overview.md","content":"Long specification body"}]}}`))
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer server.Close()
-	cobraWorkspace(t, server)
-
-	out, err := runRoot(t, "epics", "specs", "list", "42", "--json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var summary map[string]any
-	if err := json.Unmarshal([]byte(out), &summary); err != nil || len(summary) != 2 || summary["count"] != float64(1) || summary["epic_id"] != float64(42) {
-		t.Fatalf("specification summary = %s; %v", out, err)
-	}
-	for _, flag := range [][]string{{"--fields", "specs"}, {"--full"}} {
-		args := append([]string{"epics", "specs", "list", "42", "--json"}, flag...)
-		out, err := runRoot(t, args...)
-		if err != nil || !json.Valid([]byte(out)) || !strings.Contains(out, "Long specification body") {
-			t.Fatalf("explicit specification content = %s; %v", out, err)
-		}
-	}
-}
-
-func TestEpicSpecificationStatusIncludesCountsByState(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/systems":
-			healthyProbe(w, r)
-		case "/api/work/epics/42":
-			_, _ = w.Write([]byte(`{"data":{"id":42,"system_id":1}}`))
-		case "/api/work/epics/42/spec-status":
-			_, _ = w.Write([]byte(`{"data":{"epic_id":42,"artifact_count":3,"artifacts":[{"id":1,"status":"draft"},{"id":2,"status":"ready"},{"id":3,"status":"ready"}]}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	cobraWorkspace(t, server)
-	stdout, _, err := runAskStreams(t, "epics", "specs", "status", "42", "--json")
-	var summary struct {
-		ArtifactCount int            `json:"artifact_count"`
-		StatusCounts  map[string]int `json:"status_counts"`
-		Artifacts     any            `json:"artifacts"`
-	}
-	if err != nil || json.Unmarshal([]byte(stdout), &summary) != nil || summary.ArtifactCount != 3 || summary.StatusCounts["ready"] != 2 || summary.StatusCounts["draft"] != 1 || summary.Artifacts != nil {
-		t.Fatalf("status must summarize actual artifact states: %s err=%v", stdout, err)
 	}
 }
 

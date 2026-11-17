@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -16,7 +14,7 @@ var epicPublicFields = []string{
 	"id", "title", "description", "process_status", "outcome_source", "scope", "non_goals",
 	"start_date", "target_date", "generated_from", "severity", "category", "evidence",
 	"knowledge_config", "impact_assessment", "shared_context", "approved_at", "approval_basis",
-	"overview_updated_at", "target_architecture_id", "target_profile_id", "assignee_id", "approved_by_id", "release_id",
+	"target_architecture_id", "target_profile_id", "assignee_id", "approved_by_id", "release_id",
 	"metadata", "inserted_at", "updated_at", "system", "target_profile", "assignee", "approved_by", "release",
 	"summary", "scenarios", "audit_events", "user_requirements", "system_requirements", "traces", "relationships",
 	// SR-3812: the backlog records routed to or closed by the Epic.
@@ -329,162 +327,7 @@ standard input. Input examples:
 		epicsCmd.AddCommand(cmd)
 	}
 	epicsCmd.AddCommand(list, get)
-	specs := &cobra.Command{Use: "specs", Short: "Read, generate and exchange Epic specifications"}
-	for _, op := range []struct{ name, help, method, suffix string }{
-		{"list", "Summarize specifications; use --fields specs for content", "GET", "/specs"},
-		{"status", "Read specification generation status", "GET", "/spec-status"},
-		{"generate", "Start specification generation and return its server response", "POST", "/run-pipeline"},
-		{"pull", "Download the specification bundle to a local JSON file", "GET", "/export-specs"},
-		{"push", "Import specification content from a JSON file", "POST", "/import-specs"},
-	} {
-		op := op
-		cmd := &cobra.Command{Use: op.name + " <epic-id>", Short: op.help, Args: cobra.ExactArgs(1)}
-		cmd.Flags().Bool("json", false, "Emit JSON")
-		if op.name == "list" || op.name == "status" {
-			addRecordReadFlags(cmd)
-		}
-		if op.name == "pull" || op.name == "push" {
-			cmd.Flags().String("file", "", "Local JSON file (required); push accepts - for standard input")
-			_ = cmd.MarkFlagRequired("file")
-		}
-		if op.name == "push" {
-			cmd.Long = `Import specification content into the explicit Epic. Input example: {"specs":[{"category":"architecture","filename":"overview.md","content":"# Overview"}]}. A bundle from epics specs pull is also accepted. Partial import failures return a nonzero exit status.`
-		}
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			env, id, err := explicitEpic(args[0])
-			if err != nil {
-				return err
-			}
-			if _, err := readBoundEpic(env, id); err != nil {
-				return err
-			}
-			var payload map[string]any
-			if op.method == "POST" {
-				payload = map[string]any{}
-			}
-			if op.name == "push" {
-				file, _ := cmd.Flags().GetString("file")
-				input, err := commandObject(cmd, file)
-				if err != nil {
-					return err
-				}
-				payload, err = epicSpecsImport(input, id)
-				if err != nil {
-					return err
-				}
-			}
-			path := fmt.Sprintf("/api/work/epics/%d%s", id, op.suffix)
-			var data any
-			if op.method == "GET" {
-				data, err = epicGet(env, path)
-			} else {
-				data, err = epicWrite(env, op.method, path, payload)
-			}
-			if err != nil {
-				return err
-			}
-			result, ok := data.(map[string]any)
-			if !ok {
-				return fmt.Errorf("specification response must be an object")
-			}
-			switch op.name {
-			case "list":
-				if _, ok := result["specs"].([]any); !ok {
-					return fmt.Errorf("specification response is missing specs")
-				}
-			case "status", "generate", "pull":
-				responseID, ok := numberAsInt(result["epic_id"])
-				if !ok || responseID != id {
-					return fmt.Errorf("specification response has no matching Epic ID")
-				}
-				if op.name == "status" {
-					if _, ok := result["artifacts"].([]any); !ok {
-						return fmt.Errorf("specification status is missing artifacts")
-					}
-				}
-				if op.name == "generate" && str(result, "status") != "started" {
-					return fmt.Errorf("specification generation was not reported as started")
-				}
-				if op.name == "pull" {
-					if _, ok := result["specs"].(map[string]any); !ok {
-						return fmt.Errorf("specification export is missing specs")
-					}
-				}
-			}
-			if op.name == "pull" {
-				file, _ := cmd.Flags().GetString("file")
-				if file == "-" {
-					return fmt.Errorf("pull needs a local --file path; use epics specs list for stdout")
-				}
-				b, err := json.MarshalIndent(data, "", "  ")
-				if err != nil {
-					return err
-				}
-				if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
-					return err
-				}
-				if err := os.WriteFile(file, append(b, '\n'), 0644); err != nil {
-					return err
-				}
-				return writeRecord(cmd, map[string]any{"operation": "exported", "epic_id": id, "file": file})
-			}
-			if op.name == "push" {
-				result, ok := data.(map[string]any)
-				if !ok {
-					return fmt.Errorf("specification import response must be an object")
-				}
-				imported, ok := numberAsInt(result["imported"])
-				errors, errorsOK := numberAsInt(result["errors"])
-				if !ok || !errorsOK {
-					return fmt.Errorf("specification import response is missing result counts")
-				}
-				if errors != 0 || imported != int64(len(payload["specs"].([]any))) {
-					return fmt.Errorf("specification import incomplete: %d imported, %d failed", imported, errors)
-				}
-				return writeRecord(cmd, map[string]any{"operation": "imported", "epic_id": id, "imported": imported})
-			}
-			if op.name == "generate" {
-				return writeRecord(cmd, map[string]any{"operation": "generation-started", "epic_id": id, "status": result["status"]})
-			}
-			// A specification's content is opt-in, like the Epic's detail fields.
-			public := make([]string, 0, len(result)+1)
-			for field := range result {
-				public = append(public, field)
-			}
-			result["epic_id"] = id
-			public = append(public, "epic_id")
-			defaults := []string{"epic_id"}
-			if op.name == "list" {
-				rows := result["specs"].([]any)
-				result["count"] = len(rows)
-				public = append(public, "count")
-				defaults = append(defaults, "count")
-			} else if op.name == "status" {
-				artifacts := result["artifacts"].([]any)
-				counts := map[string]int{}
-				for _, raw := range artifacts {
-					if artifact, ok := raw.(map[string]any); ok {
-						if status, ok := artifact["status"].(string); ok && status != "" {
-							counts[status]++
-						}
-					}
-				}
-				result["artifact_count"] = len(artifacts)
-				result["status_counts"] = counts
-				public = append(public, "artifact_count", "status_counts")
-				defaults = append(defaults, "artifact_count", "status_counts")
-			} else if _, exists := result["status"]; exists {
-				defaults = append(defaults, "status")
-			}
-			selected, err := selectRecordFields(cmd, result, defaults, public, nil)
-			if err != nil {
-				return err
-			}
-			return writeRecord(cmd, selected)
-		}
-		specs.AddCommand(cmd)
-	}
-	epicsCmd.AddCommand(specs)
+
 }
 
 func nullableCursor(cursor string) any {
@@ -566,62 +409,4 @@ func epicResponse(status int, response map[string]any, err error) (any, error) {
 		return nil, fmt.Errorf("Epic response is missing data")
 	}
 	return data, nil
-}
-
-func epicSpecsImport(input map[string]any, id int64) (map[string]any, error) {
-	if raw, exists := input["epic_id"]; exists {
-		source, ok := numberAsInt(raw)
-		if !ok || source != id {
-			return nil, fmt.Errorf("specification bundle belongs to a different Epic")
-		}
-	}
-	specs, ok := input["specs"].([]any)
-	if !ok {
-		groups, valid := input["specs"].(map[string]any)
-		if !valid {
-			return nil, fmt.Errorf("input must contain specs as an array or exported bundle")
-		}
-		specs = []any{}
-		for category, raw := range groups {
-			rows, valid := raw.([]any)
-			if !valid {
-				return nil, fmt.Errorf("invalid specification category %q", category)
-			}
-			for _, raw := range rows {
-				row, valid := raw.(map[string]any)
-				if !valid {
-					return nil, fmt.Errorf("invalid specification in %q", category)
-				}
-				content := row["content"]
-				if object, ok := content.(map[string]any); ok {
-					if text, ok := object["text"].(string); ok {
-						content = text
-					} else {
-						encoded, err := json.MarshalIndent(object, "", "  ")
-						if err != nil {
-							return nil, err
-						}
-						content = string(encoded)
-					}
-				}
-				specs = append(specs, map[string]any{"category": category, "filename": row["filename"], "content": content})
-			}
-		}
-	}
-	if len(specs) == 0 {
-		return nil, fmt.Errorf("no specifications to import")
-	}
-	for _, raw := range specs {
-		row, ok := raw.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("each specification must be an object")
-		}
-		if str(row, "category") == "" || str(row, "filename") == "" {
-			return nil, fmt.Errorf("each specification requires category and filename")
-		}
-		if _, ok := row["content"].(string); !ok {
-			return nil, fmt.Errorf("specification content must be a string")
-		}
-	}
-	return map[string]any{"specs": specs}, nil
 }

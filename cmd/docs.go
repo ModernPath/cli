@@ -18,9 +18,7 @@ var docsSyncCmd = &cobra.Command{
 	Long: `Download the latest documentation and analysis data
 from the ModernPath platform.
 
-This updates the local .modernpath directory with the latest documentation.
-Note: Specifications are synced automatically when selecting an Epic
-via 'modernpath epics specs pull <epic-id> --file specs.json'.`,
+This updates the local .modernpath directory with the latest documentation.`,
 	RunE: runDocsSync,
 }
 

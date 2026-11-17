@@ -39,7 +39,6 @@ func TestEveryAdvertisedLeafResolves(t *testing.T) {
 		{"reverse-engineer", "record"},
 		{"env", "list"}, {"env", "test"},
 		{"dev", "review"}, {"epics", "list"}, {"epics", "get"}, {"epics", "create"},
-		{"epics", "specs", "generate"}, {"epics", "specs", "status"}, {"epics", "specs", "list"}, {"epics", "specs", "pull"}, {"epics", "specs", "push"},
 		{"requirements", "get"}, {"requirements", "create"}, {"requirements", "update"}, {"requirements", "obsolete"}, {"requirements", "set-context"}, {"traces", "list"}, {"test-cases", "create"}, {"test-cases", "list"}, {"test-cases", "get"}, {"test-cases", "update"},
 		{"evidence", "record"}, {"evidence", "latest"},
 		{"initiative", "list"}, {"initiative", "get"}, {"initiative", "create"}, {"initiative", "link"}, {"initiative", "unlink"},
@@ -477,11 +476,6 @@ var leafDispositions = map[string]disposition{
 	"epics create":                      {kind: dispNoCall, reason: "needs-precondition"},
 	"epics update":                      {kind: dispNoCall, reason: "needs-precondition"},
 	"epics retire":                      {kind: dispNoCall, reason: "needs-precondition"},
-	"epics specs list":                  {kind: dispExecute, args: []string{"epics", "specs", "list", "42"}},
-	"epics specs status":                {kind: dispExecute, args: []string{"epics", "specs", "status", "42"}},
-	"epics specs generate":              {kind: dispExecute, args: []string{"epics", "specs", "generate", "42"}},
-	"epics specs pull":                  {kind: dispExecute, args: []string{"epics", "specs", "pull", "42", "--file", "specs.json"}},
-	"epics specs push":                  {kind: dispNoCall, reason: "needs-precondition"},
 	"requirements get":                  {kind: dispExecute, args: []string{"requirements", "get", "10000000-0000-4000-8000-000000000001", "--kind", "system"}},
 	"traces list":                       {kind: dispExecute, args: []string{"traces", "list", "--entity-type", "epic", "--entity-id", "42"}},
 	"test-cases list":                   {kind: dispExecute},
@@ -703,7 +697,6 @@ func seedSmokeWorkspace(t *testing.T, dir string) {
 		}
 	}
 	mk(".modernpath/modernpath/t/architecture/overview.md", "# Doc\n\nbody\n")
-	mk(".modernpath/tasks/42/specs/requirements.md", "# spec\n")
 	mk("README.md", "# r\n")
 	git := func(args ...string) {
 		_ = exec.Command("git", append([]string{"-C", dir}, args...)...).Run()

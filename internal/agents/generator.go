@@ -9,8 +9,6 @@ import (
 	"strings"
 	"text/template"
 	"time"
-
-	"github.com/modernpath/cli/internal/config"
 )
 
 // TransformContext holds all the context needed to generate modernpath_agents.md
@@ -31,11 +29,6 @@ type TransformContext struct {
 
 	// Target system documentation
 	Docs []Document
-
-	// Specifications
-	Specs          []SpecFile
-	SpecCategories []string
-	SpecsRelPath   string
 
 	// Metadata
 	GeneratedAt string
@@ -71,13 +64,6 @@ type SourceDoc struct {
 	Angle    string
 	Summary  string
 	FilePath string // Relative path in .modernpath/source_docs/
-}
-
-// SpecFile represents a specification file
-type SpecFile struct {
-	Name     string
-	Category string
-	Path     string
 }
 
 const agentsMDTemplate = `# ModernPath Transformation Guide
@@ -137,18 +123,6 @@ Documentation for the **target** system you're building:
 No target documentation synced yet. Run ` + "`" + `modernpath docs sync` + "`" + ` to download.
 {{- end }}
 
-### Specifications (.modernpath/{{ if .SpecsRelPath }}{{ .SpecsRelPath }}{{ else }}tasks/{{ end }}/)
-
-Transformation specifications organized by category:
-
-{{- if .SpecCategories }}
-{{- range .SpecCategories }}
-- ` + "`" + `{{ . }}/` + "`" + ` - {{ . | title }} specifications
-{{- end }}
-{{- else }}
-No specifications downloaded yet. Use ` + "`" + `modernpath epics specs pull {{ .EpicID }} --file specs.json` + "`" + ` to download the stored bundle.
-{{- end }}
-
 ## CLI Tools for Additional Context
 
 When you need information beyond the synced files, use these CLI commands:
@@ -191,7 +165,7 @@ modernpath ask "What is the data flow for user login?"
 
 ## Transformation Workflow
 
-1. **Read the specs** in ` + "`" + `.modernpath/{{ if .SpecsRelPath }}{{ .SpecsRelPath }}{{ else }}specs{{ end }}/` + "`" + ` to understand requirements
+1. **Read the saved Epic plan and linked requirements** using the CLI
 2. **Review source docs** in ` + "`" + `.modernpath/source_docs/` + "`" + ` to understand the legacy system
 3. **Review source files** in ` + "`" + `.modernpath/source/` + "`" + ` for each item
 4. **Check target docs** under ` + "`" + `.modernpath/<system-slug>/` + "`" + ` (e.g. ` + "`" + `architecture/` + "`" + `) for target patterns
@@ -324,21 +298,6 @@ func GenerateFromManifest(manifestPath, outputPath string) error {
 			Purpose:    f.Purpose,
 			Summary:    f.Summary,
 		})
-	}
-
-	// Legacy Markdown exports belong to the Epic named by this manifest.
-	modernpathRoot := filepath.Join(filepath.Dir(manifestPath), "..")
-	ctx.SpecsRelPath = config.EpicSpecsRelPath(manifest.EpicID, manifest.EpicName)
-	specsDir := filepath.Join(modernpathRoot, filepath.FromSlash(ctx.SpecsRelPath))
-	if ctx.SpecsRelPath == "" {
-		ctx.SpecsRelPath = "specs"
-	}
-	if entries, err := os.ReadDir(specsDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				ctx.SpecCategories = append(ctx.SpecCategories, entry.Name())
-			}
-		}
 	}
 
 	// Scan for docs

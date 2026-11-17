@@ -589,8 +589,8 @@ The command-specific details below define identity fields and any exceptions.
 - Text lists print a continuation hint to stderr when another page exists.
   Progress and warnings also go to stderr. Errors are reported once and exit
   nonzero. Read commands never prompt. Write commands return a short receipt
-  identifying the affected resource and result; explicit content reads and
-  specification exports may return complete content.
+  identifying the affected resource and result; explicit content reads may
+  return complete content.
 
 #### Requirement references and identity
 
@@ -960,21 +960,15 @@ not paged inventories; use list commands for continuation. `--json` prints
 `modernpath status`) or a server without the search routes (update the server).
 Use `requirements list` for exact status filters and paging.
 
-### Read Epics and exchange specifications
+### Read and update Epics
 
-Epics use IDs. Read, create and update them under the bound System, and exchange
-specifications with the dedicated `epics specs` commands:
+Epics use IDs. Read, create and update them under the bound System:
 
 ```sh
 modernpath epics list
 modernpath epics get <epic-id>
 modernpath epics create --file epic.json
 modernpath epics update <epic-id> --file changes.json
-modernpath epics specs list <epic-id> --full --json
-modernpath epics specs status <epic-id>
-modernpath epics specs generate <epic-id>
-modernpath epics specs pull <epic-id> --file bundle.json
-modernpath epics specs push <epic-id> --file bundle.json
 ```
 
 `epics create` reads an Epic JSON object from `--file` or `--file -`; it
@@ -1043,18 +1037,6 @@ planning contexts the Epic is planned within: `release`, the Epic's own
 Release, and `initiative`, the one Initiative that covers it, each with its
 `planning_context`, every reference with its title, and who last changed it
 and when (`changed_by`, `changed_at`); either is `null` when the Epic has none.
-`specs status` reports the artifact count and counts by stored status;
-`--fields artifacts` selects the artifact metadata.
-`specs list` summarizes the specification count; `--fields specs` or `--full`
-includes content. `specs pull` writes the server's specification bundle as JSON. `specs push` accepts that
-bundle or an object shaped as `{"specs":[{"category":"architecture",
-"filename":"overview.md","content":"# Overview"}]}`. Partial import
-failures return a nonzero status.
-
-Specification generation captures the Epic’s Knowledge Core snapshot when none
-exists and preserves an existing snapshot. It schedules work only after that
-preparation succeeds.
-
 ### Read the Roadmap and apply a Roadmap plan
 
 ```sh
@@ -1585,7 +1567,7 @@ require confirmation. `init --json` needs an explicit System selector unless
 already bound; `new --json` needs explicit creation inputs and `--yes`.
 
 Full file and document reads, `ask` answers and explicit exports such as
-`system-docs pull` or specification pull intentionally return content.
+`system-docs pull` intentionally return content.
 `dev setup codex` currently requires manual MCP configuration and returns an
 actionable error; it does not claim to have written a config.
 `dev run` forwards child-process output and rejects `--json`; its child owns
@@ -1736,7 +1718,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Knowledge | `search`, `ask`, `context`, `read-doc`, `read-file`, `docs`, `system-docs`, `datamodel` |
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
 | requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context`, `requirements contexts` |
-| Epic records and specifications | `epics list`, `epics get`, `epics create`, `epics update`, `epics search`, `epics specs list/status/generate/pull/push` |
+| Epic records | `epics list`, `epics get`, `epics create`, `epics update`, `epics search` |
 | Roadmap | `roadmap show`, `roadmap selection`, `roadmap apply` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and test records | `traces list`, `test-cases list/get/create/update` |

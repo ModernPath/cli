@@ -215,53 +215,6 @@ func TestAgentEpicUpdateForwardsAuthoredPlanningMetadata(t *testing.T) {
 	}
 }
 
-func TestAgentEpicSpecsBundleRoundTripAndPartialFailure(t *testing.T) {
-	failed := false
-	var imported map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/systems":
-			healthyProbe(w, r)
-		case "/api/work/epics/42":
-			w.Write([]byte(`{"data":{"id":42,"target_architecture_id":1}}`))
-		case "/api/work/epics/42/export-specs":
-			w.Write([]byte(`{"data":{"epic_id":42,"specs":{"architecture":[{"filename":"overview.md","content":{"text":"# Working content"}}]}}}`))
-		case "/api/work/epics/42/import-specs":
-			if err := json.NewDecoder(r.Body).Decode(&imported); err != nil {
-				t.Error(err)
-			}
-			if failed {
-				w.Write([]byte(`{"data":{"imported":0,"created":0,"updated":0,"errors":1}}`))
-			} else {
-				w.Write([]byte(`{"data":{"imported":1,"created":0,"updated":1,"errors":0}}`))
-			}
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer server.Close()
-	cobraWorkspace(t, server)
-	file := filepath.Join(t.TempDir(), "working", "specs.json")
-	if _, err := runRoot(t, "epics", "specs", "pull", "42", "--file", file); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "epics", "specs", "push", "42", "--file", file); err != nil {
-		t.Fatal(err)
-	}
-	rows, ok := imported["specs"].([]any)
-	if !ok || len(rows) != 1 {
-		t.Fatalf("invalid import: %#v", imported)
-	}
-	row := rows[0].(map[string]any)
-	if row["content"] != "# Working content" || row["filename"] != "overview.md" || row["category"] != "architecture" {
-		t.Fatalf("changed specification: %#v", row)
-	}
-	failed = true
-	if _, err := runRoot(t, "epics", "specs", "push", "42", "--file", file); err == nil {
-		t.Fatal("partial import reported success")
-	}
-}
-
 func TestAgentEpicErrorsAndScopeDoNotReportSuccess(t *testing.T) {
 	calledWrite := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +238,7 @@ func TestAgentEpicErrorsAndScopeDoNotReportSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 	cobraWorkspace(t, server)
-	for _, args := range [][]string{{"epics", "list"}, {"epics", "plan", "show", "42"}, {"epics", "specs", "generate", "42"}} {
+	for _, args := range [][]string{{"epics", "list"}, {"epics", "plan", "show", "42"}} {
 		if _, err := runRoot(t, args...); err == nil {
 			t.Fatalf("reported success for %v", args)
 		}
@@ -371,5 +324,22 @@ func TestAgentEpicUpdateSendsPlanningFields(t *testing.T) {
 		if !strings.Contains(help, want) {
 			t.Errorf("epics update --help does not name %q", want)
 		}
+	}
+}
+
+func TestRetiredEpicSpecsCommandsAreUnknownBeforeHTTP(t *testing.T) {
+	applyGroupUnknownArgGuard(rootCmd)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusInternalServerError) }))
+	defer server.Close()
+	cobraWorkspace(t, server)
+	for _, op := range []string{"list", "status", "generate", "pull", "push"} {
+		_, err := runRoot(t, "epics", "specs", op, "42")
+		if err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("%s: expected unknown command, got %v", op, err)
+		}
+	}
+	if calls != 0 {
+		t.Errorf("retired commands made %d HTTP requests", calls)
 	}
 }

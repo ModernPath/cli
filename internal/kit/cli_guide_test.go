@@ -113,7 +113,7 @@ func TestG1RegroupGuideGivesTheListsName(t *testing.T) {
 // POST /api/work/epics refuses when `epics create` or `modernpath new` calls
 // it. Phrases are matched without code marks, case or line breaks.
 
-const a4EpicRecordsHeading = "### Read Epics and exchange specifications"
+const a4EpicRecordsHeading = "### Read and update Epics"
 
 func a4EpicRecordsSection(t *testing.T, name string, guide []byte) string {
 	t.Helper()
