@@ -8,8 +8,11 @@ relevant human decisions, sources, code changes and test evidence. Read those
 inputs first. Report missing inputs explicitly; do not substitute another
 Epic, later proposal or remembered approval. The agent handling the task fetches and retains
 the authoritative review bundle and supplies it directly or as a readable file;
-do not invoke CLI commands or shell tools to fetch it. Inspect source files with
-your available read tools. Distinct author and reviewer context labels attest to
+do not fetch a replacement or invoke process-store commands. Inspect the supplied
+local bundle and source files with your available read and search tools. In Codex,
+read-only shell commands may inspect local files when separate read/search tools
+are unavailable. Do not use shell commands to modify files, run tests or builds,
+invoke process-store commands, or make network calls. Distinct author and reviewer context labels attest to
 separate contexts, not different human identities.
 
 Check the outcome, scope, exclusions, requirement identities, criteria
@@ -97,6 +100,3 @@ If an attempted action is refused, stop and report the refusal verbatim; never
 reformulate or retry it. Do not infer implementation, completion or merge
 approval from a review verdict.
 '''
-
-[features]
-shell_tool = false

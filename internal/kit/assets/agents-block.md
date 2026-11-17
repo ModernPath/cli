@@ -44,7 +44,8 @@ the connected repository root. Its checks and output are documented in
 The CLI ships `mp-knowledge-search` for reading local analysis and live
 knowledge documents. The delegated cold review runs in
 the agent definition the CLI installs at `.claude/agents/rdd-cold-reviewer.md`
-(Read, Grep, Glob; no shell); it returns findings and a verdict, and the
+(Claude: Read, Grep, Glob; Codex: inherited shell for read-only local file
+inspection when separate read tools are unavailable); it returns findings and a verdict, and the
 session records them. The reviewer is installed for Claude Code
 (`.claude/agents/*.md`) and Codex (`.codex/agents/*.toml`), which Cursor also
 reads; its role is written for any harness. The former workspace `rdd-audit` and `rdd-reverse-engineer` are

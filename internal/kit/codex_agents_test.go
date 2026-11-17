@@ -42,7 +42,22 @@ func TestCodexAgentsMatchTheirClaudeSource(t *testing.T) {
 		}
 	}
 	reviewer, _ := os.ReadFile(filepath.Join(root, ".codex/agents/rdd-cold-reviewer.toml"))
-	if !bytes.Contains(reviewer, []byte("shell_tool = false")) {
-		t.Error("the Codex reviewer, like the Claude one, has no shell")
+	if bytes.Contains(reviewer, []byte("shell_tool = false")) {
+		t.Error("the Codex reviewer needs the inherited shell tool to inspect local files")
+	}
+}
+
+func TestCodexAgentKeepsShellAvailableForFileInspection(t *testing.T) {
+	for _, toolList := range []string{"Read, Grep, Glob", "Read, Grep, Glob, Bash"} {
+		t.Run(toolList, func(t *testing.T) {
+			md := []byte("---\nname: reviewer\ndescription: Review local files\ntools: " + toolList + "\n---\nInspect files without modifying them.\n")
+			got, err := codexAgentTOML(md)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(got, []byte("shell_tool = false")) {
+				t.Fatal("Claude tool names must not remove Codex's local file inspection tool")
+			}
+		})
 	}
 }

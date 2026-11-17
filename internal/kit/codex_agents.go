@@ -10,8 +10,9 @@ import (
 // and a Markdown body) as a Codex custom agent: one TOML file under
 // .codex/agents/ whose developer_instructions is the same body. Cursor reads
 // both directories, so these two renderings cover Claude Code, Codex and
-// Cursor from one source. Codex has no per-agent tool list; an agent whose
-// Claude tools carry no Bash gets features.shell_tool = false instead.
+// Cursor from one source. Claude's read/search tools are not necessarily
+// available in Codex, so retain the inherited shell for local file inspection.
+// The agent instructions define its read-only responsibilities.
 func codexAgentTOML(md []byte) ([]byte, error) {
 	text := string(md)
 	if !strings.HasPrefix(text, "---\n") {
@@ -40,8 +41,5 @@ func codexAgentTOML(md []byte) ([]byte, error) {
 	fmt.Fprintf(&out, "name = %q\n", fields["name"])
 	fmt.Fprintf(&out, "description = %q\n", fields["description"])
 	out.WriteString("developer_instructions = '''\n" + body + "'''\n")
-	if !strings.Contains(fields["tools"], "Bash") {
-		out.WriteString("\n[features]\nshell_tool = false\n")
-	}
 	return out.Bytes(), nil
 }

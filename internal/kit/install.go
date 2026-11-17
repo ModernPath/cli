@@ -34,7 +34,7 @@ var installTargets = map[string]string{
 	// tooling skills below are not process and remain current.
 	"assets/skills/mp-knowledge-search/SKILL.md": ".claude/skills/mp-knowledge-search/SKILL.md",
 	// REQ-CROSS-409 (EPIC-CLI-020): the delegated cold review's agent
-	// definition — Read, Grep, Glob, no shell, the review rules. Installed in
+	// definition — read-only inspection and the review rules. Installed in
 	// an edited or missing copy is drift like a skill's.
 	"assets/agents/rdd-cold-reviewer.md": ".claude/agents/rdd-cold-reviewer.md",
 	// The Codex rendering of the same reviewer (codexAgentTOML; Cursor reads
