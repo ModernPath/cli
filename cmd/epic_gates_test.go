@@ -455,3 +455,30 @@ func TestReferenceLoopNamesRetireAndConfirmRemoval(t *testing.T) {
 		}
 	}
 }
+
+// TestCase d1f20d48-441f-4122-aa0e-60bb5e389c27 — Tooling 473 / SR-4929
+func TestEpicSingleFindingResolutionPreservesScopeAndReason(t *testing.T) {
+	input := map[string]any{"review_id": "b69d69c6-f8cc-41a6-95c3-ce25e6868abe", "finding_id": "598ad242-d95c-43c4-96ee-8ca37913d893", "reason": "Earlier-cycle concern corrected"}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/api/work/epics/287/resolve-finding" || r.URL.Query().Get("system_id") != "105" || !reflect.DeepEqual(got, input) {
+			t.Errorf("changed single resolution: %s %s %#v", r.Method, r.URL, got)
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":"retained-resolution","phase":"resolution"}}`))
+	}))
+	defer server.Close()
+	data, _ := json.Marshal(input)
+	command := newEpicGatesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 105), nil })
+	command.SetArgs([]string{"resolve", "287", "--file", "-", "--json"})
+	command.SetIn(bytes.NewReader(data))
+	var out bytes.Buffer
+	command.SetOut(&out)
+	if err := command.Execute(); err != nil || requests != 1 || !strings.Contains(out.String(), "retained-resolution") {
+		t.Fatalf("single resolution: %v requests=%d output=%s", err, requests, out.String())
+	}
+}
