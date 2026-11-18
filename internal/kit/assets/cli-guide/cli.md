@@ -759,7 +759,7 @@ evidence stale, including edits within the same second.
 
 Approved or Epic-owned requirements refuse direct edits. Any authorized user
 can return the active Epic to planning with an explicit human decision, then
-apply the operation's lifecycle rules. Published or `DONE` content requires a
+apply the operation's lifecycle rules. Published or `DONE` content uses `requirements proposal save` or a
 follow-up Epic; `OBSOLETE` content stays closed. The server checks these conditions under the planning,
 System and requirement locks.
 
@@ -790,11 +790,11 @@ Use the same update command to set `work_status` to `DONE` after reviewing the
 current requirement, criteria, test results and source traces and obtaining human approval:
 
 ```sh
-# completion.json: {"work_status":"DONE","source":"USER:<completion decision>"}
+# completion.json: {"work_status":"DONE","source":"USER:<completion decision>","no_user_requirement_reason":"Internal maintenance with no applicable UR"}
 modernpath requirements update SR-12-0 --file completion.json --reason "<human completion decision>" --json
 ```
 
-A blocked update reports requirement and criterion blockers without writes. A new completion requires a
+A blocked update reports requirement and criterion blockers without writes. An ordinary new completion requires a
 confirmed, unowned, never-published `PROPOSED` or standalone `IN_PROGRESS`
 requirement, an implementation
 source trace, executable test traces, and current native passing evidence for
@@ -812,7 +812,7 @@ attribution. Current proof remains separate from the accepted version. The Audit
 `acceptance_kind` field, with no Epic. Clients do not supply the classification.
 Existing publication classifications and defaults remain unchanged.
 
-Content and grouping fields may accompany DONE only when unchanged. Save
+Completion cannot contain content, grouping, criteria or Trace edits. Save
 changes first and verify them before completion. Active Epic ownership or
 membership blocks this update. Existing content/grouping update behavior stays
 unchanged; other lifecycle assignments and server-owned fields are refused.
@@ -823,6 +823,93 @@ Legacy DONE rows without versions stay unchanged. An old exact display
 reference remains stale after publication; read the new reference or retry by
 UUID with `--kind`.
 
+
+### Standalone published requirement proposals
+
+A standalone proposal keeps accepted content visible until separate human completion approval.
+The requirement must be published, unowned and outside active Epic work.
+Legacy DONE requirements need no historical version to use this path.
+
+```sh
+modernpath requirements proposal save REQUIREMENT-UUID --kind system --file proposal.json --reason "Explain the proposed revision" --json
+modernpath requirements proposal get REQUIREMENT-UUID --kind system --json
+modernpath requirements proposal cancel REQUIREMENT-UUID --kind system --file cancellation.json --reason "Explain cancellation" --json
+```
+
+`REQUIREMENT-UUID` is the native requirement ID. `--kind` accepts `user` or `system`.
+Mutation files accept these fields:
+
+| Field | Type and constraints |
+| --- | --- |
+| `expected_revision` | Nonnegative current requirement revision, required for save. |
+| `expected_generation` | Nonnegative proposal generation, required. Initial save uses 0. Edits and cancellation use the current positive generation. |
+| `proposal_id` | Server-issued proposal UUID, required for edits and cancellation. |
+| `content` | Save-only object of editable requirement content fields. |
+| `criteria` | Save-only array, at most 200. Status is `active` or `retired`. |
+| `traces` | Save-only array of typed structural additions. |
+| `remove_traces` | Save-only array of named Trace UUIDs. Additions and removals total at most 1000. |
+| Outcome fields | Save-only optional declaration using either mode described below. |
+
+`--reason` is required for save and cancellation. It contains 1 to 2000 bytes of nonblank text.
+Cancellation files contain only `proposal_id` and `expected_generation`.
+GET sends no mutation selectors. It discovers the one open proposal and returns its complete canonical generation.
+The receipt contains scoped requirement identity, `proposal_id`, `proposal_generation`, `baseline_revision`, `content`, `criteria`, `traces` and `remove_traces`.
+No open proposal returns scoped `not_found`, including after cancellation or completion.
+After `proposal_stale`, read the current proposal, reconcile the intended edit and retry using its exact canonical selectors.
+
+Supplied criterion IDs must belong to the selected baseline or immediately previous proposal generation.
+Changed meaning and reactivated criteria receive fresh server-issued IDs. Omitted IDs always create new criteria.
+Equal meaning, reorder and retirement preserve matched IDs. Text comparison preserves whitespace and distinguishes null from empty text.
+A repeated identical save returns the same canonical IDs and generation while that save remains current.
+Save first to obtain new criterion IDs, then add their typed test links in the next save.
+Retained accepted criteria reuse current proof read-only. Their test coverage cannot change inside the proposal.
+Only fresh active proposal criteria accept evidence writes with explicit selectors on each operation:
+
+```json
+{"criterion_id":"CRITERION-UUID","proposal_id":"PROPOSAL-UUID","proposal_generation":2,"tests":[{"test_case_id":"TEST-CASE-UUID","result":"pass"}]}
+```
+
+Batch evidence places selectors on each item. One invalid or read-only item refuses the whole batch.
+`evidence latest --proposal-id PROPOSAL-UUID --proposal-generation 2` selects current proposal proof.
+Retained accepted criteria report `writable:false`. Ordinary reads show accepted proof without a proposal overlay.
+
+New standalone completion declares exactly one mode:
+
+- `user_requirement_id`, `scenario_id` and `supporting_system_requirement_ids` name an applicable same-System UR scenario and actual supporting SR relationships.
+- `no_user_requirement_reason` contains a nonblank explanation that no UR applies. This never waives the changed requirement's criterion proof.
+
+The scenario and changed SRs require complete current proof. A directly completed UR selects its own scenario.
+The server retains the declaration with the authenticated completion decision.
+Missing or invalid declarations return concrete blockers. Already-DONE replay, Epic completion and explicit existing-behavior acceptance retain their existing rules.
+
+A proposal completion file contains `work_status:DONE`, `source:USER:...`, `proposal_id`, `proposal_generation` and the selected outcome fields.
+Use `requirements update REQUIREMENT-UUID --kind system --file completion.json --reason "Human completion decision" --json` only after explicit human approval.
+Completion rechecks the baseline, generation, endpoints and current proof under locks, then publishes one new revision and closes the proposal atomically.
+An applied proposal retry returns its own immutable version receipt, including after another revision publishes.
+Cancellation removes only draft proof and leaves accepted content, proof and versions unchanged.
+
+### Accepted requirement versions
+
+```sh
+modernpath requirements get REQUIREMENT-UUID --kind system --version VERSION-UUID --json
+```
+
+`VERSION-UUID` is one stored accepted version UUID. This read requires native requirement identity and returns the raw frozen snapshot.
+The CLI checks requirement, kind, System and version identity before returning data. Field selection is unavailable for this raw read.
+Content, criteria, structural Traces, revision and approval attribution remain unchanged after later edits, proposals or Trace removal.
+Authorized System members can read accepted versions after requirement soft deletion. Missing historical versions remain unavailable.
+
+### Named implementation Trace removal
+
+```sh
+modernpath traces remove TRACE-UUID --requirement REQUIREMENT-UUID --kind system --reason "Replacement implementation exists" --json
+```
+
+`TRACE-UUID` selects one existing implementation link to code. The reason contains 1 to 2000 bytes of nonblank text.
+A valid active replacement link must remain. Active Epic ownership or an open standalone proposal blocks removal.
+The operation soft-deletes only the named link and records the authenticated actor and reason atomically.
+Other links and accepted snapshots remain unchanged. An identical retry returns `unchanged` without another audit entry.
+The CLI checks the selected Trace and requirement identities in the receipt.
 
 ### Obsolete an unpublished requirement
 

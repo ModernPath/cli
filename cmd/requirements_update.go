@@ -36,7 +36,7 @@ Active Epic-owned work must return to planning first.
 On editable drafts, unchanged content fields alongside a grouping change also
 preserve evidence; requests containing content fields still require a draft.
 Any workspace member may edit. --reason optionally records why in the Audit Trail.
-Unchanged values write nothing. Published content changes need a follow-up Epic.
+Unchanged values write nothing. Published content changes use requirements proposal save; accepted content stays visible.
 For a standalone start, send only work_status IN_PROGRESS in the JSON file; it
 cannot be combined with content, criteria, traces or source. The optional
 --reason flag records why the start was requested. If the server prompts for
@@ -45,11 +45,15 @@ The server owns mandatory moves; an optional Keep choice applies only to
 requirements already in another delivery Release. Start leaves revision 0 and
 does not publish content. IN_REVIEW is not supported here.
 For verified completion, send work_status DONE. New completion requires a
-USER: source and --reason; a refused update reports its blockers. The requirement must be confirmed, unowned, never-published
+USER: source and --reason; a refused update reports its blockers. For ordinary new
+completion, the requirement must be confirmed, unowned, never-published
 PROPOSED or standalone IN_PROGRESS with at least one active criterion, active scoped implementation/test source
 traces and complete current passing proof for every active criterion. Independently recorded passing pairs combine;
 revision numbers and historical outcomes do not determine readiness. Changed content
-must be saved before completion.
+must be saved before completion. Published proposals require proposal_id and
+proposal_generation. New standalone completion declares either no_user_requirement_reason
+or user_requirement_id, scenario_id and supporting_system_requirement_ids.
+A no-UR reason never waives current proof; human completion remains separate.
 Completion publishes an immutable version and increments revision once. Retrying an
 unowned DONE UUID returns unchanged without new approval or fabricated history.
 UUIDs require --kind user or system; an exact display reference infers its kind.`,
@@ -188,6 +192,14 @@ UUIDs require --kind user or system; an exact display reference infers its kind.
 // Completion metadata belongs only to updates; creation retains its content contract.
 func validateRequirementUpdate(payload map[string]any, kind string, completion bool) error {
 	content := make(map[string]any)
+	if completion {
+		if err := validateProposalSelection(payload); err != nil {
+			return err
+		}
+		if err := validateSmallChangeOutcome(payload, false); err != nil {
+			return err
+		}
+	}
 	for key, value := range payload {
 		switch key {
 		case "work_status":
@@ -202,7 +214,14 @@ func validateRequirementUpdate(payload map[string]any, kind string, completion b
 			if !ok || !strings.HasPrefix(source, "USER:") || strings.TrimSpace(strings.TrimPrefix(source, "USER:")) == "" {
 				return fmt.Errorf("source must name a USER decision")
 			}
+		case "proposal_id", "proposal_generation", "no_user_requirement_reason", "user_requirement_id", "scenario_id", "supporting_system_requirement_ids":
+			if !completion {
+				return fmt.Errorf("%s is only valid for completion", key)
+			}
 		case "criteria", "traces":
+			if completion {
+				return fmt.Errorf("completion cannot contain content, criteria or traces")
+			}
 			if err := validateUpdateArray(key, value); err != nil {
 				return err
 			}
@@ -211,6 +230,9 @@ func validateRequirementUpdate(payload map[string]any, kind string, completion b
 		}
 	}
 	if len(content) > 0 {
+		if completion {
+			return fmt.Errorf("completion cannot contain content edits")
+		}
 		return validateRequirementContent(content, kind, false)
 	}
 	if len(payload) == 0 {
@@ -322,6 +344,13 @@ func validateCompletionReceipt(data map[string]any, kind, requested string, syst
 	if err != nil || refRevision != revision || !validRevision || revision < 0 || sid != int64(systemID) || data["requirement_kind"] != kind+"_requirement" || !requirementUUIDPattern.MatchString(str(data, "id")) || strings.TrimSpace(str(data, "title")) == "" {
 		return invalid
 	}
+	if submitted["proposal_id"] != nil {
+		actual, valid := numberAsInt(data["proposal_generation"])
+		expected, _ := numberAsInt(submitted["proposal_generation"])
+		if data["proposal_id"] != submitted["proposal_id"] || !valid || actual != expected || !requirementUUIDPattern.MatchString(str(data, "version_id")) {
+			return invalid
+		}
+	}
 	result := str(data, "result")
 	if requirementUUIDPattern.MatchString(requested) {
 		if !strings.EqualFold(str(data, "id"), requested) {
@@ -348,11 +377,48 @@ func validateCompletionReceipt(data map[string]any, kind, requested string, syst
 		}
 		actor, _ := numberAsInt(data["approved_by_id"])
 		_, dateErr := time.Parse(time.RFC3339Nano, str(data, "approved_at"))
-		if revision != 1 || !requirementUUIDPattern.MatchString(str(data, "version_id")) || actor <= 0 || dateErr != nil || strings.TrimSpace(str(data, "reason")) == "" {
+		if (revision != 1 && submitted["proposal_id"] == nil) || !requirementUUIDPattern.MatchString(str(data, "version_id")) || actor <= 0 || dateErr != nil || strings.TrimSpace(str(data, "reason")) == "" {
 			return invalid
 		}
 	} else if data["version_id"] != nil && !requirementUUIDPattern.MatchString(str(data, "version_id")) {
 		return invalid
+	}
+	return nil
+}
+
+// A missing declaration remains a server decision: already-DONE retries need none.
+func validateSmallChangeOutcome(payload map[string]any, required bool) error {
+	reason, noUR := payload["no_user_requirement_reason"]
+	_, ur := payload["user_requirement_id"]
+	_, scenario := payload["scenario_id"]
+	_, supporting := payload["supporting_system_requirement_ids"]
+	if noUR {
+		text, ok := reason.(string)
+		if !ok || !validSmallChangeReason(text) || ur || scenario || supporting {
+			return fmt.Errorf("use one nonblank no_user_requirement_reason or one user requirement scenario with supporting system requirements")
+		}
+	} else if ur || scenario || supporting {
+		if !requirementUUIDPattern.MatchString(str(payload, "user_requirement_id")) || !requirementUUIDPattern.MatchString(str(payload, "scenario_id")) || !supporting {
+			return fmt.Errorf("user outcome requires user_requirement_id, scenario_id and supporting_system_requirement_ids")
+		}
+		if err := validateUUIDArray("supporting_system_requirement_ids", payload["supporting_system_requirement_ids"]); err != nil {
+			return err
+		}
+	} else if required {
+		return fmt.Errorf("name a user outcome or no_user_requirement_reason")
+	}
+	return nil
+}
+
+func validateProposalSelection(payload map[string]any) error {
+	_, hasID := payload["proposal_id"]
+	_, hasGeneration := payload["proposal_generation"]
+	if !hasID && !hasGeneration {
+		return nil
+	}
+	generation, valid := numberAsInt(payload["proposal_generation"])
+	if !requirementUUIDPattern.MatchString(str(payload, "proposal_id")) || !hasGeneration || !valid || generation <= 0 {
+		return fmt.Errorf("proposal_id and positive proposal_generation must be supplied together")
 	}
 	return nil
 }

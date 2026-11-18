@@ -392,8 +392,8 @@ recorded evidence or the human's completion decision.
    observable criteria, or update eligible unowned, unpublished drafts, through
    supported CLI operations; read them back. Cover every changed clause and
    retain its source, boundary and expected observation. Do not edit accepted
-   versions or active Epic-owned content: published behavior changes need a
-   supported proposal/revision path or a follow-up requirement; active Epic-owned
+   versions or active Epic-owned content: published behavior changes use
+   `requirements proposal save` or a follow-up requirement; active Epic-owned
    work stays within its approved Epic and evidence obligations.
 2. Establish scoped implementation and test Traces and link each criterion
    to its required TestCases before execution. Use actual source and test
@@ -415,6 +415,36 @@ recorded evidence or the human's completion decision.
    revision increment; an identical retry must not publish twice. This is the
    lightweight completion path without an Epic. Do not use existing-behavior
    acceptance to disguise changed behavior or manufacture an Epic approval.
+
+For each new standalone completion, declare exactly one user outcome mode:
+`user_requirement_id`, `scenario_id` and `supporting_system_requirement_ids`,
+or a nonblank `no_user_requirement_reason`. Use an applicable same-System UR
+scenario and actual typed supporting SR relationships. Verify current scenario
+and changed-SR proof. A no-UR reason never waives the changed requirement's
+criterion proof. Do not invent a UR relationship to pass the check. The server
+retains the declaration with the authenticated completion decision.
+Already-DONE replay, Epic completion and explicit existing-behavior acceptance
+retain their existing rules.
+
+For a published unowned requirement, save a standalone proposal with the
+current `expected_revision` and `expected_generation` zero. The accepted
+content stays visible. Read the canonical proposal using `requirements proposal
+get <UUID> --kind user|system`. Save edits and cancellation with its
+`proposal_id` and `expected_generation`. After `proposal_stale`, discover the
+current open proposal again and reconcile the intended edit before retrying.
+Use the exact `proposal_id` and `proposal_generation` on each evidence operation
+and on the separately approved DONE update. New criteria receive server-issued
+IDs. Retained accepted criteria reuse current proof read-only in the proposal.
+Record focused RED/GREEN and proportional regression evidence, without copying
+old proof into changed criteria. A cancelled proposal changes no accepted content.
+
+Read the exact accepted snapshot with `requirements get <UUID> --kind user|system
+--version <VERSION-UUID>` after publication. Earlier accepted versions stay
+unchanged. Missing historical versions remain unavailable. Retire an outdated
+implementation link explicitly with `traces remove <TRACE-UUID> --requirement
+<UUID> --kind user|system --reason <REASON>` only after a valid replacement
+exists. Removal preserves accepted history and refuses active Epic or open
+proposal work. These operations require no delivery Epic.
 
 Check capabilities before relying on them. If the CLI cannot write criteria,
 retain applicable test evidence, propose a published requirement change or

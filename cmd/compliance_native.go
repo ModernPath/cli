@@ -31,6 +31,7 @@ func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
 	kind := ""
 	cmd.Flags().StringVar(&kind, "kind", "", "requirement kind for UUIDs: user or system (*_requirement names also accepted)")
 	cmd.Flags().Bool("json", false, "Emit selected fields as JSON")
+	cmd.Flags().String("version", "", "read one raw immutable accepted version by UUID")
 	addRecordReadFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		isUUID := requirementUUIDPattern.MatchString(args[0])
@@ -50,6 +51,35 @@ func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
 				return fmt.Errorf("--kind conflicts with requirement reference %q", args[0])
 			}
 			effectiveKind = inferred
+		}
+		if cmd.Flags().Changed("version") {
+			version, _ := cmd.Flags().GetString("version")
+			if !isUUID || !requirementUUIDPattern.MatchString(version) {
+				return fmt.Errorf("--version requires native requirement and version UUIDs")
+			}
+			for _, flag := range []string{"fields", "full"} {
+				if cmd.Flags().Changed(flag) {
+					return fmt.Errorf("--version returns the raw immutable snapshot; %s selection is not supported", flag)
+				}
+			}
+			env, err := load()
+			if err != nil {
+				return err
+			}
+			if env.SystemID <= 0 {
+				return fmt.Errorf("version reads require a bound System")
+			}
+			route := fmt.Sprintf("/api/v1/systems/%d/requirements/%s/%s/versions/%s", env.SystemID, effectiveKind, url.PathEscape(args[0]), url.PathEscape(version))
+			body, err := nativeGetData(env, route, "requirement version", false)
+			if err != nil {
+				return err
+			}
+			data := body["data"].(map[string]any)
+			sid, _ := numberAsInt(data["system_id"])
+			if sid != int64(env.SystemID) || data["requirement_kind"] != effectiveKind+"_requirement" || !strings.EqualFold(str(data, "requirement_id"), args[0]) || !strings.EqualFold(str(data, "id"), version) {
+				return fmt.Errorf("version response does not confirm requested requirement and version identity")
+			}
+			return writeRecord(cmd, data)
 		}
 		allowed := requirementDetailFields(effectiveKind)
 		if err := validateRecordSelection(cmd, allowed); err != nil {
@@ -208,7 +238,7 @@ no direct trace write.`}
 
 func newTraceCommands(load func() (*cliEnv, error)) *cobra.Command {
 	root := &cobra.Command{Use: "traces", Short: "Read trace relationships"}
-	root.AddCommand(newTraceListCommand(load))
+	root.AddCommand(newTraceListCommand(load), newTraceRemoveCommand(load))
 	return root
 }
 
@@ -415,6 +445,25 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if items, batch := payload["items"]; batch {
+			if _, top := payload["proposal_id"]; top {
+				return fmt.Errorf("batch proposal selectors belong on each item")
+			}
+			if _, top := payload["proposal_generation"]; top {
+				return fmt.Errorf("batch proposal selectors belong on each item")
+			}
+			if rows, ok := items.([]any); ok {
+				for _, raw := range rows {
+					if item, ok := raw.(map[string]any); ok {
+						if err := validateProposalSelection(item); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		} else if err := validateProposalSelection(payload); err != nil {
+			return err
+		}
 		payload["system_id"] = env.SystemID
 		route := "/api/v1/sync/evidence"
 		if _, batch := payload["items"]; batch {
@@ -432,6 +481,9 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 			return fmt.Errorf("evidence response is missing its data object")
 		}
 		data, _ := body["data"].(map[string]any)
+		if err := validateEvidenceProposalReceipt(payload, data); err != nil {
+			return err
+		}
 		return writeRecord(cmd, data)
 	}})
 	root.Commands()[0].Flags().String("file", "", "evidence JSON file (required)")
@@ -446,12 +498,23 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 	c.Flags().String("outcome", "", "filter outcome: pass, fail, error, inconclusive, skip")
 	c.Flags().String("since", "", "include results recorded at or after RFC3339 time")
 	c.Flags().String("until", "", "include results recorded before RFC3339 time")
+	c.Flags().String("proposal-id", "", "select the current proposal UUID")
+	c.Flags().Int64("proposal-generation", 0, "select the exact current proposal generation")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		env, err := load()
 		if err != nil {
 			return err
 		}
 		p := url.Values{"system_id": {fmt.Sprint(env.SystemID)}, "page": {"true"}}
+		if cmd.Flags().Changed("proposal-id") || cmd.Flags().Changed("proposal-generation") {
+			id, _ := cmd.Flags().GetString("proposal-id")
+			generation, _ := cmd.Flags().GetInt64("proposal-generation")
+			if err := validateProposalSelection(map[string]any{"proposal_id": id, "proposal_generation": generation}); err != nil {
+				return err
+			}
+			p.Set("proposal_id", id)
+			p.Set("proposal_generation", fmt.Sprint(generation))
+		}
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit < 1 || limit > 200 {
 			return fmt.Errorf("--limit must be between 1 and 200")
@@ -469,7 +532,7 @@ func newEvidenceCommand(load func() (*cliEnv, error)) *cobra.Command {
 		}
 		data, _ := body["data"].(map[string]any)
 		return writeNativePage(cmd, data, "targets", func(item map[string]any) (map[string]any, error) {
-			return selectKeys(item, []string{"id", "criterion_id", "target_id", "result", "state", "updated_by_id", "updated_at"}), nil
+			return selectKeys(item, []string{"id", "criterion_id", "target_id", "result", "state", "updated_by_id", "updated_at", "proposal_id", "proposal_generation", "writable", "stored_outcomes"}), nil
 		})
 	}
 	root.AddCommand(c)
@@ -487,6 +550,11 @@ TestCase must verify the criterion and have a scoped source Trace. Outcomes are
 pass, fail, error, skip or inconclusive. The latest committed outcome for each
 criterion and TestCase is current, including failures; identical retries retain
 result and Trace identities. Read current proof with evidence latest.
+For a standalone proposal, put proposal_id and proposal_generation on each
+operation (each batch item). Only fresh active proposal criteria are writable;
+retained accepted criteria reuse current proof read-only. evidence latest accepts
+--proposal-id and --proposal-generation; ordinary reads show accepted proof.
+
 `
 
 func lenAny(value any) int { rows, _ := value.([]any); return len(rows) }
@@ -675,4 +743,35 @@ func decodeObject(input io.Reader) (map[string]any, error) {
 		return nil, fmt.Errorf("input must be a JSON object")
 	}
 	return object, nil
+}
+
+func validateEvidenceProposalReceipt(input, data map[string]any) error {
+	if rows, ok := input["items"].([]any); ok {
+		receipts, _ := data["items"].([]any)
+		for i, raw := range rows {
+			item, ok := raw.(map[string]any)
+			if !ok || item["proposal_id"] == nil {
+				continue
+			}
+			if i >= len(receipts) {
+				return fmt.Errorf("evidence response is missing selected proposal receipts")
+			}
+			receipt, ok := receipts[i].(map[string]any)
+			if !ok {
+				return fmt.Errorf("invalid evidence proposal receipt")
+			}
+			if err := validateEvidenceProposalReceipt(item, receipt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if input["proposal_id"] != nil {
+		expected, _ := numberAsInt(input["proposal_generation"])
+		actual, valid := numberAsInt(data["proposal_generation"])
+		if input["proposal_id"] != data["proposal_id"] || !valid || expected != actual {
+			return fmt.Errorf("evidence response does not confirm selected proposal identity and generation")
+		}
+	}
+	return nil
 }

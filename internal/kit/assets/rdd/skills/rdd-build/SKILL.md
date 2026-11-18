@@ -75,3 +75,24 @@ Modernization runs are separate historical captures made after execution with
 `modernpath modernization record` under an authorized Modernization Release.
 Their ModernizationTestResults do not replace, satisfy or invalidate current
 criterion proof or ordinary readiness.
+
+## Standalone small changes
+
+For new standalone completion, retain one applicable same-System
+`user_requirement_id`, `scenario_id` and `supporting_system_requirement_ids`,
+or one nonblank `no_user_requirement_reason`. Verify the actual typed
+relationships and current scenario and changed-SR proof. The no-UR reason
+never waives criterion proof. Use focused RED/GREEN and proportional regressions.
+Explicit human completion remains separate from implementation and evidence.
+
+For published unowned content, use `requirements proposal save`, then discover
+canonical IDs with selector-free `requirements proposal get`. After a stale
+mutation, read the current proposal and reconcile before retrying. Select its
+exact `proposal_id` and `proposal_generation` on each evidence operation and
+approved DONE update. Retained accepted criteria reuse current proof read-only.
+Ordinary reads show accepted content while the proposal is open. Cancellation
+preserves it. Active Epic work stays on its approved Epic path.
+After publication, use `requirements get <UUID> --kind user|system --version
+<VERSION-UUID>` to inspect the immutable accepted snapshot. Missing historical
+versions remain unavailable. Use `traces remove` only for a named outdated
+implementation link with a valid replacement and an attributed reason.
