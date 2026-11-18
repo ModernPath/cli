@@ -26,8 +26,8 @@ import (
 )
 
 type roadmapRequest struct {
-	method, path string
-	body         map[string]any
+	method, path, query string
+	body                map[string]any
 }
 
 // roadmapServer answers the reachability probe and records every other
@@ -42,7 +42,7 @@ func roadmapServer(t *testing.T, status int, body string) (*httptest.Server, *[]
 		}
 		var decoded map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&decoded)
-		seen = append(seen, roadmapRequest{method: r.Method, path: r.URL.Path, body: decoded})
+		seen = append(seen, roadmapRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: decoded})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -496,4 +496,57 @@ func TestRoadmapShowJSONCarriesDoneDoneWhenAndWaitingFor(t *testing.T) {
 			}
 		}
 	}
+}
+
+// 38568a46-9be6-451a-b398-b48f910cc69a
+func TestRoadmapStatusDiagnostics(t *testing.T) {
+	const path = "/api/v1/systems/1/roadmap/status/diagnostics"
+	const id = "11111111-1111-4111-8111-111111111111"
+	const reply = `{"data":{"id":"11111111-1111-4111-8111-111111111111","status":"failed","recorded_status":"drafting","inserted_at":"2026-11-18T10:00:00Z","updated_at":"2026-11-18T10:00:00Z","failure":{"category":"draft_stale","summary":"The status draft did not finish in time."},"job":{"state":"discarded","attempt":3,"max_attempts":3}}}`
+	t.Run("selected ID text", func(t *testing.T) {
+		server, seen := roadmapServer(t, http.StatusOK, reply)
+		cobraWorkspace(t, server, 1)
+		out, err := runRoot(t, "roadmap", "status-diagnostics", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := requireOneRoadmapRequest(t, seen, http.MethodGet, path)
+		if req.query != "update_id="+id {
+			t.Fatalf("query = %s", req.query)
+		}
+		for _, want := range []string{id, "failed", "drafting", "2026-11-18T10:00:00Z", "did not finish in time", "3/3"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output lacks %q: %s", want, out)
+			}
+		}
+	})
+	t.Run("latest JSON", func(t *testing.T) {
+		server, seen := roadmapServer(t, http.StatusOK, reply)
+		cobraWorkspace(t, server, 1)
+		out, err := runRoot(t, "roadmap", "status-diagnostics", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := requireOneRoadmapRequest(t, seen, http.MethodGet, path)
+		if req.query != "" {
+			t.Fatalf("query = %s", req.query)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil || got["status"] != "failed" {
+			t.Fatalf("invalid diagnostic JSON: %s, %v", out, err)
+		}
+	})
+	t.Run("refusal and invalid ID", func(t *testing.T) {
+		server, seen := roadmapServer(t, http.StatusNotFound, `{"error":"not_found"}`)
+		cobraWorkspace(t, server, 1)
+		if _, err := runRoot(t, "roadmap", "status-diagnostics", "invalid"); err == nil || !strings.Contains(err.Error(), "UUID") {
+			t.Fatalf("expected invalid UUID error, got %v", err)
+		}
+		if len(*seen) != 0 {
+			t.Fatalf("unexpected request: %#v", *seen)
+		}
+		if _, err := runRoot(t, "roadmap", "status-diagnostics", id); err == nil || !strings.Contains(err.Error(), "404") {
+			t.Fatalf("expected a 404 refusal, got %v", err)
+		}
+	})
 }

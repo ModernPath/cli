@@ -34,8 +34,56 @@ context, a kind of work, and the Epics that deliver it. 'roadmap show' reads it;
 Initiative's keep, change and drop decisions, to a file; 'roadmap apply'
 applies a Roadmap plan from a file, on a person's word, with the checks Chat's
 plan card runs.`}
-	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load))
+	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load))
 	return parent
+}
+
+// SR-4950-0: read diagnostics without requesting or changing a draft.
+func newRoadmapStatusDiagnosticsCommand(load func() (*cliEnv, error)) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "status-diagnostics [draft-id]",
+		Short: "Read safe diagnostics for a Roadmap status draft",
+		Long:  "Read a status draft in the bound System, or its latest draft when no UUID is given. Shows state, timestamps, a safe failure summary and job attempts when available.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && !requirementUUIDPattern.MatchString(args[0]) {
+				return fmt.Errorf("draft ID must be a UUID")
+			}
+
+			env, err := roadmapEnv(load)
+			if err != nil {
+				return err
+			}
+			path := "/api/v1/systems/" + strconv.Itoa(env.SystemID) + "/roadmap/status/diagnostics"
+			if len(args) == 1 {
+				path += "?update_id=" + args[0]
+			}
+			status, body, err := env.get(path)
+			data, err := roadmapData(status, body, err)
+			if err != nil {
+				return err
+			}
+			if machine, _ := cmd.Flags().GetBool("json"); machine {
+				return writeCommandJSON(cmd, data)
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Roadmap status draft %s\nStatus: %s (recorded: %s)\nCreated: %s\nUpdated: %s\n",
+				str(data, "id"), str(data, "status"), str(data, "recorded_status"),
+				str(data, "inserted_at"), str(data, "updated_at"))
+			if failure, ok := data["failure"].(map[string]any); ok {
+				fmt.Fprintf(out, "Failure: %s (%s)\n", str(failure, "summary"), str(failure, "category"))
+			}
+			if job, ok := data["job"].(map[string]any); ok {
+				fmt.Fprintf(out, "Job: %s, attempt %v/%v\n", str(job, "state"), job["attempt"], job["max_attempts"])
+			} else {
+				fmt.Fprintln(out, "Job details unavailable.")
+			}
+			return nil
+		},
+	}
+	command.Flags().Bool("json", false, "Emit JSON")
+	return command
 }
 
 func newRoadmapShowCommand(load func() (*cliEnv, error)) *cobra.Command {
