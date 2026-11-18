@@ -28,7 +28,11 @@ repository.
    lifecycle, linked requirements, recent evidence and completion state.
    Read the planning contexts of the Epic's Release and Initiative with
    `epics get <id> --fields planning_contexts` (or `roadmap show`); the Epic
-   is planned and built within them.
+   is planned and built within them. Read the System's Active Engineering
+   Constraints at the same moment with `constraints list --state active`; the
+   Epic is held to them as written, by ref and revision. Open each one the
+   change may touch with `constraints get <ref>`; the Active text is the
+   current revision, not the row text when a change is pending.
    Before planning, read the Roadmap with `modernpath roadmap show`: it lists
    each Initiative with the Epics it covers. Note the context of the
    Initiative the Epic is linked to; the Epic's requirements share it.

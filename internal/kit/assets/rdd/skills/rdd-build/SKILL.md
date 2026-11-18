@@ -16,7 +16,11 @@ saved plan and proposed content has human implementation approval. Confirm the E
 requirement IDs and remain inside approved scope. Before the first change,
 read the planning contexts of the Epic's Release and Initiative again
 (`epics get <id> --fields planning_contexts`) and build within them; a question
-they leave open goes to the human. Before building, read the changes since
+they leave open goes to the human. Read the System's Active Engineering
+Constraints beside them with `constraints list --state active` and open each
+one the change may touch with `constraints get <ref>`; the Active text is the
+current revision, not the row text when a change is pending. The build keeps
+to them as written. Before building, read the changes since
 approval with `epics gates presentation <id> --json` (`changes_since_approval`):
 a team member may have opened one of those planning contexts for change and
 edited it since the approval. Tell the approver about a change the plan did not

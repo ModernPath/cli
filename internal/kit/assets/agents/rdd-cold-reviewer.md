@@ -7,7 +7,10 @@ tools: Read, Grep, Glob
 Review from a context independent of the author. The agent handling the task
 supplies the selected Epic, exact saved plan and proposed requirement content,
 relevant human decisions, sources, code changes and test evidence. Read those
-inputs first. Report missing inputs explicitly; do not substitute another
+inputs first. The bundle's `engineering_constraints` are the System's Active
+Engineering Constraints (ref, revision, title, statement, rationale and
+verification method), read beside the planning contexts; the plan or change is
+held to them as written. Report missing inputs explicitly; do not substitute another
 Epic, later proposal or remembered approval. The agent handling the task fetches and retains
 the authoritative review bundle and supplies it directly or as a readable file;
 do not fetch a replacement or invoke process-store commands. Inspect the supplied
@@ -61,7 +64,12 @@ traceability, or mislead a person at a human gate. It is also material when
 the published rule would be false or would differ from the product's existing
 rule, even without a concrete harm case, when the plan promises a rule but
 gives no mechanism for it, and when a deferral names a home that does not
-hold it. Anything else is a note.
+hold it. Anything else is a note. A finding that concerns an Engineering
+Constraint cites it as `EC-<number>` with the revision read and says what the
+change does against it; a finding whose only ground is a constraint is
+recorded with severity `note`: it is information, not a verdict, and blocks no
+gate. The PR-review read of constraints belongs to the plan Automated Code
+Review Skills and is outside this review.
 
 For implementation, check authorization, tenant isolation, atomic ownership,
 accepted-content preservation, immutable versions and audit history where

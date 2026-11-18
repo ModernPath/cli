@@ -91,7 +91,12 @@ the review that follows them. Before the new review of a requested revision:
    behavior and recovery. Read the planning contexts of the Epic's Release and
    Initiative again before planning (`epics get <id> --fields planning_contexts`),
    plan within them, and name in the plan the decisions and assumptions it
-   relies on and any it conflicts with.
+   relies on and any it conflicts with. Read the System's Active Engineering
+   Constraints at the same moment with `constraints list --state active`, open
+   each one the change may touch with `constraints get <ref>` (the Active text
+   is the current revision, not the row text when a change is pending), and
+   name in the reconnaissance each Active constraint the change touches by its
+   EC ref; a change that contradicts one is a question for the human.
 5. Define behavior boundaries, acceptance scenarios, code/test targets,
    expected RED assertions, focused and proportional regression checks,
    operational and security risks, and the requirement content that completion would publish.

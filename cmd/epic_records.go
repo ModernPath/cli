@@ -21,6 +21,9 @@ var epicPublicFields = []string{
 	"backlog",
 	// Epic 325 (A2): the planning contexts of the Epic's Release and Initiative.
 	"planning_contexts",
+	// Epic 437 (SR-4921): the System's Active Engineering Constraints, each with
+	// cited_by_review and accepted_since_approval for this Epic.
+	"engineering_constraints",
 	// Epic 327 (A4): the Initiative on the Roadmap that covers the Epic.
 	"covered_by",
 }

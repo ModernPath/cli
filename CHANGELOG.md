@@ -19,6 +19,19 @@
   `constraints <verb> (server <status>): <reason>`. The reference gains the
   commands, the file shape, a "Constraints" pass-table row and the refusal
   glossary rows. Requires the matching Core engineering-constraints routes.
+- `epics get` accepts `engineering_constraints` in `--fields` and includes it
+  with `--full`: the System's Active Engineering Constraints as the Epic
+  detail serves them, each with `cited_by_review` and
+  `accepted_since_approval` for the Epic. The installed kit reads them where
+  it reads the planning contexts: `rdd-start`, `rdd-plan` and `rdd-build` name
+  `constraints list --state active` and `constraints get <ref>`, `PROCESS.md`
+  names the read moments and the bundle field, and `rdd-cold-review` and the
+  `rdd-cold-reviewer` agent read `engineering_constraints` from the review
+  bundle and cite a constraint as `EC-<number>` with the revision read; a
+  finding whose only ground is a constraint is a `note`. The pass table of the
+  reference names the read in its Session entry, Plan, Cold review and
+  Implement rows. Requires the matching Core Epic detail and review bundle
+  field.
 - `epics build record <id> --file <build handoff>` records a delegated build
   in one write: implements traces to the changed files, verifies traces to the
   test files, the plan's criterion outcomes read from TRX, JUnit XML and

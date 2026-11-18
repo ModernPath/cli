@@ -38,6 +38,14 @@ Check that:
   Initiative that the review bundle carries (`planning_contexts`) and names the
   decisions and assumptions it relies on; a plan that contradicts one of them
   is a material finding;
+- the plan or change keeps to the Active Engineering Constraints the review
+  bundle carries (`engineering_constraints`: ref, revision, title, statement,
+  rationale and verification method), read beside the planning contexts; a
+  finding that concerns one cites it as `EC-<number>` with the revision read
+  and says what the change does against it; a finding whose only ground is a
+  constraint is recorded with severity `note`: it is information, not a
+  verdict, and blocks no gate; the PR-review read of constraints belongs to
+  the plan Automated Code Review Skills and is outside this skill;
 - every reader and screen of changed data, behavior at the largest expected
   input, and the privileges and bypasses of any database or security
   mechanism the plan relies on are covered;

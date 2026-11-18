@@ -92,6 +92,7 @@ var mcpSurfaceTools = []string{
 	"start_conversation", "list_conversations", "chat", "list_epics", "get_epic",
 	"query_requirements", "trace_requirement", "chat_result", "search_epics",
 	"search_requirements", "context_search", "list_systems",
+	"query_constraints", "get_constraint",
 }
 
 func TestDevPromptNamesOnlyMCPTools(t *testing.T) {

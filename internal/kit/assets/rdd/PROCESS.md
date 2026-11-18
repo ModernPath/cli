@@ -147,6 +147,19 @@ again before it plans and before it builds, with
 `epics get <id> --fields planning_contexts` or `roadmap show`; the context hook
 does not carry them.
 
+A System's Active Engineering Constraints are read at the same moments: at
+session entry and before the agent plans and before it builds, with
+`constraints list --state active`, and each one the change may touch with
+`constraints get <ref>`; the Active text is the current revision, not the row
+text when a change is pending. The review bundle carries them as
+`engineering_constraints` (ref, revision, title, statement, rationale and
+verification method), and the cold review reads them beside the planning
+contexts. Unlike a planning context, a constraint accepted or changed after a
+plan review does not outdate that review. A finding that cites a constraint
+names it as `EC-<number>` with the revision read and is information, not a
+verdict; a finding whose only ground is a constraint is recorded with severity
+`note` and blocks no gate.
+
 A planning context locks when the business owner agrees it and at the first
 approval of an Epic that reads it. When the business owner agrees the Now plan
 on the Roadmap, the planning context of each Initiative in it locks, and so
