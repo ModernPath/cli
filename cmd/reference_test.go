@@ -163,6 +163,8 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 		"reverse-engineer record", "reverse-engineer check", "reverse-engineer review", "reverse-engineer accept",
 		"evidence record", "evidence latest", "traces list",
 		"test-cases create", "backlog create", "backlog update", "epics create", "epics update",
+		"constraints create", "constraints update", "constraints discard", "constraints delete",
+		"constraints accept", "constraints deactivate", "constraints list", "constraints get",
 	} {
 		if !strings.Contains(loop, "`"+path) && !strings.Contains(loop, "`"+strings.TrimPrefix(path, "epics plan ")) {
 			t.Errorf("the phase table never names %q", path)
@@ -218,6 +220,65 @@ func TestCLIReferenceOmitsRepositoryInternals(t *testing.T) {
 		if strings.Contains(reference, internal) {
 			t.Errorf("customer command reference exposes repository internals: %q", internal)
 		}
+	}
+}
+
+// Epic 436 (SR-4917 criterion 8e973534, SR-4918 criterion b278d386): the
+// reference documents the eight `constraints` commands, the one file shape
+// with an example, the "Constraints" row of the pass table and the glossary
+// rows of the lifecycle refusals, so the rdd-constraint skill and the person
+// accepting a rule find the how here.
+// TestCase 88e91340-58e8-4fdf-a93f-7a0c419c6b72
+func TestCLIReferenceDocumentsTheConstraintsCommands(t *testing.T) {
+	ref := renderCLIReference(rootCmd)
+	loop := ref[:strings.Index(ref, "## Global flags")]
+	leaves := []string{"create", "update", "discard", "delete", "accept", "deactivate", "list", "get"}
+	for _, leaf := range leaves {
+		if !strings.Contains(ref, "## `modernpath constraints "+leaf+"`") {
+			t.Errorf("reference has no section for constraints %s", leaf)
+		}
+	}
+	row := phaseRow(t, loop, "| Constraints |")
+	for _, want := range []string{
+		"`rdd-constraint`", "`constraints create --file`", "`constraints update <ref> --file`",
+		"`constraints accept <ref> --reason \"USER:", "`constraints deactivate <ref> --reason \"USER:",
+		"`constraints discard <ref>`", "`constraints delete <ref>`",
+		"`constraints list", "--state active", "`constraints get <ref>`", "--agent",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the Constraints row of the pass table does not name %q", want)
+		}
+	}
+	for _, code := range []string{"human_decision_required", "nothing_to_accept", "nothing_to_discard", "not_active", "active_must_be_deactivated"} {
+		if !strings.Contains(loop, "| `"+code+"` | server 422 |") {
+			t.Errorf("the refusal glossary has no server 422 row for %q", code)
+		}
+	}
+	if !strings.Contains(loop, "`unsupported constraint field`") {
+		t.Error("the refusal glossary has no cli row for the constraint file refusals")
+	}
+	example := `{"title":"...","statement":"...","rationale":"...","verification_method":"..."}`
+	for _, section := range []string{"modernpath constraints create", "modernpath constraints update"} {
+		body := referenceSection(t, ref, section)
+		for _, want := range []string{example, "`--file -`", "title", "statement", "verification_method", "rationale", "USER:", "unsupported constraint field"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("section %q does not document %q", section, want)
+			}
+		}
+	}
+	for _, section := range []string{"modernpath constraints accept", "modernpath constraints deactivate"} {
+		body := referenceSection(t, ref, section)
+		for _, want := range []string{`--reason "USER:<date>: ..."`, "--reason must be the human's decision beginning USER:", "`--agent`"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("section %q does not document %q", section, want)
+			}
+		}
+	}
+	if body := referenceSection(t, ref, "modernpath constraints list"); !strings.Contains(body, "proposed|active|deactivated") || !strings.Contains(body, "rev") {
+		t.Errorf("constraints list does not document its --state values and row shape:\n%s", body)
+	}
+	if body := referenceSection(t, ref, "modernpath constraints get"); !strings.Contains(body, "revisions") || !strings.Contains(body, "audit events") {
+		t.Errorf("constraints get does not document the revisions and audit events it prints:\n%s", body)
 	}
 }
 

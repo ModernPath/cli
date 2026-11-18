@@ -52,7 +52,7 @@ repository has no file-backed process ledger.
 |---|---|
 | `AGENTS.md` | Shared agent policy and canonical entry point |
 | `PROCESS.md` | Canonical process authority and engineering workflow |
-| `skills/` | End-to-end orchestration, autopilot, focused delivery passes, and shared Trace and evidence audit |
+| `skills/` | End-to-end orchestration, autopilot, focused delivery passes, Engineering Constraint authoring, and shared Trace and evidence audit |
 
 ## Distribution
 

@@ -5,7 +5,20 @@
 - `autopilot create --file grant.json` records the human's explicit grant and
   returns its receipt. Requires the matching Core creation route and grant
   migrations. Run `modernpath install` to refresh the CLI reference.
-
+- `constraints` records the Engineering Constraints of the bound System: a
+  rule in a person's words with the ref `EC-<number>` and the states
+  proposed, active and deactivated. `create --file` and `update <ref> --file`
+  take one JSON object (`title`, `statement`, `verification_method`, optional
+  `rationale`; `--file -` reads stdin) and are checked before the workspace is
+  read; `accept <ref>` and `deactivate <ref>` are the person's decisions and
+  refuse locally unless `--reason` begins `USER:`; `discard <ref>` drops a
+  pending change and `delete <ref>` removes a proposed or deactivated
+  constraint; `list [--state proposed|active|deactivated]` and `get <ref>`
+  read them back with revisions and audit events. Every write takes `--agent
+  <slug>` and every command `--json`; a server refusal prints as
+  `constraints <verb> (server <status>): <reason>`. The reference gains the
+  commands, the file shape, a "Constraints" pass-table row and the refusal
+  glossary rows. Requires the matching Core engineering-constraints routes.
 - `epics build record <id> --file <build handoff>` records a delegated build
   in one write: implements traces to the changed files, verifies traces to the
   test files, the plan's criterion outcomes read from TRX, JUnit XML and

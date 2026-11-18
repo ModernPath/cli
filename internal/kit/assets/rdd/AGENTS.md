@@ -43,6 +43,8 @@ Use `skills/rdd-reverse-engineer-verify/SKILL.md` and
 existing behavior without an implementation Epic when no behavior or test
 change is requested. Route code or test changes through `PROCESS.md`
 §Work scope, including its small-change exception.
+Use `skills/rdd-constraint/SKILL.md` to turn a rule in a person's words into
+a Proposed Engineering Constraint; accepting it is the person's act.
 `skills/rdd-audit/SKILL.md` is a shared utility invoked by other passes, not a phase.
 
 Read relevant product documents and inspect their cited code and tests. A

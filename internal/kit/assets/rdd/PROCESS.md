@@ -74,6 +74,7 @@ resolves; it does not prove that the source supports the claim.
 | `CODE` | Implementing files, symbols, revision, branch and changes |
 | `TEST_CASE` | ID, title, existing revision and approval attribution; typed links to requirements, criteria and code |
 | `TEST_RESULT` | Current actual outcome for one criterion and TestCase, with scoped result-to-criterion and result-to-TestCase Traces |
+| `EC` | Engineering Constraint record, ref `EC-<number>`: a human-owned rule of the System, Proposed, Active or Deactivated, effective from a person's accept to a person's deactivate, authored through `rdd-constraint`; its own item, never a requirement kind |
 
 Requirement and Epic identifiers come from the authoritative process store.
 Use those IDs in plans, code/test links, review notes and evidence.
@@ -706,6 +707,7 @@ gap.
 | Verify existing behavior | `rdd-reverse-engineer-verify` | Current PROPOSED content traced to existing behavior and complete applicable test outcomes recorded; no lifecycle transition |
 | Accept existing behavior | `rdd-reverse-engineer-accept` | Exact verified targets explicitly accepted by a human and atomically published as DONE, or left PROPOSED with the tooling gap reported |
 | Discoveries and blockers | `rdd-triage` | Discovery routed into a draft plan or reported as a separate-work decision/blocker; active approvals preserved |
+| Record an Engineering Constraint | `rdd-constraint` | Proposed constraint created on the person's word and read back by ref; acceptance left to the person |
 
 A focused pass is a handoff, not whole-task completion. Stop when its exit is
 reached and report what remains.

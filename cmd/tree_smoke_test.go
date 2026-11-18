@@ -387,11 +387,21 @@ var leafDispositions = map[string]disposition{
 	"factory pin set":            {kind: dispExecute, args: []string{"factory", "pin", "set", "--pin-stdin"}},
 	"factory release activate":   {kind: dispExecute, args: []string{"factory", "release", "activate", "2", "--pin-stdin"}},
 
-	"autopilot create":                  {kind: dispExecute, args: []string{"autopilot", "create", "--file", "-", "--json"}},
-	"backlog create":                    {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
-	"backlog update":                    {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
-	"backlog list":                      {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
-	"backlog get":                       {kind: dispExecute, args: []string{"backlog", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"autopilot create": {kind: dispExecute, args: []string{"autopilot", "create", "--file", "-", "--json"}},
+	"backlog create":   {kind: dispExecute, args: []string{"backlog", "create", "--file", "-", "--json"}},
+	"backlog update":   {kind: dispExecute, args: []string{"backlog", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
+	"backlog list":     {kind: dispExecute, args: []string{"backlog", "list", "--json"}},
+	"backlog get":      {kind: dispExecute, args: []string{"backlog", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
+	// Epic 436: Engineering Constraints. create and update read their file
+	// from stdin (fixture below); accept and deactivate carry a USER: reason.
+	"constraints create":                {kind: dispExecute, args: []string{"constraints", "create", "--file", "-", "--json"}},
+	"constraints update":                {kind: dispExecute, args: []string{"constraints", "update", "EC-1", "--file", "-", "--json"}},
+	"constraints discard":               {kind: dispExecute, args: []string{"constraints", "discard", "EC-1", "--json"}},
+	"constraints delete":                {kind: dispExecute, args: []string{"constraints", "delete", "EC-1", "--json"}},
+	"constraints accept":                {kind: dispExecute, args: []string{"constraints", "accept", "EC-1", "--reason", "USER:smoke", "--json"}},
+	"constraints deactivate":            {kind: dispExecute, args: []string{"constraints", "deactivate", "EC-1", "--reason", "USER:smoke", "--json"}},
+	"constraints list":                  {kind: dispExecute, args: []string{"constraints", "list", "--state", "active", "--json"}},
+	"constraints get":                   {kind: dispExecute, args: []string{"constraints", "get", "EC-1", "--json"}},
 	"acceptance specs list":             {kind: dispExecute, args: []string{"acceptance", "specs", "list", "--line", "10000000-0000-4000-8000-000000000001", "--json"}},
 	"acceptance specs create":           {kind: dispExecute, args: []string{"acceptance", "specs", "create", "--line", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"acceptance specs update":           {kind: dispExecute, args: []string{"acceptance", "specs", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
@@ -514,6 +524,9 @@ var leafDispositions = map[string]disposition{
 	"initiative approve-completion":     {kind: dispExecute, args: []string{"initiative", "approve-completion", "10000000-0000-4000-8000-000000000001", "--epics", "42", "--reason", "smoke"}},
 }
 
+// Epic 436: the eight `constraints` leaves are classified here, with the
+// reference checks of the same TestCase.
+// TestCase 88e91340-58e8-4fdf-a93f-7a0c419c6b72
 func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 	requests := 0
 	var server *httptest.Server
@@ -607,6 +620,9 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		}
 		if name == "backlog update" {
 			rootCmd.SetIn(strings.NewReader(`{"notes_md":"Smoke update"}`))
+		}
+		if name == "constraints create" || name == "constraints update" {
+			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke constraint","statement":"Smoke statement","verification_method":"Smoke check"}`))
 		}
 		if name == "acceptance specs create" || name == "acceptance specs update" {
 			rootCmd.SetIn(strings.NewReader(`{"title":"Smoke spec"}`))

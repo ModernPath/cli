@@ -21,6 +21,8 @@ Read and follow these before starting product work:
    - `rdd-cold-review` — review a change without its authoring context;
    - `rdd-completion-review` — review evidence for human completion approval;
    - `rdd-triage` — route discoveries, blockers and deferrals;
+   - `rdd-constraint` — turn a rule in a person's words into a Proposed
+     Engineering Constraint; acceptance stays the person's;
    - `rdd-deliver` — deliver the approved Epic through verification and human completion;
    - `rdd-autopilot` — a sprint under a human's autopilot grant: product
      questions asked without waiting, process refusals cleared or logged,
