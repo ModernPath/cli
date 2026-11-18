@@ -41,7 +41,9 @@ For each changed behavior in ordinary implementation:
 1. Write or select a focused assertion and run it against current code. Confirm
    the expected failure; a compile error or unrelated failure is not RED evidence.
 2. Implement the smallest passing change. Run focused checks and proportional
-   boundary and regression checks.
+   boundary and regression checks. Check that concise comments identify the
+   requirement beside the implementation and its verifying assertions, as
+   specified in PROCESS.md.
 3. Record each actual outcome for the criterion and TestCase as current direct
    proof. After a delegated build, run
    `modernpath epics build record <id> --file <handoff>` with `--dry-run`

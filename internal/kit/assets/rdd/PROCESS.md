@@ -78,6 +78,11 @@ resolves; it does not prove that the source supports the claim.
 
 Requirement and Epic identifiers come from the authoritative process store.
 Use those IDs in plans, code/test links, review notes and evidence.
+When changing requirement-driven behavior, put the requirement ID in a short
+comment beside the code that implements it and beside the test assertion or
+group of assertions that verifies it. Include the criterion ID when it helps
+distinguish which clause the assertions cover. Stored Traces remain the
+authoritative record of these relationships.
 Never invent, derive, or substitute a path, slug, code, or external key for an
 identity the store owns.
 
