@@ -19,6 +19,7 @@ import (
 
 func TestEveryAdvertisedLeafResolves(t *testing.T) {
 	paths := [][]string{
+		{"chats", "list"}, {"chats", "get"},
 		{"ask"}, {"auth", "status"}, {"context"},
 		{"datamodel", "export"},
 		{"dev", "list"}, {"dev", "setup"}, {"dev", "run"},
@@ -374,6 +375,8 @@ const (
 
 // Each current leaf is classified against the retained command tree below.
 var leafDispositions = map[string]disposition{
+	"chats list":                 {kind: dispExecute, args: []string{"chats", "list", "--json"}},
+	"chats get":                  {kind: dispExecute, args: []string{"chats", "get", "42", "--json"}},
 	"releases list":              {kind: dispExecute},
 	"releases members":           {kind: dispExecute, args: []string{"releases", "members", "2", "--all", "--json"}},
 	"releases move-requirements": {kind: dispExecute, args: []string{"releases", "move-requirements", "2", "--file", "-", "--json"}},

@@ -5,6 +5,34 @@ command-line interface. Run `modernpath <command> --help` for the options
 supported by your installed version. `modernpath install` refreshes the local
 command reference at `.modernpath/cli-reference.md`.
 
+## Chat transcripts
+
+These commands read an existing Chat as context for local work:
+
+```sh
+modernpath chats list --json
+modernpath chats get 96024 --json
+```
+
+`get` returns the saved transcript, context, author, model, tool and attachment
+metadata. Without `--json`, it prints a readable transcript. JSON retains all
+returned fields without truncation. To keep a local copy, redirect the output:
+
+```sh
+modernpath chats get 96024 --json > /tmp/chat-96024.json
+```
+
+`list` returns the server's recent set, not every Chat. Transcript reads use the
+existing unpaged API. Attachment metadata does not contain image bytes.
+
+Access follows the server's Workspace authorization, including shared Chats.
+The bound System does not replace the Chat's context. These commands send no
+messages and change no Chat state.
+
+Use the transcript as reference for local planning. Read the current Epic plan
+and approvals with `modernpath epics plan show <id> --full` before acting on
+historical decisions. Chat text does not replace current RDD authority.
+
 ## Delivery release activation
 
 From a workspace bound to the intended System:

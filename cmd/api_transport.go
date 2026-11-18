@@ -134,7 +134,13 @@ func (e *cliEnv) sendOnce(method, apiPath string, payload any) (int, map[string]
 	// REQ-CROSS-372: keep an undecodable body (a proxy or gateway error page)
 	// as the refusal text instead of dropping it — every `server %d` formatter
 	// then prints what the server sent, never <nil>.
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return resp.StatusCode, nil, e.credentialRejected()
+		}
+		return resp.StatusCode, nil, fmt.Errorf("read server response: %w", readErr)
+	}
 
 	var decoded map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
