@@ -391,15 +391,20 @@ No separate Epic plan or implementation-approval ceremony is required.
 The exemption removes the Epic, not requirements, acceptance criteria,
 recorded evidence or the human's completion decision.
 
-1. Before changing tests or behavior, find the relevant UR/SR requirements
-   through the CLI and read their current content, criteria, traces and ownership.
-   Reuse accurate requirements and criteria. Create missing requirements and
-   observable criteria, or update eligible unowned, unpublished drafts, through
-   supported CLI operations; read them back. Cover every changed clause and
-   retain its source, boundary and expected observation. Do not edit accepted
-   versions or active Epic-owned content: published behavior changes use
-   `requirements proposal save` or a follow-up requirement; active Epic-owned
-   work stays within its approved Epic and evidence obligations.
+1. Before creating or revising a requirement or changing tests or behavior,
+   check what the small change affects. Use the CLI to search the System's URs
+   and SRs for the behavior and related terms. Read the matching requirements'
+   current content, criteria and ownership. Follow their Traces to check
+   related requirements, shared implementation and tests for overlap and
+   downstream effects. Reuse accurate requirements and criteria. Update
+   eligible unowned, unpublished drafts in place. If the intent of a
+   published unowned requirement still applies, use
+   `requirements proposal save` to revise it. Create a requirement only for
+   behavior the existing requirements do not cover. Active Epic-owned work
+   stays within its approved Epic and evidence obligations.
+   Read back changed records and retain every changed clause's source,
+   boundary and expected observation. Apply the findings to the requirement
+   changes and focused regression checks without a separate saved assessment.
 2. Establish scoped implementation and test Traces and link each criterion
    to its required TestCases before execution. Use actual source and test
    identities, with TestCase revisions; a PR description is no substitute

@@ -21,7 +21,11 @@ func TestStandaloneSmallChangeGuidance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, phrase := range []string{"no_user_requirement_reason", "proposal_generation", "requirements get", "same-System", "never waives", "read-only", "human completion"} {
+		phrases := []string{"no_user_requirement_reason", "proposal_generation", "requirements get", "same-System", "never waives", "read-only", "human completion"}
+		if path == "assets/rdd/PROCESS.md" {
+			phrases = append(phrases, "check what the small change affects", "Create a requirement only for", "without a separate saved assessment")
+		}
+		for _, phrase := range phrases {
 			if !strings.Contains(string(body), phrase) {
 				t.Errorf("%s must explain %s for standalone small changes", path, phrase)
 			}
