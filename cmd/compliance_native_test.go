@@ -194,6 +194,41 @@ func TestRequirementGetFullDisplayRefIncludesCriteriaAndTraces(t *testing.T) {
 	}
 }
 
+func TestRequirementGetShowsLiveAndRetainedReleasesOnRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/compliance/requirements/by-ref/SR-9-4" || r.URL.Query().Get("system_id") != "4" {
+			t.Errorf("request = %s, want scoped display reference", r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"data":{"entity":{"id":"11111111-1111-4111-8111-111111111111","system_id":4,"release_id":7,"title":"Shared requirement"},"display_id":"SR-9-4","delivery_releases":[{"id":7},{"id":8}],"retained_releases":[{"id":5}]}}`))
+	}))
+	defer server.Close()
+
+	for _, fields := range [][]string{nil, {"--fields", "delivery_releases,retained_releases"}, {"--full"}} {
+		command := newRequirementGetCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		command.SetArgs(append([]string{"SR-9-4", "--json"}, fields...))
+		var output bytes.Buffer
+		command.SetOut(&output)
+		if err := command.Execute(); err != nil {
+			t.Fatal(err)
+		}
+
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+			t.Fatalf("result is not JSON: %v", err)
+		}
+		if len(fields) == 0 {
+			assertJSONKeys(t, result, []string{"display_ref", "id", "requirement_kind", "title", "work_status"})
+			continue
+		}
+		var delivery, retained []struct{ ID int }
+		deliveryErr := json.Unmarshal(result["delivery_releases"], &delivery)
+		retainedErr := json.Unmarshal(result["retained_releases"], &retained)
+		if deliveryErr != nil || retainedErr != nil || len(delivery) != 2 || delivery[0].ID != 7 || delivery[1].ID != 8 || len(retained) != 1 || retained[0].ID != 5 {
+			t.Fatalf("Release sets in %v = %s", fields, output.String())
+		}
+	}
+}
+
 func TestRequirementGetRejectsConflictingKindBeforeRequest(t *testing.T) {
 	root := newRequirementGetCommand(func() (*cliEnv, error) {
 		t.Fatal("conflicting display-ref kind must fail before loading the environment")

@@ -27,14 +27,10 @@ written, and a refusal names the Epic by index and ID ("item 1 (Epic 7)").
 Any authorized workspace member may submit a round; any one person may approve a round's completion. Each Epic keeps its own
 approvals, reviews, gate checks and completion, and can still be returned to
 planning or to implementation alone with the single-Epic commands.
-approve-implementation and submit-review may return release_choice_required
-when a transitioning requirement is outside the active Release. Base/unassigned
-requirements are mandatory moves; KEEP applies only to requirements in another
-delivery Release. No transition is written until the person reviews the prompted
-placements and retries with --release-choice <file>. The file echoes action,
-target_release_id and every prompted requirement's kind, id and expected_release_id.
-The server owns move_required; do not send it. The CLI never chooses
-automatically; stale choices prompt again.
+When implementation approval prompts for placement, place the selected Epics
+through the Roadmap and review their destination. If the Epics now belong to
+different Initiatives, the CLI lists the original selection and each destination.
+Review each destination with its explicit --epics before you approve it.
 A round runs in one transaction bounded at two minutes. After an uncertain
 answer (a timeout or a lost connection), read an Epic of the round back before
 retrying; split a large round if it times out.`
@@ -517,6 +513,9 @@ func initiativeRoundCall(cmd *cobra.Command, load func() (*cliEnv, error), line,
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
+		if placementErr := epicPlacementRefusal(cmd, body); placementErr != nil {
+			return nil, placementErr
+		}
 		if choiceErr := releaseChoiceRequired(body); choiceErr != nil {
 			return nil, choiceErr
 		}

@@ -325,6 +325,28 @@ func TestInitiativeRoundForwardsExplicitReleaseChoice(t *testing.T) {
 	}
 }
 
+func TestInitiativeRoundShowsChangedDestinationsWithoutRetrying(t *testing.T) {
+	server, seen := iniServer(t, func(r *http.Request) (int, any) {
+		return 409, map[string]any{"error": "round_placement_changed", "placement": map[string]any{
+			"epic_ids": []int{7, 3},
+			"destinations": []map[string]any{
+				{"initiative_id": iniLine, "initiative": "First initiative", "release": "June", "epic_ids": []int{7}},
+				{"initiative_id": iniOther, "initiative": "Second initiative", "release": "July", "epic_ids": []int{3}},
+			},
+		}}
+	})
+	cobraWorkspace(t, server, 1)
+	out, err := runRoot(t, "initiative", "approve-implementation", iniLine, "--epics", "7,3", "--reason", "Review")
+	if err == nil || !strings.Contains(err.Error(), "fresh round review") || len(*seen) != 1 {
+		t.Fatalf("output %q, error %v, requests %#v", out, err, *seen)
+	}
+	for _, want := range []string{"Selected Epics: 7,3", "First initiative", "Release June: Epics 7", "Second initiative", "Release July: Epics 3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q does not contain %q", out, want)
+		}
+	}
+}
+
 func iniLines() []any {
 	return []any{
 		map[string]any{

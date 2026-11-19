@@ -13,6 +13,43 @@ import (
 type releaseRequirement struct {
 	kind, id string
 	source   any
+	link     requirementSource
+}
+
+type requirementSource struct {
+	kind, initiative, link string
+}
+
+func readRequirementSource(raw any) (requirementSource, bool) {
+	if raw == nil {
+		return requirementSource{}, true
+	}
+	row, ok := raw.(map[string]any)
+	if !ok || len(row) != 3 {
+		return requirementSource{}, false
+	}
+	kind, _ := row["kind"].(string)
+	initiative, _ := row["initiative_id"].(string)
+	link, _ := row["link_id"].(string)
+	_, linkPresent := row["link_id"]
+	if !requirementUUIDPattern.MatchString(initiative) || !linkPresent ||
+		(kind == "own" && row["link_id"] != nil) ||
+		(kind == "link" && !requirementUUIDPattern.MatchString(link)) ||
+		(kind != "own" && kind != "link") {
+		return requirementSource{}, false
+	}
+	return requirementSource{kind, strings.ToLower(initiative), strings.ToLower(link)}, true
+}
+
+func (source requirementSource) json() any {
+	if source.kind == "" {
+		return nil
+	}
+	var link any
+	if source.link != "" {
+		link = source.link
+	}
+	return map[string]any{"kind": source.kind, "initiative_id": source.initiative, "link_id": link}
 }
 
 func (r releaseRequirement) key() string { return r.kind + ":" + r.id }
@@ -35,7 +72,7 @@ func requirementSelection(raw any, reviewed bool) ([]releaseRequirement, error) 
 			return nil, fmt.Errorf("each requirement needs its kind and UUID")
 		}
 		for field := range row {
-			if field != "kind" && field != "id" && !(reviewed && field == "expected_release_id") {
+			if field != "kind" && field != "id" && !(reviewed && (field == "expected_release_id" || field == "expected_source")) {
 				return nil, fmt.Errorf("unsupported requirement field %q", field)
 			}
 		}
@@ -46,6 +83,12 @@ func requirementSelection(raw any, reviewed bool) ([]releaseRequirement, error) 
 				return nil, fmt.Errorf("reviewed requirements need expected_release_id, including explicit null")
 			}
 			item.source = source
+			rawSource, present := row["expected_source"]
+			sourceLink, valid := readRequirementSource(rawSource)
+			if !present || !valid {
+				return nil, fmt.Errorf("reviewed requirements need a valid expected_source, including explicit null")
+			}
+			item.link = sourceLink
 		}
 		if seen[item.key()] {
 			return nil, fmt.Errorf("duplicate requirement %s", item.key())
@@ -132,6 +175,7 @@ func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 		applying, _ := c.Flags().GetBool("apply")
 		selectionObject := input
 		action := "preview"
+		var destination string
 		if applying {
 			action = "move"
 			selectionObject, _ = input["apply"].(map[string]any)
@@ -140,6 +184,10 @@ func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 			}
 			if !sameReleaseID(selectionObject["system_id"], env.SystemID) || !sameReleaseID(selectionObject["target_release_id"], id) {
 				return fmt.Errorf("reviewed preview names a different System or target")
+			}
+			destination, err = membershipDestination(selectionObject)
+			if err != nil {
+				return err
 			}
 		} else {
 			for field := range input {
@@ -153,7 +201,7 @@ func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 			return err
 		}
 		if applying {
-			if err := validateMembershipReceipt(input, target, env.SystemID, selected, true); err != nil {
+			if err := validateMembershipReceipt(input, target, env.SystemID, selected, destination, false); err != nil {
 				return fmt.Errorf("invalid reviewed preview: %w", err)
 			}
 		}
@@ -162,10 +210,30 @@ func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 			row := map[string]any{"kind": r.kind, "id": r.id}
 			if applying {
 				row["expected_release_id"] = r.source
+				row["expected_source"] = r.link.json()
 			}
 			items = append(items, row)
 		}
-		status, body, err := env.sendOnce("POST", fmt.Sprintf("/api/compliance/releases/%d/requirements/%s", id, action), map[string]any{"system_id": env.SystemID, "requirements": items})
+		request := map[string]any{"system_id": env.SystemID, "requirements": items, "association_version": 1}
+		endpoint := fmt.Sprintf("/api/compliance/releases/%d/requirements/", id)
+		if applying {
+			request["destination_initiative_id"] = destination
+			request["target_release_id"] = id
+			request["reviewed_apply"] = true
+			status, body, err := env.sendOnce("POST", endpoint+"preview", request)
+			if err != nil {
+				return fmt.Errorf("could not refresh the requirement move preview: %w", err)
+			}
+			if status != 200 {
+				return membershipFailure(status, body)
+			}
+			data, _ := body["data"].(map[string]any)
+			if err := validateMembershipReceipt(data, target, env.SystemID, selected, destination, true); err != nil {
+				return fmt.Errorf("cannot apply the reviewed requirement move: %w", err)
+			}
+			delete(request, "reviewed_apply")
+		}
+		status, body, err := env.sendOnce("POST", endpoint+action, request)
 		if err != nil {
 			return fmt.Errorf("requirement membership request failed; inspect membership before retrying: %w", err)
 		}
@@ -173,7 +241,7 @@ func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 			return membershipFailure(status, body)
 		}
 		data, _ := body["data"].(map[string]any)
-		if err := validateMembershipReceipt(data, target, env.SystemID, selected, applying); err != nil {
+		if err := validateMembershipReceipt(data, target, env.SystemID, selected, destination, applying); err != nil {
 			return fmt.Errorf("invalid membership receipt; inspect membership before retrying: %w", err)
 		}
 		return writeRecord(c, data)
@@ -181,9 +249,25 @@ func newReleaseRequirementMove(load func() (*cliEnv, error)) *cobra.Command {
 	return c
 }
 
-func validateMembershipReceipt(data, target map[string]any, system int, requested []releaseRequirement, checkSources bool) error {
+func membershipDestination(data map[string]any) (string, error) {
+	version, _ := numberAsInt(data["association_version"])
+	id, _ := data["destination_initiative_id"].(string)
+	if version != 1 || !requirementUUIDPattern.MatchString(id) {
+		return "", fmt.Errorf("typed requirement moves require an upgraded server and a fresh preview")
+	}
+	return strings.ToLower(id), nil
+}
+
+func validateMembershipReceipt(data, target map[string]any, system int, requested []releaseRequirement, reviewedDestination string, checked bool) error {
 	if data == nil {
 		return fmt.Errorf("missing data")
+	}
+	destination, err := membershipDestination(data)
+	if err != nil {
+		return err
+	}
+	if reviewedDestination != "" && destination != reviewedDestination {
+		return fmt.Errorf("destination Initiative changed; preview the move again")
 	}
 	t, _ := data["target"].(map[string]any)
 	if !sameReleaseID(data["system_id"], system) || !sameReleaseID(t["id"], target["id"]) || !sameReleaseID(t["system_id"], system) {
@@ -199,7 +283,8 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 	}
 	seen := map[string]bool{}
 	moving, unchanged := 0, 0
-	actualSources := map[string]any{}
+	actualSources := map[string]releaseRequirement{}
+	unchangedRows := map[string]bool{}
 	for _, raw := range rows {
 		row, ok := raw.(map[string]any)
 		if !ok {
@@ -208,7 +293,7 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 		kind, _ := row["kind"].(string)
 		id, _ := row["id"].(string)
 		key := kind + ":" + strings.ToLower(id)
-		expected, exists := wanted[key]
+		_, exists := wanted[key]
 		if !exists || seen[key] {
 			return fmt.Errorf("unexpected or duplicate requirement")
 		}
@@ -217,10 +302,16 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 		if !present || !nullableReleaseID(source) {
 			return fmt.Errorf("invalid source membership")
 		}
-		if sameReleaseID(source, target["id"]) {
+		rawLink, present := row["expected_source"]
+		link, valid := readRequirementSource(rawLink)
+		if !present || !valid {
+			return fmt.Errorf("invalid source Initiative binding")
+		}
+		if link.kind == "link" && link.initiative == destination && sameReleaseID(source, target["id"]) {
 			if row["action"] != "unchanged" {
 				return fmt.Errorf("invalid unchanged disposition")
 			}
+			unchangedRows[key] = true
 			unchanged++
 		} else {
 			if row["action"] != "move" {
@@ -228,13 +319,10 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 			}
 			moving++
 		}
-		if checkSources && !sameReleaseID(source, expected.source) && !sameReleaseID(source, target["id"]) {
-			return fmt.Errorf("source differs from reviewed membership")
-		}
 		if to, present := row["to_release_id"]; present && !sameReleaseID(to, target["id"]) {
 			return fmt.Errorf("different destination")
 		}
-		actualSources[key] = source
+		actualSources[key] = releaseRequirement{source: source, link: link}
 	}
 	counts, _ := data["counts"].(map[string]any)
 	m, mok := numberAsInt(counts["move"])
@@ -243,7 +331,8 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 		return fmt.Errorf("incorrect movement counts")
 	}
 	apply, _ := data["apply"].(map[string]any)
-	if !sameReleaseID(apply["system_id"], system) || !sameReleaseID(apply["target_release_id"], target["id"]) {
+	applyDestination, err := membershipDestination(apply)
+	if err != nil || destination != applyDestination || !sameReleaseID(apply["system_id"], system) || !sameReleaseID(apply["target_release_id"], target["id"]) {
 		return fmt.Errorf("invalid reusable apply scope")
 	}
 	applyRows, err := requirementSelection(apply["requirements"], true)
@@ -251,9 +340,16 @@ func validateMembershipReceipt(data, target map[string]any, system int, requeste
 		return fmt.Errorf("invalid reusable apply selection")
 	}
 	for _, r := range applyRows {
-		source, exists := actualSources[r.key()]
-		if !exists || !sameReleaseID(source, r.source) {
+		key := r.key()
+		source, exists := actualSources[key]
+		if !exists || ((!checked || !unchangedRows[key]) && (!sameReleaseID(source.source, r.source) || source.link != r.link)) {
 			return fmt.Errorf("reusable apply differs from preview")
+		}
+		if reviewedDestination != "" {
+			expected := wanted[key]
+			if !sameReleaseID(expected.source, r.source) || expected.link != r.link {
+				return fmt.Errorf("source differs from reviewed membership; preview the move again")
+			}
 		}
 	}
 	return nil
@@ -267,7 +363,9 @@ func membershipFailure(status int, body map[string]any) error {
 		code = str(errVal, "code")
 	}
 	switch code {
-	case "not_found", "system_not_found", "forbidden", "no_creator", "items_required", "too_many_items", "duplicate_items", "invalid_item", "invalid_release_id", "expected_release_required", "release_not_open", "requirement_source_changed":
+	case "invalid_association_version", "invalid_expected_source", "invalid_destination_initiative", "requirement_destination_changed":
+		return fmt.Errorf("requirement membership refused (HTTP %d): %s. Upgrade the CLI and preview the move again", status, code)
+	case "not_found", "system_not_found", "forbidden", "no_creator", "items_required", "too_many_items", "duplicate_items", "invalid_item", "invalid_release_id", "expected_release_required", "release_not_open", "requirement_source_changed", "requirement_source_ambiguous":
 		if item, ok := body["requirement"].(map[string]any); ok {
 			kind, _ := item["kind"].(string)
 			id, _ := item["id"].(string)
@@ -276,8 +374,8 @@ func membershipFailure(status int, body map[string]any) error {
 			}
 		}
 		return errors.New(withBindingHint(status, fmt.Sprintf("requirement membership refused (HTTP %d): %s", status, code)))
-	case "selected_requirement_held":
-		return heldRequirementFailure(status, body)
+	case "selected_requirement_held", "requirement_linked_to_epic":
+		return heldRequirementFailure(status, code, body)
 	}
 	return errors.New(withBindingHint(status, fmt.Sprintf("requirement membership refused (HTTP %d)", status)))
 }
@@ -285,7 +383,7 @@ func membershipFailure(status int, body map[string]any) error {
 // heldRequirementFailure names a requirement that an in-place Epic took and
 // that moves only with that Epic (Epic 334, C1): the server's sentence, then
 // the requirement and the Epic it names.
-func heldRequirementFailure(status int, body map[string]any) error {
+func heldRequirementFailure(status int, code string, body map[string]any) error {
 	requirement, _ := body["requirement"].(map[string]any)
 	epic, _ := body["epic"].(map[string]any)
 	name := strings.TrimSpace(str(requirement, "display_ref") + " " + str(requirement, "title"))
@@ -293,8 +391,8 @@ func heldRequirementFailure(status int, body map[string]any) error {
 	if message == "" {
 		message = fmt.Sprintf("%s moves with the Epic %s, which took it. Move the Epic to move it.", orDash(name), orDash(str(epic, "title")))
 	}
-	return fmt.Errorf("requirement membership refused (HTTP %d): selected_requirement_held: %s Requirement: %s (%s:%s). Epic: %s (id %v).",
-		status, message, orDash(name), str(requirement, "kind"), str(requirement, "id"), orDash(str(epic, "title")), epic["id"])
+	return fmt.Errorf("requirement membership refused (HTTP %d): %s: %s Requirement: %s (%s:%s). Epic: %s (id %v).",
+		status, code, message, orDash(name), str(requirement, "kind"), str(requirement, "id"), orDash(str(epic, "title")), epic["id"])
 }
 
 func newReleaseMembers(load func() (*cliEnv, error)) *cobra.Command {

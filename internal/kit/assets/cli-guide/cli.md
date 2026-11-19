@@ -1591,12 +1591,14 @@ There is no archive or reconstruction from current TestCase content. See the
 ### Read requirements, test cases, traces and evidence
 
 Read a requirement by display reference, or by UUID and kind. Use
-`--fields` or `--full` to include stored criteria and trace detail:
+`--fields` or `--full` to include stored criteria, trace detail, or its current
+delivery Releases and retained completion history:
 
 ```sh
 modernpath requirements get UR-6-0 --fields title,description
 modernpath requirements get <uuid> --kind user --full
 modernpath requirements get <uuid> --kind system --fields title,criteria
+modernpath requirements get SR-6-0 --fields delivery_releases,retained_releases
 modernpath traces list --entity-type user_requirement --entity-id <uuid>
 modernpath test-cases list
 modernpath test-cases get <uuid>

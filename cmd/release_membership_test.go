@@ -16,6 +16,110 @@ import (
 
 const membershipSR = "0951fc74-235d-4041-98ea-0dfa2a870e7d"
 const membershipUR = "d04e4a91-9585-43b0-811a-f90de731ae8d"
+const membershipDefault = "87068bf3-269d-459a-8fe4-253dd143cf3a"
+const membershipNamed = "a457dc71-30da-4d17-b6b6-1378bfb7af6b"
+
+// 097b9511-35b0-4b9a-befc-0a3783ad86e9
+func TestTypedMembershipRefusesOlderServerBeforeMutableRequest(t *testing.T) {
+	previews, moves := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET":
+			listMembershipReleases(w)
+		case strings.HasSuffix(r.URL.Path, "/preview"):
+			previews++
+			json.NewEncoder(w).Encode(map[string]any{"data": legacyMembershipReceipt()})
+		default:
+			moves++
+			t.Error("an older server received a mutable request")
+		}
+	}))
+	defer server.Close()
+	reviewed := membershipReceipt()
+	_, err := runMembership(t, server, "move-requirements", "next", "--apply", "--json", "--file", membershipInput(t, reviewed))
+	if err == nil || !strings.Contains(err.Error(), "upgrade") || previews != 1 || moves != 0 {
+		t.Fatalf("need upgrade refusal after one read-only preview; previews=%d moves=%d err=%v", previews, moves, err)
+	}
+}
+
+// 097b9511-35b0-4b9a-befc-0a3783ad86e9
+func TestTypedMembershipSameReleaseRequiresExactFreshInitiativeBinding(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stale=%v", stale), func(t *testing.T) {
+			makeReceipt := func(source string) map[string]any {
+				receipt := membershipReceipt()
+				binding := map[string]any{"kind": "own", "initiative_id": source, "link_id": nil}
+				row := receipt["requirements"].([]any)[0].(map[string]any)
+				row["from_release_id"] = 2
+				row["expected_source"] = binding
+				item := receipt["apply"].(map[string]any)["requirements"].([]any)[0].(map[string]any)
+				item["expected_release_id"] = 2
+				item["expected_source"] = binding
+				return receipt
+			}
+			original := makeReceipt(membershipNamed)
+			previews, moves := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" {
+					listMembershipReleases(w)
+					return
+				}
+				var request map[string]any
+				json.NewDecoder(r.Body).Decode(&request)
+				if request["association_version"] != float64(1) || request["destination_initiative_id"] != membershipDefault {
+					t.Errorf("missing exact typed binding: %v", request)
+				}
+				posted := request["requirements"].([]any)[0].(map[string]any)
+				if posted["expected_source"].(map[string]any)["initiative_id"] != membershipNamed || posted["expected_release_id"] != float64(2) {
+					t.Errorf("wrong reviewed source: %v", posted)
+				}
+				result := original
+				if strings.HasSuffix(r.URL.Path, "/preview") {
+					previews++
+					if request["reviewed_apply"] != true {
+						t.Error("the read-only refresh must validate the saved preview")
+					}
+					if stale {
+						result = makeReceipt(membershipUR)
+					}
+				} else {
+					moves++
+					if _, ok := request["reviewed_apply"]; ok {
+						t.Error("the final mutation may not send the read-only flag")
+					}
+				}
+				json.NewEncoder(w).Encode(map[string]any{"data": result})
+			}))
+			defer server.Close()
+			_, err := runMembership(t, server, "move-requirements", "next", "--apply", "--json", "--file", membershipInput(t, original))
+			if previews != 1 {
+				t.Fatalf("preview checks = %d, want one", previews)
+			}
+			if stale {
+				if err == nil || !strings.Contains(err.Error(), "source differs") || moves != 0 {
+					t.Fatalf("stale preview error = %v, mutations = %d", err, moves)
+				}
+			} else if err != nil || moves != 1 {
+				t.Fatalf("same-Release move error = %v, mutations = %d", err, moves)
+			}
+		})
+	}
+}
+
+func typedMembershipReceipt(data map[string]any) map[string]any {
+	data["association_version"] = 1
+	data["destination_initiative_id"] = membershipDefault
+	apply := data["apply"].(map[string]any)
+	apply["association_version"] = 1
+	apply["destination_initiative_id"] = membershipDefault
+	for _, raw := range apply["requirements"].([]any) {
+		raw.(map[string]any)["expected_source"] = nil
+	}
+	for _, raw := range data["requirements"].([]any) {
+		raw.(map[string]any)["expected_source"] = nil
+	}
+	return data
+}
 
 func TestMembershipFailureIdentifiesRefusedRequirement(t *testing.T) {
 	posts := 0
@@ -51,6 +155,10 @@ func membershipSelection() []any {
 	return []any{map[string]any{"kind": "system_requirement", "id": membershipSR}, map[string]any{"kind": "user_requirement", "id": membershipUR}}
 }
 func membershipReceipt() map[string]any {
+	return typedMembershipReceipt(legacyMembershipReceipt())
+}
+
+func legacyMembershipReceipt() map[string]any {
 	return map[string]any{
 		"system_id": 4, "target": map[string]any{"id": 2, "slug": "next", "system_id": 4},
 		"counts":       map[string]any{"move": 2, "unchanged": 0},
@@ -115,7 +223,7 @@ func TestReleaseRequirementPreviewAndReviewedApply(t *testing.T) {
 	if _, err := runMembership(t, s, "move-requirements", "2", "--file", p, "--apply", "--json"); err != nil {
 		t.Fatalf("apply failed %v", err)
 	}
-	if len(paths) != 2 || paths[1] != "/api/compliance/releases/2/requirements/move" {
+	if len(paths) != 3 || paths[1] != "/api/compliance/releases/2/requirements/preview" || paths[2] != "/api/compliance/releases/2/requirements/move" {
 		t.Fatalf("wrong operations %v", paths)
 	}
 }
@@ -277,16 +385,15 @@ func TestReleaseRequirement1462ItemsUseOneMutationRequest(t *testing.T) {
 		reviewed = append(reviewed, map[string]any{"kind": kind, "id": id, "expected_release_id": nil})
 		rows = append(rows, map[string]any{"kind": kind, "id": id, "from_release_id": nil, "action": "move"})
 	}
-	receipt := map[string]any{"system_id": 4, "target": map[string]any{"id": 2, "system_id": 4}, "requirements": rows, "counts": map[string]any{"move": 1462, "unchanged": 0}, "apply": map[string]any{"system_id": 4, "target_release_id": 2, "requirements": reviewed}}
+	receipt := typedMembershipReceipt(map[string]any{"system_id": 4, "target": map[string]any{"id": 2, "system_id": 4}, "requirements": rows, "counts": map[string]any{"move": 1462, "unchanged": 0}, "apply": map[string]any{"system_id": 4, "target_release_id": 2, "requirements": reviewed}})
 	mutations := 0
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			listMembershipReleases(w)
 			return
 		}
-		mutations++
-		if !strings.HasSuffix(r.URL.Path, "/move") {
-			t.Errorf("unexpected operation %s", r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/move") {
+			mutations++
 		}
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
@@ -348,6 +455,10 @@ func TestReleaseRequirementMutationDoesNotRetryServerLimiting(t *testing.T) {
 			listMembershipReleases(w)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/preview") {
+			json.NewEncoder(w).Encode(map[string]any{"data": membershipReceipt()})
+			return
+		}
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(429)
@@ -378,16 +489,14 @@ func TestReleaseRequirementOriginalPreviewCanBeRetriedWhenAlreadyAtTarget(t *tes
 			if rows[0].(map[string]any)["expected_release_id"] != nil || rows[1].(map[string]any)["expected_release_id"] != float64(1) {
 				t.Error("retry did not retain the original reviewed sources")
 			}
-			if mutations == 2 {
-				receipt["counts"] = map[string]any{"move": 0, "unchanged": 2}
-				for _, raw := range receipt["requirements"].([]any) {
-					row := raw.(map[string]any)
-					row["from_release_id"] = 2
-					row["action"] = "unchanged"
-				}
-				for _, raw := range receipt["apply"].(map[string]any)["requirements"].([]any) {
-					raw.(map[string]any)["expected_release_id"] = 2
-				}
+		}
+		if mutations == 2 || (mutations == 1 && strings.HasSuffix(r.URL.Path, "/preview")) {
+			receipt["counts"] = map[string]any{"move": 0, "unchanged": 2}
+			for _, raw := range receipt["requirements"].([]any) {
+				row := raw.(map[string]any)
+				row["from_release_id"] = 2
+				row["expected_source"] = map[string]any{"kind": "link", "initiative_id": membershipDefault, "link_id": membershipNamed}
+				row["action"] = "unchanged"
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": receipt})
@@ -459,6 +568,10 @@ func TestReleaseRequirementLostMutationResponseIsNotRetried(t *testing.T) {
 			listMembershipReleases(w)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/preview") {
+			json.NewEncoder(w).Encode(map[string]any{"data": membershipReceipt()})
+			return
+		}
 		attempts++
 		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/move") {
 			t.Errorf("unexpected mutation %s %s", r.Method, r.URL.Path)
@@ -507,6 +620,10 @@ func TestC1_6487fdc2_MoveRequirementsPrintsTheHeldRequirementSentence(t *testing
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "GET" {
 					listMembershipReleases(w)
+					return
+				}
+				if scenario.name == "apply" && strings.HasSuffix(r.URL.Path, "/preview") {
+					json.NewEncoder(w).Encode(map[string]any{"data": membershipReceipt()})
 					return
 				}
 				posts = append(posts, r.URL.Path)

@@ -27,7 +27,8 @@ func newNativeComplianceCommands(load func() (*cliEnv, error)) []*cobra.Command 
 }
 
 func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
-	cmd := &cobra.Command{Use: "get <uuid|display-ref>", Short: "Read a concise requirement record", Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{Use: "get <uuid|display-ref>", Short: "Read a concise requirement record", Args: cobra.ExactArgs(1),
+		Long: "Read a requirement in the bound System. Use --fields delivery_releases,retained_releases or --full to include its current delivery Releases and retained completion history."}
 	kind := ""
 	cmd.Flags().StringVar(&kind, "kind", "", "requirement kind for UUIDs: user or system (*_requirement names also accepted)")
 	cmd.Flags().Bool("json", false, "Emit selected fields as JSON")
@@ -108,7 +109,7 @@ func newRequirementGetCommand(load func() (*cliEnv, error)) *cobra.Command {
 		}
 		record["display_ref"] = data["display_id"]
 		record["requirement_kind"] = map[string]string{"user": "user_requirement", "system": "system_requirement"}[effectiveKind]
-		for _, key := range []string{"created_by", "criteria", "traces_from", "traces_to", "audit_events"} {
+		for _, key := range []string{"created_by", "criteria", "traces_from", "traces_to", "audit_events", "delivery_releases", "retained_releases"} {
 			if value, exists := data[key]; exists {
 				record[key] = value
 			}
@@ -143,6 +144,7 @@ func requirementDetailFields(kind string) []string {
 		"internal_only", "deleted_at", "tenant_id", "system_id", "created_by_id",
 		"change_epic_id", "release_id", "inserted_at", "updated_at",
 		"created_by", "criteria", "traces_from", "traces_to", "audit_events",
+		"delivery_releases", "retained_releases",
 	}
 	if kind == "system" {
 		return append(fields, "boundary", "rationale", "verification_method", "carried_from_release_id")

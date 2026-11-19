@@ -10,6 +10,48 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func epicPlacementRefusal(cmd *cobra.Command, response map[string]any) error {
+	code, _ := response["error"].(string)
+	if code != "epic_placement_required" && code != "round_placement_changed" {
+		return nil
+	}
+	placement, _ := response["placement"].(map[string]any)
+	if machine, _ := cmd.Flags().GetBool("json"); machine {
+		if err := writeCommandJSON(cmd, placement); err != nil {
+			return err
+		}
+	} else if code == "round_placement_changed" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Selected Epics: %s\n", placementEpicIDs(placement["epic_ids"]))
+		destinations, _ := placement["destinations"].([]any)
+		for _, raw := range destinations {
+			destination, _ := raw.(map[string]any)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s (%s), Release %s: Epics %s\n",
+				str(destination, "initiative"), str(destination, "initiative_id"),
+				orDash(str(destination, "release")), placementEpicIDs(destination["epic_ids"]))
+		}
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "Selected Epics: %s\n", placementEpicIDs(placement["epic_ids"]))
+		releases, _ := placement["releases"].([]any)
+		for _, raw := range releases {
+			release, _ := raw.(map[string]any)
+			fmt.Fprintf(cmd.OutOrStdout(), "Release %s: %s\n", acceptanceText(release["id"]), str(release, "name"))
+		}
+	}
+	if code == "round_placement_changed" {
+		return fmt.Errorf("%s: select each destination Initiative and its explicit Epic IDs for a fresh round review", code)
+	}
+	return fmt.Errorf("%s: place the selected Epics in the Roadmap, then review the destination before approving", code)
+}
+
+func placementEpicIDs(raw any) string {
+	ids, _ := raw.([]any)
+	labels := make([]string, 0, len(ids))
+	for _, id := range ids {
+		labels = append(labels, acceptanceText(id))
+	}
+	return strings.Join(labels, ",")
+}
+
 func init() {
 	epicsCmd.AddCommand(newEpicPlanCommand(cliEnvLoad))
 }
@@ -97,6 +139,9 @@ func newEpicPlanCommand(load func() (*cliEnv, error)) *cobra.Command {
 					return err
 				}
 				if status < 200 || status >= 300 {
+					if err := epicPlacementRefusal(cmd, response); err != nil {
+						return err
+					}
 					if err := releaseChoiceRequired(response); err != nil {
 						return err
 					}
@@ -351,15 +396,11 @@ each published criterion whose approved meaning differs from its published meani
 unchanged criterion proof remains current. Obtain a new plan review and implementation
 approval, then retest each changed published criterion.
 
-submit-review checks current completion-review readiness and moves work to
-IN_REVIEW. If a transitioning requirement is outside the active Release, the server
-refuses with its current placement prompt and writes nothing. Base/unassigned
-rows are mandatory moves; KEEP is offered only for other-Release rows. Review
-those rows, then retry with --release-choice <file>; the file contains the prompt's target
-Release, action move or keep, and every prompted requirement with its expected
-current release_id (null when unassigned). The server owns move_required; do not
-include it in the file. A stale choice prompts again. The CLI never selects an
-action automatically. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
+If approval prompts for Epic placement, confirm a Release through the Roadmap
+or epics update with an explicit release_id. Review the destination plan before
+approving. submit-review checks current completion-review readiness and moves
+work to IN_REVIEW. Lifecycle actions preserve the delivery links that determine
+requirement placement. approve-completion rechecks current requirements, tests, results and Traces under locks, publishes
 one accepted requirement version and releases ownership. Each retired requirement becomes a
 new OBSOLETE version. Repeating completion on
 DONE publishes nothing twice. return-to-implementation needs a non-empty human
