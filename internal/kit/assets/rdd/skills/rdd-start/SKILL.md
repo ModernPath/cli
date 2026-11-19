@@ -58,8 +58,9 @@ repository.
    incomplete. If a plan review already exists and awaits a human decision,
    route to `rdd-entry-review` with its findings and blockers, even if it failed
    or became stale. Resuming a session does not authorize another plan review
-   or revision. Follow an explicit human request to revise or review again.
-   Do not start implementation or test changes before approval.
+   or revision, except the full review before approval when it is due. Follow
+   an explicit human request to revise or review again. Do not start
+   implementation or test changes before approval.
 5. If Epic implementation is approved, route to `rdd-build` or `rdd-verify` based
    on current evidence. If ready for delivery, route to
    `rdd-completion-review`.

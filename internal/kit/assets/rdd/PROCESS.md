@@ -571,7 +571,8 @@ Before drafting, and after a first reconnaissance, list the questions only the
 human can answer and ask them together: conflicts with stored requirements,
 documented behavior or the kit's own rules, which entry points and callers are
 in scope, names for new user-visible terms, behavior at the largest expected
-input, and how earlier answers apply after later changes. Declare each one as a
+input, and how earlier answers apply after later changes. `rdd-plan` holds the
+full list of question topics. Declare each question as a
 decision; its answer is recorded once the saved plan lists it. A question left
 for a reviewer to find costs a review round and a plan revision.
 
@@ -606,13 +607,56 @@ The reviewer marks each note as requirement text or build. A requirement-text
 note says the plan would publish false requirement content or change promised
 behavior; a build note concerns test detail, plan wording or disclosures.
 Present the notes in these two groups so the human can choose which to fix
-before approval. For a failed review, present each material finding with the
+before approval. Do not offer to leave to the build a note that would change
+behavior, requirement content the plan would publish, or a file that other work
+reads or generates (`rdd-entry-review`). For a failed review, present each
+material finding with the
 correction the agent proposes, and ask separately any question only the human
 can answer. A finding about existing behavior that the Epic leaves unchanged
 goes to `rdd-triage` as a Backlog record unless the human widens the Epic.
 
+The first plan review of a planning cycle is a full review: it reads the whole
+plan. A later review in the same cycle is a review of the change, unless it is
+the full review before approval, the gate names no cause, or, in a round, it is
+the first plan review of any Epic in it. A review of the change reads each
+earlier finding with its recorded resolution, what the gate's `causes` name,
+and each criterion, requirement field, plan section and test title that uses a
+changed term, rule or record.
+
+For `plan_content`, `verification`, `decision`, `trace_removal` and
+`modernizes_trace` the reviewer reads the `changed` parts and ids and the
+`comment` of each plan save the plan history lists since the previous review;
+for a changed `body` it reads the sections the `comment` names, and the whole
+body when it names none. For `requirement_edit` the gate names no ids: read
+every requirement field and criterion of the plan again, against the stored
+content in the bundle's `review.baseline`. For `decision` also read the answers
+recorded since the previous review, for `planning_context`, `release` and
+`initiative` the planning contexts in the bundle, and for `stored_trace` it
+finds each id of `trace_ids` in the traces of the bundle's `review.baseline`.
+An id that is not there is a removed trace, or a trace of a test or of a
+retired requirement; the supplied trace lists show the last two without ids,
+and a removed trace is in neither the baseline nor the lists, so read the lists
+in full. When no plan save explains a cause, read in full the part of the plan
+the cause names.
+
+A review passes when it has no material finding. The full review before
+approval is one more full review of a revised plan. It is due when the latest
+plan review is a review of the change, has no material finding and is current
+(the `readiness` of a bundle fetched after that review was recorded has no
+`plan_review_required` blocker), the planning cycle has only one full review,
+and the reason of a review of the change in this cycle names `plan_content` or
+`requirement_edit`. Obtain it before you present the plan, without a human
+decision between the two reviews, and present both. A review is a full review
+unless its reason starts with `Review of the change.` Count the plan reviews in
+the `reviews` of the same bundle; a return to planning starts a new planning
+cycle. In a round it is due for the round when it is due for any Epic in it,
+and a round review is a full review when it is the first plan review of any
+Epic in it.
+
 A human-requested revision gets one new independent review, then returns to
-the human. A fix is a design change: make the smallest change that removes each
+the human. The one exception to one review for each plan submission and each
+revision is the full review before approval, defined above. A fix is a design
+change: make the smallest change that removes each
 finding, and check every claim, option and suggested correction it relies on in
 the code as for the first draft, including how a changed record shape behaves
 through approval, evidence recording and completion. Check each change for side
@@ -622,9 +666,9 @@ behavior, including code that reads any path or name the change introduces and
 the actual output of any tool it names. Before the new review, a read-only agent
 that did not write the fixes checks them the same way; that check records no
 review.
-Reuse recorded reviews when resuming a session. If reviewed inputs
-changed, including decision answers, membership or test definitions, disclose
-the stale review and obtain a human decision before renewing it. A current
+Reuse recorded reviews when resuming a session. If the gate reports a review
+out of date, disclose the stale review, with the causes the gate names for a
+plan review, and obtain a human decision before renewing it. A current
 review remains required for implementation approval. Gate checks, finding
 resolutions and an identical saved value do not themselves require another
 review. After applying the human's disposition, record actual resolutions and
@@ -701,8 +745,8 @@ question text.
 These are test definitions, not executable test changes before approval.
 Obtain and record answers to declared decisions before the independent review.
 Inspect read-only phase readiness and correct structural blockers before review;
-a missing independent review is expected at this point. A later answer changes
-the reviewed content; disclose it for the human to direct renewed review before
+a missing independent review is expected at this point. A later answer that
+differs from the recorded one changes the reviewed content; disclose it for the human to direct renewed review before
 implementation approval.
 
 The agent supplies current authoritative requirements, plan, traces, outcomes and
@@ -723,6 +767,20 @@ outdated by the earlier change. Ambiguous applicability blocks approval.
 Writers share the existing serialization boundary and assign ordering
 times after acquiring it. A no-op save or JSON formatting change is not a semantic
 change. Add no fingerprints, ETags, tokens, counters or reviewed-state fields.
+
+For a plan review the rule is narrower. A plan review goes out of date when the
+plan's content changes, when something the plan relies on changes, such as which
+test proves a criterion, when the plan's list of traces to remove
+(`remove_traces`) changes, when the plan's modernizes traces change, or when a
+stored trace changes that belongs to the plan's requirements or criteria, to a
+requirement it retires, or that links a test of the plan and code. The gate
+names what changed in `causes`: `plan_content`, `requirement_edit`,
+`verification`, `decision`, `planning_context`, `release`, `initiative`,
+`stored_trace`, `trace_removal` or `modernizes_trace`, and lists the changed
+stored traces in `trace_ids`. These leave a plan review current: a trace added,
+changed or left out of the plan's `traces` that is neither a test's verifies
+link nor a modernizes trace, a renamed test, a requirement's grouping, the same
+answer recorded again and a selection change.
 
 Present the current saved plan and effective human decisions before implementation
 approval, and the approved proposal, published baseline, outcomes, findings and
@@ -746,7 +804,8 @@ The Epic delivery loop is:
 
 ```text
 CHOOSE EPIC -> SAVE PLAN AND PROPOSED CONTENT -> ANSWER DECLARED DECISIONS
--> RETAIN REVIEW BUNDLE -> ONE INDEPENDENT PLAN REVIEW
+-> RETAIN REVIEW BUNDLE
+-> INDEPENDENT PLAN REVIEW, AND THE FULL REVIEW BEFORE APPROVAL WHEN DUE
 -> HUMAN DECISION ON PLAN AND FINDINGS -> RECORD FINDING RESOLUTIONS
 -> HUMAN IMPLEMENTATION APPROVAL / IN_PROGRESS + REQUIREMENT OWNERSHIP
 -> RUN EXPECTED FAILING ASSERTIONS -> IMPLEMENT -> RUN FOCUSED AND QUICK CHECKS
@@ -768,7 +827,7 @@ gap.
 | Session entry and scope | `rdd-start` | Small-change scope and RED/GREEN checks identified, Epic plan read, or System/requirements/evidence read for an explicit existing-behavior pass; next phase identified |
 | Discover and classify | `rdd-discover` | Sources and proposed scope/decisions recorded for the selected Epic |
 | Plan | `rdd-plan` | Saved plan and exact proposed content ready for independent review |
-| Cold review | `rdd-cold-review` | One review recorded; exact plan, findings and gate blockers handed to the human |
+| Cold review | `rdd-cold-review` | One review recorded, and the full review before approval when it is due; exact plan, findings and gate blockers handed to the human |
 | Implementation approval | `rdd-entry-review` | Human decision on the plan and review; eligible approval read back, requested revision routed, or rejection reported |
 | Implement | `rdd-build` | Red-first implementation and focused checks complete |
 | Verify | `rdd-verify` | Required lower and upper criterion proof passes |

@@ -268,6 +268,11 @@ func planHistorySummary(raw any) map[string]any {
 	if item["action"] == "updated" {
 		summary["fields"] = details["fields"]
 	}
+	// The parts and ids a plan save changed, as served; null for a save
+	// recorded before the server wrote them.
+	if item["action"] == "plan_saved" {
+		summary["changed"] = details["changed"]
+	}
 	return summary
 }
 
@@ -431,7 +436,7 @@ var epicPlanOperationHelp = map[string]string{
 	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Any authorized workspace member can submit.",
 	"return-to-implementation": "Apply the human's not-yet decision to an IN_REVIEW Epic. --reason is required. Current completion readiness may fail. The plan, approval and ownership remain in effect.",
 	"approve-completion":       "Apply explicit human completion approval to eligible current server state. Publish requirements, accepted versions, audit and released ownership atomically. Use --reason for the explicit USER: decision. A repeat on DONE publishes once. Each requirement the plan retires becomes a new OBSOLETE version, accepted as a retirement with the entry's reason.",
-	"history":                  "Read attributable saves, approvals, returns and content edits. --full includes surviving audit details. Removed presentations and copied plans cannot be reconstructed.",
+	"history":                  "Read attributable saves, approvals, returns and content edits. The summary of a plan_saved item has changed: the parts and ids the save changed, or null. --full includes surviving audit details. Removed presentations and copied plans cannot be reconstructed.",
 }
 
 func readEpicPlan(input io.Reader) (map[string]any, error) {

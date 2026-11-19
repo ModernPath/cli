@@ -25,6 +25,12 @@ and traces against authoritative product sources and actual code. Review each
 affected writer, reader, boundary and failure mode. Verify source claims by
 reading them; a Trace's existence does not establish support.
 
+The agent handling the task says whether this is a full review or a review of
+the change, as `PROCESS.md` (installed as `.modernpath/rdd/PROCESS.md`) defines
+them. In a review of the change, read what it lists for each cause and apply
+the method below to that text. Name under limitations each trace id that may
+be in a trace list that could not be read.
+
 For a plan, a citation that checks out proves nothing about the design: sample
 the plan's file and line claims rather than confirming each one, and spend the
 effort in this order.
@@ -93,13 +99,20 @@ being silently resolved.
 Write nothing: no file edits, process-store writes, Git operations or comments.
 Return findings and a PASS/FAIL verdict, followed by verification limitations.
 Identify the supplied bundle, reviewer context, every criterion and verification
-obligation reviewed, a reason, and material versus note findings. For implementation,
-state whether all approved scope is implemented; do not claim this if evidence is
-incomplete. The agent handling the task maps these results to the review record
+obligation reviewed, a reason, and material versus note findings. In a review
+of the change, still list every criterion and obligation, because the server
+refuses a review that leaves one out. Start the reason with
+`Review of the change. Causes: ` and the causes you read, separated by commas.
+Then name in the reason the criteria you did not read again. Start the reason
+of a full review or of an implementation review in any other way. For
+implementation, state whether all approved scope is implemented; do not claim
+this if evidence is incomplete. The agent handling the task maps these results to the review record
 against the unchanged retained inputs. For a plan, return one review; the
 agent handling the task hands the plan, verdict and all findings to the human.
 Do not request an automatic
-revision or another review to obtain PASS. The human decides whether to revise,
+revision or another review to obtain PASS. The full review before approval,
+which the agent handling the task obtains itself, is not a review to obtain
+PASS. The human decides whether to revise,
 review again or approve eligible content; material resolutions retain that
 decision and reason. Changed plan inputs require a human decision before
 renewing review. For implementation, changed reviewed inputs require renewed

@@ -16,13 +16,15 @@ human-selected Epic and its latest saved plan before acting.
 2. Establish sources and scope with `rdd-discover` when needed; save the plan
    with `rdd-plan`.
 3. Obtain and record answers to declared decisions before the plan review.
-   Retain the authoritative bundle. Obtain one independent plan review with
-   `rdd-cold-review`; reuse it if already recorded. Do not revise the plan or
+   Retain the authoritative bundle. Obtain the plan review with
+   `rdd-cold-review`, and the full review before approval when it is due; reuse
+   a recorded review. Do not revise the plan or
    repeat the review in response to its findings before the human decides.
 4. Present the exact saved plan, proposed content, review and gate blockers
    with `rdd-entry-review`, even when the review fails. Wait for the human's
    decision. Only a human-requested revision or further review starts another
-   pass, which returns to the human. Do not implement before eligible approval.
+   pass, which returns to the human; the one exception is the full review
+   before approval (`PROCESS.md`). Do not implement before eligible approval.
 5. Implement red-first with `rdd-build`, then run `rdd-verify` for the Epic's
    minimal tests. When they pass, push the Epic's commits to the sprint branch
    and open the sprint pull request if it is not open, both under the project's

@@ -23,6 +23,43 @@
 - `autopilot create --file grant.json` records the human's explicit grant and
   returns its receipt. Requires the matching Core creation route and grant
   migrations. Run `modernpath install` to refresh the CLI reference.
+
+- A plan review now goes out of date only for a change to the plan's content,
+  to something the plan relies on, or to a stored trace. It stays current for
+  changes around the plan other than a change to a stored trace: a code or
+  planned trace added in a plan save, a renamed test, a requirement's grouping,
+  the same answer recorded again and a selection change. The rule is the
+  server's; the CLI shows what the server reports:
+  - `epics gates check` prints, on the line after a blocker that has `causes`,
+    two spaces, `causes: ` and the names, such as
+    `causes: stored_trace, verification`. The names are `plan_content`,
+    `requirement_edit`, `verification`, `decision`, `planning_context`,
+    `release`, `initiative`, `stored_trace`, `trace_removal` and
+    `modernizes_trace`. The changed stored traces (`trace_ids`) appear only
+    with `--json`.
+  - `epics plan history <id> --json` has `changed` in the summary of each
+    `plan_saved` item, as the server returned it: `{parts, requirement_ids,
+    criterion_ids}`. It is null for a save recorded before the server wrote it.
+  - The installed `PROCESS.md` and the CLI reference name the causes and what
+    leaves a plan review current. Run `modernpath install` to get the new text.
+  Both outputs need a Core that returns `causes` and `changed`.
+- The installed planning instructions use those causes. Run `modernpath
+  install` to get the new text. No command changes.
+  - The cold review fetches the plan review bundle with `--phase plan-ready`,
+    so the reviewer sees the earlier reviews of the planning cycle, their
+    findings and resolutions, and the gate's causes.
+  - A later plan review in the same planning cycle is a review of the change:
+    it reads what the gate's causes and `epics plan history` name. Its reason
+    starts with `Review of the change. Causes: `.
+  - After a change of plan content, one more full review comes before
+    approval. The agent obtains it without a further human decision and
+    presents both reviews.
+  - `rdd-entry-review` does not offer for the build a note that would change
+    behavior, and lists the changes recorded after the current plan review.
+  - `rdd-plan` asks for a split decision when the plan body and its added or
+    changed criteria are above about 25,000 characters, looks for an answer in
+    a source before it asks the human, quotes human decisions, and keeps
+    review markers out of requirement fields and criteria.
 - `constraints` records the Engineering Constraints of the bound System: a
   rule in a person's words with the ref `EC-<number>` and the states
   proposed, active and deactivated. `create --file` and `update <ref> --file`

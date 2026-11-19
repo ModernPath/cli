@@ -48,6 +48,10 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 				for _, raw := range blockers {
 					if b, ok := raw.(map[string]any); ok {
 						fmt.Fprintf(cmd.OutOrStdout(), "- %s: %s\n", b["code"], b["message"])
+						// What put a plan review out of date. trace_ids stays in --json.
+						if causes := blockerCauses(b["causes"]); len(causes) > 0 {
+							fmt.Fprintf(cmd.OutOrStdout(), "  causes: %s\n", strings.Join(causes, ", "))
+						}
 					}
 				}
 			}
@@ -120,6 +124,18 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 	return group
 }
 
+// blockerCauses reads a blocker's `causes`, a list of names.
+func blockerCauses(raw any) []string {
+	list, _ := raw.([]any)
+	names := make([]string, 0, len(list))
+	for _, item := range list {
+		if name, ok := item.(string); ok {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 func epicGateCall(cmd *cobra.Command, load func() (*cliEnv, error), address, method, suffix string, payload any) (map[string]any, error) {
 	id, err := strconv.ParseInt(address, 10, 64)
 	if err != nil || id <= 0 {
@@ -183,6 +199,8 @@ const epicGatesHelp = `Check Epic readiness and record independent reviews and h
 check <id> --phase plan-ready|implementation|completion-review|completion records
 current readiness in the Audit Trail. A passing check does not authorize an
 implementation or completion transition; each is a separate human decision.
+When a plan review is out of date, the line after its blocker names the causes;
+--json also lists the changed stored traces in trace_ids.
 
 Record actual outcomes with evidence record. Each criterion is ready when its
 required TestCases have passing current results and scoped source and test

@@ -1,6 +1,6 @@
 ---
 name: rdd-entry-review
-description: Present the saved Epic plan and its single independent review for the human to approve, request revision, or reject. Stops before implementation.
+description: Present the saved Epic plan and its independent review for the human to approve, request revision, or reject. Stops before implementation.
 ---
 
 # Obtain implementation approval
@@ -8,7 +8,10 @@ description: Present the saved Epic plan and its single independent review for t
 Read `PROCESS.md`, the Epic's exact saved plan and proposed content, independent
 review findings and any recorded resolutions. Present that content and review
 to the human even when the review fails or gate blockers remain. This is the
-decision point after one independent review, not another review or repair pass.
+decision point after the plan's review, or after a review of the change and the
+full review before approval, not another review or repair pass. If the full
+review before approval is due and not recorded, return to `rdd-cold-review`
+before you present the plan.
 
 Before requesting approval, confirm the Epic includes UR/SR
 requirements covering all in-scope behavior, with explicit criteria and
@@ -33,7 +36,8 @@ Resolve and record declared human decisions before the independent review.
 Read the authoritative current plan, decisions, traces and separate review
 before asking for a decision. If an answer or reviewed input changed, disclose
 the stale review and let the human direct the revision or renewed review.
-Do not silently edit the plan or commission another review.
+Do not silently edit the plan or commission another review, except the full
+review before approval.
 
 Present the user outcome, included requirements and exclusions, material
 sources, risks, test strategy, recorded decision answers, review verdict,
@@ -43,6 +47,24 @@ human can choose which to fix before approval. For a failed review, give each
 material finding with the correction you propose, and ask separately the
 questions only the human can answer. Check the claims of each correction and
 each option in the code before you offer them, so the human decides on facts.
+Give each requirement-text note with the wording you propose, checked in the
+code as you check a correction. Before you offer to leave a note to the build,
+check whether acting on it would change behavior, requirement content the plan
+would publish, or a file that other work reads or generates. If it would, do
+not offer it for the build. Look for the answer in a recorded human decision,
+then in a published requirement, then in the legacy system, and give the human
+the plan correction with that source. Ask the human the question only when no
+source answers it. Do not propose an approval rule that needs a review with no
+notes.
+
+Before you ask for approval, read
+`modernpath epics plan history <epic-id> --limit 50 --json` and list for the
+human each item recorded after the current plan review: for a plan save its
+`changed` parts and its `comment`, for an edit of the Epic its `fields`; read
+the next page with `--offset` while `has_more` is true. When the review is
+current, these changes left it current, so no reviewer has read them. Say so
+when there are none.
+
 Ask the human to approve eligible content, request a revision or further review,
 or reject the plan. Wait for that decision. Notes do not require plan edits.
 Do not imply that a passing review or autopilot grant is completion approval.
@@ -53,9 +75,10 @@ correction resolved. Record the disposition of each note the human leaves to
 the build, so the build finds it with the review. Route a finding about
 existing behavior that the Epic leaves unchanged to `rdd-triage` as a Backlog
 record, unless the human widens the Epic. A requested revision returns
-to `rdd-plan` for the specified changes and one new review before presenting it
-again. Rejection stops the plan. Do not manufacture resolutions or waive gate
-conditions to turn a blocked plan into an approval.
+to `rdd-plan` for the specified changes, one new review and, when it is due,
+the full review before approval, before presenting it again. Rejection stops
+the plan. Do not manufacture resolutions or waive gate conditions to turn a
+blocked plan into an approval.
 
 If eligible and approved, apply the current-state approval with the human's
 actual answer and `USER:` attribution through the CLI. Reuse that explicit

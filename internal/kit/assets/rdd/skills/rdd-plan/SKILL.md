@@ -24,8 +24,9 @@ requirement that falls outside it.
 
 If the plan already has an independent review, present the plan and that review
 to the human through `rdd-entry-review`. Revise a reviewed plan only when the
-human requests it. A requested revision gets one new review, then returns to
-the human; do not start an autonomous revision-and-review loop.
+human requests it. A requested revision gets one new review and, when it is
+due, the full review before approval, then returns to the human; do not start
+an autonomous revision-and-review loop.
 
 A fix is a design change, and in practice fixes cause many of the findings of
 the review that follows them. Before the new review of a requested revision:
@@ -49,9 +50,17 @@ the review that follows them. Before the new review of a requested revision:
   the plan) for the old wording, and inspect what else reads the changed
   behavior, including code that reads any path, folder or name the change
   introduces and the actual output of any tool it names.
+- Write a fix into the text it corrects. Keep review markers, round numbers
+  and finding ids out of requirement fields and criteria as well as the plan
+  body; the review record holds them.
+- Give each plan save after a review a `--reason` that names the finding or
+  decision each change answers. The plan history records which parts,
+  requirements and criteria the save changed; the reason says why.
 - Then give the changes to a read-only agent that did not write them, to check
   each fix against the code in the same way, and correct what it finds. This
-  check records no review.
+  check records no review. The read-only check reads the text you will save.
+  Check a correction you make after the check once more, reading only the
+  corrected text.
 
 1. Confirm the exact Epic, its lifecycle and intended outcome. Preserve
    IDs and identify included requirements and explicit exclusions.
@@ -76,14 +85,23 @@ the review that follows them. Before the new review of a requested revision:
    read-only agent that returns the answers. Also search the stored requirements
    and the kit's own rules (`PROCESS.md`, the skills and the CLI reference) for
    anything the change would contradict.
-3. Then, still before drafting, list the questions only the human can answer
+3. Before you put a product question to the human, look for its answer in a
+   recorded human decision, then in a published requirement, then in the
+   legacy system. When a source answers it, write the answer into the plan
+   with the source: the decision or requirement, or the file and line. Ask the
+   human only what no source answers.
+   Then, still before drafting, list the questions only the human can answer
    and ask them in one batch:
    - conflicts with stored requirements, documented behavior or the kit's own rules;
    - which entry points, callers and paths are in scope;
    - names for any new user-visible label or term;
    - behavior at the largest expected input, such as bulk operations,
      notification volume, locks and timeouts;
-   - how earlier answers apply after later changes.
+   - how earlier answers apply after later changes;
+   - data that is stale or partly written when the change runs;
+   - the platforms and CI images the change runs on, and how its tests stay
+     isolated;
+   - who reads or generates each output and document the change alters.
 
    If the prompt you ask through holds fewer questions than you have, ask the
    ones that change scope and put the rest in the plan as assumptions the human
@@ -94,6 +112,9 @@ the review that follows them. Before the new review of a requested revision:
    Control shows the title on a short card and the rest when the card is opened.
    Record the answer after the plan save,
    because the server accepts an answer only for a decision the saved plan lists.
+   When a human answer adds a mechanism the plan did not have, such as a
+   record, a command, a time limit or a file, do the reconnaissance for that
+   part again before you write it into the plan.
 4. Inspect affected control/data flow, persistence, interfaces, integrations,
    failure modes, dependencies and project test gates. For shared or persisted
    state, identify actual writers, readers, existing shapes, partial-failure
@@ -127,7 +148,10 @@ the review that follows them. Before the new review of a requested revision:
    by phrase tests. Gate only on deterministic tests; plan a model-dependent
    run as a measurement reported at the end.
 7. Record open questions, conflicts, assumptions, deferred scope and risk in
-   plain language. Do not invent a CLI command or local plan format.
+   plain language. Write each human decision into the plan in the human's own
+   words, in quotation marks. Put your reading of it under the plan's
+   assumptions, where the human can correct it. Do not invent a CLI command or
+   local plan format.
 8. Before the first review, check the draft:
    - every design claim cites a file and line you read;
    - each expected RED says what the code does at the first commit and which
@@ -138,8 +162,14 @@ the review that follows them. Before the new review of a requested revision:
    - documented behavior the change alters is named.
 
    State each behavior once, in its criterion, and let requirement fields and
-   the plan body refer to it instead of restating it. If the plan grows beyond
-   about 15 criteria, offer the human a split.
+   the plan body refer to it instead of restating it. Define each term the
+   criteria rely on once, and use only the term elsewhere.
+
+   Before the first review, count the characters of the saved plan body and of
+   the criteria the plan adds or changes. Above about 25,000 in total, ask the
+   human to split the Epic or keep it whole, as a declared decision. More than
+   15 criteria is a reason to consider a split, not a limit. Count again after
+   a revision, and tell the human the size when it is above about 25,000.
 9. Save the plan through the CLI and read back the exact
    saved content. Then use the CLI to mark each backlog, gap or tooling
    record the plan delivers as routed to the Epic, with a reference to this
@@ -147,7 +177,7 @@ the review that follows them. Before the new review of a requested revision:
    Do the same when a later plan save adds a record. Obtain and record
    answers to declared decisions. Inspect the CLI's read-only phase readiness
    and correct structural blockers before retaining the review bundle; a missing
-   independent review is expected at this point. Hand off for one independent
+   independent review is expected at this point. Hand off for independent
    review, then present the saved plan and findings to the human. Do not change
    tests or product code in this pass.
 

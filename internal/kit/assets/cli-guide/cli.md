@@ -752,9 +752,10 @@ being updated. The arrays replace the editable sets, so include links and criter
 to retain.
 
 Content edits require unowned `PROPOSED`, `BLOCKED`, `DEFERRED` or standalone
-`IN_PROGRESS` requirements with revision 0 and no accepted version. Drafts in planning Epics can be edited;
-the changed content makes their plan reviews outdated, requiring a fresh review
-before implementation approval. Content edits also make previous acceptance
+`IN_PROGRESS` requirements with revision 0 and no accepted version. Drafts in planning Epics can be edited.
+An edit to a draft's content, criteria or stored traces puts the Epic's plan
+review out of date, and implementation approval then needs a new review. An edit
+to grouping only (`context`, `context_name`) leaves the review current. Content edits also make previous acceptance
 evidence stale, including edits within the same second.
 
 Approved or Epic-owned requirements refuse direct edits. Any authorized user
@@ -1422,6 +1423,42 @@ The SHA is caller-supplied trace information; the server does not verify it
 against a repository. Both passing and blocked checks are recorded; blocked
 checks exit nonzero, and audit failure returns an error. Reading a preview or
 review bundle records no check. A passing check grants no human approval.
+
+A plan review goes out of date only for a change to the plan's content, to
+something the plan relies on, or to a stored trace. It stays current for changes
+around the plan other than a change to a stored trace: a trace added to, changed
+in or left out of the plan's `traces` that is neither a test's verifies link nor
+a modernizes trace, a renamed test, a requirement's grouping, the same answer
+recorded again and a selection change. When the review is out of date, the
+`plan_review_required` blocker has `causes`, and the text output prints them on
+the line after the blocker:
+
+```text
+- plan_review_required: <message>
+  causes: stored_trace, verification
+```
+
+| Cause | What counts |
+|---|---|
+| `plan_content` | A plan save that changed the body, a requirement, a criterion or the retire list. |
+| `requirement_edit` | A requirement's content or stored criteria edited outside a plan save. |
+| `verification` | A plan save that changes which test proves a criterion or the test boundaries; the delete of a test the plan names, needs or has a trace row to; a move to another System of a test whose System before or after the change is the Epic's System. |
+| `decision` | A new or different answer; a decision added to or removed from the plan. |
+| `planning_context` | A change to the planning context of the Release or Initiative the Epic reads. |
+| `release` | The Epic moved to another Release, or the Initiative the Epic reads moved to another Release. A move of the Epic to another Release names `initiative` as well, because the Epic then belongs to that Release's Initiative. |
+| `initiative` | The Initiative that covers the Epic changed. |
+| `stored_trace` | A change to a stored trace of the plan's requirements or criteria, of a requirement it retires, or between a test of the plan and code. |
+| `trace_removal` | A plan save that changes the plan's `remove_traces` list. |
+| `modernizes_trace` | A plan save that changes the plan's modernizes traces. |
+
+When `stored_trace` is a cause, the blocker also has `trace_ids`, the ids of the
+changed stored traces. `trace_ids` appears only in the `--json` output; the text
+output prints the causes line. A blocker without `causes` prints as before.
+
+`modernpath epics plan history <epic-id> --json` shows `changed` on each
+`plan_saved` item: the parts of the plan the save changed (`parts`) and the ids
+of the changed requirements and criteria (`requirement_ids`, `criterion_ids`).
+`changed` is null for a save recorded before the server wrote it.
 
 Read current server facts for a separate review with
 `modernpath epics gates review-bundle <epic-id> --phase <phase> --json`.
