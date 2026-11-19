@@ -1237,6 +1237,21 @@ with the signed-in person and, with `--agent`, the agent.
 A Release's planning context is written on the Release page; the command line
 creates and edits no Release.
 
+### Read Roadmap status draft diagnostics
+
+```sh
+modernpath roadmap status-diagnostics
+modernpath roadmap status-diagnostics <draft-uuid> --json
+```
+
+The command reads the latest draft in the bound System. Give a UUID to select
+an earlier draft. The output shows the effective status, recorded status, and
+timestamps. A failed draft has a safe failure category and summary. An old
+drafting row can show an effective status of failed.
+
+When the drafting job is available, the output shows its state and attempt
+counts. In JSON, unavailable failure or job details are `null`.
+
 ### Read and set an Initiative's selection
 
 An Initiative that replaces part of the legacy system has a selection: a keep,
@@ -1834,7 +1849,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
 | requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context`, `requirements contexts` |
 | Epic records | `epics list`, `epics get`, `epics create`, `epics update`, `epics search` |
-| Roadmap | `roadmap show`, `roadmap selection`, `roadmap apply` |
+| Roadmap | `roadmap show`, `roadmap status-diagnostics`, `roadmap selection`, `roadmap apply` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |

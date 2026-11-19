@@ -31,6 +31,11 @@ A fix is a design change, and in practice fixes cause many of the findings of
 the review that follows them. Before the new review of a requested revision:
 - Make the smallest change that removes each finding. Add no name, folder,
   flag, general claim or record shape that the finding does not need.
+- Change only what the material findings and the human's request need. Fix no
+  other note in the same revision: each further fix adds text for the next
+  review to fault. Propose to the human only the notes that would change
+  behavior or publish false requirement content, and leave the rest to the
+  build or a follow-up record.
 - Treat a correction a reviewer suggests, and each option you offered the
   human, as a claim to check, not as a verified fix.
 - Give every claim, path, name, tool and record shape a fix adds the same
@@ -61,6 +66,10 @@ the review that follows them. Before the new review of a requested revision:
    substitute for requirements.
 2. Ground claims in source passages, code, tests or observed runs. Verify
    important source references by reading the source; a path alone is insufficient.
+   An approved handoff or specification is a source, not an answer to every
+   question. Read it for the cases it leaves open, such as what happens on a
+   failure, who may start an action and what counts as done, and put those to
+   the human in step 3.
    Before writing the design, turn each claim it depends on into a question
    for the code, such as which transaction a write runs in and who calls it,
    and record the answer with file and line. Delegate many such reads to a
@@ -100,6 +109,9 @@ the review that follows them. Before the new review of a requested revision:
 5. Define behavior boundaries, acceptance scenarios, code/test targets,
    expected RED assertions, focused and proportional regression checks,
    operational and security risks, and the requirement content that completion would publish.
+   When the change is process or prompt text, state each rule in one place and
+   let the other files name that place. A rule that several files repeat must
+   change in all of them at once, so the plan lists every file that repeats it.
    A removal Epic retires published requirements through `retire` and
    removes their traces through `remove_traces`.
 6. Create or reuse test definitions before readiness review. Declare

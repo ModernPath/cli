@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Process: `rdd-plan` keeps a plan revision to the material findings and the
+  human's request, reads an approved handoff for the cases it leaves open
+  before drafting, and states a rule of process or prompt text in one place.
+  Run `modernpath install` to refresh the process.
 - `autopilot create --file grant.json` records the human's explicit grant and
   returns its receipt. Requires the matching Core creation route and grant
   migrations. Run `modernpath install` to refresh the CLI reference.
