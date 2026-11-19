@@ -1524,8 +1524,8 @@ again. Report the blocker and ask the business owner; no command records the
 agreement.
 
 Run focused assertions before implementation and confirm their expected
-failures. After implementation, run focused and proportional checks and record
-actual outcomes for each criterion and TestCase with `evidence record`. The
+failures. After implementation, run the focused checks and the Epic's minimal tests and
+record actual outcomes for each criterion and TestCase with `evidence record`. The
 latest committed outcome for each pair is current, including failures.
 
 A separate review records `phase`, `reviewer_context`, all criterion and obligation

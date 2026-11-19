@@ -264,10 +264,17 @@ completion presentation (`epics gates presentation`): the opening with who
 opened it and why, each edit, and the lock that followed. Any authorized workspace member returns it to planning, and only if the change needs a new plan; otherwise
 the build continues within the approved plan.
 
-Pin the base: build an Epic on the main revision it started from, and do not
-stack an Epic on an open pull request. Rebase once before implementation review. A rebase with no conflict in the Epic's files is not a return to planning.
-Rerun affected deterministic checks after a rebase. A conflict that changes the
-Epic's behavior or scope requires a return to planning.
+Build an Epic from the tip of the sprint branch (§Minimal tests and the full
+run). When the Epic lands, push its commits to the sprint branch under the
+project's rules for pushing, and start the next Epic from the branch's tip.
+Until it lands, its commits are not pushed to the sprint branch. A fix is built
+from the tip and pushed, under the same rules, when its red-first test and the
+quick checks pass. An Epic whose commits are not yet on the sprint branch
+brings the new tip in before they are pushed and reruns the affected checks.
+Bringing the release branch into the sprint branch with no conflict in the
+Epic's files is not a return to planning. Rerun the affected deterministic
+checks after bringing it in. A conflict that changes the Epic's behavior or
+scope requires a return to planning.
 
 ### Reverse engineering
 
@@ -515,6 +522,13 @@ closing it needs their words in `disposition_ref`. The server can only check
 that a `USER:` source is there, so the agent writes that source only from the
 person's own words, never from a template such as `USER:<date>:completion`.
 
+An autopilot sprint is one pull request. Each Epic lands on the sprint branch
+when its minimal tests pass, the full run runs during the sprint, and the pull
+request description has one section for each Epic: its record, criteria,
+minimal-test evidence and changed files. An instruction to verify at the end
+names the full run. The sprint report lists each full run with its result and
+link, and each fix.
+
 Autopilot does not waive red-first testing, security, tenant isolation, data
 integrity, project commit checks, independent completion review, accepted-content
 read-back, or explicit human completion approval. The human remains in
@@ -735,8 +749,10 @@ CHOOSE EPIC -> SAVE PLAN AND PROPOSED CONTENT -> ANSWER DECLARED DECISIONS
 -> RETAIN REVIEW BUNDLE -> ONE INDEPENDENT PLAN REVIEW
 -> HUMAN DECISION ON PLAN AND FINDINGS -> RECORD FINDING RESOLUTIONS
 -> HUMAN IMPLEMENTATION APPROVAL / IN_PROGRESS + REQUIREMENT OWNERSHIP
--> RUN EXPECTED FAILING ASSERTIONS -> IMPLEMENT -> RUN CHECKS
--> RECORD CURRENT CRITERION RESULTS -> CLEANUP -> VERIFY
+-> RUN EXPECTED FAILING ASSERTIONS -> IMPLEMENT -> RUN FOCUSED AND QUICK CHECKS
+-> RECORD CURRENT CRITERION RESULTS -> CLEANUP -> VERIFY WITH THE EPIC'S MINIMAL TESTS
+-> LAND ON THE SPRINT BRANCH -> FULL RUN ON THE SPRINT PULL REQUEST
+-> FIXES ON THE SAME PULL REQUEST -> PASSING FULL RUN
 -> RECORDED INDEPENDENT IMPLEMENTATION REVIEW -> IN_REVIEW
 -> HUMAN COMPLETION APPROVAL / ATOMIC PUBLICATION + REVISION + AUDIT + UNLOCK
 ```
@@ -756,7 +772,7 @@ gap.
 | Implementation approval | `rdd-entry-review` | Human decision on the plan and review; eligible approval read back, requested revision routed, or rejection reported |
 | Implement | `rdd-build` | Red-first implementation and focused checks complete |
 | Verify | `rdd-verify` | Required lower and upper criterion proof passes |
-| Review, publish and complete | `rdd-completion-review` | Human-approved content atomically published/versioned/audited, ownership released, or incomplete work reported |
+| Review, publish and complete | `rdd-completion-review` | Human-approved content atomically published/versioned/audited after a passing full run, ownership released, or incomplete work reported |
 | Verify existing behavior | `rdd-reverse-engineer-verify` | Current PROPOSED content traced to existing behavior and complete applicable test outcomes recorded; no lifecycle transition |
 | Accept existing behavior | `rdd-reverse-engineer-accept` | Exact verified targets explicitly accepted by a human and atomically published as DONE, or left PROPOSED with the tooling gap reported |
 | Discoveries and blockers | `rdd-triage` | Discovery routed into a draft plan or reported as a separate-work decision/blocker; active approvals preserved |
@@ -764,6 +780,67 @@ gap.
 
 A focused pass is a handoff, not whole-task completion. Stop when its exit is
 reached and report what remains.
+
+### Minimal tests and the full run
+
+A sprint is one Epic or several built together on one pull request, with or
+without an autopilot grant. The sprint branch is that pull request's branch.
+The release branch is the branch the sprint branch starts from and merges into;
+it is usually the main branch and is not a Release record. The quick checks are
+the project's fast checks, such as build, static and architecture checks, and
+unit and domain tests; the project instructions name them. An Epic lands when
+`rdd-verify`'s run of its minimal tests passes; its commits are then pushed to
+the sprint branch (§Returning to planning). The sprint report is the agent's
+report to the human at the end of the sprint, before it asks for completion
+approval.
+
+An Epic's minimal tests are the TestCases of its changed criteria, at unit
+level first and at integration level where the criterion's boundary needs it;
+mutation testing of the code the Epic changed, where the project instructions
+name a mutation tool, with its results kept in the PR notes; the project's
+quick checks; and any check the plan names that the full run does not run.
+`rdd-verify` runs these and no more.
+
+The full run is the project's full test suite, with mutation testing in full
+where the project uses it. It runs on the sprint pull request, as its CI or as
+the project's full-run command, during the sprint as well as at its end. Coding
+never waits for a full run. The full run's result and a link to it go in the
+pull request description and the sprint report. The platform records criterion
+outcomes only: a full-run result with no TestCase traced to a criterion is not
+recorded and blocks no gate.
+
+A full-run failure goes to `rdd-triage`. A failure the project instructions
+list as a known flake is rerun alone three times. It is a flake only when all
+three pass, and it is listed in the sprint report. A confirmed flake does not
+make the full run pass: rerun the failed part of the full run until it passes,
+or the whole run where it cannot be rerun in parts. The full run has passed
+when every part of it has passed on the same commit. Every other failure is a
+defect. A defect that a sprint Epic caused is fixed red-first under that Epic,
+on the same pull request, while that Epic is not DONE. A defect that was
+already on the release branch also fails on the tip of the release branch and
+belongs to no approved Epic. The agent fixes a defect that was already on the
+release branch, and a defect that a DONE Epic caused, red-first as a small
+change (§Small changes) on the same pull request, without waiting for the
+human, and lists it in the sprint report. This rule authorizes that small
+change in place of a user's request and of the fresh approval §Work scope asks
+for. With or without a grant, the stops of §Autopilot apply to it; under a
+grant, so do the grant's excluded areas. The human still decides the small
+change's completion (§Small changes). A fix that changes what a published
+requirement or its criteria state, or that is not narrow, is its own Epic, with
+its own plan and approval; for a DONE Epic that is its follow-up Epic.
+
+Request the independent implementation review after the full run passes,
+because a criterion outcome that changes after the review outdates it. The
+human approves an Epic's completion after a full run that contains the Epic has
+passed. This is a rule for the agent and the approver; no gate checks it. The
+human merges the pull request after its full run has passed; how it is merged
+is the project's choice. An Epic that changes no code or tests has no full run
+to wait for.
+
+The project instructions name the quick checks, the full-run command and where
+it runs, how many long runs one machine may run at a time, the sprint branch
+and the release branch, the mutation tool if the project uses one, and the
+known flakes.
 
 ### AI TDD inner loop
 
@@ -774,7 +851,9 @@ TestCase Traces in the platform. For each clause:
 1. Write or select a focused assertion and run it before implementation.
    Confirm the expected assertion failure. A build error or unrelated failure
    is not RED evidence.
-2. Implement the change and run the focused and proportional regression checks.
+2. Implement the change and run the focused checks. Epic work also runs the
+   project's quick checks; a small change runs its proportional regression
+   checks.
 3. Record each actual outcome against its criterion and TestCase. A later
    outcome replaces the earlier one for that pair. Read back the current results
    and Traces; a pass for one required test does not cover another.
@@ -838,13 +917,11 @@ delegated build, for current direct proof.
 Choose evidence by boundary: unit/property for domain rules, component and
 browser for UI, endpoint or contract tests for APIs, integration for
 persistence and external integrations, schema conformance for cross-service
-contracts, and harness/smoke for operations. Run project-required checks and
-proportional regression suites after cleanup. Keep test identities and
+contracts, and harness/smoke for operations. Run the Epic's minimal tests after cleanup; the full run covers the regression suites, including regression checks a plan names. A check a plan names that the full run does not run is one of the Epic's minimal tests. Keep test identities and
 requirement links stable; file line numbers are navigation aids,
 not identities.
 
-Before completion review, run the required checks and record their actual
-outcomes. Review from a context independent of the author. Resolve material
+Before completion review, record the actual outcomes of the Epic's criteria and, unless the Epic changes no code or tests, wait for a passing full run of the sprint pull request. Review from a context independent of the author. Resolve material
 correctness, security, data-loss, contract, traceability and testability
 findings; explain remaining limits. Keep code integration in version control
 under the project's rules and the human's PR-specific merge approval.
@@ -891,6 +968,7 @@ tooling gap and leave the item explicitly incomplete.
 | Missing human decision or ambiguous intent | Ask the human and record the answer with its source before relying on it |
 | Technical failure inside approved behavior | Continue red-first implementation and verification |
 | External impediment | Report the blocker, its owner and the next action |
+| A full-run failure | §Minimal tests and the full run |
 | Known future work outside the approved scope | Disclose it and leave it for a separately authorized Epic |
 | Contradicted or removed behavior | Explain the conflict and ask the human how the approved outcome changes |
 

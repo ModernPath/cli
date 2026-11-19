@@ -18,6 +18,10 @@ defines no local delivery ledger.
 - Project instructions own project-specific architecture, repository layout,
   commands, environments and test gates. They name the CLI and the channel
   for reporting a tooling gap.
+  For verification they name the quick checks, the full-run command and where
+  it runs, how many long runs one machine may run at a time, the sprint branch
+  and the release branch, the mutation tool if the project uses one, and the
+  known flakes.
 - `skills/rdd-reverse-engineer-verify/SKILL.md` verifies PROPOSED requirements
   against existing behavior and actual test evidence; it does not change their
   lifecycle.
@@ -87,8 +91,8 @@ documentation workflow.
 
 Be terse and factual. Ground technical claims in sources, code, tests or
 observed runs. Prefer simple, robust changes. Preserve red-first test evidence,
-run the focused and proportional regression checks, and report commands and
-results. Read back accepted requirement versions after completion approval or
+run the focused checks, then an Epic's minimal tests or a small change's
+proportional regression checks, and report commands and results. Read back accepted requirement versions after completion approval or
 existing-behavior acceptance;
 verify Git, PR and deployment state separately before making those claims.
 

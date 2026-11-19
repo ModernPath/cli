@@ -22,22 +22,28 @@ grant is missing, expired or ambiguous.
    explicitly authorized, stop for hard-to-reverse decisions: existing-data
    deletion or migration, security or authorization, billing or legal terms,
    or an external-party contract.
-3. Follow `rdd-build` and `rdd-verify` for every slice. Record actual current
+3. Follow `rdd-build` for every slice and `rdd-verify` for each Epic, not for each slice. Record actual current
    criterion outcomes and read them back using an authorized account. The grant
    does not confer another account's authority. Work red-first in
    bounded slices. Each new behavior gets an expected
-   failing assertion before implementation, then focused and proportional
-   regression checks after cleanup. Keep security, tenant isolation and data
+   failing assertion before implementation, then focused checks and the project's quick checks; the Epic's minimal tests run once, after its cleanup. Keep security, tenant isolation and data
    integrity from the first functioning slice.
-4. Use focused checks during the sprint and reserve required full verification
-   and hardening for closeout. Do not skip project commit checks.
-5. At closeout, finish evidence collection, then follow `rdd-completion-review`
+4. Use one pull request for the sprint. Build each Epic from the tip of the
+   sprint branch; when its minimal tests pass, push it to the sprint branch
+   under the project's rules for pushing and start the next Epic from the tip.
+   Start or queue the full run during the sprint, not only at closeout, and
+   never wait idle for it. Give the pull request description one section for
+   each Epic: its record, criteria, minimal-test evidence and changed files. Do
+   not skip project commit checks.
+5. At closeout, after a full run of the sprint pull request has passed, or at once when no Epic of the sprint changes code or tests, finish evidence collection, then follow `rdd-completion-review`
    to retain and record the independent implementation review, resolve findings,
    submit and retain the human completion presentation. Audit its
    Epic/requirement/code/test traces. Record tested code revisions through
    version control and present the changes since approval, the assumed
    defaults not yet confirmed, findings, evidence and unfinished scope. Keep
    published requirement content and ownership unchanged in review.
+   List each full run with its result and link, and each fix, in the sprint
+   report.
 6. Obtain explicit human completion approval, then read back atomic requirement
    publication, revision increments, immutable versions, audit and released
    ownership. The grant is never that answer.

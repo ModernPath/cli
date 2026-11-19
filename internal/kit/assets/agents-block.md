@@ -25,8 +25,9 @@ Read and follow these before starting product work:
      Engineering Constraint; acceptance stays the person's;
    - `rdd-deliver` — deliver the approved Epic through verification and human completion;
    - `rdd-autopilot` — a sprint under a human's autopilot grant: product
-     questions asked without waiting, process refusals cleared or logged,
-     one review and one completion page at sprint end;
+     questions asked without waiting, process refusals cleared or logged, one
+     pull request for the sprint; implementation review and the human's
+     completion approvals after its full run passes;
    - `rdd-reverse-engineer` — read existing behavior and record requirements
      with typed traces to source files;
    - `rdd-reverse-engineer-verify` — verify existing behavior with criterion-level execution evidence;

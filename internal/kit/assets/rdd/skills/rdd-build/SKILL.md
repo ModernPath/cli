@@ -1,6 +1,6 @@
 ---
 name: rdd-build
-description: Implement behavior within a human-approved Epic plan, using red-first development and proportional cleanup and regression checks.
+description: Implement behavior within a human-approved Epic plan, using red-first development, focused checks and the project's quick checks.
 ---
 
 # Build approved behavior
@@ -44,8 +44,8 @@ For each changed behavior in ordinary implementation:
 
 1. Write or select a focused assertion and run it against current code. Confirm
    the expected failure; a compile error or unrelated failure is not RED evidence.
-2. Implement the smallest passing change. Run focused checks and proportional
-   boundary and regression checks. Check that concise comments identify the
+2. Implement the smallest passing change. Run focused checks and the project's
+   quick checks. Check that concise comments identify the
    requirement beside the implementation and its verifying assertions, as
    specified in PROCESS.md.
 3. Record each actual outcome for the criterion and TestCase as current direct
@@ -69,8 +69,8 @@ reran for a criterion of a published requirement that no Epic owns goes in
 `regression`, and a file a requirement uses but the build did not change goes
 in `unchanged_paths`. It never writes to the store.
 
-Build on the main revision the Epic started from and rebase once, before the
-implementation review (`PROCESS.md` §Returning to planning). Never disable or
+Build from the tip of the sprint branch, and do not push the Epic's commits to
+it before the Epic lands (`PROCESS.md` §Returning to planning). Never disable or
 weaken tests to get past a project check. Keep security,
 authorization, tenant isolation and atomic data integrity in the first
 functioning slice. Do not claim a change is verified from code inspection

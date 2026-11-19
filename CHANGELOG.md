@@ -6,6 +6,20 @@
   human's request, reads an approved handoff for the cases it leaves open
   before drafting, and states a rule of process or prompt text in one place.
   Run `modernpath install` to refresh the process.
+- Process: an Epic is verified with its minimal tests, and the full tests run
+  on the sprint pull request. `rdd-verify` runs the changed criteria's
+  TestCases, mutation testing of the changed code where the project names a
+  tool, the project's quick checks and any check the plan names that the full
+  run does not run. A sprint is one pull request; an Epic is built from the tip
+  of the sprint branch and pushed when its minimal tests pass. The
+  implementation review, the completion approval and the merge come after a
+  passing full run. A confirmed known flake does not make the full run pass. A
+  defect a sprint Epic caused is fixed under that Epic, and one already on the
+  release branch as a small change on the same pull request. The rules "pin
+  the base", "do not stack an Epic on an open pull request" and "rebase once"
+  are gone. Name the quick checks, the full-run command, the sprint and release
+  branches, the mutation tool and the known flakes in the project's
+  instructions. Run `modernpath install` to refresh the process.
 - `autopilot create --file grant.json` records the human's explicit grant and
   returns its receipt. Requires the matching Core creation route and grant
   migrations. Run `modernpath install` to refresh the CLI reference.

@@ -1,6 +1,6 @@
 ---
 name: rdd-verify
-description: Verify implementation under an approved Epic plan, including current lower-level and user-flow evidence and proportional regression checks.
+description: Verify implementation under an approved Epic plan with the Epic's minimal tests and current criterion evidence.
 ---
 
 # Verify approved work
@@ -18,13 +18,13 @@ captured with `modernpath modernization record` under a Modernization Release.
 They do not satisfy, replace or invalidate current criterion proof or ordinary
 readiness.
 
-Run focused tests after cleanup, proportional boundary and regression checks,
-and affected user scenarios. Report runtime observations and limits. A run whose outcome depends on a language model is a measurement; report its result
+Run the Epic's minimal tests after cleanup (`PROCESS.md` §Minimal tests and the
+full run): the TestCases of the changed criteria, mutation testing of the
+changed code where the project instructions name a mutation tool, the project's
+quick checks, and any check the plan names that the full run does not run. Do
+not run the full suite here: it runs on the sprint pull request. Report runtime observations and limits. A run whose outcome depends on a language model is a measurement; report its result
 without presenting it as a deterministic test outcome. Do not reconstruct results or mark skipped tests
-as passing. Keep commands and output in PR notes. Make the single rebase onto
-main that `rdd-build` names before your final checks, rerun the affected checks
-after it, and name in the PR notes the commit your checks ran at and the tests
-they ran.
+as passing. Keep commands and output in PR notes, and name in the PR notes the commit your checks ran at and the tests they ran.
 
 For existing behavior, verify the selected current facts without changing code or
 fabricating failures. Route missing behavior or tests to normal development. A

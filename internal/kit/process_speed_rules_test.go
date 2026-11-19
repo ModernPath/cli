@@ -27,10 +27,6 @@ func TestProcessStatesTheDeliverySpeedRules(t *testing.T) {
 		// Criteria state behavior; wording is tested by phrase tests.
 		"A criterion states observable behavior",
 		"a wording change that keeps the behavior stays under the same criterion and needs no return to planning",
-		// Pin the base; rebase once.
-		"Pin the base",
-		"do not stack an Epic on an open pull request",
-		"A rebase with no conflict in the Epic's files is not a return to planning",
 	} {
 		if !strings.Contains(process, phrase) {
 			t.Errorf("PROCESS.md is missing %q", phrase)
@@ -43,9 +39,6 @@ func TestProcessStatesTheDeliverySpeedRules(t *testing.T) {
 		},
 		"assets/rdd/skills/rdd-verify/SKILL.md": {
 			"A run whose outcome depends on a language model is a measurement",
-		},
-		"assets/rdd/skills/rdd-build/SKILL.md": {
-			"Build on the main revision the Epic started from and rebase once",
 		},
 	}
 	for path, phrases := range skills {

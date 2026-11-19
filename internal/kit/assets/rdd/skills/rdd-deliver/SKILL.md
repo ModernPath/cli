@@ -23,10 +23,16 @@ human-selected Epic and its latest saved plan before acting.
    with `rdd-entry-review`, even when the review fails. Wait for the human's
    decision. Only a human-requested revision or further review starts another
    pass, which returns to the human. Do not implement before eligible approval.
-5. Implement red-first with `rdd-build`, then run `rdd-verify` for required
-   focused, boundary and user-flow evidence.
-6. Use `rdd-completion-review` for independent code review, trace audit and
-   separate human completion approval. Present the changes since approval and
+5. Implement red-first with `rdd-build`, then run `rdd-verify` for the Epic's
+   minimal tests. When they pass, push the Epic's commits to the sprint branch
+   and open the sprint pull request if it is not open, both under the project's
+   rules for pushing, and, when the Epic changes code or tests, start or queue
+   the full run on it. Never wait idle for a full run: continue with the next
+   approved Epic or other approved work. Send a full-run failure to
+   `rdd-triage`.
+6. After the full run has passed, or at once when the Epic changes no code or
+   tests, use `rdd-completion-review` for independent code review, trace audit
+   and separate human completion approval. Present the changes since approval and
    the assumed defaults not yet confirmed, which block nothing. Only that
    approval publishes requirement content, raises revisions, records audit and
    releases ownership atomically. After completion approval is read back, use

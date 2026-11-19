@@ -33,6 +33,23 @@ source, code and test evidence. Preserve IDs.
 5. Disclose blockers, assumptions and deferred work. Do not silently add
    another Epic, invent a local record, or declare a process-tool refusal
    cleared.
+6. For a full-run failure, keep the link to its output. If the project
+   instructions list it as a known flake, rerun it alone three times; when all
+   three pass, list it in the sprint report and rerun the failed part of the
+   full run, or the whole run where it cannot be rerun in parts. The full run
+   has not passed until that rerun passes. Otherwise the failure is a defect.
+   Fix one that a sprint Epic caused red-first under that Epic, unless that
+   Epic is DONE. For any other defect, check which approved Epic owns the
+   failing behavior before you fix it. When an approved Epic that is not DONE
+   owns it, the fix belongs to that Epic: report it as a blocker with that Epic
+   as its owner, and do not fix it as a small change. When a DONE Epic caused
+   it, or it also fails on the tip of the release branch and no approved Epic
+   owns it, fix it red-first as a small change (`PROCESS.md` §Small changes) on
+   the same pull request, and list it in the sprint report. Do not wait for the
+   human, unless the fix needs a stop of `PROCESS.md` §Autopilot or, under a
+   grant, is in an area the grant excludes. A fix that changes what a published
+   requirement or its criteria state, or that is not narrow, is its own Epic.
+   An autopilot grant does not widen an Epic's scope to cover it.
 
 Report evidence, affected items, the earliest needed phase and what
 remains incomplete.

@@ -97,18 +97,23 @@ func TestKitTellsADelegatedBuildToWriteAHandoffRecordedByTheSession(t *testing.T
 }
 
 // TestCase 1a062fc6-9dfd-42bb-ad08-ffbf17999249
-func TestVerifyRebasesOnceAndCompletionReviewReusesCurrentResults(t *testing.T) {
-	requireBuildRecordPhrases(t, "rdd-verify", buildRecordText(t, "assets/rdd/skills/rdd-verify/SKILL.md"), []string{
-		"Make the single rebase onto main that rdd-build names before your final checks, rerun the affected checks after it, and name in the PR notes the commit your checks ran at and the tests they ran.",
+func TestCompletionReviewWaitsForAPassingFullRunAndVerifyDoesNotRebase(t *testing.T) {
+	verify := buildRecordText(t, "assets/rdd/skills/rdd-verify/SKILL.md")
+	requireSprintPhrases(t, "rdd-verify", verify, []string{
+		"Keep commands and output in PR notes, and name in the PR notes the commit your checks ran at and the tests they ran.",
 		"Hand current results and limits to rdd-completion-review, which reuses them;",
 	})
-	review := buildRecordText(t, "assets/rdd/skills/rdd-completion-review/SKILL.md")
-	requireBuildRecordPhrases(t, "rdd-completion-review", review, []string{
-		"Keep a current passing result, without recording it again, when the PR notes list its owning tests as run at the commit the verification checks ran at, the branch has not been rebased since, and nothing in the owning package or app, a package or app it depends on, its lockfiles or its configuration has changed since that commit.",
-		"git diff --name-only <commit> lists committed and uncommitted changes, and git status --porcelain lists untracked files.",
-		"Run the owning checks for every other criterion, and record those outcomes and limits before obtaining the implementation review.",
+	forbidSprintPhrases(t, "rdd-verify", verify, []string{
+		"Make the single rebase onto main",
 	})
-	if strings.Contains(review, "Run the owning checks and record current criterion outcomes and limits before obtaining the implementation review.") {
-		t.Error("rdd-completion-review still tells the agent to run the owning checks for every criterion")
-	}
+	review := buildRecordText(t, "assets/rdd/skills/rdd-completion-review/SKILL.md")
+	requireSprintPhrases(t, "rdd-completion-review", review, []string{
+		"1. Inspect each approved requirement and its actual evidence. Wait for a passing full run of the sprint pull request that contains the Epic, unless the Epic changes no code or tests. Keep a current passing result, without recording it again, when that full run ran its owning tests and they passed. Record an owning test's failure in a full run as the criterion's current outcome, and its pass after the fix or the rerun. Run the owning checks for every other criterion, and record those outcomes and limits before obtaining the implementation review. Request the implementation review after the full run has passed, where there is one.",
+	})
+	forbidSprintPhrases(t, "rdd-completion-review", review, []string{
+		"the branch has not been rebased since",
+		"nothing in the owning package or app",
+		"git diff --name-only",
+		"Run the owning checks and record current criterion outcomes and limits before obtaining the implementation review.",
+	})
 }

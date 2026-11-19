@@ -15,15 +15,15 @@ transitions below apply only to Epic work.
 Read `PROCESS.md`, the Epic's approved plan and exact proposed content, the
 still-published requirements, ownership, implementation, traces and evidence.
 
-1. Inspect each approved requirement and its actual evidence. Keep a current
-   passing result, without recording it again, when the PR notes list its
-   owning tests as run at the commit the verification checks ran at, the branch
-   has not been rebased since, and nothing in the owning package or app, a
-   package or app it depends on, its lockfiles or its configuration has changed
-   since that commit. `git diff --name-only <commit>` lists committed and
-   uncommitted changes, and `git status --porcelain` lists untracked files. Run
-   the owning checks for every other criterion, and record those outcomes and
-   limits before obtaining the implementation review.
+1. Inspect each approved requirement and its actual evidence. Wait for a
+   passing full run of the sprint pull request that contains the Epic, unless
+   the Epic changes no code or tests. Keep a current passing result, without
+   recording it again, when that full run ran its owning tests and they passed.
+   Record an owning test's failure in a full run as the criterion's current
+   outcome, and its pass after the fix or the rerun. Run the owning checks for
+   every other criterion, and record those outcomes and limits before obtaining
+   the implementation review. Request the implementation review after the full
+   run has passed, where there is one.
    Explicitly authorized deletion
    can leave affected paths broken; disclose those failures without restoring
    deleted machinery or claiming unproven behavior works.
@@ -48,7 +48,11 @@ still-published requirements, ownership, implementation, traces and evidence.
    blockers before asking for completion approval. Fetch and retain the
    authoritative completion presentation before asking.
    Present its exact approved proposal, current published content, evidence,
-   findings, risks and any unfinished scope to the human. Also present the
+   findings, risks and any unfinished scope to the human.
+   Show the full run's result and link, and each fix made after a full-run
+   failure, beside the Epic's proof, and say so when the full run has not
+   passed. The human's approval waits for a passing full run that contains the
+   Epic, unless the Epic changes no code or tests; no gate checks it. Also present the
    changes since approval and the assumed defaults not yet confirmed, which
    block nothing: the presentation lists them as `changes_since_approval` and
    `assumed_defaults`. Obtain
@@ -60,6 +64,7 @@ still-published requirements, ownership, implementation, traces and evidence.
    `modernpath initiative approve-completion`. Any authorized workspace member may submit a round; any one
    person may approve a round's completion, which writes each Epic's own completion records, all
    or nothing. A refusal changes no Epic.
+   Epics that are not a round of one Initiative are approved one by one.
 5. Apply only the human's explicit current-state approval and reason through the
    CLI. Upload no plan or presentation. The server rechecks current eligible
    state under locks. Read back atomic publication, one revision increment per
