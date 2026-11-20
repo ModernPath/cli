@@ -79,7 +79,7 @@ func TestConstraintsCreateAndUpdateRefuseAnInvalidFileBeforeLoading(t *testing.T
 	for _, tc := range []struct{ input, want string }{
 		{`{"statement":"s","verification_method":"v"}`, `"title"`},
 		{`{"title":"t","verification_method":"v"}`, `"statement"`},
-		{`{"title":"t","statement":"s"}`, `"verification_method"`},
+		{`{"title":"t","statement":"s","verification_method":9}`, `"verification_method"`},
 		{`{"title":"  ","statement":"s","verification_method":"v"}`, `"title"`},
 		{`{"title":"t","statement":"s","verification_method":"v","state":"active"}`, `unsupported constraint field "state"`},
 		{`{"title":"t","statement":"s","verification_method":"v","system_id":4}`, `unsupported constraint field "system_id"`},
@@ -147,6 +147,19 @@ func TestConstraintsCreatePostsTheFileAndPrintsTheReceipt(t *testing.T) {
 	}
 	if _, has := calls[0].body["rationale"]; has {
 		t.Fatalf("rationale was sent although the file omitted it: %#v", calls[0].body)
+	}
+
+	// The verification method is optional too: a file with title and statement
+	// only is accepted, and the body carries neither optional key.
+	// TestCase 8f3b6a6f-9775-4a1f-ad50-f0da86e7e255
+	calls = nil
+	if _, err = runConstraints(t, load, `{"title":"t","statement":"s"}`, "create", "--file", "-"); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"rationale", "verification_method"} {
+		if _, has := calls[0].body[key]; has {
+			t.Fatalf("%s was sent although the file omitted it: %#v", key, calls[0].body)
+		}
 	}
 }
 

@@ -23,19 +23,21 @@ import (
 var constraintRefPattern = regexp.MustCompile(`^(?i)EC-[1-9][0-9]*$`)
 
 var (
-	constraintRequiredFields = []string{"title", "statement", "verification_method"}
+	constraintRequiredFields = []string{"title", "statement"}
+	constraintOptionalFields = []string{"rationale", "verification_method"}
 	constraintStates         = []string{"proposed", "active", "deactivated"}
 )
 
 const constraintReasonRefusal = "--reason must be the human's decision beginning USER:"
 
 // constraintFileHelp is the one file shape of create and update (SR-4918).
-const constraintFileHelp = `The file is a JSON object with the keys title, statement and verification_method,
-all required non-empty strings, and the optional string rationale. Any other key is
+const constraintFileHelp = `The file is a JSON object with the keys title and statement, required non-empty
+strings, and the optional strings rationale and verification_method. Any other key is
 refused locally as 'unsupported constraint field "<key>"'; a missing required key is
 refused naming it. Use ` + "`--file -`" + ` to read the object from standard input.
 Example: {"title":"...","statement":"...","rationale":"...","verification_method":"..."}.
-Acceptance is the person's: accept and deactivate take --reason "USER:<date>: ...".`
+Write a verification_method only when the statement does not say how a reviewer
+decides. Acceptance is the person's: accept and deactivate take --reason "USER:<date>: ...".`
 
 const constraintAgentHelp = "Slug of the agent that ran this command; sent as the actor beside the signed-in person"
 
@@ -295,12 +297,12 @@ func constraintFilePayload(cmd *cobra.Command) (map[string]any, error) {
 	return payload, nil
 }
 
-// validateConstraintFile is the one file shape of SR-4918: title, statement
-// and verification_method as non-empty strings, rationale an optional string,
+// validateConstraintFile is the one file shape of SR-4918: title and statement
+// as non-empty strings, rationale and verification_method optional strings,
 // nothing else.
 func validateConstraintFile(payload map[string]any) error {
 	for key, value := range payload {
-		if key != "rationale" && !contains(constraintRequiredFields, key) {
+		if !contains(constraintRequiredFields, key) && !contains(constraintOptionalFields, key) {
 			return fmt.Errorf("unsupported constraint field %q", key)
 		}
 		if _, ok := value.(string); !ok {

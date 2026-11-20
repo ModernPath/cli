@@ -38,9 +38,15 @@ returns the file, and the main session runs the one write.
    change must carry). The shape is writing guidance, not a stored field.
 3. Write the statement as a sentence a reviewer can test on a change, naming
    the thing forbidden or required.
-4. Write the verification prose for the change, not for the codebase: what
-   the reviewer looks at in the diff and how they decide. A rule that cannot
-   be judged on a change goes back to the person as a question.
+4. Decide whether the statement already says how a reviewer decides. When it
+   does (a forbidden call, a named file and value, an artifact a change must
+   carry), leave the verification method empty: a second text that restates
+   the statement is read in every review bundle and decides nothing. Write
+   one only for what the statement leaves open: a measure and its threshold,
+   a script or check in the repository to run, or where a reviewer sees that
+   a behavior did not happen. Write it for the change, not for the codebase.
+   A rule that cannot be judged on a change either way goes back to the
+   person as a question.
 5. Write the reason in the person's words, naming the document when there is
    one, such as the ADR or the instruction file it comes from.
 6. Check the list for a duplicate or a conflict and report what it found,
@@ -91,8 +97,9 @@ The constraint file is one JSON object:
 {"title": "...", "statement": "...", "rationale": "...", "verification_method": "..."}
 ```
 
-`title`, `statement` and `verification_method` are required; `rationale` is
-optional. Any other key is refused.
+`title` and `statement` are required; `rationale` and `verification_method`
+are optional, and an absent or blank one is stored as empty. Any other key is
+refused.
 
 Report the ref and the state read back, the refs of any duplicate or conflict
 found, and the drafted acceptance reason. Acceptance stays with the person.

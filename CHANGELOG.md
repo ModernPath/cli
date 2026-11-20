@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `constraints create` and `constraints update`: the file's `verification_method`
+  is optional, like `rationale`; `title` and `statement` stay required. A
+  statement that says how a reviewer decides needs no second text, and every
+  Active constraint's text travels in every review bundle. Requires the matching
+  Core (SR-4912 revision 2). The `rdd-constraint` skill says when to write one:
+  a measure and its threshold, a check in the repository to run, or where a
+  reviewer sees that a behavior did not happen. Run `modernpath install` to
+  refresh the process.
+
 ## v0.30.0 - Exact review of the change and trace ids
 
 Released on 2026-11-20 from monorepo commit `f16af982c8`.
