@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.29.0 - Sprint verification, Engineering Constraints and build recording
+
+Published before production serves the matching Core changes
+(`USER:2026-11-20`). Until production is promoted, the commands below that
+say "Requires the matching Core" fail against production; the process text
+needs no server change.
 
 - Process: `rdd-plan` keeps a plan revision to the material findings and the
   human's request, reads an approved handoff for the cases it leaves open
