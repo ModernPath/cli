@@ -1,6 +1,10 @@
 # Changelog
 
+## Unreleased
+
 ## v0.30.0 - Exact review of the change and trace ids
+
+Released on 2026-11-20 from monorepo commit `f16af982c8`.
 
 Published before production serves the Core changes of v0.29.0
 (`USER:2026-11-20`). The process text needs no server change.
