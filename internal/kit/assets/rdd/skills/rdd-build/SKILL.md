@@ -15,7 +15,7 @@ For Epic work, read `PROCESS.md` and verify through the CLI that the current
 saved plan and proposed content has human implementation approval. Confirm the Epic and
 requirement IDs and remain inside approved scope. Before the first change,
 read the planning contexts of the Epic's Release and Initiative again
-(`epics get <id> --fields planning_contexts`) and build within them; a question
+(`epics get <id> --fields planning_contexts --json`) and build within them; a question
 they leave open goes to the human. Read the System's Active Engineering
 Constraints beside them with `constraints list --state active` and open each
 one the change may touch with `constraints get <ref>`; the Active text is the
@@ -26,6 +26,10 @@ a team member may have opened one of those planning contexts for change and
 edited it since the approval. Tell the approver about a change the plan did not
 know; any authorized workspace member returns the Epic to planning, and only if the change
 needs a new plan.
+Read the live Initiative description in that handoff and implement the approved
+plan and its owned requirements. Raise a conflict with the approver. If the
+human decides to change scope or acceptance, explicitly return the Epic to
+planning and obtain a fresh review and implementation approval before building it.
 Read the plan review notes the
 human left to the build, recorded as finding resolutions, and apply them.
 The active approved plan and

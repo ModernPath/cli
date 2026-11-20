@@ -141,7 +141,7 @@ const epicPlanningContextsReply = `{"data":{"id":42,"system_id":1,"title":"Card 
    "assumptions":[],"open_questions":[],
    "references":[{"kind":"document","target_ref":"document:sd:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"Payments architecture"}]},
   "changed_by":{"id":5,"name":"Pia Planner"},"changed_at":"2026-10-25T10:00:00Z"},
- "initiative":{"id":"11111111-1111-4111-8111-111111111111","title":"Card wallet",
+ "initiative":{"id":"11111111-1111-4111-8111-111111111111","title":"Card wallet","description":"Keep **returning customers** in checkout.\n\n- Reuse the saved wallet.",
   "planning_context":{"version":1,"accepted_context_revision":0,
    "decisions":[],"assumptions":[{"statement":"One wallet per customer"}],"open_questions":[],"references":[]},
   "changed_by":{"id":6,"name":"Ola Owner"},"changed_at":"2026-10-25T11:00:00Z"}}}}`
@@ -162,6 +162,7 @@ func epicPlanningContextsServer(t *testing.T) *httptest.Server {
 	return server
 }
 
+// 2968d204-4128-4bfa-94e8-fd2ec1d95e60 (SR-4964-0)
 func TestEpicGetAcceptsFieldsPlanningContexts(t *testing.T) {
 	cobraWorkspace(t, epicPlanningContextsServer(t))
 
@@ -181,6 +182,9 @@ func TestEpicGetAcceptsFieldsPlanningContexts(t *testing.T) {
 	initiative, _ := contexts["initiative"].(map[string]any)
 	if release["name"] != "Spring" || initiative["title"] != "Card wallet" {
 		t.Fatalf("planning_contexts = %#v", contexts)
+	}
+	if desc := "Keep **returning customers** in checkout.\n\n- Reuse the saved wallet."; initiative["description"] != desc {
+		t.Fatalf("planning_contexts did not carry the Initiative description verbatim: %#v", initiative)
 	}
 	refs := release["planning_context"].(map[string]any)["references"].([]any)
 	if ref := refs[0].(map[string]any); ref["title"] != "Payments architecture" {

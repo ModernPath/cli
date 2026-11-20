@@ -413,6 +413,49 @@ func TestInitiativeListReadsTheBoundSystemsInitiativesInOneGETAndPrintsIdTextRel
 	}
 }
 
+// 2968d204-4128-4bfa-94e8-fd2ec1d95e60 (SR-4964-0)
+func TestInitiativeJSONReadsTheScopedDescriptionBeforeEpicCreation(t *testing.T) {
+	detail := map[string]any{
+		"id": iniLine, "text": "Pay in one step", "description": "## Business and UX",
+		"work":    []any{},
+		"sources": []any{map[string]any{"text": "Customer interview", "origin": "Support"}},
+	}
+	missing := "77777777-7777-4777-8777-777777777777"
+	server, seen := iniServer(t, func(request *http.Request) (int, any) {
+		switch request.URL.Path {
+		case "/api/roadmap/lines/" + iniLine:
+			return iniOK(detail)(request)
+		case "/api/roadmap/lines/" + missing:
+			return http.StatusNotFound, map[string]any{"error": "not_found"}
+		default:
+			return iniOK(iniLines())(request)
+		}
+	})
+	cobraWorkspace(t, server, 1)
+
+	out, err := runRoot(t, "initiative", "get", iniLine, "--json")
+	if err != nil {
+		t.Fatalf("initiative get --json: %v\n%s", err, out)
+	}
+	if len(*seen) != 1 || (*seen)[0].method != "GET" || (*seen)[0].path != "/api/roadmap/lines/"+iniLine || (*seen)[0].query["system_id"] != "1" {
+		t.Fatalf("get --json must read one scoped Initiative detail: %#v", *seen)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &printed); err != nil || !reflect.DeepEqual(printed, detail) {
+		t.Fatalf("JSON detail lost the specification or source fields: err=%v\n%s", err, out)
+	}
+
+	out, err = runRoot(t, "initiative", "get", missing, "--json")
+	if err == nil || !strings.Contains(iniText(out, err), "Initiative "+missing+" not found in System 1") {
+		t.Fatalf("get --json for an absent Initiative: err=%v\n%s", err, out)
+	}
+	before := len(*seen)
+	_, err = runRoot(t, "initiative", "get", "not-a-uuid", "--json")
+	if err == nil || len(*seen) != before {
+		t.Fatalf("invalid IDs must fail before a request: err=%v requests=%d", err, len(*seen)-before)
+	}
+}
+
 // TestCase 3a86fbc6: initiative create sends the file's allowed fields with
 // system_id in one POST and refuses any other field before loading.
 func TestInitiativeCreateSendsTheFilesAllowedFieldsWithSystemIdInOnePOSTAndRefusesAnyOtherFieldBeforeLoading(t *testing.T) {

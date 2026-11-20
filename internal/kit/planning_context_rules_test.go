@@ -29,6 +29,29 @@ func planningContextText(body []byte) string {
 
 const planningContextRead = "epics get <id> --fields planning_contexts"
 
+// 2968d204-4128-4bfa-94e8-fd2ec1d95e60 (SR-4964-0)
+func TestInstalledSkillsUseTheLiveInitiativeDescription(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, skill := range []string{"rdd-start", "rdd-plan", "rdd-build"} {
+		body := installedKitFile(t, root, ".modernpath", "rdd", "skills", skill, "SKILL.md")
+		text := planningContextText(body)
+		phrases := []string{planningContextRead + " --json", "initiative description"}
+		if skill == "rdd-build" {
+			phrases = append(phrases, "implement the approved plan and its owned requirements", "explicitly return the epic to planning")
+		} else {
+			phrases = append(phrases, "initiative get <uuid> --json", "before epics create", "business and ux specification")
+		}
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s is missing %q", skill, phrase)
+			}
+		}
+	}
+}
+
 func TestInstalledProcessNamesThePlanningContexts(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Install(root); err != nil {

@@ -86,11 +86,18 @@ horizon <horizon>  <progress>. --json prints the served list.`,
 func newInitiativeGetCommand(load func() (*cliEnv, error)) *cobra.Command {
 	get := &cobra.Command{Use: "get <initiative-uuid>", Short: "Read one Initiative with its work", Args: cobra.ExactArgs(1),
 		Long: `Read one Initiative of the bound System with its work (its Epics and
-requirements). It is read from the System's list of Initiatives; an ID that
-is not in the list fails as not found.`,
+requirements). --json reads the scoped Initiative detail, including its live
+planning description. An ID outside the bound System fails as not found.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := acceptanceUUID(args[0], "Initiative"); err != nil {
 				return err
+			}
+			if machine, _ := cmd.Flags().GetBool("json"); machine {
+				line, err := initiativeDetail(load, args[0])
+				if err != nil {
+					return err
+				}
+				return writeCommandJSON(cmd, line)
 			}
 			lines, env, err := initiativeLines(load)
 			if err != nil {
@@ -98,9 +105,6 @@ is not in the list fails as not found.`,
 			}
 			for _, line := range lines {
 				if strings.EqualFold(str(line, "id"), args[0]) {
-					if machine, _ := cmd.Flags().GetBool("json"); machine {
-						return writeCommandJSON(cmd, line)
-					}
 					fmt.Fprintln(cmd.OutOrStdout(), initiativeSummary(line))
 					work, _ := line["work"].([]any)
 					for _, raw := range work {
@@ -265,6 +269,32 @@ func initiativeLines(load func() (*cliEnv, error)) ([]map[string]any, *cliEnv, e
 		}
 	}
 	return lines, env, nil
+}
+
+func initiativeDetail(load func() (*cliEnv, error), id string) (map[string]any, error) {
+	env, err := load()
+	if err != nil {
+		return nil, err
+	}
+	if env.SystemID <= 0 {
+		return nil, fmt.Errorf("initiative requires a bound System")
+	}
+	path := "/api/roadmap/lines/" + strings.ToLower(id) + "?system_id=" + strconv.Itoa(env.SystemID)
+	status, body, err := env.get(path)
+	if err != nil {
+		return nil, err
+	}
+	if status == 404 {
+		return nil, fmt.Errorf("Initiative %s not found in System %d", id, env.SystemID)
+	}
+	if status < 200 || status >= 300 {
+		return nil, serverRefusal("Initiative request refused", status, body)
+	}
+	line, ok := body["data"].(map[string]any)
+	if !ok || !strings.EqualFold(str(line, "id"), id) {
+		return nil, fmt.Errorf("Initiative response is missing the requested Initiative")
+	}
+	return line, nil
 }
 
 func initiativeWrite(load func() (*cliEnv, error), method, path string, payload map[string]any) (any, error) {
