@@ -1,11 +1,9 @@
 # Changelog
 
-## v0.29.0 - Sprint verification, Engineering Constraints and build recording
+## v0.30.0 - Exact review of the change and trace ids
 
-Published before production serves the matching Core changes
-(`USER:2026-11-20`). Until production is promoted, the commands below that
-say "Requires the matching Core" fail against production; the process text
-needs no server change.
+Published before production serves the Core changes of v0.29.0
+(`USER:2026-11-20`). The process text needs no server change.
 
 - `traces list` shows the id of each trace: each row of `--json` has `id`
   beside source, relation and target, and each line of the text output starts
@@ -22,6 +20,16 @@ needs no server change.
   that is not in the bundle is looked up in the supplied trace lists. A new gap
   of a kind the human resolved without a plan change is raised as a note. Run
   `modernpath install` to refresh the process.
+
+## v0.29.0 - Sprint verification, Engineering Constraints and build recording
+
+Released on 2026-11-20 from monorepo commit `7dd1152cf4`.
+
+Published before production serves the matching Core changes
+(`USER:2026-11-20`). Until production is promoted, the commands below that
+say "Requires the matching Core" fail against production; the process text
+needs no server change.
+
 - Process: `rdd-plan` keeps a plan revision to the material findings and the
   human's request, reads an approved handoff for the cases it leaves open
   before drafting, and states a rule of process or prompt text in one place.
