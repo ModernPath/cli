@@ -131,7 +131,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		selected, err := selectRecordFields(cmd, data, []string{"id", "title", "process_status"}, epicPublicFields, nil)
+		selected, err := selectRecordFields(cmd, data, []string{"id", "title", "process_status", "covered_by"}, epicPublicFields, nil)
 		if err != nil {
 			return err
 		}
@@ -142,9 +142,9 @@ func init() {
 
 The file may name an Initiative of the Roadmap by its id as line_id (a
 string), beside release_id: the server links the Epic to that Initiative and
-places it in the Initiative's Release unless release_id names another open
-Release, and the receipt names the Release and the Initiative with its
-context, which you write into the requirements you create for the Epic.
+places it in the Initiative's Release even when release_id names another
+Release. The receipt names the Release and the Initiative with its context,
+which you write into the requirements you create for the Epic.
 line_id needs a server with this change: when the answer names no Initiative,
 the command stops with an error naming the Epic the server created.
 

@@ -144,7 +144,7 @@ func TestEpicGetDefaultsToSummaryAndSupportsExactProjection(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &summary); err != nil {
 		t.Fatal(err)
 	}
-	if len(summary) != 3 || summary["id"] != float64(42) || summary["title"] != "Explicit" || summary["process_status"] != "IN_PROGRESS" {
+	if len(summary) != 4 || summary["covered_by"] != nil || summary["id"] != float64(42) || summary["title"] != "Explicit" || summary["process_status"] != "IN_PROGRESS" {
 		t.Fatalf("unexpected default summary: %#v", summary)
 	}
 
@@ -408,16 +408,16 @@ func TestA4EpicsGetPrintsTheInitiativeThatCoversTheEpic(t *testing.T) {
 	defer server.Close()
 	cobraWorkspace(t, server)
 
-	out, err := runRoot(t, "epics", "get", "42", "--fields", "covered_by", "--json")
+	out, err := runRoot(t, "epics", "get", "42", "--json")
 	if err != nil {
-		t.Fatalf("epics get --fields covered_by: %q %v", out, err)
+		t.Fatalf("epics get: %q %v", out, err)
 	}
 	var selected map[string]any
 	if err := json.Unmarshal([]byte(out), &selected); err != nil {
 		t.Fatal(err)
 	}
 	covered, ok := selected["covered_by"].(map[string]any)
-	if len(selected) != 1 || !ok || covered["line_id"] != a4LineID || covered["text"] != "Pay in one step" {
-		t.Fatalf("--fields covered_by must print the covering Initiative: %#v", selected)
+	if len(selected) != 4 || !ok || covered["line_id"] != a4LineID || covered["text"] != "Pay in one step" {
+		t.Fatalf("the default response must include the covering Initiative: %#v", selected)
 	}
 }

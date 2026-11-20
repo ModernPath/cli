@@ -550,3 +550,41 @@ func TestRoadmapStatusDiagnostics(t *testing.T) {
 		}
 	})
 }
+
+func TestRoadmapVerify(t *testing.T) {
+	const violations = `[{"epic_id":4,"problems":["missing_initiative"],"initiative_ids":[]},{"epic_id":8,"problems":["multiple_initiatives","release_mismatch"],"initiative_ids":["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]}]`
+	for _, tt := range []struct {
+		name, body, output string
+		status             int
+		wantError          bool
+	}{
+		{"clean", `{"data":{"violations":[]}}`, `"violations":[]`, 200, false},
+		{"mixed", `{"data":{"violations":` + violations + `}}`, "release_mismatch", 200, true},
+		{"unknown outer field", `{"data":{"violations":[]},"error":"verification_failed"}`, "", 200, true},
+		{"unknown inner field", `{"data":{"violations":[],"error":"verification_failed"}}`, "", 200, true},
+		{"missing", `{"data":{}}`, "", 200, true},
+		{"null", `{"data":{"violations":null}}`, "", 200, true},
+		{"invalid", `{"data":{"violations":[{"epic_id":4,"problems":["unknown"],"initiative_ids":[]}]}}`, "", 200, true},
+		{"refused", `{"error":"not_found"}`, "", 404, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server, seen := roadmapServer(t, tt.status, tt.body)
+			cobraWorkspace(t, server, 1)
+			out, err := runRootStdout(t, "roadmap", "verify", "--json")
+			if (err != nil) != tt.wantError {
+				t.Fatalf("error = %v, want error = %v, output: %q", err, tt.wantError, out)
+			}
+			requireOneRoadmapRequest(t, seen, http.MethodGet, "/api/v1/systems/1/roadmap/verify")
+			if tt.output != "" {
+				var data map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(out), &data); err != nil || len(data) != 1 || data["violations"] == nil {
+					t.Fatalf("want only the violations object, got %q (%v)", out, err)
+				}
+				compact := strings.Join(strings.Fields(out), "")
+				if !strings.Contains(compact, tt.output) {
+					t.Fatalf("output = %q, want %q", out, tt.output)
+				}
+			}
+		})
+	}
+}

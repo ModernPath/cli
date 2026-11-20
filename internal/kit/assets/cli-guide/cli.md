@@ -1132,8 +1132,8 @@ Epic (`requirements create` with `context` and `context_name`). `line_id`
 needs a server with this change: when the answer names no Initiative,
 `epics create` stops with an error that names the Epic the server created
 without the link, which you link with Add on the Initiative's panel.
-`epics get <id> --fields covered_by` returns the Initiative that covers an
-Epic (`line_id` and `text`), or `null`.
+`epics get <id>` includes `covered_by`, with the containing Initiative’s
+`line_id` and `text`, or `null`.
 
 `epics create` and `modernpath new` both call `POST /api/work/epics`, which
 checks every request before it writes anything; a refused request writes
@@ -1237,6 +1237,19 @@ with the signed-in person and, with `--agent`, the agent.
 
 A Release's planning context is written on the Release page; the command line
 creates and edits no Release.
+
+### Check Epic assignments
+
+```sh
+modernpath roadmap verify
+modernpath roadmap verify --json
+```
+
+The command lists Epics in the bound System with missing Initiatives,
+multiple Initiatives, or Release mismatches. It exits with status 1 if it
+finds a problem. Use `--json` to get one object with a `violations` array.
+Each row includes `epic_id`, `problems`, and `initiative_ids`. A clean
+check returns an empty array and exits with status 0.
 
 ### Read Roadmap status draft diagnostics
 
@@ -1891,7 +1904,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
 | requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context`, `requirements contexts` |
 | Epic records | `epics list`, `epics get`, `epics create`, `epics update`, `epics search` |
-| Roadmap | `roadmap show`, `roadmap status-diagnostics`, `roadmap selection`, `roadmap apply` |
+| Roadmap | `roadmap show`, `roadmap verify`, `roadmap status-diagnostics`, `roadmap selection`, `roadmap apply` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history` |
 | Requirement traces and test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |

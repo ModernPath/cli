@@ -34,7 +34,7 @@ context, a kind of work, and the Epics that deliver it. 'roadmap show' reads it;
 Initiative's keep, change and drop decisions, to a file; 'roadmap apply'
 applies a Roadmap plan from a file, on a person's word, with the checks Chat's
 plan card runs.`}
-	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load))
+	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load), newRoadmapVerifyCommand(load))
 	return parent
 }
 

@@ -414,6 +414,7 @@ var leafDispositions = map[string]disposition{
 	"acceptance release":                {kind: dispExecute, args: []string{"acceptance", "release", "2", "--json"}},
 	"roadmap show":                      {kind: dispExecute, args: []string{"roadmap", "show", "--json"}},
 	"roadmap status-diagnostics":        {kind: dispExecute, args: []string{"roadmap", "status-diagnostics", "--json"}},
+	"roadmap verify":                    {kind: dispExecute, args: []string{"roadmap", "verify", "--json"}},
 	"roadmap selection":                 {kind: dispExecute, args: []string{"roadmap", "selection", "--initiative", "11111111-1111-4111-8111-111111111111", "--json"}},
 	"roadmap apply":                     {kind: dispExecute, args: []string{"roadmap", "apply", "--file", "-", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
