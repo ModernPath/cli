@@ -55,7 +55,9 @@ the review that follows them. Before the new review of a requested revision:
   body; the review record holds them.
 - Give each plan save after a review a `--reason` that names the finding or
   decision each change answers. The plan history records which parts,
-  requirements and criteria the save changed; the reason says why.
+  requirements and criteria the save changed; the reason says why. When a save
+  changes the plan body, name in the `--reason` the exact heading of every
+  section it changed.
 - Then give the changes to a read-only agent that did not write them, to check
   each fix against the code in the same way, and correct what it finds. This
   check records no review. The read-only check reads the text you will save.

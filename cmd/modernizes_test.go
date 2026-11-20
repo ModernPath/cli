@@ -177,7 +177,7 @@ func TestC1_84b06f8f_TraceListNamesAndSendsTheModernizesRelation(t *testing.T) {
 			t.Errorf("unexpected request %s", r.URL)
 		}
 		relations = append(relations, r.URL.Query().Get("relation"))
-		_, _ = w.Write([]byte(`{"data":{"items":[{"source":{"type":"user_requirement","id":"a1a1a1a1-1111-4111-8111-111111111111"},"relation":"modernizes","target":{"type":"user_requirement","id":"b2b2b2b2-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
+		_, _ = w.Write([]byte(`{"data":{"items":[{"id":"c3c3c3c3-3333-4333-8333-333333333333","source":{"type":"user_requirement","id":"a1a1a1a1-1111-4111-8111-111111111111"},"relation":"modernizes","target":{"type":"user_requirement","id":"b2b2b2b2-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
 	}))
 	defer server.Close()
 	list := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })

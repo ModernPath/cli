@@ -79,9 +79,13 @@ func requirePlanningLoopText(t *testing.T, copies []planningLoopCopy, says, gone
 func TestKitSaysWhatAFullReviewAndAReviewOfTheChangeRead(t *testing.T) {
 	root := planningLoopInstall(t)
 	requirePlanningLoopText(t, planningLoopProcess(t, root), []string{
-		"The first plan review of a planning cycle is a full review: it reads the whole plan. A later review in the same cycle is a review of the change, unless it is the full review before approval, the gate names no cause, or, in a round, it is the first plan review of any Epic in it. A review of the change reads each earlier finding with its recorded resolution, what the gate's `causes` name, and each criterion, requirement field, plan section and test title that uses a changed term, rule or record.",
-		"For `plan_content`, `verification`, `decision`, `trace_removal` and `modernizes_trace` the reviewer reads the `changed` parts and ids and the `comment` of each plan save the plan history lists since the previous review; for a changed `body` it reads the sections the `comment` names, and the whole body when it names none. For `requirement_edit` the gate names no ids: read every requirement field and criterion of the plan again, against the stored content in the bundle's `review.baseline`. For `decision` also read the answers recorded since the previous review, for `planning_context`, `release` and `initiative` the planning contexts in the bundle, and for `stored_trace` it finds each id of `trace_ids` in the traces of the bundle's `review.baseline`. An id that is not there is a removed trace, or a trace of a test or of a retired requirement; the supplied trace lists show the last two without ids, and a removed trace is in neither the baseline nor the lists, so read the lists in full. When no plan save explains a cause, read in full the part of the plan the cause names.",
+		"The first plan review of a planning cycle is a full review: it reads the whole plan. A later review in the same cycle is a review of the change, unless it is the full review before approval, the gate names no cause, or, in a round, it is the first plan review of any Epic in it. A review of the change reads each earlier finding with its recorded resolution, what the gate's `causes` name, and each criterion, verification obligation, requirement field, plan section and test title that uses a changed term, rule or record, or that describes the same behavior and should now say what changed.",
+		"For `plan_content`, `verification`, `decision`, `trace_removal` and `modernizes_trace` the reviewer reads the `changed` parts and ids and the `comment` of each plan save the plan history lists since the previous review; for a changed `body` it reads the sections whose headings the `comment` names word for word, and the whole body when the `comment` names no heading of the plan. The previous review is the plan review the blocker's `review_id` names: a plan save counts when its `at` is at or after that review's `inserted_at`, and a decision record when its `inserted_at` is at or after it. For `requirement_edit` the gate names no ids: read every requirement field and criterion of the plan again, against the stored content in the bundle's `review.baseline`. For `decision` also read the answers recorded since the previous review, for `planning_context`, `release` and `initiative` the planning contexts in the bundle, and for `stored_trace` it finds each id of `trace_ids` in the traces of the bundle's `review.baseline`. An id that is not there is looked up by `id` in the supplied trace lists; an id in neither is a removed trace. When no plan save explains a cause, read in full the part of the plan the cause names.",
 	}, nil)
+	requirePlanningLoopText(t, planningLoopProcess(t, root), nil, []string{
+		"it reads the sections the `comment` names, and the whole body when it names none.",
+		"the supplied trace lists show the last two without ids",
+	})
 	requirePlanningLoopText(t, planningLoopReviewer(t, root), []string{
 		"The agent handling the task says whether this is a full review or a review of the change, as `PROCESS.md` (installed as `.modernpath/rdd/PROCESS.md`) defines them. In a review of the change, read what it lists for each cause and apply the method below to that text.",
 	}, nil)
@@ -151,6 +155,8 @@ func TestKitSaysHowAReviewOfTheChangeFindsTheChange(t *testing.T) {
 	root := planningLoopInstall(t)
 	requirePlanningLoopText(t, planningLoopSkill(t, root, "rdd-plan"), []string{
 		"Give each plan save after a review a `--reason` that names the finding or decision each change answers. The plan history records which parts, requirements and criteria the save changed; the reason says why.",
+		"When a save changes the plan body, name in the `--reason` the exact heading of every section it changed.",
+		"the reason says why. When a save changes the plan body, name in the `--reason` the exact heading of every section it changed.",
 	}, nil)
 	requirePlanningLoopText(t, planningLoopSkill(t, root, "rdd-cold-review"), []string{
 		"For a review of the change, also supply the output of `modernpath epics plan history <epic-id> --limit 50 --json`, fetched after the last change, and the next page with `--offset` while `has_more` is true. The causes are in the bundle's `readiness`, in the blocker `plan_review_required`. When the causes name `stored_trace`, also supply `modernpath traces list --entity-type <kind> --entity-id <id> --status all --limit 200 --json`, and the next page with `--cursor` while `next_cursor` is not null, for each requirement, criterion and test of the plan and each requirement it retires with its criteria, and tell the reviewer which lists could not be read. For a round, supply the history of each Epic in it.",
@@ -161,8 +167,10 @@ func TestKitSaysHowAReviewOfTheChangeFindsTheChange(t *testing.T) {
 func TestKitMarksAReviewOfTheChangeInItsReason(t *testing.T) {
 	root := planningLoopInstall(t)
 	requirePlanningLoopText(t, planningLoopReviewer(t, root), []string{
-		"In a review of the change, still list every criterion and obligation, because the server refuses a review that leaves one out. Start the reason with `Review of the change. Causes: ` and the causes you read, separated by commas. Then name in the reason the criteria you did not read again.",
-	}, nil)
+		"In a review of the change, still list every criterion and obligation, because the server refuses a review that leaves one out. Start the reason with `Review of the change. Causes: ` and the causes you read, in the order the gate lists them, separated by a comma and a space and ended with a full stop, then `PASS.` or `FAIL.`, as in `Review of the change. Causes: decision, plan_content. PASS.` Then write `Criteria not read again: ` and their ids, separated by a comma and a space and ended with a full stop, or `Criteria not read again: none.` Start the reason of a full review or of an implementation review with `PASS.` or `FAIL.` When a change adds a gap of the same kind as a finding the human resolved without a plan change, raise it as a note that names that finding.",
+	}, []string{
+		"separated by commas. Then name in the reason the criteria you did not read again.",
+	})
 	requirePlanningLoopText(t, planningLoopSkill(t, root, "rdd-cold-review"), []string{
 		"Record the reviewer's reason with its first words unchanged. A review whose reason does not start with `Review of the change.` counts as a full review.",
 	}, nil)
@@ -172,9 +180,10 @@ func TestKitMarksAReviewOfTheChangeInItsReason(t *testing.T) {
 func TestReviewerKeepsTheMarkerForAReviewOfTheChangeAndNamesUnreadTraceIds(t *testing.T) {
 	root := planningLoopInstall(t)
 	requirePlanningLoopText(t, planningLoopReviewer(t, root), []string{
-		"Start the reason of a full review or of an implementation review in any other way.",
 		"Name under limitations each trace id that may be in a trace list that could not be read.",
-	}, nil)
+	}, []string{
+		"Start the reason of a full review or of an implementation review in any other way.",
+	})
 }
 
 // TestCase 66ece9ae-38ee-4143-b0f9-e5620edf06fe

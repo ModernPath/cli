@@ -7,6 +7,21 @@ Published before production serves the matching Core changes
 say "Requires the matching Core" fail against production; the process text
 needs no server change.
 
+- `traces list` shows the id of each trace: each row of `--json` has `id`
+  beside source, relation and target, and each line of the text output starts
+  with `id=`. The ids a plan review's `trace_ids` name can be looked up in the
+  list.
+- Process: the instructions for a review of the change are exact. The reviewer
+  writes `PASS.` or `FAIL.` after the marker and the causes, and
+  `Criteria not read again: none.` when it read every criterion again. A review
+  of the change also reads verification obligations and each text that
+  describes the same behavior as a changed one. For a changed plan body the
+  reviewer reads the sections whose headings the save's reason names word for
+  word, and `rdd-plan` names the exact heading of every section a save changed.
+  The previous review is the one the blocker's `review_id` names. A trace id
+  that is not in the bundle is looked up in the supplied trace lists. A new gap
+  of a kind the human resolved without a plan change is raised as a note. Run
+  `modernpath install` to refresh the process.
 - Process: `rdd-plan` keeps a plan revision to the material findings and the
   human's request, reads an approved handoff for the cases it leaves open
   before drafting, and states a rule of process or prompt text in one place.

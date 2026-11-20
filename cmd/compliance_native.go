@@ -163,9 +163,9 @@ the type: each request returns one page for the whole type, so a read of many
 entities does not need one request per entity. An active trace is left out
 when no entity of the type at its ends exists in the System, so a page can
 hold fewer rows than --limit. Pass the printed next_cursor to --cursor
-until no cursor is printed. Each row is source, relation and target; an
-endpoint is its type and id (a source_file endpoint shows repository and
-path). --relation filters by link kind:
+until no cursor is printed. Each row is id, source, relation and target; id
+is the id of the trace, and an endpoint is its type and id (a source_file
+endpoint shows repository and path). --relation filters by link kind:
 implements, verifies, derives or relates within the System, or modernizes, the
 trace that links a new requirement to the legacy requirement it modernizes in
 another System. A requirement's criteria are entities of their own: list a
@@ -228,7 +228,7 @@ no direct trace write.`}
 		}
 		data, _ := body["data"].(map[string]any)
 		return writeNativePage(cmd, data, "items", func(item map[string]any) (map[string]any, error) {
-			row := map[string]any{"source": item["source"], "relation": item["relation"], "target": item["target"]}
+			row := map[string]any{"id": item["id"], "source": item["source"], "relation": item["relation"], "target": item["target"]}
 			if status != "active" {
 				row["status"] = item["status"]
 			}

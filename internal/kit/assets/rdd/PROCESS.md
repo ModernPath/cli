@@ -620,24 +620,27 @@ plan. A later review in the same cycle is a review of the change, unless it is
 the full review before approval, the gate names no cause, or, in a round, it is
 the first plan review of any Epic in it. A review of the change reads each
 earlier finding with its recorded resolution, what the gate's `causes` name,
-and each criterion, requirement field, plan section and test title that uses a
-changed term, rule or record.
+and each criterion, verification obligation, requirement field, plan section
+and test title that uses a changed term, rule or record, or that describes the
+same behavior and should now say what changed.
 
 For `plan_content`, `verification`, `decision`, `trace_removal` and
 `modernizes_trace` the reviewer reads the `changed` parts and ids and the
 `comment` of each plan save the plan history lists since the previous review;
-for a changed `body` it reads the sections the `comment` names, and the whole
-body when it names none. For `requirement_edit` the gate names no ids: read
+for a changed `body` it reads the sections whose headings the `comment` names
+word for word, and the whole body when the `comment` names no heading of the
+plan. The previous review is the plan review the blocker's `review_id` names: a
+plan save counts when its `at` is at or after that review's `inserted_at`, and
+a decision record when its `inserted_at` is at or after it. For
+`requirement_edit` the gate names no ids: read
 every requirement field and criterion of the plan again, against the stored
 content in the bundle's `review.baseline`. For `decision` also read the answers
 recorded since the previous review, for `planning_context`, `release` and
 `initiative` the planning contexts in the bundle, and for `stored_trace` it
 finds each id of `trace_ids` in the traces of the bundle's `review.baseline`.
-An id that is not there is a removed trace, or a trace of a test or of a
-retired requirement; the supplied trace lists show the last two without ids,
-and a removed trace is in neither the baseline nor the lists, so read the lists
-in full. When no plan save explains a cause, read in full the part of the plan
-the cause names.
+An id that is not there is looked up by `id` in the supplied trace lists; an id
+in neither is a removed trace. When no plan save explains a cause, read in full
+the part of the plan the cause names.
 
 A review passes when it has no material finding. The full review before
 approval is one more full review of a revised plan. It is due when the latest

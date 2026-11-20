@@ -102,9 +102,14 @@ Identify the supplied bundle, reviewer context, every criterion and verification
 obligation reviewed, a reason, and material versus note findings. In a review
 of the change, still list every criterion and obligation, because the server
 refuses a review that leaves one out. Start the reason with
-`Review of the change. Causes: ` and the causes you read, separated by commas.
-Then name in the reason the criteria you did not read again. Start the reason
-of a full review or of an implementation review in any other way. For
+`Review of the change. Causes: ` and the causes you read, in the order the gate
+lists them, separated by a comma and a space and ended with a full stop, then
+`PASS.` or `FAIL.`, as in `Review of the change. Causes: decision, plan_content. PASS.`
+Then write `Criteria not read again: ` and their ids, separated by a comma and
+a space and ended with a full stop, or `Criteria not read again: none.` Start
+the reason of a full review or of an implementation review with `PASS.` or
+`FAIL.` When a change adds a gap of the same kind as a finding the human
+resolved without a plan change, raise it as a note that names that finding. For
 implementation, state whether all approved scope is implemented; do not claim
 this if evidence is incomplete. The agent handling the task maps these results to the review record
 against the unchanged retained inputs. For a plan, return one review; the

@@ -43,7 +43,7 @@ func TestTraceListReadsNativeCriterionTestResultInBoundSystem(t *testing.T) {
 		if r.URL.Query().Get("entity_type") != "criterion_test_result" || r.URL.Query().Get("entity_id") != resultID || r.URL.Query().Get("system_id") != "4" {
 			t.Errorf("unscoped result trace request: %s", r.URL)
 		}
-		_, _ = w.Write([]byte(`{"data":{"items":[{"source":{"type":"criterion_test_result","id":"11111111-1111-4111-8111-111111111111"},"relation":"relates","target":{"type":"test_case","id":"22222222-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
+		_, _ = w.Write([]byte(`{"data":{"items":[{"id":"33333333-3333-4333-8333-333333333333","source":{"type":"criterion_test_result","id":"11111111-1111-4111-8111-111111111111"},"relation":"relates","target":{"type":"test_case","id":"22222222-2222-4222-8222-222222222222"}}],"next_cursor":null}}`))
 	}))
 	defer server.Close()
 	root := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
@@ -298,7 +298,7 @@ func TestTraceListScopesNativeRequirementBeforeReadingTraces(t *testing.T) {
 		if r.URL.Path != "/api/compliance/traces" || r.URL.Query().Get("entity_type") != "user_requirement" || r.URL.Query().Get("entity_id") != "abc" || r.URL.Query().Get("system_id") != "4" {
 			t.Errorf("trace request = %s", r.URL)
 		}
-		_, _ = w.Write([]byte(`{"data":{"items":[{"source":{"type":"user_requirement","id":"abc"},"relation":"implements","target":{"type":"source_file","id":"file"}}],"next_cursor":"next"}}`))
+		_, _ = w.Write([]byte(`{"data":{"items":[{"id":"t1","source":{"type":"user_requirement","id":"abc"},"relation":"implements","target":{"type":"source_file","id":"file"}}],"next_cursor":"next"}}`))
 	}))
 	defer server.Close()
 	root := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
@@ -347,13 +347,13 @@ func TestTraceListWithoutEntityIDReadsEveryEntityOfTheType(t *testing.T) {
 		return query, out.String(), errOut.String()
 	}
 
-	t.Run("prints each row as source, relation and target", func(t *testing.T) {
+	t.Run("prints each row as id, source, relation and target", func(t *testing.T) {
 		query, out, errOut := run(t)
 		if query.Get("limit") != "20" || query.Has("cursor") || query.Has("relation") {
 			t.Errorf("default request = %v, want limit=20 and no cursor or relation", query)
 		}
-		want := "relation=implements  source=source_file:file  target=system_requirement:abc\n" +
-			"relation=derives  source=system_requirement:def  target=user_requirement:ghi\n"
+		want := "id=t1  relation=implements  source=source_file:file  target=system_requirement:abc\n" +
+			"id=t2  relation=derives  source=system_requirement:def  target=user_requirement:ghi\n"
 		if out != want {
 			t.Errorf("rows =\n%s\nwant\n%s", out, want)
 		}
@@ -375,12 +375,86 @@ func TestTraceListWithoutEntityIDReadsEveryEntityOfTheType(t *testing.T) {
 			t.Fatalf("output is not JSON: %v\n%s", err, out)
 		}
 		wantFirst := map[string]any{
+			"id":       "t1",
 			"source":   map[string]any{"type": "source_file", "id": "file"},
 			"relation": "implements",
 			"target":   map[string]any{"type": "system_requirement", "id": "abc"},
 		}
 		if len(got.Items) != 2 || !reflect.DeepEqual(got.Items[0], wantFirst) || got.NextCursor != "next" {
 			t.Errorf("JSON page = %s", out)
+		}
+	})
+}
+
+// TestCase d8346f4e-a9b9-45b1-bfc8-aadc64f65a7e
+func TestTraceListShowsTheIDOfEachTrace(t *testing.T) {
+	const first, second = "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"
+	const page = `{"data":{"items":[` +
+		`{"id":"` + first + `","status":"active","source":{"type":"source_file","id":"file"},"relation":"implements","target":{"type":"system_requirement","id":"abc"}},` +
+		`{"id":"` + second + `","status":"stale","source":{"type":"system_requirement","id":"def"},"relation":"derives","target":{"type":"user_requirement","id":"ghi"}}` +
+		`],"next_cursor":null}}`
+	run := func(t *testing.T, args ...string) string {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(page))
+		}))
+		defer server.Close()
+		list := newTraceListCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+		list.SetArgs(append([]string{"--entity-type", "system_requirement"}, args...))
+		var out bytes.Buffer
+		list.SetOut(&out)
+		list.SetErr(&bytes.Buffer{})
+		list.SilenceErrors = true
+		list.SilenceUsage = true
+		if err := list.Execute(); err != nil {
+			t.Fatalf("traces list %v failed: %v", args, err)
+		}
+		return out.String()
+	}
+
+	for _, status := range []string{"active", "all"} {
+		t.Run("each JSON row has the id the server returned, --status "+status, func(t *testing.T) {
+			out := run(t, "--status", status, "--json")
+			var got struct {
+				Items []map[string]any `json:"items"`
+			}
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("output is not JSON: %v\n%s", err, out)
+			}
+			if len(got.Items) != 2 {
+				t.Fatalf("JSON page = %s, want two rows", out)
+			}
+			for i, want := range []string{first, second} {
+				row := got.Items[i]
+				if row["id"] != want {
+					t.Errorf("row %d id = %v, want %s", i, row["id"], want)
+				}
+				for _, key := range []string{"source", "relation", "target"} {
+					if row[key] == nil {
+						t.Errorf("row %d has no %s: %v", i, key, row)
+					}
+				}
+			}
+		})
+
+		t.Run("each text line starts with id= and the id, --status "+status, func(t *testing.T) {
+			out := run(t, "--status", status)
+			lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+			if len(lines) != 2 {
+				t.Fatalf("rows =\n%s\nwant two lines", out)
+			}
+			for i, want := range []string{first, second} {
+				if !strings.HasPrefix(lines[i], "id="+want+"  ") {
+					t.Errorf("line %d = %q, want it to start with id=%s", i, lines[i], want)
+				}
+			}
+		})
+	}
+
+	t.Run("the help text says each row is id, source, relation and target", func(t *testing.T) {
+		list := newTraceListCommand(func() (*cliEnv, error) { return nil, nil })
+		if help := strings.Join(strings.Fields(list.Long), " "); !strings.Contains(help, "Each row is id, source, relation and target;") {
+			t.Errorf("traces list help does not say each row is id, source, relation and target:\n%s", list.Long)
 		}
 	})
 }
@@ -431,8 +505,8 @@ func TestTraceListStatusSelectsActiveStaleOrAllTraces(t *testing.T) {
 			if query.Get("status") != status {
 				t.Errorf("status = %q, want %s", query.Get("status"), status)
 			}
-			want := "relation=implements  source=source_file:file  status=active  target=system_requirement:abc\n" +
-				"relation=derives  source=system_requirement:def  status=stale  target=user_requirement:ghi\n"
+			want := "id=t1  relation=implements  source=source_file:file  status=active  target=system_requirement:abc\n" +
+				"id=t2  relation=derives  source=system_requirement:def  status=stale  target=user_requirement:ghi\n"
 			if out != want {
 				t.Errorf("rows =\n%s\nwant\n%s", out, want)
 			}
