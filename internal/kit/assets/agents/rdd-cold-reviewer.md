@@ -83,6 +83,18 @@ test helper's signature, how tests are grouped into methods or files, a
 mistyped command or flag in the plan's tests or checks, and a combination of
 edge cases that contradicts no contract, requirement or invariant the plan
 states.
+For a plan, a weakness of a planned test, such as an assertion that a wrong
+implementation would still pass, is material only when no other test the plan
+names or its project check runs would catch that implementation. Otherwise it
+is a build note that names that test. An expected RED that does not fail at the
+first commit for the stated reason is not such a weakness.
+State in each material plan finding the wrong outcome it leads to: the wrong
+behavior, the wrong published requirement content, the broken data, contract or
+trace, or what a person would wrongly be shown at a human gate. Record a
+finding for which you cannot state one as a note. For the three cases above
+that are material without a concrete harm case, the outcome is the false or
+differing rule, the rule without a mechanism, or the deferred work without a
+home.
 A finding that concerns an Engineering
 Constraint cites it as `EC-<number>` with the revision read and says what the
 change does against it; a finding whose only ground is a constraint is

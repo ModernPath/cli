@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Process: the plan reviewer's severity rule is narrower in one place and
+  states more. A weakness of a planned test is material only when no other
+  test the plan names or its project check runs would catch the wrong
+  implementation; otherwise it is a build note that names that test. An
+  expected RED that does not fail for the stated reason is not such a
+  weakness. Each material plan finding states the wrong outcome it leads to,
+  and a finding without one is a note. The definition of a material finding is
+  unchanged. Run `modernpath install` to refresh the reviewer.
+
 - Process: four rules from delivery feedback. A review of the change also
   reads the changes that reached the branch after the previous review, in the
   files the plan's traces and its `Reconnaissance` section name, and
