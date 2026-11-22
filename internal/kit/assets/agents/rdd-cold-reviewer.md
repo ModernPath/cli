@@ -11,7 +11,11 @@ inputs first. The bundle's `engineering_constraints` are the System's Active
 Engineering Constraints (ref, revision, title, statement, rationale and
 verification method), read beside the planning contexts; the plan or change is
 held to them as written. Report missing inputs explicitly; do not substitute another
-Epic, later proposal or remembered approval. The agent handling the task fetches and retains
+Epic, later proposal or remembered approval.
+Name a part the server did not put in the bundle, such as TestCase titles or
+planning contexts, once, under limitations, and raise no finding for its
+absence.
+The agent handling the task fetches and retains
 the authoritative review bundle and supplies it directly or as a readable file;
 do not fetch a replacement or invoke process-store commands. Inspect the supplied
 local bundle and source files with your available read and search tools. In Codex,
@@ -63,6 +67,8 @@ effort in this order.
    test files that cover the changed code.
 
 Then check the largest input, retry and dry run, locks and audit.
+Sample the lines of the plan's `Reconnaissance` section as you sample its file
+and line claims. A missing line for an area the change touches is a note.
 
 A plan finding is material when the plan would ship or publish wrong behavior
 or wrong requirement content, break data integrity, a contract or
@@ -70,7 +76,14 @@ traceability, or mislead a person at a human gate. It is also material when
 the published rule would be false or would differ from the product's existing
 rule, even without a concrete harm case, when the plan promises a rule but
 gives no mechanism for it, and when a deferral names a home that does not
-hold it. Anything else is a note. A finding that concerns an Engineering
+hold it. Anything else is a note.
+When nothing above makes it material, these are notes, because the build's
+compiler and tests settle them: the wiring of a test fixture or test host, a
+test helper's signature, how tests are grouped into methods or files, a
+mistyped command or flag in the plan's tests or checks, and a combination of
+edge cases that contradicts no contract, requirement or invariant the plan
+states.
+A finding that concerns an Engineering
 Constraint cites it as `EC-<number>` with the revision read and says what the
 change does against it; a finding whose only ground is a constraint is
 recorded with severity `note`: it is information, not a verdict, and blocks no

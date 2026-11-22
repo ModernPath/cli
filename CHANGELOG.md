@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Process: a planning cycle has at most three plan reviews. After the third
+  the agent requests no further review unless the human asks, and the human
+  decides: approve the plan as it stands, one more revision with its review,
+  split the Epic or reject. The full review before approval is not due when
+  the cycle already has three or more.
+  Before the first draft the planner reads seven reconnaissance areas
+  (contracts, stored data, shared mechanisms, concurrency, composition and
+  startup, existing behavior, process records) and the plan has a
+  `Reconnaissance` section with one line for each. Before a plan review the
+  agent checks that the bundle holds the TestCase titles and planning contexts
+  and supplies a missing part. The reviewer marks details that the build
+  settles, such as test wiring and test grouping, as notes when nothing in its
+  definition of material applies. Name the files of each reconnaissance area
+  in the project's instructions. Run `modernpath install` to refresh the
+  process.
+
 - `constraints create` and `constraints update`: the file's `verification_method`
   is optional, like `rationale`; `title` and `statement` stay required. A
   statement that says how a reviewer decides needs no second text, and every

@@ -65,6 +65,10 @@ the next page with `--offset` while `has_more` is true. When the review is
 current, these changes left it current, so no reviewer has read them. Say so
 when there are none.
 
+When the planning cycle has three or more plan reviews, say so and present the
+choices `PROCESS.md` §Planning and readiness gives for the cap, instead of
+offering a further review.
+
 Ask the human to approve eligible content, request a revision or further review,
 or reject the plan. Wait for that decision. Notes do not require plan edits.
 Do not imply that a passing review or autopilot grant is completion approval.

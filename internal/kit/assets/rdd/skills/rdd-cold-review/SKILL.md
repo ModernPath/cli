@@ -25,6 +25,17 @@ the explicit list of Epics and record one review for all of them. Return coverag
 context, reason, findings and limitations. Context separation is an attestation,
 not proof of different human identities.
 
+Before you hand the bundle to the reviewer, check that it holds the title of
+each TestCase the plan links and the planning contexts of the Epic's Release
+and Initiative. Supply a missing part from `modernpath test-cases get <uuid>`
+or `modernpath epics get <epic-id> --fields planning_contexts`, and tell the
+reviewer where it came from. Name a part you cannot supply to the reviewer
+once, and report the tooling gap through the project's named channel. Before
+you request a plan review, count the plan reviews of the planning cycle: the
+records in the bundle's `reviews` whose `phase` is `plan`. At three or more,
+request no review unless the human chose a revision with its review or asked
+for a review, and follow the cap of `PROCESS.md` §Planning and readiness.
+
 For a review of the change, also supply the output of
 `modernpath epics plan history <epic-id> --limit 50 --json`, fetched after the
 last change, and the next page with `--offset` while `has_more` is true. The

@@ -567,6 +567,28 @@ shared state, inspect the actual writers, readers, existing data shapes,
 partial-failure behavior and recovery; document the risks and mitigation in
 the saved plan. Do not replace reconnaissance with a list of source links.
 
+Before the first draft, read the code in each reconnaissance area the change
+touches:
+
+- contracts: API specifications, generated schemas, shared error and value
+  types, and the rules of any contract check;
+- stored data: the schema, grants and migrations, and how an existing database
+  is upgraded;
+- shared mechanisms the change passes through, such as authorization,
+  idempotency, paging and deletion;
+- concurrency: the existing locks and transactions and their order;
+- composition and startup: host programs, configuration, route inventories and
+  startup checks;
+- existing behavior: the guards and tests that already exist, so that a
+  regression check is not planned as an expected RED;
+- process records: the existing traces of the files the change touches, and the
+  content of the review bundle.
+
+The project's instructions name the files of each area. When the project names
+none for an area, find the files yourself. The saved plan has a section
+`Reconnaissance` with one line for each area: what was read, with file and
+line, or why the area does not apply.
+
 Before drafting, and after a first reconnaissance, list the questions only the
 human can answer and ask them together: conflicts with stored requirements,
 documented behavior or the kit's own rules, which entry points and callers are
@@ -655,6 +677,18 @@ the `reviews` of the same bundle; a return to planning starts a new planning
 cycle. In a round it is due for the round when it is due for any Epic in it,
 and a round review is a full review when it is the first plan review of any
 Epic in it.
+
+A planning cycle has at most three plan reviews, and the full review before
+approval is not due when the cycle already has three or more. After the third,
+obtain no further plan review unless the human chooses a revision with its
+review or asks for a review in their own words. Present the plan with its
+reviews and its open findings. Say when the full review before approval was not
+obtained because of the cap. The human decides: approve the plan as it stands,
+with the human's resolution recorded for each open material finding; request
+one more revision with its review; split the Epic; or reject the plan. When the
+latest plan review is out of date, say that approval needs a renewed review,
+which the human may ask for. In a round the cap is reached when any Epic in it
+has three or more.
 
 A human-requested revision gets one new independent review, then returns to
 the human. The one exception to one review for each plan submission and each

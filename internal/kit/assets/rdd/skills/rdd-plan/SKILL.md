@@ -87,6 +87,10 @@ the review that follows them. Before the new review of a requested revision:
    read-only agent that returns the answers. Also search the stored requirements
    and the kit's own rules (`PROCESS.md`, the skills and the CLI reference) for
    anything the change would contradict.
+   Read each reconnaissance area of `PROCESS.md` §Planning and readiness that
+   the change touches, in the files the project's instructions name for it,
+   before you write the design, and write the plan's `Reconnaissance` section
+   from what you read.
 3. Before you put a product question to the human, look for its answer in a
    recorded human decision, then in a published requirement, then in the
    legacy system. When a source answers it, write the answer into the plan
