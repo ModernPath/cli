@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Process: four rules from delivery feedback. A review of the change also
+  reads the changes that reached the branch after the previous review, in the
+  files the plan's traces and its `Reconnaissance` section name, and
+  `rdd-entry-review` lists those that reached it after the current plan
+  review, before approval. In ordinary implementation
+  the builder breaks the finished code by hand for each changed criterion to
+  see its test fail, removes the change before the commit and does not record
+  that run; where the project names a mutation tool, `rdd-verify` does this
+  with the tool. `rdd-verify` reads each changed criterion against its tests
+  and closes or raises a gap before the implementation review. An empty or
+  missing result of a delegated pass is a failed run: nothing is recorded and
+  it runs again once the cause is removed. `rdd-plan` and `rdd-entry-review`
+  apply a decision of the Release or Initiative planning context and do not
+  ask it again; it counts whether or not the context is agreed or locked, and
+  a disagreement between the two contexts is asked. Run `modernpath install`
+  to refresh the process.
+
 - Process: a planning cycle has at most three plan reviews. After the third
   the agent requests no further review unless the human asks, and the human
   decides: approve the plan as it stands, one more revision with its review,

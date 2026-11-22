@@ -13,6 +13,11 @@ actual direct outcomes with `modernpath evidence record`, or
 current results and Traces. Revision differences and prior outcomes do not
 determine proof applicability.
 
+For each changed criterion, read its statement against its tests, also after a
+fix that changed a test. A test that proves less than the criterion states is a
+gap: close it under the TestCases of the approved plan before the independent
+implementation review, or raise it with the approver.
+
 `ModernizationTestRun` and `ModernizationTestResult` are historical outcomes
 captured with `modernpath modernization record` under a Modernization Release.
 They do not satisfy, replace or invalidate current criterion proof or ordinary

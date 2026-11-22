@@ -47,6 +47,13 @@ requirement, criterion and test of the plan and each requirement it retires
 with its criteria, and tell the reviewer which lists could not be read. For a
 round, supply the history of each Epic in it.
 
+For a review of the change, also supply the changes that, after the previous
+review was recorded, reached the branch of the checkout the reviewer reads,
+with their content, in the files the plan's traces and its `Reconnaissance`
+section name; a commit made before the review that reached the branch after it
+counts. For a round, supply them for the files of each Epic in it. Say so when
+nothing landed.
+
 Check that:
 
 - the user outcome, scope and exclusions are explicit and consistent with

@@ -54,7 +54,10 @@ would publish, or a file that other work reads or generates. If it would, do
 not offer it for the build. Look for the answer in a recorded human decision,
 then in a published requirement, then in the legacy system, and give the human
 the plan correction with that source. Ask the human the question only when no
-source answers it. Do not propose an approval rule that needs a review with no
+source answers it.
+A decision of the planning context counts as a recorded human decision
+(`rdd-plan` step 3).
+Do not propose an approval rule that needs a review with no
 notes.
 
 Before you ask for approval, read
@@ -64,6 +67,12 @@ human each item recorded after the current plan review: for a plan save its
 the next page with `--offset` while `has_more` is true. When the review is
 current, these changes left it current, so no reviewer has read them. Say so
 when there are none.
+
+List also the changes that, after the current plan review was recorded, reached
+the branch of the checkout that review read, in the files the plan's traces and
+its `Reconnaissance` section name; a commit made before the review that reached
+the branch after it counts. No reviewer has read the plan against those
+changes. Say so when nothing landed.
 
 When the planning cycle has three or more plan reviews, say so and present the
 choices `PROCESS.md` §Planning and readiness gives for the cap, instead of

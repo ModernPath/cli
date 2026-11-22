@@ -63,6 +63,17 @@ For each changed behavior in ordinary implementation:
 4. Clean up, rerun affected checks and record current outcomes. Keep commands
    and output in PR notes; do not upload procedures or raw reports.
 
+In ordinary implementation, for each changed criterion, after its test passes,
+make a change by hand to the implemented code that breaks the behavior the
+criterion states, confirm that the test fails, remove the change before you
+commit, and run the test again; do not record the run with the change. A test
+that still passes with the change does not prove the criterion: strengthen it
+under its TestCase, or raise it with the approver. Write the assertion and the
+change in the PR notes, and in what a delegated build returns beside the build
+handoff; the agent handling the task copies it to the PR notes. Where the
+project instructions name a mutation tool, `rdd-verify` does this with the tool
+instead.
+
 A delegated build agent puts each TestCase's full UUID in its test's name or in
 a comment just above the test (for a Go test function, in a comment above it),
 or lists the test names per TestCase in the build handoff's `tests`. It ends by

@@ -646,6 +646,13 @@ and each criterion, verification obligation, requirement field, plan section
 and test title that uses a changed term, rule or record, or that describes the
 same behavior and should now say what changed.
 
+A review of the change also reads the changes that, after the previous review
+was recorded, reached the branch of the checkout the reviewer reads, in the
+files the plan's traces and its `Reconnaissance` section name; a commit made
+before the review that reached the branch after it counts. A plan statement
+that such a change makes false is a finding, although the plan text did not
+change.
+
 For `plan_content`, `verification`, `decision`, `trace_removal` and
 `modernizes_trace` the reviewer reads the `changed` parts and ids and the
 `comment` of each plan save the plan history lists since the previous review;
@@ -986,6 +993,10 @@ records them through the CLI. Recording a reviewer's verdict does not make that
 agent an independent reviewer. A delegated pass that encounters a permission, authentication or
 process-tool refusal stops and returns it verbatim; it does not retry by
 rewriting or splitting the refused action.
+A delegated pass that returns an empty or missing result has failed. Record
+nothing from it, say that it failed, and run it again once the cause is
+removed. Before a build runs again, check what it left in the working tree. A
+failed run is not a review, and a refusal is not a failed run.
 
 ## Evidence and completion
 

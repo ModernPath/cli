@@ -96,6 +96,11 @@ the review that follows them. Before the new review of a requested revision:
    legacy system. When a source answers it, write the answer into the plan
    with the source: the decision or requirement, or the file and line. Ask the
    human only what no source answers.
+   A decision in the planning context of the Epic's Release or Initiative
+   counts as a recorded human decision here, whether or not the context is
+   agreed or locked. Apply it, name it in the plan as the source, and do not
+   ask the human what it decides. When a Release decision and an Initiative
+   decision disagree, ask.
    Then, still before drafting, list the questions only the human can answer
    and ask them in one batch:
    - conflicts with stored requirements, documented behavior or the kit's own rules;
