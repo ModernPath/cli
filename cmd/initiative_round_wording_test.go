@@ -101,9 +101,11 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 	if _, err := os.Stat(filepath.Join(docs, "adr")); err != nil {
 		return
 	}
+	// The vocabulary is the copy of the brand repository's terminology.md.
+	vocabulary := filepath.Join("..", "company-brand-brain", "terminology.md")
 	for _, name := range []string{
 		filepath.Join("adr", "0006-initiative-and-modernization-release.md"),
-		"01-ubiquitous-language.md",
+		vocabulary,
 		filepath.Join("features", "roadmap.md"),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -118,7 +120,7 @@ func TestInitiativeHelpTheCLIGuidePROCESSMdTheThreeReviewSkillsADR0006TheVocabul
 			if strings.Contains(text, "delivered by one epic as the rule") {
 				t.Errorf("%s must not say %q", name, "delivered by one Epic as the rule")
 			}
-			if name == "01-ubiquitous-language.md" && !regexp.MustCompile(`(?m)^\|\s*Round\s*\|`).MatchString(string(body)) {
+			if name == vocabulary && !regexp.MustCompile(`(?m)^\|\s*Round\s*\|`).MatchString(string(body)) {
 				t.Errorf("the vocabulary must have a Round row")
 			}
 		})
