@@ -98,10 +98,10 @@ that covers several clauses identifies each clause and assertion it checks.
 
 A Release is a delivery grouping of a System: the Epics delivered together and
 the Initiatives shown under it, with a target date when it has one. Each Epic
-is in a Release. An Initiative is a Roadmap
-item: a scope of delivery the business owner agrees, with one bounded context
-its Epics' requirements share, placed in a horizon (Now, Next or Later) and
-delivered by its Epics. The Roadmap is the System's Initiatives by Release and
+is in a Release. An Initiative is the business and UX planning container for
+one clear, scoped feature or change to one bounded context, which its Epics'
+requirements share, placed in a horizon (Now, Next or Later) and delivered by
+its Epics. The Roadmap is the System's Initiatives by Release and
 horizon, with the Now plan its business owner agrees.
 
 The chain runs Initiative → Epic → requirement → trace: Epics deliver an

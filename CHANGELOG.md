@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Process: `PROCESS.md` defines an Initiative with the wording of
+  `terminology.md`: the business and UX planning container for one clear,
+  scoped feature or change to one bounded context. It no longer calls an
+  Initiative a Roadmap item or a scope of delivery the business owner agrees.
+  Run `modernpath install` to refresh the process.
+
 - Process: the plan reviewer's severity rule is narrower in one place and
   states more. A weakness of a planned test is material only when no other
   test the plan names or its project check runs would catch the wrong
