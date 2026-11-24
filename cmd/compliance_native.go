@@ -142,7 +142,7 @@ func requirementDetailFields(kind string) []string {
 		"embedding_model", "context", "context_name", "work_status", "release_note",
 		"detail_md", "delivered_revision", "process_metadata", "completed_at",
 		"internal_only", "deleted_at", "tenant_id", "system_id", "created_by_id",
-		"change_epic_id", "release_id", "inserted_at", "updated_at",
+		"change_epic_id", "release_id", "inserted_at", "updated_at", "what_it_has",
 		"created_by", "criteria", "traces_from", "traces_to", "audit_events",
 		"delivery_releases", "retained_releases",
 	}
@@ -166,13 +166,17 @@ hold fewer rows than --limit. Pass the printed next_cursor to --cursor
 until no cursor is printed. Each row is id, source, relation and target; id
 is the id of the trace, and an endpoint is its type and id (a source_file
 endpoint shows repository and path). --relation filters by link kind:
-implements, verifies, derives or relates within the System, or modernizes, the
-trace that links a new requirement to the legacy requirement it modernizes in
-another System. A requirement's criteria are entities of their own: list a
+implements, verifies, derives or relates within the System (a replay's relates
+traces to its capture reach the legacy system), or modernizes, the trace that
+links a new requirement to the legacy requirement it modernizes in another
+System. A requirement's criteria are entities of their own: list a
 criterion's traces with --entity-type criterion. Traces are written by
-reverse-engineer record and by an Epic plan at implementation and completion
-approval; only an Epic plan writes a modernizes trace, and there is
-no direct trace write.`}
+reverse-engineer record, by an Epic plan at implementation and completion
+approval, by evidence record when a test run maps a test case to a
+criterion, and by roadmap recording; only an Epic plan writes a modernizes
+trace. A replay's links to its capture test case and to the capture's passing
+result, and its break test's link to the replay, are written only by roadmap
+recording.`}
 	entityType, entityID := "", ""
 	cmd.Flags().StringVar(&entityType, "entity-type", "", "entity kind (user_requirement, system_requirement, test_case, system_document, source_file, file_analysis, subsystem, epic, criterion, criterion_test_result, modernization_test_result)")
 	cmd.Flags().StringVar(&entityID, "entity-id", "", "entity id; omit to list the traces of every entity of the type")

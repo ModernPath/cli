@@ -1,0 +1,17 @@
+{
+  "requirements": [
+    {
+      "kind": "system_requirement",
+      "id": "b0000000-0000-4000-8000-000000000101",
+      "what_it_has": [
+        "screen"
+      ]
+    },
+    {
+      "kind": "system_requirement",
+      "id": "b0000000-0000-4000-8000-000000000102",
+      "what_it_has": []
+    }
+  ],
+  "traces": []
+}

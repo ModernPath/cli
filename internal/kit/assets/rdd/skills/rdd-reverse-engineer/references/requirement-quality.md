@@ -81,7 +81,7 @@ Every requirement and criterion carries a UUID in the staged file, so a rerun
 reuses it instead of creating a duplicate. Read a stored requirement against
 the code before reusing it, with the verdict rubric below. Reuse a good one,
 and a record the batch plan names as kept, through a reference entry: only its
-`kind` and `id`. Replace a weak, wrong or not-a-requirement record only when it
+`kind`, its `id` and, when you record what it has, `what_it_has`. Replace a weak, wrong or not-a-requirement record only when it
 is PROPOSED with no Epic owner: stage a replacement with new UUIDs and name the
 stored id it replaces. The replacement carries the derives traces the stored
 record had. After the replacement is recorded, the coordinator asks to make

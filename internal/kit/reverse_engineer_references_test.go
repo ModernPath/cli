@@ -97,7 +97,8 @@ func TestRequirementQualityReferenceCarriesTheRules(t *testing.T) {
 		"`implements`",
 		"`verifies`",
 		"Every requirement and criterion carries a UUID in the staged file",
-		"a reference entry: only its `kind` and `id`",
+		// Epic 341 (G3): what a reference entry holds moved to
+		// TestG3_150d7fb9_RequirementQualityReferenceEntryCarriesWhatItHas.
 		// The independent sample read.
 		"at least 20 records of a context, or all of them when it has fewer",
 		"good, weak, not a requirement, or wrong",
@@ -234,5 +235,55 @@ func TestG1FlowBatchReferenceAndProcessUseTheList(t *testing.T) {
 	})
 	requirePhrases(t, "PROCESS.md", embeddedText(t, "assets/rdd/PROCESS.md"), []string{
 		"Every requirement reverse engineering records has a context from the System's one list of contexts",
+	})
+}
+
+// g3Plain folds whitespace and drops Markdown code and bold marks, so a phrase
+// may wrap or carry marks; it keeps letter case (Epic 341, G3 contract §6).
+func g3Plain(text string) string {
+	return strings.Join(strings.Fields(strings.NewReplacer("**", "", "`", "").Replace(text)), " ")
+}
+
+func g3RequirePlainPhrases(t *testing.T, name, text string, phrases []string) {
+	t.Helper()
+	plain := g3Plain(text)
+	for _, phrase := range phrases {
+		if !strings.Contains(plain, g3Plain(phrase)) {
+			t.Errorf("%s is missing %q", name, phrase)
+		}
+	}
+}
+
+// Epic 341 (G3), test case 150d7fb9 (TC-G3-13): the batch reference puts the
+// rule for what each requirement has in every brief, adds it to recorded
+// requirements in a new staged file of reference entries under their stored
+// ids, and says what to do with a file of reference entries refused because
+// active Epic work holds a requirement it names.
+func TestG3_150d7fb9_BatchReferenceAddsWhatItHasByReference(t *testing.T) {
+	g3RequirePlainPhrases(t, "batch.md", embeddedText(t, reverseEngineerSkillDir+"references/batch.md"), []string{
+		"the rule for what each requirement has, with what each value means",
+		"To add what a requirement has to requirements already recorded, stage a new file of reference entries `{kind, id, what_it_has}` under their stored ids, never with new UUIDs",
+		"remove that entry, record the file again and record the entry in a later file once its Epic is done",
+		"List the entry in `open-questions.md`",
+	})
+}
+
+// Epic 341 (G3), test case 150d7fb9 (TC-G3-13): the requirement quality
+// reference lets a reference entry carry what_it_has. This replaces the
+// phrase "a reference entry: only its `kind` and `id`" that
+// TestRequirementQualityReferenceCarriesTheRules asserted.
+func TestG3_150d7fb9_RequirementQualityReferenceEntryCarriesWhatItHas(t *testing.T) {
+	g3RequirePlainPhrases(t, "requirement-quality.md", embeddedText(t, reverseEngineerSkillDir+"references/requirement-quality.md"), []string{
+		"a reference entry: only its `kind`, its `id` and, when you record what it has, `what_it_has`",
+	})
+}
+
+// Epic 341 (G3), test case 150d7fb9 (TC-G3-13): the kit's CLI guide, in its
+// sweep paragraph, adds what a requirement has to recorded requirements in a
+// new staged file of reference entries under their stored ids. The phrase is
+// searched in the whole guide, so a reworded paragraph lead does not hide it.
+func TestG3_150d7fb9_CLIGuideSweepAddsWhatItHasByReference(t *testing.T) {
+	g3RequirePlainPhrases(t, "cli.md", embeddedCLIGuide(t), []string{
+		"in a new staged file of such entries under their stored ids, never by editing a recorded file and never with new UUIDs",
 	})
 }

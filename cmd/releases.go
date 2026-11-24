@@ -76,7 +76,7 @@ func newReleaseList(load func() (*cliEnv, error)) *cobra.Command {
 
 func newReleaseActivate(load func() (*cliEnv, error)) *cobra.Command {
 	c := &cobra.Command{Use: "activate <id|slug>", Short: "Make a delivery release active with your compliance PIN", Args: cobra.ExactArgs(1),
-		Long: "Activate or reactivate a release in the bound System. Use --pin-stdin for secret-store input; otherwise the terminal prompts without echo. --close-current consents to closing the active incumbent read from this System. Unfinished work must be handled through the release close flow first. Creation stays planned. No retired process-store gate is written."}
+		Long: "Activate or reactivate a release in the bound System. Use --pin-stdin for secret-store input; otherwise the terminal prompts without echo. --close-current consents to closing the active incumbent read from this System. Unfinished work must be handled through the release close flow first: a refusal names each release to close and each Initiative whose decisions would go on, with its INIT-<n> and how many. Creation stays planned. No retired process-store gate is written."}
 	c.Flags().String("by", "auto", "Select by auto, id, or exact slug; disambiguate numeric slugs explicitly")
 	c.Flags().Bool("pin-stdin", false, "Read PIN from stdin instead of a hidden terminal prompt")
 	c.Flags().Bool("close-current", false, "Explicitly consent to closing the current active delivery release")
@@ -261,8 +261,41 @@ func readReleasePIN(c *cobra.Command, confirm bool) (pin string, err error) {
 func releaseFailure(status int, body map[string]any) error {
 	code, _ := body["error"].(string)
 	switch code {
-	case "pin_required", "pin_not_set", "invalid_pin", "pin_locked", "locked", "release_open", "incumbent_changed", "incumbent_has_unfinished_work", "not_found", "system_not_found", "forbidden", "base_release", "invalid_close_current", "invalid_incumbent", "invalid_reason":
+	case "incumbent_has_unfinished_work":
+		return errors.New(withBindingHint(status, fmt.Sprintf("release operation refused (HTTP %d): %s", status, code)+unfinishedReleases(body)))
+	case "pin_required", "pin_not_set", "invalid_pin", "pin_locked", "locked", "release_open", "incumbent_changed", "not_found", "system_not_found", "forbidden", "base_release", "invalid_close_current", "invalid_incumbent", "invalid_reason":
 		return errors.New(withBindingHint(status, fmt.Sprintf("release operation refused (HTTP %d): %s", status, code)))
 	}
 	return errors.New(withBindingHint(status, fmt.Sprintf("release operation refused (HTTP %d)", status)))
+}
+
+// unfinishedReleases names, from the named fields only (the activation sends a
+// PIN, so its body is never printed), each release the activation must close
+// first and, Epic 458 (H1a), each partly done Initiative whose decisions would
+// go on: its title, INIT-<n> and count.
+func unfinishedReleases(body map[string]any) string {
+	releases, _ := body["open_releases"].([]any)
+	var text strings.Builder
+	for _, r := range releases {
+		release, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&text, "\n%s (%s) still has unfinished work or decisions that go on; close it on its close page first.",
+			str(release, "name"), str(release, "slug"))
+		undelivered, _ := release["undelivered_decisions"].([]any)
+		for _, u := range undelivered {
+			entry, ok := u.(map[string]any)
+			if !ok {
+				continue
+			}
+			count := roadmapCount(entry["decisions"])
+			noun := "decisions go"
+			if count == 1 {
+				noun = "decision goes"
+			}
+			fmt.Fprintf(&text, "\n  %s (INIT-%v): %d %s on", str(entry, "title"), entry["display_number"], count, noun)
+		}
+	}
+	return text.String()
 }

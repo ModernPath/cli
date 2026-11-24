@@ -85,3 +85,29 @@ func TestG1RegroupSkillRegroupsWithARequirementUpdate(t *testing.T) {
 		t.Errorf("installed reverse-engineering procedure is missing %q", phrase)
 	}
 }
+
+// Epic 341 (G3), test case 150d7fb9 (TC-G3-13): the installed
+// reverse-engineering procedure, with the references it links, tells the agent
+// to record what each requirement has, decided from the code it read, says what
+// each value means and that a requirement recorded earlier gets it from a
+// reference entry. The text and the phrases are compared with g3Plain.
+func TestG3_150d7fb9_InstalledSkillRecordsWhatEachRequirementHas(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(root); err != nil {
+		t.Fatal(err)
+	}
+	skill := g3Plain(installedReverseEngineeringInstructions(t, root))
+	for _, phrase := range []string{
+		"Record with each requirement what it has, decided from the code you read and not from file names alone",
+		"an interface when its behaviour is seen in requests and responses, messages or jobs at the system's boundary",
+		"stored data when it creates, changes or deletes data the system keeps",
+		"a screen when a person sees or uses it on a screen",
+		"none of these, an empty list",
+		"a requirement recorded earlier gets what it has from a reference entry: its kind, its id and what it has",
+		"Leave what_it_has out only when the code you read does not say",
+	} {
+		if !strings.Contains(skill, g3Plain(phrase)) {
+			t.Errorf("installed reverse-engineering procedure is missing %q", phrase)
+		}
+	}
+}

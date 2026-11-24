@@ -31,7 +31,8 @@ copy and receipt of each recorded file, the note of each refused file).
 
 The brief is the worker's whole prompt, at most 60 lines: the slice's file
 list, the rules of [requirement quality](requirement-quality.md) in the
-context's terms, the link kinds, the UUID rule and reference entries, a
+context's terms, the rule for what each requirement has, with what each value
+means, the link kinds, the UUID rule and reference entries, a
 `requirements search` step for reuse, the handoff template, and the exact
 check command. A slice is a group of files that implement related behavior,
 small enough to read whole. A worker never writes to the store. It stages
@@ -71,6 +72,12 @@ result:
   context unfinished and go on.
 - Changed after record: never edit a recorded file. Make a new file with new
   UUIDs, list it with the old id under `Replacements:` and make the old record obsolete in the end order below.
+- To add what a requirement has to requirements already recorded, stage a new
+  file of reference entries `{kind, id, what_it_has}` under their stored ids,
+  never with new UUIDs. When the server refuses the file with
+  `requirement_in_progress` or `requirement_owned` for one of them, remove
+  that entry, record the file again and record the entry in a later file once
+  its Epic is done. List the entry in `open-questions.md`.
 
 Receipts only help resume; the store is the authority. Read back with
 `requirements get` and `traces list`.

@@ -33,7 +33,11 @@ func newAcceptanceCommand(load func() (*cliEnv, error)) *cobra.Command {
 		Long: `Release acceptance of an initiative (roadmap line) in the bound System: acceptance
 specs (test steps for a human tester), one acceptance report per initiative and
 release with a result per spec, and its sign-off or rejection. Release acceptance
-is not RDD evidence: it records no test evidence and accepts no requirement.`}
+is not RDD evidence: it records no test evidence and accepts no requirement.
+For an Initiative that replaces part of the legacy system the platform writes a
+spec for each requirement that modernizes a kept or changed legacy requirement
+('specs refresh'), and the domain expert's signed-off report is part of what
+makes the Initiative done.`}
 	parent.AddCommand(newAcceptanceSpecsCommand(load), newAcceptanceReportCommand(load), newAcceptanceReleaseCommand(load))
 	return parent
 }
@@ -43,7 +47,10 @@ func newAcceptanceSpecsCommand(load func() (*cliEnv, error)) *cobra.Command {
 
 	list := &cobra.Command{Use: "list", Short: "List an initiative's live acceptance specs in order", Args: cobra.NoArgs,
 		Long: `List the live acceptance specs of the initiative --line, in their order:
-<uuid>  r<revision>  <title>. --json prints the served list.`,
+<uuid>  r<revision>  <requirement>  <title>. <requirement> names the requirement a
+spec the platform wrote follows, by its short reference and the revision the spec
+names, as UR-12-0 revision 2, with ", now revision 3" when the requirement has a
+newer revision; a person's spec prints a dash. --json prints the served list.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			line, err := acceptanceUUIDFlag(cmd, "line", "initiative")
 			if err != nil {
@@ -53,9 +60,7 @@ func newAcceptanceSpecsCommand(load func() (*cliEnv, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeAcceptanceList(cmd, data, func(row map[string]any) string {
-				return fmt.Sprintf("%s  r%s  %s", orDash(str(row, "id")), acceptanceText(row["revision"]), orDash(oneLine(str(row, "title"))))
-			})
+			return writeAcceptanceList(cmd, data, acceptanceSpecLine)
 		}}
 	acceptanceLineFlag(list)
 	list.Flags().Bool("json", false, "Emit JSON")
@@ -88,7 +93,9 @@ Example: {"title":"Pay by card","steps_md":"1. Add an item\n2. Pay by card","exp
 		Long: `Change a live acceptance spec from a JSON object using --file or --file - for stdin.
 Allowed fields: title, steps_md, expected_md; omitted fields are kept. A change
 to any of them bumps the spec's revision, so results recorded for the earlier
-revision no longer count for sign-off.`,
+revision no longer count for sign-off. A spec the platform wrote from a
+requirement follows that requirement, and the server refuses its change with
+requirement_spec_read_only: write a spec of your own to test something else.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := acceptanceUUID(args[0], "acceptance spec"); err != nil {
 				return err
@@ -107,7 +114,9 @@ revision no longer count for sign-off.`,
 
 	retire := &cobra.Command{Use: "retire <spec-uuid>", Short: "Retire an acceptance spec (kept, no longer required)", Args: cobra.ExactArgs(1),
 		Long: `Retire an acceptance spec. It keeps its row and results and is no longer required
-for sign-off. A spec is never deleted.`,
+for sign-off. A spec is never deleted. A spec the platform wrote from a requirement
+is retired only by the platform, when its requirement no longer counts; the server
+refuses to retire it with requirement_spec_read_only.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := acceptanceUUID(args[0], "acceptance spec"); err != nil {
 				return err
@@ -116,7 +125,42 @@ for sign-off. A spec is never deleted.`,
 		}}
 	retire.Flags().Bool("json", false, "Emit JSON")
 
-	specs.AddCommand(list, create, update, retire)
+	refresh := &cobra.Command{Use: "refresh", Short: "Write the specs of an initiative's kept and changed requirements", Args: cobra.NoArgs,
+		Long: `Write the specs of the initiative --line, one that replaces part of the legacy
+system, from the requirements that modernize its kept and changed legacy user
+requirements, then list its live specs as 'specs list' does. The platform writes
+one spec for each user requirement whose modernizes trace names one of the
+initiative's kept or changed legacy user requirements, and in place one for each
+kept or changed user requirement itself, with the requirement's id and revision,
+its title, and steps and an expected result written from it. A requirement that
+an approved Epic still holds gets no spec yet. A new revision of the requirement
+raises the spec's revision, also when its text stays the same, so a result for
+the earlier revision no longer counts; a spec whose requirement no longer counts
+is retired. Run it again at any time: with nothing changed it writes nothing,
+and for an initiative under a closed Release it changes nothing. --json prints
+the served list.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			line, err := acceptanceUUIDFlag(cmd, "line", "initiative")
+			if err != nil {
+				return err
+			}
+			env, err := load()
+			if err != nil {
+				return err
+			}
+			if env.SystemID <= 0 {
+				return fmt.Errorf("acceptance requires a bound System")
+			}
+			data, err := acceptanceResponse(env.write("POST", "/api/roadmap/lines/"+url.PathEscape(line)+"/acceptance-specs/refresh", map[string]any{"system_id": env.SystemID}))
+			if err != nil {
+				return err
+			}
+			return writeAcceptanceList(cmd, data, acceptanceSpecLine)
+		}}
+	acceptanceLineFlag(refresh)
+	refresh.Flags().Bool("json", false, "Emit JSON")
+
+	specs.AddCommand(list, create, update, retire, refresh)
 	return specs
 }
 
@@ -128,7 +172,15 @@ func newAcceptanceReportCommand(load func() (*cliEnv, error)) *cobra.Command {
 stdin) a JSON object may name release_id, environment and build_ref; without
 release_id the initiative's effective release is used. When a live (draft or
 signed-off) report exists for the initiative and release, that report is
-returned; a rejected one is never reopened. The tester is the signed-in person.`,
+returned; a rejected or superseded one is never reopened. The tester is the
+signed-in person.
+--retest asks for a new acceptance test, for when a spec moved after the
+sign-off: a signed-off report that no longer covers every live spec at its
+current revision is superseded, and a new draft opens for the same initiative
+and release, whose replaces_report_id names the report it replaced. While the
+signed-off report still covers them the server refuses with retest_not_needed;
+with a live draft --retest returns the draft, and with no live report it opens
+a new draft.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			line, err := acceptanceUUIDFlag(cmd, "line", "initiative")
 			if err != nil {
@@ -138,10 +190,14 @@ returned; a rejected one is never reopened. The tester is the signed-in person.`
 			if err != nil {
 				return err
 			}
+			if retest, _ := cmd.Flags().GetBool("retest"); retest {
+				payload["retest"] = true
+			}
 			return acceptanceWriteRecord(cmd, load, "POST", "/api/roadmap/lines/"+url.PathEscape(line)+"/acceptance-reports", payload, acceptanceReportSummary)
 		}}
 	acceptanceLineFlag(open)
 	acceptanceFileFlag(open, "Report JSON file, or - for stdin (optional)", false)
+	open.Flags().Bool("retest", false, "Ask for a new acceptance test after a spec moved since the sign-off")
 	open.Flags().Bool("json", false, "Emit JSON")
 
 	get := &cobra.Command{Use: "get <report-uuid>", Short: "Read an acceptance report with its results", Args: cobra.ExactArgs(1),
@@ -161,7 +217,11 @@ returned; a rejected one is never reopened. The tester is the signed-in person.`
 		Long: `Record the result of the spec --spec in a draft acceptance report from a JSON object
 using --file or --file - for stdin. Allowed fields: outcome (pass, fail, blocked
 or not_run; required) and notes_md. The result stores the spec's current
-revision and replaces an earlier result for the same spec.
+revision and replaces an earlier result for the same spec. On a spec the
+platform wrote from a requirement, fail, blocked and not_run need notes_md,
+which keeps the reason; without them the server refuses with notes_required.
+A fail on such a spec raises a difference at the sign-off, with the notes as
+what changed. An agent records a result only on the domain expert's word.
 Example: {"outcome":"fail","notes_md":"The receipt shows the wrong total"}.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := acceptanceUUID(args[0], "acceptance report"); err != nil {
@@ -215,7 +275,9 @@ Example: {"outcome":"fail","notes_md":"The receipt shows the wrong total"}.`,
 result for its current revision, and a fail or blocked result needs --note.
 --source USER:<date or reference> names the human decision and is required: an
 agent records results but never signs off on its own. The source is kept on the
-audit event. A signed-off report is closed.`, false)
+audit event. A signed-off report is closed. Signing off a report with a fail on
+a spec the platform wrote raises a difference on each legacy requirement that
+the spec's requirement modernizes, with the notes as what changed.`, false)
 	reject := decide("reject", "Reject a draft report as the signed-in person", "reject",
 		`Reject a draft acceptance report as the signed-in person; --note is required.
 --source USER:<date or reference> names the human decision and is required. The
@@ -230,7 +292,10 @@ func newAcceptanceReleaseCommand(load func() (*cliEnv, error)) *cobra.Command {
 	release := &cobra.Command{Use: "release <release-id>", Short: "List every initiative in a release with its acceptance report status", Args: cobra.ExactArgs(1),
 		Long: `List every initiative whose effective release is <release-id>, with its acceptance
 report and status (none, draft, signed_off or rejected): <line-uuid>  <status>  <text>.
-The live report is shown, else the newest rejected one. --json prints the served list.`,
+The live (draft or signed-off) report is shown, else the newest rejected one. A
+superseded report is closed and never the live one: a new acceptance test (report
+open --retest) replaced it, and the report that replaced it names it in
+replaces_report_id. --json prints the served list.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.Atoi(args[0])
 			if err != nil || id <= 0 {
@@ -250,8 +315,37 @@ The live report is shown, else the newest rejected one. --json prints the served
 
 var (
 	acceptanceSpecSummary   = []string{"id", "line_id", "title", "revision", "retired_at"}
-	acceptanceReportSummary = []string{"id", "line_id", "release_id", "status", "tester_name", "signed_off_by_name"}
+	acceptanceReportSummary = []string{"id", "line_id", "release_id", "status", "tester_name", "signed_off_by_name", "covers_live_specs", "replaces_report_id"}
+	// acceptanceServedOnly are summary fields printed only when the server
+	// serves them (Epic 337, D3), so a read from an older server prints as before.
+	acceptanceServedOnly = []string{"covers_live_specs", "replaces_report_id"}
 )
+
+// acceptanceSpecLine is one spec in a list: <uuid>  r<revision>  <requirement>  <title>.
+func acceptanceSpecLine(row map[string]any) string {
+	return fmt.Sprintf("%s  r%s  %s  %s", orDash(str(row, "id")), acceptanceText(row["revision"]), acceptanceSpecRequirement(row), orDash(oneLine(str(row, "title"))))
+}
+
+// acceptanceSpecRequirement names the requirement a spec the platform wrote
+// follows, at the revision the spec names, and the requirement's current
+// revision when it is newer; a person's spec has none and prints a dash
+// (Epic 337, D3).
+func acceptanceSpecRequirement(row map[string]any) string {
+	requirement, _ := row["requirement"].(map[string]any)
+	if requirement == nil && row["requirement_id"] == nil {
+		return "—"
+	}
+	ref := str(requirement, "display_ref")
+	if ref == "" {
+		ref = orDash(str(row, "requirement_id"))
+	}
+	named := acceptanceText(row["requirement_revision"])
+	text := ref + " revision " + named
+	if current, ok := requirement["revision"]; ok && current != nil && acceptanceText(current) != named {
+		text += ", now revision " + acceptanceText(current)
+	}
+	return text
+}
 
 func acceptanceLineFlag(cmd *cobra.Command) {
 	cmd.Flags().String("line", "", "Initiative (roadmap line) UUID (required)")
@@ -343,7 +437,8 @@ func acceptanceWriteRecord(cmd *cobra.Command, load func() (*cliEnv, error), met
 }
 
 // acceptanceResponse unwraps {data: ...}; a refusal names the server code
-// (not_found, report_closed, results_missing, ...).
+// (not_found, report_closed, results_missing, ...) and, from Epic 337 (D3),
+// prints the server's sentence beside it.
 func acceptanceResponse(status int, body map[string]any, err error) (any, error) {
 	if err != nil {
 		return nil, err
@@ -368,6 +463,9 @@ func writeAcceptanceRecord(cmd *cobra.Command, data any, summary []string) error
 	}
 	selected := make(map[string]any, len(summary))
 	for _, field := range summary {
+		if _, served := row[field]; !served && contains(acceptanceServedOnly, field) {
+			continue
+		}
 		selected[field] = row[field]
 	}
 	if results, ok := row["results"].([]any); ok {

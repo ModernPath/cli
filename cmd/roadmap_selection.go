@@ -52,17 +52,25 @@ revised_since_selected, context_changed_since_decided, not_counted,
 new_since_agreement) and decision (null while undecided, else its outcome,
 reason, expected level, Initiative, who set it, when, and the agent).
 
-Each requirement also carries expected_level, the level of proof it should
-reach (compared, screens_compared or tests_only), and expected_level_basis,
+Each requirement also carries expected_level, its agreed level of proof
+(compared, screens_compared or tests_only), and expected_level_basis,
 the code that says where that level comes from. The Selection tab gives each
-code in words. changed is "changed requirement": a row decided change
-expects tests_only. person is "set by {person}", with the reason: a person
+code in words. raised is "raised by {person}", with the reason: a person
+raised the level of a row decided change to compared, and the reason is the
+decision's expected_level_reason; it comes before changed. changed is
+"changed requirement": a row decided change expects tests_only. person is
+"set by {person}", with the reason: a person
 set the level on a row decided keep, and the reason is the decision's
 expected_level_reason. estimated is "estimated from its files": the level
 comes from the roles of the source files the requirement's traces reach, and
-an undecided or dropped row gets the level it should reach if kept. Read the
-codes as an open list: a planned change adds recorded, "recorded by reverse
-engineering".
+an undecided or dropped row gets the agreed level it would have if kept. recorded
+is "recorded by reverse engineering": reverse engineering recorded what the
+requirement has (what_it_has: interface, stored_data, screen, or an empty
+list for none of these), and the level follows it, compared for an interface
+or stored data, screens_compared for a screen without either, tests_only for
+none of these, whatever its traced files give; it comes before estimated.
+Each requirement carries what_it_has, null when nothing is recorded. Read the
+codes as an open list.
 
 With the basis estimated, expected_level_files gives the roles the estimate
 found and how many files it read, such as

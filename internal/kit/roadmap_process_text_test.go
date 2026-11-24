@@ -34,12 +34,11 @@ func TestProcessNamesTheReleaseTheInitiativeAndTheRoadmap(t *testing.T) {
 		"a release is",
 		"an initiative is",
 		"the roadmap is",
-		// The chain, and where an Initiative is shown.
+		// The chain. Epic 458 (H1a): where an Initiative is shown is
+		// TC-H1-K1's (continuation_rule_test.go).
 		"initiative -> epic -> requirement -> trace",
 		"one bounded context",
 		"each epic is in a release",
-		"the earliest open release of its epics",
-		"span several releases",
 		// How an agent reads the Roadmap and applies a plan.
 		"modernpath roadmap show",
 		"modernpath roadmap apply",

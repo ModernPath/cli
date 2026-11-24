@@ -24,15 +24,18 @@ Reads every *.json file of each --dir in lexical order as one set in the
 reverse-engineer record input shape. It needs no sign-in and no bound System.
 <dir>/recorded/<name>.receipt is the receipt of <dir>/<name>, and
 <dir>/recorded/<name> the copy kept when it was recorded (record --dir writes
-both). An entry with only kind and id is a reference to an existing
-requirement: it is left out of the content checks and counts as present.
+both). An entry with only kind and id, or kind, id and what_it_has, is a
+reference to an existing requirement: it is left out of the content checks
+and counts as present.
 
 Checks that fail:
   ids                   a requirement or criterion without a UUID; one UUID
                         with two different contents in the set
   receipts              an empty or unparsable receipt; a receipt without its copy
   changed-after-record  a recorded file that differs from its copy: make a new
-                        file with new UUIDs instead of editing it
+                        file with new UUIDs instead of editing it; add what a
+                        requirement has in a new file of reference entries
+                        under the stored ids
   distinct-statements   two descriptions equal, exactly or once their title
                         words are removed: a sentence template
   template-scenarios    one criterion frame (its text without the title words)
@@ -40,6 +43,9 @@ Checks that fail:
   actor-outcome         a user requirement with no actor or intended_use, a
                         catch-all actor, or several roles joined by "or" or "/"
   field-limits          an actor, context or context_name over 255 characters
+  what-it-has           a what_it_has the server refuses: null, not a list, or
+                        an element other than interface, stored_data and
+                        screen, on a new requirement or a reference entry
 Warnings:
   ur-without-sr         a user requirement no system requirement in the set
                         serves through a derives trace
@@ -68,6 +74,10 @@ func reverseCheckCommand() *cobra.Command {
 		Short: "Check staged record files for content problems and coverage, offline",
 		Long:  reverseCheckHelp,
 		Args:  cobra.NoArgs,
+		// The report is the output, also with --json; the failure is the exit
+		// code and the error main prints, as the root silences it.
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dirs, _ := cmd.Flags().GetStringArray("dir")
 			selfTest, _ := cmd.Flags().GetBool("self-test")
@@ -309,6 +319,7 @@ func (s *reCheckSet) run(served map[string]bool) []reCheckResult {
 		checkTemplateScenarios(content),
 		checkActorOutcome(content),
 		checkFieldLimits(content),
+		checkWhatItHas(all),
 		checkURWithoutSR(content, all, s.traces(), served),
 		checkTraceEndpoints(all, s.traces(), served),
 	}
@@ -386,7 +397,7 @@ func (s *reCheckSet) checkChangedAfterRecord() reCheckResult {
 		staged, okStaged := reCheckNormalizedJSON(f.Raw)
 		copied, okCopy := reCheckNormalizedJSON(f.Copy)
 		if !okStaged || !okCopy || staged != copied {
-			result.add("%s changed after it was recorded: make a new file with new UUIDs", f.label())
+			result.add("%s changed after it was recorded: make a new file with new UUIDs; add what a requirement has in a new file of reference entries under the stored ids", f.label())
 		}
 	}
 	return result
@@ -526,6 +537,33 @@ func checkFieldLimits(content []reCheckRequirement) reCheckResult {
 			if n := utf8.RuneCountInString(reCheckString(r.Entry, field)); n > reverseCheckFieldLimit {
 				result.add("%s: %s is %d characters long; the server refuses more than %d", r.label(), field, n, reverseCheckFieldLimit)
 			}
+		}
+	}
+	return result
+}
+
+// reCheckWhatItHasValues are the values the server stores in what_it_has
+// (Epic 341, G3); the server refuses any other list, null included.
+var reCheckWhatItHasValues = map[string]bool{"interface": true, "stored_data": true, "screen": true}
+
+// checkWhatItHas fails every entry, a reference entry too, whose what_it_has
+// the server would refuse; an entry without the key records nothing and passes.
+func checkWhatItHas(all []reCheckRequirement) reCheckResult {
+	result := reCheckResult{Name: "what-it-has", Level: "fail"}
+	for _, r := range all {
+		raw, present := r.Entry["what_it_has"]
+		if !present {
+			continue
+		}
+		list, ok := raw.([]any)
+		bad := !ok
+		for _, item := range list {
+			if value, isString := item.(string); !isString || !reCheckWhatItHasValues[value] {
+				bad = true
+			}
+		}
+		if bad {
+			result.add("%s in %s has what_it_has %s: give a list of interface, stored_data and screen (an empty list for none of these), or leave it out", r.label(), r.File.label(), reCheckCanonical(raw))
 		}
 	}
 	return result

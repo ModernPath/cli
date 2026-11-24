@@ -106,9 +106,13 @@ horizon, with the Now plan its business owner agrees.
 
 The chain runs Initiative → Epic → requirement → trace: Epics deliver an
 Initiative, requirements state an Epic's behavior, and traces connect a
-requirement to code and evidence. An Initiative is shown under the earliest
-open Release of its Epics, else its own; its Epics are free to span several
-Releases.
+requirement to code and evidence. An Initiative stays in its stored Release.
+When a Modernization Release closes, a close continues a partly done
+Initiative in a linked Initiative of the next Modernization Release: a partly
+done Initiative has a done Epic in the closing Release or continues another,
+and the linked Initiative takes the Epics carried to that Release and the
+decisions that are not yet proved. A close is refused when no Release can take
+them.
 
 Read the Roadmap with `modernpath roadmap show` before planning an Epic: it
 lists each Initiative with its context and the Epics it covers. Change the
@@ -375,6 +379,11 @@ does not stand in for implementation or completion approval on Epic work.
 The business owner's agreement of the Now plan, on the Roadmap, is the human
 stop for a selection, which no agent and no command records.
 
+The domain expert's acceptance of an Initiative and a person's acceptance of a
+difference are human stops: no agent records either on its own. An agent
+records the domain expert's results and sign-off only on their word, with a
+`USER:` reference to their decision as the source and their words as the note.
+
 Git and PR/CI systems own code revisions, commits, merges and conflicts. Retain
 links and tested code revisions for traceability; their hashes do not define
 requirement identity, versions or approval validity. Never describe a code
@@ -495,6 +504,8 @@ A small change has no Epic to route a backlog, gap or tooling record to. When
 it delivers such a record, name the record in the PR, use the CLI to mark the
 record as routed to the relevant requirement, and read it back. Once the change
 merges, use the CLI to mark the record as closed by that pull request and read it back.
+A difference closed by a merged pull request is written `CLOSED by PR #<number>`
+or with the pull request's address.
 This closes the delivered discovery, not the governed requirement; requirement
 publication still needs its explicit human completion decision. If completion
 or delivered scope remains blocked, leave the discovery open and explain why.
@@ -1017,12 +1028,27 @@ criterion/TestCase pair, linked by `verifies` and `relates` Traces. A later
 direct outcome replaces that pair's result. Modernization history is separate:
 an authorized open Modernization Release captures a `ModernizationTestRun`, its
 commit and immutable `ModernizationTestResult` outcomes atomically after
-execution. Each historical result has criterion and TestCase Traces. Runs have
-no pre-registration or finalization lifecycle. Their reads and reference
+execution. Each historical result has a TestCase Trace and the criterion
+Traces its entry names; a capture test case's result names none. Runs have no
+pre-registration or finalization lifecycle. Their reads and reference
 selection do not satisfy, replace or invalidate current criterion proof or
 ordinary readiness. Capture with `modernpath modernization record`; use
 `modernpath evidence record`, or `modernpath epics build record` after a
 delegated build, for current direct proof.
+
+A difference is a place where the new system behaves differently from the
+legacy system it replaces. Record a difference with `modernpath backlog create`
+as a gap of kind difference that names the kept or changed legacy requirement
+it concerns, what changed and the evidence. A person on the team accepts a
+difference by name on the Initiative's Proof tab, with their own words, and
+the agent never does. A difference that changes stored values or fails a write
+is fixed as a defect, never accepted. Close a difference only by the done Epic
+that fixed it, with `CLOSED by` and the Epic's number, or by the merged pull
+request that fixed it, with `CLOSED by PR #<number>` or the pull request's
+address. A mask added to a replay after its first failing run cites an
+accepted difference by its reference. `modernpath roadmap proof` lists the
+Initiative's differences with their references, its acceptance and what it
+waits for.
 
 Choose evidence by boundary: unit/property for domain rules, component and
 browser for UI, endpoint or contract tests for APIs, integration for

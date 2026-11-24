@@ -62,12 +62,18 @@ func refusalBodyText(body map[string]any) string {
 	}
 	switch errVal := body["error"].(type) {
 	case string:
+		text := errVal
 		// Epic 345: a coverage refusal (already_on_roadmap, not_linkable)
 		// names the covered records by their native ids.
 		if ids := refusalIDs(body["ids"]); ids != "" {
-			return errVal + ": " + ids
+			text += ": " + ids
 		}
-		return errVal
+		// Epic 337 (D3): a bare code with the server's sentence in a top-level
+		// message ({"error": "retest_not_needed", "message": ...}) prints both.
+		if message := str(body, "message"); message != "" {
+			text += " — " + message
+		}
+		return text
 	case map[string]any:
 		if text, ok := batchRefusalText(body, errVal); ok {
 			return text

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -104,4 +105,97 @@ func TestReverseEngineerRecordRejectsSeparateFilesArray(t *testing.T) {
 	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), `unknown input field "files"`) {
 		t.Fatalf("expected obsolete files field rejection, got %v", err)
 	}
+}
+
+// Epic 341 (G3), test case f17f2164 (TC-G3-11), criterion 5c8a73dd: the
+// receipt record --file prints lists each requirement's what_it_has as the
+// server returns it, a list or null, beside its id, kind, display_number,
+// title and work_status. The five keys hold on the first slice (guard); the
+// receipt leaves what_it_has out there, so that assertion fails.
+
+const (
+	g3ReceiptListID = "c3000000-0000-4000-8000-000000000001"
+	g3ReceiptNullID = "c3000000-0000-4000-8000-000000000002"
+)
+
+// g3ReceiptResponse is the recording's answer for two requirements: one
+// recorded as having an interface and a screen, one with nothing recorded.
+const g3ReceiptResponse = `{"data":{"requirements":[` +
+	`{"id":"` + g3ReceiptListID + `","kind":"system_requirement","display_number":31,"title":"Show the station map","work_status":"PROPOSED","context":"CATALOG","description":"long text the receipt leaves out","what_it_has":["interface","screen"]},` +
+	`{"id":"` + g3ReceiptNullID + `","kind":"system_requirement","display_number":32,"title":"Price a charging session","work_status":"PROPOSED","context":"CATALOG","description":"long text the receipt leaves out","what_it_has":null}` +
+	`],"traces":[]}}`
+
+// g3ReceiptInput is the staged record input whose answer is g3ReceiptResponse.
+const g3ReceiptInput = `{"requirements":[` +
+	`{"id":"` + g3ReceiptListID + `","kind":"system_requirement","title":"Show the station map","description":"The map API and screen show the stations near a position.","context":"CATALOG","what_it_has":["screen","interface"]},` +
+	`{"id":"` + g3ReceiptNullID + `","kind":"system_requirement","title":"Price a charging session","description":"The pricing job prices a closed charging session.","context":"CATALOG"}` +
+	`],"traces":[]}`
+
+// g3RequireReceiptWhatItHas checks that text is a receipt whose requirements
+// keep the five keys and what_it_has exactly as g3ReceiptResponse serves them.
+func g3RequireReceiptWhatItHas(t *testing.T, what, text string) {
+	t.Helper()
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(text), &receipt); err != nil {
+		t.Errorf("%s is not one JSON object: %v\n%s", what, err, text)
+		return
+	}
+	var served map[string]any
+	if err := json.Unmarshal([]byte(g3ReceiptResponse), &served); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]map[string]any{}
+	for _, raw := range served["data"].(map[string]any)["requirements"].([]any) {
+		row := raw.(map[string]any)
+		want[row["id"].(string)] = row
+	}
+	rows, _ := receipt["requirements"].([]any)
+	if len(rows) != len(want) {
+		t.Errorf("%s lists %d requirements; want %d:\n%s", what, len(rows), len(want), text)
+	}
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		id, _ := row["id"].(string)
+		served, ok := want[id]
+		if !ok {
+			t.Errorf("%s lists a requirement the server did not return: %v", what, row)
+			continue
+		}
+		// Guard: the five keys the receipt has always kept.
+		for _, key := range []string{"id", "kind", "display_number", "title", "work_status"} {
+			if value, present := row[key]; !present || !reflect.DeepEqual(value, served[key]) {
+				t.Errorf("%s requirement %s %s = %v (present %v); want %v", what, id, key, value, present, served[key])
+			}
+		}
+		if _, present := row["description"]; present {
+			t.Errorf("%s requirement %s carries its description; the receipt is compact", what, id)
+		}
+		value, present := row["what_it_has"]
+		if !present || !reflect.DeepEqual(value, served["what_it_has"]) {
+			gotJSON, _ := json.Marshal(value)
+			wantJSON, _ := json.Marshal(served["what_it_has"])
+			t.Errorf("%s requirement %s what_it_has = %s (present %v); want %s as the server returned it", what, id, gotJSON, present, wantJSON)
+		}
+	}
+}
+
+func TestG3_f17f2164_RecordFileReceiptListsWhatItHas(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/systems/4/reverse-engineering/requirements" {
+			t.Errorf("request = %s %s, want POST to the recording route", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(g3ReceiptResponse))
+	}))
+	defer server.Close()
+
+	command := newReverseEngineerCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	command.SetIn(strings.NewReader(g3ReceiptInput))
+	command.SetArgs([]string{"record", "--file", "-", "--json"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("record --file failed: %v; output %s", err, out.String())
+	}
+	g3RequireReceiptWhatItHas(t, "the receipt record --file prints", out.String())
 }

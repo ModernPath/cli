@@ -2,6 +2,101 @@
 
 ## Unreleased
 
+- `modernization record` sends the commit's details as `commit_details`: the
+  first line of its message cut to 200 characters (code points), its author's
+  name cut to 255 and its author date, read with git from the folder it runs
+  in when that folder holds the commit, else from the new flag
+  `--legacy-checkout <path>`. With neither it sends none and prints `the run
+  carries no commit details: neither this folder nor --legacy-checkout holds
+  commit <sha>.`; a `--legacy-checkout` that is not a git checkout exits 1
+  before anything is sent. A server that keeps no commit details yet refuses
+  the key with `invalid_modernization_results`, so the command sends the
+  capture once more without it and prints `the server keeps no commit details
+  yet; the run was recorded without them.`; the new server's
+  `invalid_commit_details` is not sent again. Release the CLI only once the
+  server that stores the details is live. `modernization history` shows each
+  passing revision's results, message, author and date.
+- `roadmap show --readiness` ends a Modernization Release's block with the step
+  its reference revision waits for: record the legacy System's test results,
+  then a person chooses it on the Release page's Modernization tab. Where what
+  the ledger misses cannot be read, it prints the read's message, which says
+  why. `roadmap show` names an Initiative's Epics in number order with their
+  count: `Epic 2 (1 Epic)`, `Epics 2, 10 (2 Epics)`.
+- The `rdd-modernize` skill opens with a section, Start the proof: commit the
+  capture scripts first, record the legacy System's own test results at that
+  commit, and ask a person to choose it as the reference revision.
+
+- `roadmap show` prints, under an Initiative that replaces part of the legacy
+  system and is not done, its planning steps before its other lines: `Waits
+  for 6 legacy requirements undecided: Decide them on the Selection tab, The
+  team` and `Waits for the agreement of Now: Not agreed yet, <name> (business
+  owner)` (or `Changed since the agreement`; `The business owner` when the
+  owner has no name, `A workspace admin` while none is named). `--json`
+  carries them as `planning_waits`, the agreement item with `all_decided`
+  (true while every legacy requirement of its context is decided, those
+  captured or moved in since the agreement included). Its acceptance line
+  appears only once a linked item's own status is in progress, in review or
+  done. The help and the CLI guide state when each line appears.
+- `roadmap apply`, with `--dry-run`, prints a `set_selection` refused with
+  `release_closed`, because the Initiative's Modernization Release is released
+  or archived, with its sentence: `The initiative's release is closed, so this
+  initiative can no longer change its decisions.` The server answered
+  `release_not_modernization` there before. The CLI reference's refusal
+  glossary has a row for it.
+- `roadmap recording --dry-run` exits with status 1 when any recording would be
+  refused, after printing each recording's result and the last line
+  `<n> of <m> recordings would be refused; nothing was written.`; with `--json`
+  it prints the answer and exits the same way. A dry run with no refusal, and a
+  refusal of the whole request, exit as before.
+- `backlog create` sends a difference's optional `legacy_answer` and
+  `new_answer` (both Systems' answers, each `{"commit", "text"}`) under
+  `metadata.difference`, and refuses before sending one that is not exactly a
+  commit of 7 to 64 hexadecimal characters and a text of 1 to 2,000
+  characters. Its help says an agent adds them when a replay or test shows both
+  Systems' outputs, and that evidence alone stays the normal case. The help and
+  refusals of `backlog create` and `backlog update` name the Proof tab's Decide
+  and its decision panel where they named its Accept form.
+- `roadmap show` prints, under an Initiative that a Release's close continued
+  in a later Release, `continued in <text> (INIT-<n>)`, and under the part
+  that continues it `continues: <text> (INIT-<n>)`; `--json` carries
+  `continues` and `continued_by` as served. `roadmap apply`, with and without
+  `--dry-run`, prints an `initiative_continued` refusal of an `archive_line`
+  with the server's sentence, which names the continuation. A refused
+  `releases activate` (`incumbent_has_unfinished_work`) names each release to
+  close first and each Initiative whose decisions would go on, with its
+  `INIT-<n>` and count, and never prints the answer's body.
+- `roadmap show`, `initiative list` and `initiative get` print an
+  Initiative's stage in the web app's words: `Built · waits for acceptance`,
+  `Accepted` with what remains (such as `Accepted · 2 proved below the agreed
+  level · 1 open difference`), `Done` or `Done · accepted`. An Initiative at an
+  earlier step prints as before; a work item keeps its progress code. Under an
+  Initiative that is not done, `roadmap show` prints its proof waits, such as
+  `Waits for 2 proved below the agreed level: Prove it at the agreed level or
+  accept the lower level by name, A person on the team`. `--json` carries
+  `progress`, `accepted`, `done_when` and `waiting_for` as served.
+- `roadmap proof` prints the counts and the rows in the Proof tab's words:
+  `proved as agreed`, `proved below the agreed level (n accepted by name)`,
+  `not proved yet` and `agreed level`; a row below its agreed level that a
+  person accepted reads `accepted by <name>: <their words>`; a row not proved
+  yet reads `Not proved yet`. Under Done when it prints `Proved as agreed` with
+  where it stands and what it waits for. The words "proved as well as
+  expected", "less well", "less than expected" and "should reach" are gone.
+- `roadmap show --readiness` prints `Proved as agreed`, then `Proved below the
+  agreed level: n (k accepted by name)`, and `Drafted, not proved yet` from
+  `drafted_not_proved_yet`, so a requirement proved below the agreed level is
+  no longer counted as not proved.
+- New `roadmap accept-lower-level --file accept.json --agent <name>` records,
+  on the person's explicit word and with the person's own words as the USER:
+  source and the words, that a kept or changed requirement stays proved below
+  its agreed level. `--agent` is required; the file's keys are checked before
+  anything is sent. It prints the row's new state, or the server's code and
+  sentence (a read-only workspace included) and exits non-zero; `--json` writes
+  the server's answer.
+- Process: the `rdd-modernize` skill records an acceptance of a lower level of
+  proof only on the person's explicit word, in their own words, never from a
+  template, and otherwise asks the person to accept on the Proof tab.
+  These need a Core with Epic 459's proof read, done read and accept route. Run
+  `modernpath install` to refresh the process and the CLI reference.
 - Use `epics images` or `initiative images` to list, download, upload, and
   remove planning images in the bound System.
 
@@ -71,6 +166,168 @@
   a measure and its threshold, a check in the repository to run, or where a
   reviewer sees that a behavior did not happen. Run `modernpath install` to
   refresh the process.
+
+- Readiness and the completion reads (Epic 338). `roadmap show --readiness`
+  sends `readiness=true` and prints, after each Modernization Release's
+  context lines, its readiness in the words of the Release page's
+  Modernization panel: Proved with its percent, or that proof is read once
+  the reference revision is set; Drafted, not proved yet; Not drafted yet;
+  Undecided with the dropped count; one line with how many are built, how
+  many kept or changed user requirements a domain expert accepted and what
+  the ledger misses (the legacy files with behaviour that no requirement
+  traces); every such file by path and role under its context; and the
+  latest replays against the captures before them. For a Release whose
+  legacy system was deleted it prints one sentence, and without
+  `--readiness` it prints none of this. The block's Built counts the kept or
+  changed requirements of the Initiatives shown under the Release, as Proved
+  does, while the context lines' built counts over every decided row of the
+  context. In the kit, step 4 of `rdd-completion-review` presents the
+  completion presentation's `completion_reads` (the revisions, the kept
+  requirements the change touched and the whole-suite comparison), which
+  never block the completion answer; it and the Prove step of
+  `rdd-modernize` tell the agent to capture, after the merge, every test of
+  the touched kept requirements in the Release's scope. Requires the
+  matching server.
+- Differences and acceptance (Epic 337). `backlog create` takes a gap of
+  `gap_kind` `difference`, with its fields under `metadata.difference`:
+  `legacy_requirement`, `what_changed` and `evidence`, which it requires, and
+  `requirement`, `accepting_accepts` and `risk` when given. Before it sends
+  anything it refuses a difference without one of the three, and one that sets
+  `classification`, `changes_stored_values` or `accepted_words`, which a person
+  sets with Accept on the Initiative's Proof tab. `backlog update` reads the
+  record first only when the disposition it would send starts with
+  `ACCEPTED with`, and for a difference refuses to send it, because a person
+  accepts a difference by name on the Proof tab and the agent never does;
+  every other disposition is sent without that read, and a `difference` object
+  never. Its help gives the two forms of closing a difference by a pull
+  request, `CLOSED by PR #<number>` and the pull request's address. `backlog
+  get` serves the record's `difference`: `--full --json` carries it, and
+  `--fields difference` is accepted.
+  `acceptance specs list` prints each spec's requirement and revision, or a
+  dash for a person's spec; the new `acceptance specs refresh --line` writes
+  the specs of an Initiative that replaces part of the legacy system and
+  prints them; `acceptance report open --retest` sends `retest` and prints the
+  new draft with `replaces_report_id`. A refusal whose body is a bare code with
+  a top-level `message` now prints the code and the sentence
+  (`retest_not_needed`, `requirement_spec_read_only`, `notes_required`).
+  `roadmap proof` prints the Initiative's Done when items, what it waits for of
+  its acceptance and open differences, the acceptance with each requirement's
+  state, and the differences with their references. The Initiative waits for a
+  difference only while No open difference is not met, so a difference raised
+  after its Release closed is listed and the Initiative does not wait for it.
+  `roadmap show` prints the acceptance line as `Acceptance for <Release>` and
+  each open difference by its reference and title, with their steps and turns
+  in the Initiative page's words. `roadmap apply`'s help says the server refuses
+  a raise to `compared` while no accepted difference names the requirement or
+  one naming it is open. Requires the matching server.
+- `roadmap proof --initiative <id>` prints the Proof tab of an Initiative that
+  replaces part of the legacy system: for each kept or changed legacy
+  requirement, the level of proof it should reach with its basis and the
+  level reached with its reason, in the tab's words, with the counts; `--json`
+  writes the proof route's answer (Epic 336). Only a run of the modernized
+  system at the commit that merged the change, or at a commit that contains
+  it, counts, and the proof is read once the Release's reference revision is
+  set.
+
+- `roadmap selection` documents the basis code `raised`, "raised by {person}"
+  with the reason: a person raised the level of a row decided change to
+  `compared` (Epic 336). `roadmap apply` sends such a raise as a level-only
+  row, or as a row that names `change` with `compared` to keep a stored
+  raise; the server refuses a raise with `raise_needs_accepted_differences` and
+  a sentence while no accepted difference names the requirement or one naming it
+  is open, and `roadmap apply`, with or without `--dry-run`, prints the sentence
+  for the refused row.
+
+- `epics record-merge <epic-id> --commit <sha>` records on a done Epic the
+  merge commit of the last pull request that carried its change, in lower
+  case, for any authorized member of the Epic's workspace; recording it again
+  replaces it, and `--agent` names the agent (Epic 336). `epics plan show`
+  gives the Epic's `merge_commit_sha` and `merge_commit_recorded_at`, and the
+  Epic's history lists each recording. The Proof tab reads the commit as the
+  floor from which a captured run of the modernized system proves the kept or
+  changed requirements the Epic takes or reaches.
+
+- `modernization record` sends the run's commit chain and takes capture-only
+  entries (Epic 390). Run in the git checkout that holds the file's commit,
+  the command reads the Release's `chain_stops` from the Release read (GET
+  `/api/compliance/releases/:id`), lists the commits with `git rev-list
+  --topo-order` from that commit until every stop commit is listed, at 2,000
+  commits or before 8,000,000 bytes of commit objects, reads each object with
+  `git cat-file --batch` and sends them as `commit_chain`, a list of `{sha,
+  object}` entries with the object in base64, with the commit as its full id
+  in lower case. It prints to standard error how many commits it sent and how
+  the walk ended; an end at a limit or at a shallow checkout's edge leaves the
+  chain cut. In such a checkout it refuses, before sending, a commit not given
+  as its full 40- or 64-character id and, when the commit is HEAD, uncommitted
+  changes to tracked files. Elsewhere it sends the file without a chain and
+  says so. An entry whose `criterion_ids` is an empty list, a capture test
+  case's entry, is sent; an entry without the key is still refused before
+  sending. The server refuses a broken chain with 422 `invalid_commit_chain`,
+  an entry with no criterion whose test case is not a capture test case with
+  `not_a_capture_test_case`, and a file that mixes the legacy System's and the
+  Release's own System's test cases with `invalid_verification_endpoint`;
+  nothing is written. `modernization history --system-id` reads the legacy
+  System or the Release's own System. The help, the CLI guide and the refusal
+  glossary describe the chain and the capture-only entry; the pass-to-command
+  map records the capture with `modernization record`. Requires the matching
+  server.
+- Captures, replays and break tests (Epic 335). Add `roadmap recording --file
+  <file|-> [--release <id>] [--agent <name>] [--dry-run] [--json]`: run from a
+  folder bound to the new system, it links each replay test to its capture
+  test case and to the capture's passing result on the legacy system, and the
+  break test to the replay, before either has run. The file is
+  `{"recordings": [{"replay_test_case_id", "break_test_case_id",
+  "capture_test_case_id", "capture_result_id"}]}`; another key, an empty or
+  missing `recordings`, and an `--agent` name outside lowercase letters,
+  digits, `.`, `_` and `-` are refused before anything is sent. The command
+  prints each recording's replay and its three links, each written, kept or
+  moved from an earlier result; `--dry-run` prints each recording's result
+  (would link, would move, unchanged, or refused with the reason) and writes
+  nothing; `--json` prints the server's answer. The whole file is refused at
+  the first recording that breaks a rule, and nothing is written; the refusal
+  reads `<code> — item <index> (replay <uuid>) — <reason>`: 422
+  `release_not_open_modernization`, `release_required`,
+  `reference_revision_required`, `not_a_capture_test_case`,
+  `capture_not_selected`, `capture_result_not_passing`,
+  `capture_revision_not_allowed` or `invalid_replay`, 409
+  `replay_already_run`, `replay_linked_elsewhere`, `capture_result_older` or
+  `break_test_taken`, and 422 `invalid_agent` or `invalid_recordings` for the
+  whole request. `reverse-engineer record` refuses with 422
+  `capture_link_not_recordable` a trace from a test case to a test result, and
+  a `relates` trace between two test cases either of which is a capture test
+  case or a replay; nothing is written. `traces list --help` says
+  that a replay's links are written only by `roadmap recording`.
+  `roadmap selection` writes each requirement's `recording`,
+  `legacy_changed_since_recorded` and `legacy_changes` as the server serves
+  them. The new rdd-modernize skill gives the five stages of a modernization,
+  the stop at the business owner's agreement, and the capture steps on the
+  legacy system and on the new system; the CLI guide, the pass-to-command map
+  and the refusal glossary describe the command and its refusals. Run
+  `modernpath install` to refresh the installed process. Requires the matching
+  server.
+
+- What a requirement has (Epic 341). A `reverse-engineer record` entry may
+  carry `what_it_has`, a list of `interface`, `stored_data` and `screen` (an
+  empty list for none of these), as the code read shows it; the receipt lists
+  it as the server returns it, null when nothing is recorded, and
+  `requirements get --full` prints it (`--fields what_it_has` selects it). It
+  is current metadata, not content: a reference entry `{kind, id,
+  what_it_has}` replaces the stored value without a new revision, DONE
+  requirements included, with one `updated` audit event; the server refuses
+  with 422 `invalid_what_it_has` a null or other value, with 422
+  `requirement_deleted` a value for a deleted requirement, and with 409
+  `requirement_in_progress` or `requirement_owned` one for a requirement
+  active Epic work holds; nothing is written. `reverse-engineer check` adds the
+  check `what-it-has`, which fails a value the server refuses, and its
+  changed-after-record finding and `record --dir`'s message say to add what a
+  requirement has in a new file of reference entries under the stored ids.
+  `roadmap selection` writes each requirement's `what_it_has`, and the basis
+  `recorded`, "recorded by reverse engineering", gives the expected level what
+  was recorded gives (`compared` for an interface or stored data,
+  `screens_compared` for a screen without either, `tests_only` for none of
+  these), before the estimate. The rdd-reverse-engineer skill, its batch and
+  requirement-quality references, the CLI guide and the refusal glossary
+  describe the rule. Requires the matching server.
 
 ## v0.30.0 - Exact review of the change and trace ids
 

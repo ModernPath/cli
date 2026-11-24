@@ -1,0 +1,27 @@
+{
+  "requirements": [
+    {
+      "kind": "system_requirement",
+      "id": "b0000000-0000-4000-8000-000000000010",
+      "what_it_has": [
+        "api"
+      ]
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000013",
+      "kind": "system_requirement",
+      "title": "Stop a session",
+      "description": "The charging API stops a session when the driver ends it in the app.",
+      "context": "CHARGING",
+      "what_it_has": "screen",
+      "criteria": [
+        {
+          "id": "b0000000-0000-4000-8000-000000000513",
+          "kind": "criterion",
+          "statement": "a stopped session ends within 5 seconds"
+        }
+      ]
+    }
+  ],
+  "traces": []
+}

@@ -132,10 +132,29 @@ refusal names the requirement's position in the file, counted from 0, its
 title and the listed value. A requirement reused by id keeps its stored context,
 and a null context_name matches the stored name, so a retried file is reused.
 
-The receipt lists each requirement's id, kind, display_number, title and
-work_status, and the number of traces. Read back with requirements get
-<uuid> --kind user|system --full and traces list --entity-type <kind>
---entity-id <uuid>.`
+Each requirement entry may carry what_it_has: what the requirement has, as
+the code you read shows it, a list of interface (its behaviour is seen in
+requests and responses, messages or jobs at the system's boundary),
+stored_data (it creates, changes or deletes data the system keeps) and screen
+(a person sees or uses it on a screen); an empty list means none of these.
+Leave the key out to record nothing; null is refused (invalid_what_it_has, as
+is a value that is not such a list). It is current metadata, not content: on
+a requirement the System holds, a reference entry {kind, id, what_it_has}
+with a different value replaces the stored one without a new revision, with
+one updated audit event, DONE requirements included; the same value again
+writes nothing. The server refuses with 409 a different value for a requirement
+in progress or in review (requirement_in_progress) or held by active Epic work
+(requirement_owned), and with 422 one for a deleted requirement
+(requirement_deleted), which names the entry's position, kind and id; the
+request writes nothing. To add what requirements already recorded
+have, stage a new file of such reference entries under their stored ids;
+never edit a recorded file.
+
+The receipt lists each requirement's id, kind, display_number, title,
+work_status and what_it_has (the receipt lists what_it_has as the server
+returns it, null when nothing is recorded), and the number of traces. Read
+back with requirements get <uuid> --kind user|system --full and traces list
+--entity-type <kind> --entity-id <uuid>.`
 
 type reverseRecordPayload struct {
 	Requirements []map[string]any `json:"requirements"`
@@ -211,7 +230,7 @@ func reverseRecordReceipt(body map[string]any) (map[string]any, error) {
 		if !ok {
 			return nil, fmt.Errorf("reverse-engineering response contains an invalid requirement")
 		}
-		items = append(items, selectKeys(row, []string{"id", "kind", "display_number", "title", "work_status"}))
+		items = append(items, selectKeys(row, []string{"id", "kind", "display_number", "title", "work_status", "what_it_has"}))
 	}
 	return map[string]any{"requirements": items, "trace_count": len(traces)}, nil
 }

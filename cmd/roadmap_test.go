@@ -16,7 +16,9 @@ package cmd
 // assertions on the requests and the output fail.
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -551,6 +553,110 @@ func TestRoadmapStatusDiagnostics(t *testing.T) {
 	})
 }
 
+// Epic 458 (H1a), SR-1 criterion 2 (b7c6e1ee): `roadmap show` prints the
+// continuation link under each Initiative and `--json` carries it; `roadmap
+// apply`, with and without --dry-run, prints an initiative_continued refusal
+// with the server's message; `releases activate` refused with
+// incumbent_has_unfinished_work prints, besides the code, only named fields
+// of each release and its undelivered decisions, never the body.
+//
+// 6e29820b-3471-4f7f-9a6c-825a1e126b6f
+func TestRoadmapContinuationOutputAndTheActivationRefusal(t *testing.T) {
+	const first = `{"id":"44444444-4444-4444-8444-444444444444","text":"Replace invoicing","horizon":"now","context":"PAY","work_kind":"replaces_legacy","release_id":7,"epic_ids":[41],
+"continues":null,"continued_by":{"id":"55555555-5555-4555-8555-555555555555","display_number":13,"text":"Replace invoicing (continued)","archived_at":null,"release_id":8,"release_name":"Summer"}}`
+	const part = `{"id":"55555555-5555-4555-8555-555555555555","text":"Replace invoicing (continued)","horizon":"next","context":"PAY","work_kind":"replaces_legacy","release_id":8,"epic_ids":[42],
+"continues":{"id":"44444444-4444-4444-8444-444444444444","display_number":12,"text":"Replace invoicing","archived_at":null,"release_id":7,"release_name":"Spring"},"continued_by":null}`
+	read := `{"data":{"system_id":1,"plan_state":"agreed","contexts":[{"code":"PAY","name":"Payments"}],
+"releases":[{"id":7,"name":"Spring","status":"released","initiatives":[` + first + `]},{"id":8,"name":"Summer","status":"planned","initiatives":[` + part + `]}],
+"no_release":{"now":[],"next":[],"later":[]}}}`
+
+	server, _ := roadmapServer(t, http.StatusOK, read)
+	cobraWorkspace(t, server, 1)
+	out, err := runRoot(t, "roadmap", "show")
+	if err != nil {
+		t.Fatalf("roadmap show: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"continued in Replace invoicing (continued) (INIT-13)",
+		"continues: Replace invoicing (INIT-12)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("roadmap show lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "continued in") > strings.Index(out, "Replace invoicing (continued)  [") {
+		t.Errorf("the link prints under its Initiative:\n%s", out)
+	}
+
+	out, err = runRoot(t, "roadmap", "show", "--json")
+	if err != nil {
+		t.Fatalf("roadmap show --json: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"continued_by"`) || !strings.Contains(out, `"continues"`) {
+		t.Errorf("roadmap show --json lacks the link:\n%s", out)
+	}
+
+	message := "Replace invoicing is continued by Replace invoicing (continued) in Summer, so it cannot be archived or deleted; it stays as part of the chain."
+	refused := `{"index":1,"op":"archive_line","reason":"initiative_continued","message":"` + message + `","continuation":{"id":"55555555-5555-4555-8555-555555555555","display_number":13,"text":"Replace invoicing (continued)","release_id":8,"release_name":"Summer"}}`
+	const archive = `{"operations":[{"op":"archive_line","line_id":"44444444-4444-4444-8444-444444444444"}]}`
+
+	server, _ = roadmapServer(t, http.StatusOK, `{"data":{"operations":[{"index":1,"op":"archive_line","summary":"Archive initiative","release":null}],"errors":[`+refused+`],"dry_run":true}}`)
+	cobraWorkspace(t, server, 1)
+	plan := writeRoadmapPlan(t, "archive.json", archive)
+	out, err = runRoot(t, "roadmap", "apply", "--file", plan, "--dry-run")
+	if err == nil || !strings.Contains(out, message) {
+		t.Errorf("roadmap apply --dry-run prints the server's message (err %v):\n%s", err, out)
+	}
+
+	server, _ = roadmapServer(t, http.StatusUnprocessableEntity, `{"error":"initiative_continued","index":1,"errors":[`+refused+`]}`)
+	cobraWorkspace(t, server, 1)
+	plan = writeRoadmapPlan(t, "archive.json", archive)
+	out, err = runRoot(t, "roadmap", "apply", "--file", plan)
+	if err == nil || !strings.Contains(err.Error()+out, message) {
+		t.Errorf("roadmap apply prints the server's message (err %v):\n%s", err, out)
+	}
+
+	// releases activate: the named fields only.
+	activation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			fmt.Fprint(w, `{"data":{"items":[{"id":1,"system_id":4,"slug":"current","status":"active"},{"id":2,"system_id":4,"slug":"next","status":"planned"}]}}`)
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, `{"error":"incumbent_has_unfinished_work","detail":"body text 7731","open_releases":[{"id":1,"name":"Spring","slug":"current","status":"active","system_id":4,"note":"body text 7732",
+"undelivered_decisions":[{"id":"44444444-4444-4444-8444-444444444444","display_number":12,"title":"Replace invoicing","decisions":2}]}]}`)
+	}))
+	defer activation.Close()
+	cmd := newReleasesCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, activation, 4), nil })
+	cmd.SetArgs([]string{"activate", "next", "--close-current", "--pin-stdin"})
+	cmd.SetIn(strings.NewReader("482913\n"))
+	var printed bytes.Buffer
+	cmd.SetOut(&printed)
+	cmd.SetErr(&printed)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	err = cmd.Execute()
+	if err == nil {
+		t.Fatal("the refused activation must fail the command")
+	}
+	text := err.Error() + printed.String()
+	for _, want := range []string{
+		"incumbent_has_unfinished_work",
+		"Spring (current)",
+		"still has unfinished work or decisions that go on; close it on its close page first",
+		"Replace invoicing (INIT-12): 2 decisions go on",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("releases activate lacks %q:\n%s", want, text)
+		}
+	}
+	for _, never := range []string{"body text 7731", "body text 7732", "482913"} {
+		if strings.Contains(text, never) {
+			t.Errorf("releases activate printed %q:\n%s", never, text)
+		}
+	}
+}
+
 func TestRoadmapVerify(t *testing.T) {
 	const violations = `[{"epic_id":4,"problems":["missing_initiative"],"initiative_ids":[]},{"epic_id":8,"problems":["multiple_initiatives","release_mismatch"],"initiative_ids":["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]}]`
 	for _, tt := range []struct {
@@ -587,4 +693,52 @@ func TestRoadmapVerify(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Epic 460 (H3), TestCase TC-H3-S10, SR-5 criterion 1: "roadmap show prints an
+// Initiative's Epics as Epic 2 (1 Epic) or Epics 2, 10 (2 Epics), in number
+// order." Before the Epic the line reads "Epics 2" for one Epic and sorts the
+// ids as text ("Epics 10, 2"), so the assertions fail. An Initiative with no
+// Epic names none (guard).
+const h3RoadmapEpicsReply = `{"data":{"system_id":1,"plan_state":"agreed",
+"contexts":[{"code":"PAY","name":"Payments"}],
+"releases":[{"id":7,"name":"Spring","status":"active","initiatives":[
+  {"id":"11111111-1111-4111-8111-111111111111","text":"Card wallet","horizon":"now","context":"PAY","new_context":false,"work_kind":"new_work","release_id":7,"epic_ids":[10,2]},
+  {"id":"33333333-3333-4333-8333-333333333333","text":"Gift cards","horizon":"now","context":"PAY","new_context":false,"work_kind":"new_work","release_id":7,"epic_ids":[2]}]}],
+"no_release":{"now":[],"next":[
+  {"id":"22222222-2222-4222-8222-222222222222","text":"Points for every order","horizon":"next","context":"PAY","new_context":false,"work_kind":"new_work","release_id":null,"epic_ids":[]}],
+  "later":[]}}}`
+
+func TestH3_RoadmapShowCountsAnInitiativesEpicsInWords(t *testing.T) {
+	server, _ := roadmapServer(t, http.StatusOK, h3RoadmapEpicsReply)
+	cobraWorkspace(t, server, 1)
+	out, err := runRoot(t, "roadmap", "show")
+	if err != nil {
+		t.Fatalf("roadmap show: %v\n%s", err, out)
+	}
+	line := func(text string) string {
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, text) {
+				return l
+			}
+		}
+		t.Fatalf("roadmap show prints no line for %s:\n%s", text, out)
+		return ""
+	}
+
+	t.Run("two Epics in number order, with their count", func(t *testing.T) {
+		if got := line("Card wallet"); !strings.Contains(got, ", Epics 2, 10 (2 Epics)]") {
+			t.Errorf("the line of Card wallet = %q; want Epics 2, 10 (2 Epics)", got)
+		}
+	})
+	t.Run("one Epic in the singular, with its count", func(t *testing.T) {
+		if got := line("Gift cards"); !strings.Contains(got, ", Epic 2 (1 Epic)]") {
+			t.Errorf("the line of Gift cards = %q; want Epic 2 (1 Epic)", got)
+		}
+	})
+	t.Run("an Initiative with no Epic names none (guard)", func(t *testing.T) {
+		if got := line("Points for every order"); strings.Contains(got, "Epic") {
+			t.Errorf("the line of Points for every order = %q; want no Epic", got)
+		}
+	})
 }

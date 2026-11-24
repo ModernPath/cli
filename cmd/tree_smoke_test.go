@@ -406,6 +406,7 @@ var leafDispositions = map[string]disposition{
 	"acceptance specs create":           {kind: dispExecute, args: []string{"acceptance", "specs", "create", "--line", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"acceptance specs update":           {kind: dispExecute, args: []string{"acceptance", "specs", "update", "10000000-0000-4000-8000-000000000001", "--file", "-", "--json"}},
 	"acceptance specs retire":           {kind: dispExecute, args: []string{"acceptance", "specs", "retire", "10000000-0000-4000-8000-000000000001", "--json"}},
+	"acceptance specs refresh":          {kind: dispExecute, args: []string{"acceptance", "specs", "refresh", "--line", "10000000-0000-4000-8000-000000000001", "--json"}},
 	"acceptance report open":            {kind: dispExecute, args: []string{"acceptance", "report", "open", "--line", "10000000-0000-4000-8000-000000000001", "--json"}},
 	"acceptance report get":             {kind: dispExecute, args: []string{"acceptance", "report", "get", "10000000-0000-4000-8000-000000000001", "--json"}},
 	"acceptance report record":          {kind: dispExecute, args: []string{"acceptance", "report", "record", "10000000-0000-4000-8000-000000000001", "--spec", "10000000-0000-4000-8000-000000000002", "--file", "-", "--json"}},
@@ -417,6 +418,9 @@ var leafDispositions = map[string]disposition{
 	"roadmap verify":                    {kind: dispExecute, args: []string{"roadmap", "verify", "--json"}},
 	"roadmap selection":                 {kind: dispExecute, args: []string{"roadmap", "selection", "--initiative", "11111111-1111-4111-8111-111111111111", "--json"}},
 	"roadmap apply":                     {kind: dispExecute, args: []string{"roadmap", "apply", "--file", "-", "--json"}},
+	"roadmap recording":                 {kind: dispExecute, args: []string{"roadmap", "recording", "--file", "-", "--json"}},
+	"roadmap proof":                     {kind: dispExecute, args: []string{"roadmap", "proof", "--initiative", "11111111-1111-4111-8111-111111111111", "--json"}},
+	"roadmap accept-lower-level":        {kind: dispExecute, args: []string{"roadmap", "accept-lower-level", "--file", "-", "--agent", "claude-code", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
 	"auth status":                       {kind: dispExecute},
 	"context":                           {kind: dispExecute, args: []string{"context", "smoke query"}},
@@ -453,6 +457,7 @@ var leafDispositions = map[string]disposition{
 	"epics plan show":                   {kind: dispExecute, args: []string{"epics", "plan", "show", "42"}},
 	"epics build record":                {kind: dispNoCall, reason: "needs-precondition", args: []string{"epics", "build", "record", "42"}},
 	"epics plan history":                {kind: dispExecute, args: []string{"epics", "plan", "history", "42"}},
+	"epics record-merge":                {kind: dispExecute, args: []string{"epics", "record-merge", "42", "--commit", "0123456789abcdef0123456789abcdef01234567", "--json"}},
 	"epics plan save":                   {kind: dispNoCall, args: []string{"epics", "plan", "save", "42", "--reason", "smoke"}, reason: "needs-precondition"},
 	"epics plan return-to-planning":     {kind: dispExecute, args: []string{"epics", "plan", "return-to-planning", "42", "--reason", "USER: smoke"}},
 	"epics plan approve-implementation": {kind: dispExecute, args: []string{"epics", "plan", "approve-implementation", "42", "--reason", "smoke"}},
@@ -647,11 +652,17 @@ func TestEveryLeafIsClassifiedAndBehavesAsClassified(t *testing.T) {
 		if name == "roadmap apply" {
 			rootCmd.SetIn(strings.NewReader(`{"operations":[{"op":"create_line","horizon":"next","text":"Smoke"}]}`))
 		}
+		if name == "roadmap recording" {
+			rootCmd.SetIn(strings.NewReader(`{"recordings":[{"replay_test_case_id":"10000000-0000-4000-8000-000000000001","break_test_case_id":"10000000-0000-4000-8000-000000000002","capture_test_case_id":"10000000-0000-4000-8000-000000000003","capture_result_id":"10000000-0000-4000-8000-000000000004"}]}`))
+		}
+		if name == "roadmap accept-lower-level" {
+			rootCmd.SetIn(strings.NewReader(`{"line_id":"11111111-1111-4111-8111-111111111111","requirement_kind":"system_requirement","requirement_id":"10000000-0000-4000-8000-000000000001","reached_level":"tests_only","expected_level":"compared","words":"Smoke","source":"USER:2026-11-22:Smoke"}`))
+		}
 		if name == "initiative create" {
 			rootCmd.SetIn(strings.NewReader(`{"text":"Smoke initiative"}`))
 		}
 		if name == "modernization record" {
-			rootCmd.SetIn(strings.NewReader(`{"sha":"abc123","tests":[{"test_case_id":"10000000-0000-4000-8000-000000000001","result":"pass","criterion_ids":["10000000-0000-4000-8000-000000000002"]}]}`))
+			rootCmd.SetIn(strings.NewReader(`{"sha":"0123456789abcdef0123456789abcdef01234567","tests":[{"test_case_id":"10000000-0000-4000-8000-000000000001","result":"pass","criterion_ids":["10000000-0000-4000-8000-000000000002"]}]}`))
 		}
 		if name == "source-files relocate" {
 			rootCmd.SetIn(strings.NewReader(`{"expected_path":"lib/old.ex","path":"lib/new.ex","reason":"smoke"}`))

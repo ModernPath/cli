@@ -36,7 +36,10 @@ Read and follow these before starting product work:
    - `rdd-reverse-engineer-verify` — verify existing behavior with criterion-level execution evidence;
    - `rdd-reverse-engineer-accept` — obtain explicit human acceptance and publish verified existing behavior;
    - `rdd-audit` — shared utility the other passes invoke: inspect Traces,
-     diff inventories both directions, judge whether a measurement is real.
+     diff inventories both directions, judge whether a measurement is real;
+   - `rdd-modernize` — the stages of a modernization, and the capture steps
+     that record how the legacy system behaves and link each replay test to
+     its capture.
 4. `.modernpath/cli-reference.md` — the installed `modernpath` binary's commands,
    flags, JSON file shapes, the pass-to-command map of the loop and the refusal
    glossary, rendered by `modernpath install` from the binary itself. The

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -33,8 +35,13 @@ context, a kind of work, and the Epics that deliver it. 'roadmap show' reads it;
 'roadmap selection' writes the legacy requirements of a context, or an
 Initiative's keep, change and drop decisions, to a file; 'roadmap apply'
 applies a Roadmap plan from a file, on a person's word, with the checks Chat's
-plan card runs.`}
-	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load), newRoadmapVerifyCommand(load))
+plan card runs; 'roadmap recording' links each replay test to its capture, and
+its break test to the replay, from a file; 'roadmap proof' prints the Proof tab
+of an Initiative: the agreed level of proof of each kept or changed legacy
+requirement and the level it reached; 'roadmap accept-lower-level' records, on
+a person's explicit word, that a requirement stays proved below its agreed
+level.`}
+	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load), newRoadmapRecordingCommand(load), newRoadmapProofCommand(load), newRoadmapAcceptLowerLevelCommand(load), newRoadmapVerifyCommand(load))
 	return parent
 }
 
@@ -103,6 +110,55 @@ many of its Epics, user requirements and system requirements are complete
 unfinished item of its linked work gives its step and whose turn it is, or
 says it waits for the team to shape it into work.
 
+Before those lines, an Initiative that replaces part of the legacy system and
+is not done has a line for the agreement of Now: with a proposed Epic, under
+any Release, while the approval gate would refuse that Epic for the agreement;
+with no Epic yet, in Now under a planned or active Modernization Release,
+while it is not in the latest agreement or, since it, its context, kind of
+work or decisions changed or its own or its Release's planning context changed
+or was opened. It also has a line for its undecided legacy requirements, with
+a context under a planned or active Modernization Release, while it has no
+Epic yet or the agreement line shows; that line comes first. They print as
+"Waits for 6 legacy requirements undecided: Decide them on the Selection tab,
+The team" and "Waits for the agreement of Now: Not agreed yet, <name>
+(business owner)", with "Changed since the agreement" once the plan changed
+after the agreement, "The business owner" when the owner has no name and "A
+workspace admin" while none is named; --json carries them as planning_waits.
+
+An Initiative that replaces part of the legacy system is done only when its
+work is complete, its acceptance is recorded (the domain expert signed off a
+report for the Release it is shown under that covers it) and no difference on
+its kept or changed legacy requirements is open. Under one that is not done
+the lines also give its acceptance, as "Acceptance for <Release>", and each
+open difference, by its reference and title, each with its step and whose
+turn it is in the Initiative page's words; its acceptance line appears only
+once a linked item's own status is in progress, in review or done. The
+acceptance's step is
+Acceptance test not started, Acceptance test in progress or New acceptance
+test needed: a spec changed after the sign-off, the turn of A person on the
+team, or Waits for the requirements that modernize its kept and changed
+requirements, the turn of The team; an open difference's step is Open
+difference: fix it or accept it by name, the turn of The team. One shown
+under a Release whose last close came before the platform recorded the
+acceptance at a close is read as before: done when its work is complete.
+
+Under an open Release or under none, such an Initiative is also done only when
+its proof is as agreed: every kept or changed requirement on its Proof tab is
+proved as agreed, or proved below the agreed level with the lower level
+accepted by name. An Initiative that is built, accepted or done prints its
+stage in the web app's words instead of the done line: Built · waits for
+acceptance; Accepted, then what remains (n proved below the agreed level, n
+not proved yet, proof waits for the reference revision or proof cannot be
+read, n open differences), such as "Accepted · 2 proved below the agreed level
+· 1 open difference"; Done; or Done · accepted for new work whose Release has
+a signed-off acceptance report. Under one that is not done the lines also give
+its proof: "<n> proved below the agreed level: Prove it at the agreed level or
+accept the lower level by name", the turn of A person on the team; "<n> not
+proved yet: Waits for a run that proves it", the turn of The team;
+"Reference revision: Set the Release's reference revision", the turn of A
+person on the team; or "Proof cannot be read" with the server's sentence, the
+turn of A person on the team.
+
 Under a Modernization Release come the legacy system it replaces (or "in
 place"), its reference revision, one line per context of its scope with how
 many of its legacy requirements are undecided and how many decided
@@ -113,6 +169,10 @@ legacy requirements". Under an Initiative that replaces part of the legacy
 system a line gives its keep, change and drop decisions
 ("Decisions: 2 keep, 1 change, 1 drop").
 
+When a Release's close continued an Initiative in a later Release, the part it
+continues prints "continues: <text> (INIT-<n>)" and the continued one
+"continued in <text> (INIT-<n>)".
+
 The context counts and the decisions both end with how many kept or changed
 legacy requirements are drafted and built (", 2 drafted, 1 built"). Onto a new system, a legacy requirement is
 drafted while an Epic's saved plan or a written trace links a new requirement
@@ -120,18 +180,64 @@ to it with a modernizes trace, and built once a written one has a DONE source.
 In place, it is drafted while an Epic's saved plan takes it or links a test to
 it, and built once that Epic is DONE. Drafted includes built.
 
+--readiness asks the server for each Modernization Release's readiness
+(readiness=true) and prints it after the Release's context lines, in the
+words of the Release page's Modernization panel, counted the way the
+Heartbeat counts them:
+- Proved as agreed: how many of the kept or changed requirements runs
+  captured after the change prove at least at their agreed level, with the
+  percent. Before the reference revision is set the line says "Proof is read
+  once the reference revision is set.", and while nothing is kept or changed a
+  sentence stands in place of the percent.
+- Proved below the agreed level: how many are proved, but below their agreed
+  level, with how many of them a person accepted by name.
+- Drafted, not proved yet (drafted with no proof at all, from
+  drafted_not_proved_yet); Not drafted yet; and Undecided, with the dropped
+  count.
+- One line with how many are built, their Epic complete; how many kept or
+  changed user requirements a domain expert accepted; and what the ledger
+  misses: how many legacy files with behaviour (a screen, an interface or
+  stored data) no requirement traces, and in which contexts, or that the
+  legacy system has not been analysed yet. Every such file follows by path
+  and role ("no role" when its analysis gave none) under its context, then
+  those not placed in a context.
+- The latest replays: how many of the replays with a captured result match
+  in their newest capture and how many changed since the capture before,
+  then each changed replay with both outcomes, commits and dates, each replay
+  captured once and each not captured yet; or "No replay has been captured
+  in this Release yet."
+For a Release whose legacy system was deleted the block is one sentence:
+"The legacy system was deleted, so its readiness can no longer be read."
+The block's Built counts the kept or changed requirements of the Initiatives
+shown under the Release, as Proved does, while the context lines' built
+counts over every decided row of the context. So the context lines can add
+up to more than the block's Built.
+
 --json prints the served read: releases, no_release, contexts and plan_state,
-with planning_context on each Release and Initiative; done, done_when,
-waiting_for and selection (keep, change, drop, agreed, drafted and built, or
-null for new work) on each Initiative; and modernization (each context's
+with planning_context on each Release and Initiative; progress, accepted,
+done, done_when (its work_complete item and, for an Initiative that replaces
+part of the legacy system, its acceptance and differences_resolved items, and
+under an open Release or none its proof_as_agreed item), waiting_for,
+planning_waits (each item's kind, id, step, turn, and count, or person and
+all_decided) and selection (keep, change, drop, agreed, drafted and built,
+or null for new work), continues and continued_by (the other part's id,
+display_number, text, archived_at, release_id and release_name, or null)
+on each Initiative; and modernization (each context's
 in_scope, undecided, decided, drafted and built) and new_since_agreement_count
-on each Release.`,
+on each Release. With --readiness, each Modernization Release's modernization
+also carries proof_waits_for_reference_revision, standing, readiness, built,
+accepted, ledger_misses and replays.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := roadmapEnv(load)
 			if err != nil {
 				return err
 			}
-			status, body, err := env.get("/api/v1/systems/" + strconv.Itoa(env.SystemID) + "/roadmap")
+			path := "/api/v1/systems/" + strconv.Itoa(env.SystemID) + "/roadmap"
+			readiness, _ := cmd.Flags().GetBool("readiness")
+			if readiness {
+				path += "?readiness=true"
+			}
+			status, body, err := env.get(path)
 			data, err := roadmapData(status, body, err)
 			if err != nil {
 				return err
@@ -139,9 +245,10 @@ on each Release.`,
 			if machine, _ := cmd.Flags().GetBool("json"); machine {
 				return writeCommandJSON(cmd, data)
 			}
-			return writeRoadmap(cmd, data)
+			return writeRoadmap(cmd, data, readiness)
 		}}
 	show.Flags().Bool("json", false, "Emit JSON")
+	show.Flags().Bool("readiness", false, "Print each Modernization Release's readiness, what the ledger misses and the latest replays (sends readiness=true)")
 	return show
 }
 
@@ -174,8 +281,14 @@ earlier in the plan gives the Initiative it creates ({"op": "create_line",
 "system_requirement", "requirement_id": "<uuid>", "outcome": "keep" | "change"
 | "drop", "reason": "...", "expected_level": "compared" | "screens_compared" |
 "tests_only", "expected_level_reason": "...", "move": true}: a drop needs a
-reason; an expected level, with its reason, goes only on a keep row; a row
-without outcome changes only the expected level of the Initiative's keep row;
+reason; an expected level, with its reason, goes only on a keep row, and on a
+row already decided change only as "compared", a raise the server refuses with
+raise_needs_accepted_differences and a sentence while no accepted difference
+names the requirement or one naming it is open; a row that names "change" with
+"compared" keeps a stored raise, except on a row marked revised since selected,
+where it is refused the same way; a row without outcome changes only the
+expected level of the Initiative's keep row, or raises or clears the raise of
+its change row;
 "move": true takes a legacy requirement another Initiative holds. Each "clear"
 entry {"requirement_kind", "requirement_id"} deletes the Initiative's row, so
 the legacy requirement is undecided again. One set_selection takes at most
@@ -187,6 +300,10 @@ another Initiative while an approved Epic relies on its decision or a written
 modernizes trace's new requirement modernizes it; the command prints a
 sentence that says what holds it, who approved that and who can act.
 'roadmap selection' writes the legacy requirements to decide.
+
+An archive_line of an Initiative that a later part continues is refused with
+initiative_continued, with and without --dry-run; the command prints the
+server's sentence, which names the continuation.
 
 The request id is the file's request_id, else --request-id, else derived from
 the operations, so the same file yields the same id; a --request-id that
@@ -363,7 +480,7 @@ func roadmapRefusal(body map[string]any) string {
 		for _, e := range errs {
 			if m, ok := e.(map[string]any); ok {
 				if index, ok := m["index"]; ok && index != nil {
-					parts = append(parts, fmt.Sprintf("operation %v: %s", index, str(m, "reason")))
+					parts = append(parts, fmt.Sprintf("operation %v: %s", index, roadmapReasonWithMessage(m)))
 				} else {
 					parts = append(parts, "the plan: "+str(m, "reason"))
 				}
@@ -393,24 +510,30 @@ func roadmapReleaseNames(releases []any) string {
 }
 
 // roadmapPlanReasons are the sentences of the reasons a set_selection, or a
-// move of an Initiative with decisions, is refused for: the words Chat's plan
-// card shows (Epic 332, B3).
+// move of an Initiative with decisions, is refused for. The list began as the
+// words Chat's plan card shows (Epic 332, B3); the web app now words
+// invalid_expected_level with the agreed level (Epic 462, H5a), and these
+// words stay as they are.
 var roadmapPlanReasons = map[string]string{
-	"selection_rows_refused":         "Some rows of this initiative's selection are refused.",
-	"initiative_not_replacing":       "Only an initiative that replaces part of the legacy system has a selection.",
-	"initiative_context_required":    "Give the initiative a context before setting its selection.",
-	"release_not_modernization":      "The initiative's release does not replace a legacy system.",
-	"unknown_line_ref":               "No initiative earlier in the plan has this ref.",
-	"too_many_rows":                  "An initiative's selection takes at most 1,000 rows, and a plan at most 5,000.",
-	"requirement_not_found":          "This is not a legacy requirement of the initiative's release.",
-	"requirement_not_in_scope":       "This legacy requirement is outside the scope of the initiative's release.",
-	"reason_required":                "A drop in an initiative's selection needs a reason.",
-	"invalid_outcome":                "A row of an initiative's selection is keep, change or drop.",
-	"invalid_expected_level":         "An expected level, with its reason, goes only on a keep row of an initiative.",
-	"selected_by_another_initiative": "Another initiative already holds this legacy requirement.",
-	"duplicate_requirement":          "The initiative's selection names this legacy requirement twice.",
-	"selection_release_mismatch":     "The initiative has keep, change and drop decisions, so it stays in a release that replaces its legacy system.",
-	"selection_row_held":             "This legacy requirement's decision is held by an approved Epic or a written modernizes trace.",
+	"selection_rows_refused":      "Some rows of this initiative's selection are refused.",
+	"initiative_not_replacing":    "Only an initiative that replaces part of the legacy system has a selection.",
+	"initiative_context_required": "Give the initiative a context before setting its selection.",
+	"release_not_modernization":   "The initiative's release does not replace a legacy system.",
+	// Epic 462 (H5a), SR ff34255d criterion a2bacea5: a released or archived Modernization Release.
+	"release_closed":           "The initiative's release is closed, so this initiative can no longer change its decisions.",
+	"unknown_line_ref":         "No initiative earlier in the plan has this ref.",
+	"too_many_rows":            "An initiative's selection takes at most 1,000 rows, and a plan at most 5,000.",
+	"requirement_not_found":    "This is not a legacy requirement of the initiative's release.",
+	"requirement_not_in_scope": "This legacy requirement is outside the scope of the initiative's release.",
+	"reason_required":          "A drop in an initiative's selection needs a reason.",
+	"invalid_outcome":          "A row of an initiative's selection is keep, change or drop.",
+	"invalid_expected_level":   "An expected level, with its reason, goes only on a keep row of an initiative.",
+	// Epic 336 (D2): a raise of a changed row to compared; the server's row carries its sentence in message.
+	"raise_needs_accepted_differences": "A changed requirement can expect compared only once each intended change is an accepted difference.",
+	"selected_by_another_initiative":   "Another initiative already holds this legacy requirement.",
+	"duplicate_requirement":            "The initiative's selection names this legacy requirement twice.",
+	"selection_release_mismatch":       "The initiative has keep, change and drop decisions, so it stays in a release that replaces its legacy system.",
+	"selection_row_held":               "This legacy requirement's decision is held by an approved Epic or a written modernizes trace.",
 }
 
 // roadmapPlanError is one error of a plan: the operation, or the whole plan
@@ -421,11 +544,26 @@ func roadmapPlanError(m map[string]any) string {
 	if index, ok := m["index"]; ok && index != nil {
 		where = fmt.Sprintf("operation %v (%s)", index, orDash(str(m, "op")))
 	}
-	reason := str(m, "reason")
-	if sentence := roadmapPlanReasons[reason]; sentence != "" {
+	reason := roadmapReasonWithMessage(m)
+	if sentence := roadmapPlanReasons[str(m, "reason")]; sentence != "" {
 		reason += " — " + sentence
 	}
 	return where + ": " + reason
+}
+
+// roadmapMessageReasons are the reasons whose refusal carries the server's
+// own sentence in message, which names what the person needs: Epic 458 (H1a)'s
+// initiative_continued names the continuation.
+var roadmapMessageReasons = map[string]bool{"initiative_continued": true}
+
+// roadmapReasonWithMessage is an error's reason, followed by the server's
+// message for a reason that carries one.
+func roadmapReasonWithMessage(m map[string]any) string {
+	reason := str(m, "reason")
+	if message := str(m, "message"); message != "" && roadmapMessageReasons[reason] {
+		return reason + " — " + message
+	}
+	return reason
 }
 
 // writeRoadmapRefusedRows writes one line per refused row of a set_selection:
@@ -445,6 +583,12 @@ func writeRoadmapRefusedRows(out io.Writer, rows []any, indent string) {
 		}
 		if sentence, held := roadmapHeldRow(row, orDash(name)); held {
 			fmt.Fprintf(out, "%srow %v: %s\n", indent, row["position"], sentence)
+			continue
+		}
+		// Epic 336 (D2): a refused raise carries the sentence that says why,
+		// naming the requirement, in message.
+		if message := str(row, "message"); message != "" {
+			fmt.Fprintf(out, "%srow %v: %s\n", indent, row["position"], message)
 			continue
 		}
 		reason := str(row, "reason")
@@ -513,7 +657,7 @@ var roadmapPlanStates = map[string]string{
 
 var roadmapWorkKinds = map[string]string{"new_work": "new work", "replaces_legacy": "replaces legacy"}
 
-func writeRoadmap(cmd *cobra.Command, data map[string]any) error {
+func writeRoadmap(cmd *cobra.Command, data map[string]any, readiness bool) error {
 	out := cmd.OutOrStdout()
 	names := map[string]string{}
 	if contexts, ok := data["contexts"].([]any); ok {
@@ -539,6 +683,9 @@ func writeRoadmap(cmd *cobra.Command, data map[string]any) error {
 		}
 		fmt.Fprintf(out, "\nRelease %s (%s%s)\n", str(release, "name"), orDash(str(release, "status")), roadmapTarget(release))
 		writeRoadmapModernization(cmd, release, "  ")
+		if readiness {
+			writeRoadmapReadiness(cmd, release, "  ")
+		}
 		writePlanningContext(cmd, release["planning_context"], "  ")
 		initiatives, _ := release["initiatives"].([]any)
 		if len(initiatives) == 0 {
@@ -547,6 +694,7 @@ func writeRoadmap(cmd *cobra.Command, data map[string]any) error {
 		for _, i := range initiatives {
 			if m, ok := i.(map[string]any); ok {
 				fmt.Fprintln(out, "  "+roadmapInitiative(m, names))
+				writeRoadmapContinuation(cmd, m, "    ")
 				writeRoadmapDecisions(cmd, m, "    ")
 				writeRoadmapDone(cmd, m, "    ")
 				writePlanningContext(cmd, m["planning_context"], "    ")
@@ -565,6 +713,7 @@ func writeRoadmap(cmd *cobra.Command, data map[string]any) error {
 		for _, i := range initiatives {
 			if m, ok := i.(map[string]any); ok {
 				fmt.Fprintln(out, "    "+roadmapInitiative(m, names))
+				writeRoadmapContinuation(cmd, m, "      ")
 				writeRoadmapDecisions(cmd, m, "      ")
 				writeRoadmapDone(cmd, m, "      ")
 				writePlanningContext(cmd, m["planning_context"], "      ")
@@ -572,6 +721,28 @@ func writeRoadmap(cmd *cobra.Command, data map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// writeRoadmapContinuation prints under an Initiative the continuation link
+// (Epic 458, H1a): "continues: <text> (INIT-<n>)" for the Initiative it
+// continues and "continued in <text> (INIT-<n>)" for the one that continues
+// it. A read without the link prints nothing.
+func writeRoadmapContinuation(cmd *cobra.Command, m map[string]any, indent string) {
+	out := cmd.OutOrStdout()
+	if other, ok := m["continues"].(map[string]any); ok {
+		fmt.Fprintf(out, "%scontinues: %s\n", indent, roadmapInitiativeRef(other))
+	}
+	if other, ok := m["continued_by"].(map[string]any); ok {
+		fmt.Fprintf(out, "%scontinued in %s\n", indent, roadmapInitiativeRef(other))
+	}
+}
+
+// roadmapInitiativeRef is "<text> (INIT-<n>)", or the text alone with no number.
+func roadmapInitiativeRef(m map[string]any) string {
+	if number, ok := m["display_number"]; ok && number != nil {
+		return fmt.Sprintf("%s (INIT-%v)", str(m, "text"), number)
+	}
+	return str(m, "text")
 }
 
 // writeRoadmapDecisions prints under an Initiative that replaces part of the
@@ -654,6 +825,301 @@ func roadmapLegacyRequirements(count int) string {
 	return fmt.Sprintf("%d legacy requirements", count)
 }
 
+// writeRoadmapReadiness prints, with --readiness, a Modernization Release's
+// readiness (Epic 338, D4) after the lines writeRoadmapModernization prints,
+// in the words of the Release page's Modernization panel: the four figures,
+// counted the way the Heartbeat counts them; one line with built, accepted
+// and what the ledger misses; every file the ledger misses under its context,
+// then those not placed in a context; and the latest replays. A Release whose
+// legacy system was deleted, which the server serves with a null
+// legacy_system_id and none of the readiness keys, prints one sentence. A
+// Delivery Release, or a read without the readiness, prints nothing.
+func writeRoadmapReadiness(cmd *cobra.Command, release map[string]any, indent string) {
+	if str(release, "release_type") != "modernization" {
+		return
+	}
+	out := cmd.OutOrStdout()
+	modernization, _ := release["modernization"].(map[string]any)
+	if id, present := release["legacy_system_id"]; present && id == nil {
+		fmt.Fprintln(out, indent+"The legacy system was deleted, so its readiness can no longer be read.")
+		return
+	}
+	standing, ok := modernization["standing"].(map[string]any)
+	if !ok {
+		return
+	}
+	fmt.Fprintln(out, indent+"Readiness:")
+	inner := indent + "  "
+	if line := roadmapProvedLine(modernization, standing); line != "" {
+		fmt.Fprintln(out, inner+line)
+	}
+	// Epic 459 (H2): the rows proved below the agreed level apart from Proved as
+	// agreed, with how many were accepted by name; a read with no reference
+	// revision gives no proved_below and prints no such line.
+	if below, present := standing["proved_below"]; present && below != nil {
+		fmt.Fprintf(out, "%sProved below the agreed level: %d (%d accepted by name)\n", inner,
+			roadmapCount(below), roadmapCount(standing["proved_below_accepted"]))
+	}
+	// Drafted, not proved yet counts the drafted rows with no proof at all; a read
+	// from before Epic 459 gives drafted_not_proved alone.
+	draftedNotProved, present := standing["drafted_not_proved_yet"]
+	if !present {
+		draftedNotProved = standing["drafted_not_proved"]
+	}
+	fmt.Fprintf(out, "%sDrafted, not proved yet: %d in a saved Epic plan\n", inner, roadmapCount(draftedNotProved))
+	fmt.Fprintf(out, "%sNot drafted yet: %d kept or changed, in no Epic yet\n", inner, roadmapCount(standing["not_drafted"]))
+	fmt.Fprintf(out, "%sUndecided: %d in no Initiative yet, with %d dropped\n", inner,
+		roadmapCount(standing["undecided"]), roadmapCount(standing["dropped"]))
+
+	accepted, _ := modernization["accepted"].(map[string]any)
+	ledger, _ := modernization["ledger_misses"].(map[string]any)
+	parts := []string{
+		fmt.Sprintf("Built, their Epic complete: %d", roadmapCount(modernization["built"])),
+		fmt.Sprintf("accepted by a domain expert: %d of %s", roadmapCount(accepted["count"]),
+			roadmapPlural(roadmapCount(accepted["of"]), "kept or changed user requirement", "kept or changed user requirements")),
+	}
+	if words := roadmapLedgerWords(ledger); words != "" {
+		parts = append(parts, words)
+	}
+	fmt.Fprintln(out, inner+strings.Join(parts, " · "))
+	writeRoadmapLedgerFiles(cmd, ledger, inner)
+	writeRoadmapReplays(cmd, modernization["replays"], inner)
+	if next := roadmapReferenceRevisionNext(modernization); next != "" {
+		fmt.Fprintln(out, inner+next)
+	}
+}
+
+// roadmapReferenceRevisionNext is the step a Release with no reference
+// revision waits for (Epic 460, H3), from the read's
+// progress.reference_revision.state: record the legacy System's test results,
+// or have a person choose the revision. A chosen revision, a read with no
+// progress (an older server) and a Release whose legacy System was deleted
+// give none.
+func roadmapReferenceRevisionNext(modernization map[string]any) string {
+	progress, _ := modernization["progress"].(map[string]any)
+	revision, _ := progress["reference_revision"].(map[string]any)
+	switch str(revision, "state") {
+	case "results_not_recorded":
+		return "Next: record the legacy System's test results under this Release with modernpath modernization record (onto a new system with --legacy-checkout), then a person chooses the reference revision on the Release page's Modernization tab."
+	case "waits_for_a_person":
+		return "Next: a person chooses the reference revision on the Release page's Modernization tab."
+	}
+	return ""
+}
+
+// roadmapProvedLine is the Proved as agreed figure with its percent, or the
+// Heartbeat's sentence while proof waits for the reference revision; a
+// sentence stands in place of the percent while nothing is kept or changed.
+func roadmapProvedLine(modernization, standing map[string]any) string {
+	if waits, _ := modernization["proof_waits_for_reference_revision"].(bool); waits {
+		return "Proof is read once the reference revision is set."
+	}
+	proved, present := standing["proved"]
+	if !present || proved == nil {
+		return ""
+	}
+	kept := roadmapCount(standing["kept_or_changed"])
+	line := fmt.Sprintf("Proved as agreed: %d of %d kept or changed, proved by runs captured after the change",
+		roadmapCount(proved), kept)
+	readiness, _ := modernization["readiness"].(map[string]any)
+	if percent, ok := roadmapNumber(readiness["percent"]); ok {
+		return line + fmt.Sprintf(" · %d%%", int(math.Round(percent)))
+	}
+	if kept == 0 {
+		return line + ". No legacy requirement is kept or changed yet, so there is no percent."
+	}
+	return line
+}
+
+// roadmapLedgerWords is what the ledger misses on the line with built and
+// accepted: how many legacy files with behaviour no requirement traces, in
+// which contexts, or, while it cannot be read, the read's message, which says
+// why (Epic 460, H3: no repository, an analysis running or failed, no file).
+func roadmapLedgerWords(ledger map[string]any) string {
+	if ledger == nil {
+		return ""
+	}
+	if analysed, _ := ledger["analysed"].(bool); !analysed {
+		if message := str(ledger, "message"); message != "" {
+			return message
+		}
+		return "what the ledger misses is read from the legacy system's analysis, which has not run yet"
+	}
+	words := "what the ledger misses: " + roadmapLegacyFiles(roadmapCount(ledger["total"]))
+	var names []string
+	for _, context := range roadmapLedgerContexts(ledger) {
+		name := str(context, "name")
+		if name == "" {
+			name = str(context, "code")
+		}
+		names = append(names, name)
+	}
+	if len(names) > 0 {
+		words += ", in " + roadmapJoinWords(names)
+	}
+	notPlaced, _ := ledger["not_placed"].(map[string]any)
+	if count := roadmapCount(notPlaced["count"]); count > 0 {
+		words += fmt.Sprintf("; %d of them not placed in a context", count)
+	}
+	return words
+}
+
+// roadmapLedgerContexts are the ledger's contexts that list a file.
+func roadmapLedgerContexts(ledger map[string]any) []map[string]any {
+	contexts, _ := ledger["contexts"].([]any)
+	var listed []map[string]any
+	for _, c := range contexts {
+		if context, ok := c.(map[string]any); ok && roadmapCount(context["count"]) > 0 {
+			listed = append(listed, context)
+		}
+	}
+	return listed
+}
+
+// writeRoadmapLedgerFiles prints every file the ledger misses by path and
+// role, under its context with its count of files, then those not placed in a
+// context, as the Release page's Show lists them.
+func writeRoadmapLedgerFiles(cmd *cobra.Command, ledger map[string]any, indent string) {
+	if analysed, _ := ledger["analysed"].(bool); !analysed {
+		return
+	}
+	out := cmd.OutOrStdout()
+	files := func(entry map[string]any) {
+		list, _ := entry["files"].([]any)
+		for _, f := range list {
+			file, ok := f.(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(out, "%s  %s (%s)\n", indent, str(file, "path"), roadmapFileRole(file))
+		}
+	}
+	for _, context := range roadmapLedgerContexts(ledger) {
+		label := str(context, "code")
+		if name := str(context, "name"); name != "" {
+			label = name + " (" + label + ")"
+		}
+		fmt.Fprintf(out, "%s%s: %s\n", indent, label, roadmapPlural(roadmapCount(context["count"]), "file", "files"))
+		files(context)
+	}
+	if notPlaced, ok := ledger["not_placed"].(map[string]any); ok && roadmapCount(notPlaced["count"]) > 0 {
+		fmt.Fprintf(out, "%sNot placed in a context: %s\n", indent, roadmapPlural(roadmapCount(notPlaced["count"]), "file", "files"))
+		files(notPlaced)
+	}
+}
+
+// roadmapFileRole is a missed file's role, or "no role" when its analysis gave
+// none, as the Release page and the close page show it.
+func roadmapFileRole(file map[string]any) string {
+	if role := str(file, "role"); role != "" {
+		return role
+	}
+	return "no role"
+}
+
+// roadmapLegacyFiles is a count of legacy files the ledger misses in words.
+func roadmapLegacyFiles(count int) string {
+	return roadmapPlural(count, "legacy file", "legacy files") + " with behaviour and no requirement"
+}
+
+// roadmapNumber is a served number, decoded as json.Number or float64; false
+// for null or a missing key.
+func roadmapNumber(value any) (float64, bool) {
+	switch v := value.(type) {
+	case json.Number:
+		f, err := v.Float64()
+		return f, err == nil
+	case float64:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+// writeRoadmapReplays prints the latest replays: how many of the replays
+// with a captured result match in their newest capture and how many changed
+// since the capture before, then each changed replay, each replay captured
+// once and each not captured yet; or the read's sentence when no replay of
+// the Release has a captured result.
+func writeRoadmapReplays(cmd *cobra.Command, value any, indent string) {
+	replays, ok := value.(map[string]any)
+	if !ok {
+		return
+	}
+	out := cmd.OutOrStdout()
+	changed, _ := replays["changed"].([]any)
+	newest := str(replays, "newest_capture_at")
+	if captured, known := replays["captured"].(bool); (known && !captured) || newest == "" {
+		message := str(replays, "message")
+		if message == "" {
+			message = "No replay has been captured in this Release yet."
+		}
+		fmt.Fprintln(out, indent+message)
+	} else {
+		fmt.Fprintf(out, "%sLatest replays, newest capture %s: %d of %d match · %d changed since the capture before\n", indent,
+			roadmapDay(newest), roadmapCount(replays["match"]), roadmapCount(replays["with_result"]), len(changed))
+	}
+	for _, r := range changed {
+		if replay, ok := r.(map[string]any); ok {
+			previous, _ := replay["previous"].(map[string]any)
+			newest, _ := replay["newest"].(map[string]any)
+			fmt.Fprintf(out, "%s  %s: %s, then %s\n", indent, str(replay, "title"), roadmapCaptured(previous), roadmapCaptured(newest))
+		}
+	}
+	once, _ := replays["captured_once"].([]any)
+	for _, r := range once {
+		if replay, ok := r.(map[string]any); ok {
+			newest, _ := replay["newest"].(map[string]any)
+			fmt.Fprintf(out, "%s  %s: captured once, %s\n", indent, str(replay, "title"), roadmapCaptured(newest))
+		}
+	}
+	notCaptured, _ := replays["not_captured"].([]any)
+	for _, r := range notCaptured {
+		if replay, ok := r.(map[string]any); ok {
+			fmt.Fprintf(out, "%s  %s: not captured yet\n", indent, str(replay, "title"))
+		}
+	}
+}
+
+// roadmapResultWords are the outcomes of a captured result in words.
+var roadmapResultWords = map[string]string{
+	"pass": "passed", "fail": "failed", "skip": "skipped", "error": "errored", "inconclusive": "inconclusive",
+}
+
+// roadmapCaptured is one captured result: its outcome, its commit and the day
+// its run was captured.
+func roadmapCaptured(result map[string]any) string {
+	outcome := str(result, "outcome")
+	if words, ok := roadmapResultWords[outcome]; ok {
+		outcome = words
+	}
+	return fmt.Sprintf("%s at %s on %s", orDash(outcome), orDash(str(result, "commit")), orDash(roadmapDay(str(result, "captured_at"))))
+}
+
+// roadmapDay is the day of a served timestamp, or the value as served.
+func roadmapDay(value string) string {
+	if at, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return at.UTC().Format("2006-01-02")
+	}
+	return value
+}
+
+// roadmapPlural picks the singular words for a count of one.
+func roadmapPlural(count int, one, many string) string {
+	if count == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(count) + " " + many
+}
+
+// roadmapJoinWords joins names as "A", "A and B" or "A, B and C".
+func roadmapJoinWords(names []string) string {
+	if len(names) <= 1 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
 // roadmapSteps and roadmapTurns are the Initiative page's words for the step
 // and turn codes of waiting_for (Epic 326, A3).
 var roadmapSteps = map[string]string{
@@ -663,6 +1129,18 @@ var roadmapSteps = map[string]string{
 	"plan_approval":       "Plan waiting for approval",
 	"completion_approval": "Completion waiting for approval",
 	"deferred":            "Deferred",
+	// Epic 337 (D3): the acceptance and the open differences of an Initiative
+	// that replaces part of the legacy system.
+	"acceptance_not_started":            "Acceptance test not started",
+	"acceptance_in_progress":            "Acceptance test in progress",
+	"acceptance_retest":                 "New acceptance test needed: a spec changed after the sign-off",
+	"acceptance_waits_for_requirements": "Waits for the requirements that modernize its kept and changed requirements",
+	"difference_open":                   "Open difference: fix it or accept it by name",
+	// Epic 459 (H2): the proof items of an Initiative that replaces part of the
+	// legacy system, under an open Release or none.
+	"proof_below_agreed_level":           "Prove it at the agreed level or accept the lower level by name",
+	"proof_not_yet":                      "Waits for a run that proves it",
+	"proof_waits_for_reference_revision": "Set the Release's reference revision",
 }
 
 var roadmapTurns = map[string]string{"team": "The team", "person": "A person on the team"}
@@ -674,17 +1152,195 @@ var roadmapCountKinds = []struct{ key, words string }{
 	{"system_requirement", "system requirements"},
 }
 
+// roadmapAcceptanceTitle names the acceptance an Initiative waits for: for the
+// Release it is shown under, or, shown under none, the acceptance alone.
+func roadmapAcceptanceTitle(release string) string {
+	if release == "" {
+		return "Acceptance"
+	}
+	return "Acceptance for " + release
+}
+
+// roadmapWorkParts is "n of m <kind>" for each kind of linked work with an
+// item that counts, from a work_complete item's counts.
+func roadmapWorkParts(entry map[string]any) []string {
+	var parts []string
+	counts, _ := entry["counts"].(map[string]any)
+	for _, kind := range roadmapCountKinds {
+		count, _ := counts[kind.key].(map[string]any)
+		counting := roadmapCount(count["counting"])
+		if counting == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d of %d %s", roadmapCount(count["done"]), counting, kind.words))
+	}
+	return parts
+}
+
+// roadmapWaitingWords is an item of waiting_for in words: its title, its
+// step and whose turn it is.
+func roadmapWaitingWords(item map[string]any) string {
+	title := str(item, "title")
+	if ref := str(item, "display_ref"); ref != "" {
+		title = ref + " " + title
+	}
+	if str(item, "kind") == "acceptance" {
+		title = roadmapAcceptanceTitle(str(item, "title"))
+	}
+	step := roadmapSteps[str(item, "step")]
+	if str(item, "kind") == "proof" {
+		title, step = roadmapProofWait(item, step)
+	}
+	if step == "" {
+		step = orDash(str(item, "step"))
+	}
+	if epic, ok := item["member_epic"].(map[string]any); ok {
+		step += " (Epic " + str(epic, "title") + ")"
+	}
+	turn := roadmapTurns[str(item, "turn")]
+	if turn == "" {
+		turn = orDash(str(item, "turn"))
+	}
+	return fmt.Sprintf("%s: %s, %s", title, step, turn)
+}
+
+// roadmapPlanningWords is an item of planning_waits in words (Epic 471, H5b,
+// SR-3 criterion 0): the undecided legacy requirements of the Initiative's
+// context, for the team, or the agreement of Now with who agrees: the business
+// owner by name, "The business owner" when the person has no name, or "A
+// workspace admin" while none is named.
+func roadmapPlanningWords(item map[string]any) string {
+	switch str(item, "kind") {
+	case "selection":
+		count := roadmapCount(item["count"])
+		if count == 1 {
+			return "1 legacy requirement undecided: Decide it on the Selection tab, The team"
+		}
+		return fmt.Sprintf("%d legacy requirements undecided: Decide them on the Selection tab, The team", count)
+	case "agreement":
+		state := "Not agreed yet"
+		if str(item, "step") == "agreement_changed" {
+			state = "Changed since the agreement"
+		}
+		who := "A workspace admin"
+		if person, ok := item["person"].(map[string]any); ok {
+			who = "The business owner"
+			if name := str(person, "name"); name != "" {
+				who = name + " (business owner)"
+			}
+		}
+		return "the agreement of Now: " + state + ", " + who
+	}
+	return orDash(str(item, "kind")) + ": " + orDash(str(item, "step"))
+}
+
+// roadmapProofWait is a proof item's title and step in the Overview's words
+// (Epic 459, H2): the count of rows proved below the agreed level or not
+// proved yet, the reference revision, or that the proof cannot be read with
+// the refusal's sentence as its step.
+func roadmapProofWait(item map[string]any, step string) (string, string) {
+	switch str(item, "step") {
+	case "proof_below_agreed_level":
+		return fmt.Sprintf("%d proved below the agreed level", roadmapCount(item["count"])), step
+	case "proof_not_yet":
+		return fmt.Sprintf("%d not proved yet", roadmapCount(item["count"])), step
+	case "proof_waits_for_reference_revision":
+		return "Reference revision", step
+	case "proof_unreadable":
+		reason, _ := item["reason"].(map[string]any)
+		return "Proof cannot be read", strings.TrimSuffix(strings.TrimSpace(str(reason, "message")), ".")
+	}
+	return "Proof", step
+}
+
+// roadmapDoneWhenItem is the item of an Initiative's done_when with key, or nil.
+func roadmapDoneWhenItem(m map[string]any, key string) map[string]any {
+	items, _ := m["done_when"].([]any)
+	for _, i := range items {
+		if item, ok := i.(map[string]any); ok && str(item, "key") == key {
+			return item
+		}
+	}
+	return nil
+}
+
+// roadmapStagePhrase is the web app's stage phrase of an Initiative that is
+// built, accepted or done (Epic 459, H2): Built · waits for acceptance;
+// Accepted, then what remains; Done, or Done · accepted when done_when holds
+// no acceptance item and the line is accepted. Any other progress gives "".
+func roadmapStagePhrase(m map[string]any) string {
+	switch str(m, "progress") {
+	case "built":
+		return "Built · waits for acceptance"
+	case "accepted":
+		return strings.Join(append([]string{"Accepted"}, roadmapAcceptedRemains(m)...), " · ")
+	case "done":
+		if accepted, _ := m["accepted"].(bool); accepted && roadmapDoneWhenItem(m, "acceptance") == nil {
+			return "Done · accepted"
+		}
+		return "Done"
+	}
+	return ""
+}
+
+// roadmapAcceptedRemains is what an accepted Initiative still waits for, in
+// this order, each only when present: the rows proved below the agreed level
+// and those not proved yet, or instead of both that its proof waits for the
+// reference revision or cannot be read; then its open differences while No
+// open difference is not met.
+func roadmapAcceptedRemains(m map[string]any) []string {
+	var parts []string
+	if proof := roadmapDoneWhenItem(m, "proof_as_agreed"); proof != nil {
+		_, unreadable := proof["reason"].(map[string]any)
+		waits, _ := proof["waits_for_reference_revision"].(bool)
+		counts, counted := proof["counts"].(map[string]any)
+		switch {
+		case unreadable:
+			parts = append(parts, "proof cannot be read")
+		case waits:
+			parts = append(parts, "proof waits for the reference revision")
+		case counted:
+			if below := roadmapCount(counts["below"]); below > 0 {
+				parts = append(parts, fmt.Sprintf("%d proved below the agreed level", below))
+			}
+			if notYet := roadmapCount(counts["not_yet"]); notYet > 0 {
+				parts = append(parts, fmt.Sprintf("%d not proved yet", notYet))
+			}
+		}
+	}
+	if differences := roadmapDoneWhenItem(m, "differences_resolved"); differences != nil {
+		if met, _ := differences["met"].(bool); !met {
+			if open := roadmapCount(differences["open"]); open > 0 {
+				parts = append(parts, roadmapPlural(open, "open difference", "open differences"))
+			}
+		}
+	}
+	return parts
+}
+
 // writeRoadmapDone prints under an Initiative whether it is done (Epic 326,
 // A3): Done; No work yet when no linked work counts; or Not done with n of m
 // for each kind that has an item that counts. Under an Initiative that is not
 // done, one line per item of waiting_for with its title, its step and whose
-// turn it is. A read without done prints nothing.
+// turn it is: from Epic 337 (D3) also the acceptance, as Acceptance for
+// <Release>, and each open difference by its reference and title. From Epic
+// 459 (H2) an Initiative that is built, accepted or done prints its stage
+// phrase instead, and the proof items print in the Overview's words. A read
+// without done prints nothing.
 func writeRoadmapDone(cmd *cobra.Command, m map[string]any, indent string) {
 	done, ok := m["done"].(bool)
 	if !ok {
 		return
 	}
 	out := cmd.OutOrStdout()
+	if phrase := roadmapStagePhrase(m); phrase != "" {
+		fmt.Fprintln(out, indent+phrase)
+		if done {
+			return
+		}
+		writeRoadmapWaits(out, m, indent)
+		return
+	}
 	if done {
 		fmt.Fprintln(out, indent+"Done")
 		return
@@ -693,17 +1349,8 @@ func writeRoadmapDone(cmd *cobra.Command, m map[string]any, indent string) {
 	if items, _ := m["done_when"].([]any); len(items) > 0 {
 		for _, item := range items {
 			entry, _ := item.(map[string]any)
-			if str(entry, "key") != "work_complete" {
-				continue
-			}
-			counts, _ := entry["counts"].(map[string]any)
-			for _, kind := range roadmapCountKinds {
-				count, _ := counts[kind.key].(map[string]any)
-				counting := roadmapCount(count["counting"])
-				if counting == 0 {
-					continue
-				}
-				parts = append(parts, fmt.Sprintf("%d of %d %s", roadmapCount(count["done"]), counting, kind.words))
+			if str(entry, "key") == "work_complete" {
+				parts = append(parts, roadmapWorkParts(entry)...)
 			}
 		}
 	}
@@ -711,6 +1358,18 @@ func writeRoadmapDone(cmd *cobra.Command, m map[string]any, indent string) {
 		fmt.Fprintln(out, indent+"No work yet")
 	} else {
 		fmt.Fprintln(out, indent+"Not done: "+strings.Join(parts, ", ")+" complete")
+	}
+	writeRoadmapWaits(out, m, indent)
+}
+
+// writeRoadmapWaits prints one line per item of an Initiative's waiting_for,
+// after one line per item of its planning_waits (Epic 471, H5b).
+func writeRoadmapWaits(out io.Writer, m map[string]any, indent string) {
+	planning, _ := m["planning_waits"].([]any)
+	for _, p := range planning {
+		if item, ok := p.(map[string]any); ok {
+			fmt.Fprintf(out, "%s  Waits for %s\n", indent, roadmapPlanningWords(item))
+		}
 	}
 	waiting, _ := m["waiting_for"].([]any)
 	for _, w := range waiting {
@@ -722,22 +1381,7 @@ func writeRoadmapDone(cmd *cobra.Command, m map[string]any, indent string) {
 			fmt.Fprintln(out, indent+"  Waits for the team to shape it into work")
 			continue
 		}
-		title := str(item, "title")
-		if ref := str(item, "display_ref"); ref != "" {
-			title = ref + " " + title
-		}
-		step := roadmapSteps[str(item, "step")]
-		if step == "" {
-			step = orDash(str(item, "step"))
-		}
-		if epic, ok := item["member_epic"].(map[string]any); ok {
-			step += " (Epic " + str(epic, "title") + ")"
-		}
-		turn := roadmapTurns[str(item, "turn")]
-		if turn == "" {
-			turn = orDash(str(item, "turn"))
-		}
-		fmt.Fprintf(out, "%s  Waits for %s: %s, %s\n", indent, title, step, turn)
+		fmt.Fprintf(out, "%s  Waits for %s\n", indent, roadmapWaitingWords(item))
 	}
 }
 
@@ -834,14 +1478,35 @@ func roadmapInitiative(m map[string]any, names map[string]string) string {
 	}
 	details = append(details, orDash(kind))
 	if epics, ok := m["epic_ids"].([]any); ok && len(epics) > 0 {
-		ids := make([]string, 0, len(epics))
-		for _, e := range epics {
-			ids = append(ids, fmt.Sprint(e))
-		}
-		sort.Strings(ids)
-		details = append(details, "Epics "+strings.Join(ids, ", "))
+		details = append(details, roadmapEpicList(epics))
 	}
 	return fmt.Sprintf("- %s  [%s]  %s", str(m, "text"), strings.Join(details, ", "), str(m, "id"))
+}
+
+// roadmapEpicList names an Initiative's Epics in number order with their count
+// (Epic 460, H3): "Epic 2 (1 Epic)" or "Epics 2, 10 (2 Epics)".
+func roadmapEpicList(epics []any) string {
+	ids := make([]string, 0, len(epics))
+	for _, e := range epics {
+		ids = append(ids, fmt.Sprint(e))
+	}
+	sort.SliceStable(ids, func(i, j int) bool {
+		a, errA := strconv.ParseInt(ids[i], 10, 64)
+		b, errB := strconv.ParseInt(ids[j], 10, 64)
+		switch {
+		case errA == nil && errB == nil:
+			return a < b
+		case errA == nil:
+			return true
+		case errB == nil:
+			return false
+		}
+		return ids[i] < ids[j]
+	})
+	if len(ids) == 1 {
+		return "Epic " + ids[0] + " (1 Epic)"
+	}
+	return fmt.Sprintf("Epics %s (%d Epics)", strings.Join(ids, ", "), len(ids))
 }
 
 func writeRoadmapDryRun(cmd *cobra.Command, data map[string]any) error {

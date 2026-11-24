@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
 
-var backlogFields = strings.Fields("id display_number display_ref system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links initiative_id initiative gap_kind consequence metadata")
+var backlogFields = strings.Fields("id display_number display_ref system_id kind title notes_md raised_by raised_at observation why_unrouted route candidate_route disposition disposition_ref source_refs links initiative_id initiative gap_kind consequence metadata difference")
 
 func init() { rootCmd.AddCommand(newBacklogCommand(cliEnvLoad)) }
 
@@ -38,6 +41,17 @@ assumed default's disposition_ref changes only to a USER: source. An agent write
 USER: source only from the person's own words, never from a template. Without one
 the server refuses the whole update, notes included, and this command prints the
 server's refusal as it is.
+A difference is resolved only by a fix or by a person's acceptance by name: a person
+accepts a difference by name on the Initiative's Proof tab, and the agent never does.
+So this command reads the record first only when the disposition starts with ACCEPTED
+with, and for a difference (a gap of gap_kind difference) it refuses to send it; any
+other disposition is sent without that read. It never sends a difference object: only
+the Proof tab's decision panel, a person's act, sets a difference's classification and
+changes_stored_values. Close a difference by the done Epic that fixed it, CLOSED by
+<epic id>, or by the merged pull request that fixed it, CLOSED by PR #<number> or
+CLOSED by <the pull request's address>. The server refuses CLOSED by an Epic that is
+not done, a requirement, a test case or any other text, PR:976 included, and every
+REJECTED with on a difference. The example CLOSED by PR:972 below is for other records.
 The server records the authenticated update actor and time; original attribution is preserved.
 Text output names a routing or closure target by its title (ROUTED to 288 — <title>);
 --json serves the disposition as stored, with the title on the link.
@@ -60,6 +74,13 @@ Example: {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md"
 			}
 			if env.SystemID <= 0 {
 				return fmt.Errorf("Backlog update requires a bound System")
+			}
+			// Epic 337 (D3): a person accepts a difference by name on the Proof
+			// tab. Only a disposition that would accept reads the record first.
+			if disposition, _ := payload["disposition"].(string); strings.HasPrefix(disposition, "ACCEPTED with ") {
+				if err = refuseDifferenceAcceptance(env, args[0]); err != nil {
+					return err
+				}
 			}
 			payload["system_id"] = env.SystemID
 			data, err := backlogWrite(env, "PATCH", "/api/v1/backlog/"+url.PathEscape(args[0]), payload)
@@ -86,11 +107,27 @@ Example: {"disposition":"CLOSED by PR:972","disposition_ref":"PR:972","notes_md"
 		Long: `Create a discovery from a JSON object using --file or --file - for stdin.
 Title is required; kind defaults to backlog (backlog, gap, tooling or assumption).
 Optional fields: notes_md, observation, why_unrouted, candidate_route,
-gap_kind, consequence, metadata. A gap requires gap_kind capability or
-specification. An assumption is an assumed default: an answer the agent chose
+gap_kind, consequence, metadata. A gap requires gap_kind capability,
+specification or difference. An assumption is an assumed default: an answer the agent chose
 during a build for a question nobody had answered. Its title is the default and
 its observation, which it requires, is the question the default answers, as in
 {"kind":"assumption","title":"Show the points balance on the receipt","observation":"Should the receipt show the points balance?"}.
+A difference is a gap of gap_kind difference: a place where the new system behaves
+differently from the legacy system it replaces. Its fields go under metadata.difference:
+legacy_requirement, the kept or changed legacy requirement it concerns, as
+{"kind":"user_requirement" or "system_requirement","id":"<uuid>"}, what_changed and
+evidence, which it requires, and, when known, requirement (the new requirement, in the
+same form), accepting_accepts (what accepting it accepts) and risk. Optional,
+legacy_answer and new_answer, each {"commit":"<7 to 64 hexadecimal characters>","text":"<1 to 2,000 characters>"},
+give both Systems' answers side by side on the Proof tab: an agent adds them when a
+replay or test shows both Systems' outputs, and evidence alone stays the normal case;
+this command refuses any other shape before it sends anything. The server refuses
+a difference whose legacy requirement no keep or change decision of an Initiative of
+the System names. A difference's classification is introduced, legacy, not_defect or
+unclassified, and a new one is unclassified: a person sets classification and
+changes_stored_values with Decide on the Initiative's Proof tab, so this command
+refuses both before it sends anything, and accepted_words too, as in
+{"kind":"gap","gap_kind":"difference","title":"Retries stop after three","metadata":{"difference":{"legacy_requirement":{"kind":"user_requirement","id":"<uuid>"},"what_changed":"Retries stop after three attempts instead of five","evidence":"The replay fails on the fourth retry"}}}.
 Identity, scope, attribution and OPEN disposition are assigned
 by the server. --focus atomically adds the record to the signed-in reporter’s
 focus, preserving other focus lanes. Example: {"title":"Keep cart after payment retry","metadata":{"synthetic":true}}.`,
@@ -343,11 +380,127 @@ func validateBacklogCreate(payload map[string]any) error {
 		return fmt.Errorf("an assumed default needs its question: give the question the default answers in observation")
 	}
 	gap, hasGap := payload["gap_kind"]
-	if kind == "gap" && gap != "capability" && gap != "specification" {
-		return fmt.Errorf("a gap requires gap_kind capability or specification")
+	if kind == "gap" && gap != "capability" && gap != "specification" && gap != "difference" {
+		return fmt.Errorf("a gap requires gap_kind capability, specification or difference")
 	}
 	if kind != "gap" && hasGap {
 		return fmt.Errorf("gap_kind is only valid for a gap")
+	}
+	if gap == "difference" {
+		metadata, _ := payload["metadata"].(map[string]any)
+		return validateDifferenceCreate(metadata["difference"])
+	}
+	return nil
+}
+
+// Epic 337 (D3): a difference's fields on create, under metadata.difference.
+// classification, changes_stored_values and accepted_words are a person's, set
+// with Decide on the Initiative's Proof tab, so they are never sent.
+var (
+	differenceCreateFields = strings.Fields("legacy_requirement what_changed evidence requirement accepting_accepts risk legacy_answer new_answer")
+	differencePersonFields = strings.Fields("classification changes_stored_values accepted_words")
+)
+
+const (
+	differencePersonSets  = "a person sets classification and changes_stored_values with Decide on the Initiative's Proof tab"
+	differenceAcceptsName = "a person accepts a difference by name on the Initiative's Proof tab, and the agent never does"
+)
+
+// validateDifferenceCreate checks a difference's fields before anything is
+// sent: legacy_requirement, what_changed and evidence are required, and the
+// fields a person sets are refused.
+func validateDifferenceCreate(value any) error {
+	difference, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("a difference needs metadata.difference with legacy_requirement, what_changed and evidence")
+	}
+	keys := make([]string, 0, len(difference))
+	for key := range difference {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch {
+		case key == "accepted_words":
+			return fmt.Errorf("a difference is created without accepted_words: a person writes them with Decide on the Initiative's Proof tab")
+		case contains(differencePersonFields, key):
+			return fmt.Errorf("a difference is created without %s: %s", key, differencePersonSets)
+		case !contains(differenceCreateFields, key):
+			return fmt.Errorf("unsupported difference field %q (allowed: %s)", key, strings.Join(differenceCreateFields, ", "))
+		}
+	}
+	if _, given := difference["legacy_requirement"]; !given {
+		return fmt.Errorf("a difference needs legacy_requirement: the kept or changed legacy requirement it concerns, as {\"kind\", \"id\"}")
+	}
+	for _, key := range []string{"legacy_requirement", "requirement"} {
+		value, given := difference[key]
+		if !given {
+			continue
+		}
+		ref, _ := value.(map[string]any)
+		kind, _ := ref["kind"].(string)
+		id, _ := ref["id"].(string)
+		if (kind != "user_requirement" && kind != "system_requirement") || !requirementUUIDPattern.MatchString(id) {
+			return fmt.Errorf("%s must be {\"kind\": \"user_requirement\" or \"system_requirement\", \"id\": \"<uuid>\"}", key)
+		}
+	}
+	for _, field := range []struct{ key, what string }{
+		{"what_changed", "what the new system does differently"},
+		{"evidence", "where the difference shows, such as a failing replay or an acceptance result"},
+	} {
+		if text, _ := difference[field.key].(string); strings.TrimSpace(text) == "" {
+			return fmt.Errorf("a difference needs %s: %s", field.key, field.what)
+		}
+	}
+	for _, key := range []string{"accepting_accepts", "risk"} {
+		if value, given := difference[key]; given {
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("difference field %q must be a string", key)
+			}
+		}
+	}
+	for _, key := range []string{"legacy_answer", "new_answer"} {
+		if value, given := difference[key]; given && !validDifferenceAnswer(value) {
+			return fmt.Errorf("%s takes exactly commit (7 to 64 hexadecimal characters) and text (1 to 2,000 characters)", key)
+		}
+	}
+	return nil
+}
+
+// Epic 461 (H4): an answer of one System is exactly a commit of 7 to 64
+// hexadecimal characters and a text of 1 to 2,000 code points, as the server
+// checks it.
+var differenceAnswerCommit = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+
+func validDifferenceAnswer(value any) bool {
+	answer, ok := value.(map[string]any)
+	if !ok || len(answer) != 2 {
+		return false
+	}
+	commit, ok := answer["commit"].(string)
+	if !ok || !differenceAnswerCommit.MatchString(commit) {
+		return false
+	}
+	text, ok := answer["text"].(string)
+	return ok && strings.TrimSpace(text) != "" && utf8.RuneCountInString(text) <= 2000
+}
+
+// refuseDifferenceAcceptance reads the record a disposition would accept and
+// refuses to send the acceptance of a difference (Epic 337, D3).
+func refuseDifferenceAcceptance(env *cliEnv, id string) error {
+	data, err := backlogGet(env, "/api/v1/backlog/"+url.PathEscape(id)+"?system_id="+fmt.Sprint(env.SystemID))
+	if err != nil {
+		return err
+	}
+	row, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("Backlog response is missing its record")
+	}
+	if err = validateBacklogRecord(row, env.SystemID); err != nil {
+		return err
+	}
+	if str(row, "gap_kind") == "difference" || row["difference"] != nil {
+		return fmt.Errorf("%s is a difference: %s, so backlog update sent nothing", backlogDisplayRef(row), differenceAcceptsName)
 	}
 	return nil
 }
@@ -357,6 +510,9 @@ func validateBacklogUpdate(payload map[string]any) error {
 		return fmt.Errorf("Backlog update requires notes_md, disposition, disposition_ref or initiative_id")
 	}
 	for key, value := range payload {
+		if key == "difference" {
+			return fmt.Errorf("backlog update never sends a difference object: only the Proof tab's decision panel, a person's act, sets a difference's classification and changes_stored_values")
+		}
 		if key == "initiative_id" {
 			if value == nil {
 				continue

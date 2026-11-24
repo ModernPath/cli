@@ -381,3 +381,57 @@ func TestReverseRecordDirStopsOnAFailedLocalWrite(t *testing.T) {
 		})
 	}
 }
+
+// Epic 341 (G3), test case f17f2164 (TC-G3-11), criterion 5c8a73dd: the
+// receipt record --dir keeps in recorded/<name>.receipt lists each
+// requirement's what_it_has as the server returns it, a list or null. The
+// five keys hold on the first slice (guard); what_it_has is left out there.
+func TestG3_f17f2164_RecordDirReceiptListsWhatItHas(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/systems/4/reverse-engineering/requirements" {
+			t.Errorf("request = %s %s, want POST to the recording route", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(g3ReceiptResponse))
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	chkWrite(t, filepath.Join(dir, "01-stations.json"), g3ReceiptInput)
+
+	out, err := rdRun(t, func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil }, "--dir", dir)
+	if err != nil {
+		t.Fatalf("record --dir failed: %v\n%s", err, out)
+	}
+	receipt, err := os.ReadFile(filepath.Join(dir, "recorded", "01-stations.json.receipt"))
+	if err != nil {
+		t.Fatalf("record --dir kept no receipt: %v\n%s", err, out)
+	}
+	g3RequireReceiptWhatItHas(t, "the receipt record --dir keeps", string(receipt))
+}
+
+// Epic 341 (G3), test case 150d7fb9 (TC-G3-13): record --dir's message for a
+// recorded file that changed tells the agent to add what a requirement has in
+// a new file of reference entries under the stored ids. That it still says
+// "changed after record" holds on the first slice (guard).
+func TestG3_150d7fb9_RecordDirChangedAfterRecordAddsWhatItHasByReference(t *testing.T) {
+	stub := &rdStub{}
+	server := httptest.NewServer(stub.handler(t))
+	defer server.Close()
+	env := func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil }
+	dir := t.TempDir()
+	rdFile(t, dir, "01-a.json", rdID(1), "ok a")
+	if out, err := rdRun(t, env, "--dir", dir); err != nil {
+		t.Fatalf("the first record --dir failed: %v\n%s", err, out)
+	}
+	rdFile(t, dir, "01-a.json", rdID(1), "ok a edited")
+	out, err := rdRun(t, env, "--dir", dir)
+	if err == nil {
+		t.Errorf("a recorded file edited afterwards exited 0:\n%s", out)
+	}
+	plain := g3Plain(out)
+	if !strings.Contains(plain, "changed after record") {
+		t.Errorf("record --dir does not report the edited file as changed after record:\n%s", out)
+	}
+	if phrase := g3Plain("add what a requirement has in a new file of reference entries under the stored ids"); !strings.Contains(plain, phrase) {
+		t.Errorf("record --dir's changed-after-record message does not say %q:\n%s", phrase, out)
+	}
+}

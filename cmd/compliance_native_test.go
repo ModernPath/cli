@@ -98,12 +98,14 @@ func TestModernizationRecordPostsSingleAtomicReleaseCapture(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Fatal(err)
 		}
-		_, _ = w.Write([]byte(`{"data":{"run":{"id":"run-1","sha":"abc123","system_id":4},"results":[{"id":"result-1","test_case_id":"22222222-2222-4222-8222-222222222222","result":"fail","criterion_ids":["11111111-1111-4111-8111-111111111111"]}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"run":{"id":"run-1","sha":"0123456789abcdef0123456789abcdef01234567","system_id":4},"results":[{"id":"result-1","test_case_id":"22222222-2222-4222-8222-222222222222","result":"fail","criterion_ids":["11111111-1111-4111-8111-111111111111"]}]}}`))
 	}))
 	defer server.Close()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "capture.json")
-	input := `{"sha":"abc123","tests":[{"test_case_id":"22222222-2222-4222-8222-222222222222","result":"fail","criterion_ids":["11111111-1111-4111-8111-111111111111"]}]}`
+	// A full commit id in lower case that no checkout holds: the command sends
+	// the capture without a chain and leaves out the commit_chain key (Epic 390).
+	input := `{"sha":"0123456789abcdef0123456789abcdef01234567","tests":[{"test_case_id":"22222222-2222-4222-8222-222222222222","result":"fail","criterion_ids":["11111111-1111-4111-8111-111111111111"]}]}`
 	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +116,7 @@ func TestModernizationRecordPostsSingleAtomicReleaseCapture(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if received["system_id"] != float64(4) || received["sha"] != "abc123" || len(received) != 3 {
+	if received["system_id"] != float64(4) || received["sha"] != "0123456789abcdef0123456789abcdef01234567" || len(received) != 3 {
 		t.Fatalf("capture payload = %#v", received)
 	}
 	if !strings.Contains(output.String(), `"run"`) || !strings.Contains(output.String(), `"results"`) {
@@ -685,6 +687,81 @@ func TestEvidenceRecordReturnsNativeReceipt(t *testing.T) {
 		if !strings.Contains(output.String(), id) {
 			t.Errorf("native identity %s missing from receipt: %s", id, output.String())
 		}
+	}
+}
+
+// Epic 341 (G3), test case 83da8432 (TC-G3-12), criterion 2dad892c:
+// requirements get --full prints what_it_has with its values when the server
+// returns it, and --fields what_it_has is accepted and selects it. On the
+// first slice --full leaves the field out and --fields refuses it as unknown.
+
+// g3DetailServer serves one system requirement whose detail carries
+// what_it_has.
+func g3DetailServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/compliance/requirements/by-ref/SR-9-4" || r.URL.Query().Get("system_id") != "4" {
+			t.Errorf("request = %s %s, want the scoped display-ref detail", r.Method, r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"data":{"entity":{"id":"11111111-1111-4111-8111-111111111111","system_id":4,"title":"Keys rotate","work_status":"DONE","context":"KEYS","context_name":"Keys","boundary":"api","what_it_has":["interface","stored_data"]},"display_id":"SR-9-4","criteria":[{"id":"criterion"}],"traces_from":[],"traces_to":[],"audit_events":{"items":[]}}}`))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func g3RunRequirementGet(t *testing.T, server *httptest.Server, args ...string) (string, error) {
+	t.Helper()
+	root := newRequirementGetCommand(func() (*cliEnv, error) { return nativeCLIEnv(t, server, 4), nil })
+	root.SetArgs(args)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	err := root.Execute()
+	return out.String(), err
+}
+
+func TestG3_83da8432_RequirementGetFullPrintsWhatItHas(t *testing.T) {
+	server := g3DetailServer(t)
+	out, err := g3RunRequirementGet(t, server, "SR-9-4", "--full", "--json")
+	if err != nil {
+		t.Fatalf("requirements get --full --json failed: %v\n%s", err, out)
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(out), &record); err != nil {
+		t.Fatalf("requirements get --full --json is not one JSON object: %v\n%s", err, out)
+	}
+	// Guard: --full prints the context, as it does for every listed field.
+	if record["context"] != "KEYS" {
+		t.Errorf("requirements get --full context = %v; want KEYS:\n%s", record["context"], out)
+	}
+	if value, present := record["what_it_has"]; !present || !reflect.DeepEqual(value, []any{"interface", "stored_data"}) {
+		t.Errorf("requirements get --full what_it_has = %v (present %v); want [interface stored_data] as the server returned it:\n%s", value, present, out)
+	}
+
+	text, err := g3RunRequirementGet(t, server, "SR-9-4", "--full")
+	if err != nil {
+		t.Fatalf("requirements get --full failed: %v\n%s", err, text)
+	}
+	if want := `what_it_has: ["interface","stored_data"]`; !strings.Contains(text, want) {
+		t.Errorf("requirements get --full does not print %q:\n%s", want, text)
+	}
+}
+
+func TestG3_83da8432_RequirementGetFieldsSelectsWhatItHas(t *testing.T) {
+	server := g3DetailServer(t)
+	out, err := g3RunRequirementGet(t, server, "SR-9-4", "--fields", "what_it_has", "--json")
+	if err != nil {
+		t.Errorf("requirements get --fields what_it_has was refused: %v\n%s", err, out)
+		return
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("selected output is not JSON: %v\n%s", err, out)
+	}
+	assertJSONKeys(t, result, []string{"display_ref", "id", "requirement_kind", "what_it_has"})
+	var values []string
+	if err := json.Unmarshal(result["what_it_has"], &values); err != nil || !reflect.DeepEqual(values, []string{"interface", "stored_data"}) {
+		t.Errorf("requirements get --fields what_it_has = %s; want [\"interface\",\"stored_data\"]", result["what_it_has"])
 	}
 }
 

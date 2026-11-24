@@ -449,3 +449,214 @@ func TestReverseCheckGlobDoubleStarMatchesAnyDepth(t *testing.T) {
 		}
 	}
 }
+
+// g3Plain folds whitespace and drops Markdown code and bold marks, so a phrase
+// may wrap or carry marks; it keeps letter case (Epic 341, G3 contract §6).
+func g3Plain(text string) string {
+	return strings.Join(strings.Fields(strings.NewReplacer("**", "", "`", "").Replace(text)), " ")
+}
+
+// g3CheckReport is the part of check --json the G3 tests read.
+type g3CheckReport struct {
+	Checks []struct {
+		Name     string `json:"name"`
+		Status   string `json:"status"`
+		Findings []struct {
+			Detail string `json:"detail"`
+		} `json:"findings"`
+	} `json:"checks"`
+}
+
+func g3CheckJSON(t *testing.T, out string) g3CheckReport {
+	t.Helper()
+	var report g3CheckReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Errorf("check --json is not one JSON object: %v\n%s", err, out)
+	}
+	return report
+}
+
+// g3CheckSR is a system requirement content entry with one criterion.
+func g3CheckSR(id, title, description, statement string) map[string]any {
+	return map[string]any{
+		"id": id, "kind": "system_requirement", "title": title, "description": description, "context": "CARDS",
+		"criteria": []any{map[string]any{"id": chkCritID(id), "kind": "criterion", "statement": statement}},
+	}
+}
+
+const (
+	g3CheckNullID   = "a1000000-0000-4000-8000-000000000071"
+	g3CheckStringID = "a1000000-0000-4000-8000-000000000072"
+	g3CheckEmptyID  = "a1000000-0000-4000-8000-000000000073"
+)
+
+// Epic 341 (G3), test case 2547db91 (TC-G3-20), criterion 8dc926cd: check
+// fails a staged set whose entries, a reference entry among them, carry a
+// what_it_has that is null, not a list or holds an element other than
+// interface, stored_data and screen, with the check what-it-has naming each
+// file and requirement id. On the first slice no check reads what_it_has, so
+// the set passes every check (the other checks passing it is a guard).
+func TestG3_2547db91_CheckFailsAWhatItHasTheServerRefuses(t *testing.T) {
+	dir := t.TempDir()
+	chkWrite(t, filepath.Join(dir, "01-cards.json"), chkGoodSet())
+	withNull := g3CheckSR(g3CheckNullID, "Card vault lists cards", "The cards API returns the saved cards of the signed-in customer.", "the saved cards are listed newest first")
+	withNull["what_it_has"] = nil
+	chkWrite(t, filepath.Join(dir, "02-null.json"), chkSet(withNull))
+	withString := g3CheckSR(g3CheckStringID, "Card vault renames cards", "The cards API renames a saved card on request.", "a renamed card shows its new name in the list")
+	withString["what_it_has"] = "screen"
+	chkWrite(t, filepath.Join(dir, "03-string.json"), chkSet(withString))
+	// A reference entry under the id 01-cards.json holds with its content.
+	chkWrite(t, filepath.Join(dir, "04-api.json"), chkSet(map[string]any{"kind": "system_requirement", "id": chkSR, "what_it_has": []any{"api"}}))
+	bad := []struct{ file, id string }{{"02-null.json", g3CheckNullID}, {"03-string.json", g3CheckStringID}, {"04-api.json", chkSR}}
+
+	out, err := chkRun(t, "check", "--dir", dir, "--json")
+	report := g3CheckJSON(t, out)
+	if err == nil {
+		t.Errorf("check passed a set whose what_it_has values are null, \"screen\" and [\"api\"]")
+	}
+	found := false
+	for _, c := range report.Checks {
+		if c.Name != "what-it-has" {
+			// Guard: the set is clean for every other check.
+			if c.Status != "PASS" {
+				t.Errorf("check %s = %s; the set is built to pass every check but what-it-has", c.Name, c.Status)
+			}
+			continue
+		}
+		found = true
+		if c.Status != "FAIL" {
+			t.Errorf("check what-it-has = %s; want FAIL", c.Status)
+		}
+		for _, b := range bad {
+			named := false
+			for _, f := range c.Findings {
+				named = named || (strings.Contains(f.Detail, b.file) && strings.Contains(f.Detail, b.id))
+			}
+			if !named {
+				t.Errorf("check what-it-has has no finding naming the file %s and the requirement %s", b.file, b.id)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("check reported no check what-it-has for a set whose what_it_has values are null, \"screen\" and [\"api\"]")
+	}
+
+	text, _ := chkRun(t, "check", "--dir", dir)
+	if !strings.Contains(text, "FAIL  what-it-has") {
+		t.Errorf("check does not print FAIL  what-it-has")
+	}
+	if t.Failed() {
+		t.Logf("check --dir printed:\n%s", text)
+	}
+}
+
+// Guard (holds on the first slice): a reference entry {kind, id, what_it_has}
+// under an id an earlier file holds with its content passes every check, so do
+// a reference entry with two values and a new requirement recorded as having
+// none of these; a new requirement without what_it_has draws no warning.
+func TestG3_2547db91_CheckPassesReferenceEntriesThatCarryWhatItHas(t *testing.T) {
+	dir := t.TempDir()
+	chkWrite(t, filepath.Join(dir, "01-cards.json"), chkGoodSet())
+	none := g3CheckSR(g3CheckEmptyID, "Card vault expires tokens", "The cards API deletes provider tokens that were not used for a year.", "a token unused for 12 months is deleted at the provider")
+	none["what_it_has"] = []any{}
+	chkWrite(t, filepath.Join(dir, "02-what-it-has.json"), chkSet(
+		map[string]any{"kind": "system_requirement", "id": chkSR, "what_it_has": []any{"screen"}},
+		map[string]any{"kind": "system_requirement", "id": chkRef, "what_it_has": []any{"interface", "stored_data"}},
+		none,
+	))
+	out, err := chkRun(t, "check", "--dir", dir)
+	if err != nil {
+		t.Fatalf("check failed reference entries that carry what_it_has: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "FAIL") || strings.Contains(out, "WARN") {
+		t.Errorf("check failed or warned on reference entries that carry what_it_has, or on new requirements without it:\n%s", out)
+	}
+	for _, name := range []string{"ids", "receipts", "changed-after-record", "distinct-statements", "template-scenarios", "actor-outcome", "field-limits"} {
+		if !strings.Contains(out, "PASS  "+name) {
+			t.Errorf("check did not report PASS for %s:\n%s", name, out)
+		}
+	}
+}
+
+// Epic 341 (G3), test case 2547db91 (TC-G3-20): --self-test detects the
+// check what-it-has on the embedded known-bad set, through the staged file
+// 06-what-it-has.json, and the good set's reference entries with a value pass.
+// The self-test passing and the good set staying good hold on the first slice
+// (guards); no line names what-it-has there.
+func TestG3_2547db91_SelfTestDetectsWhatItHas(t *testing.T) {
+	out, err := chkRun(t, "check", "--self-test")
+	if err != nil {
+		t.Errorf("self-test failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "GOOD SET") || strings.Contains(out, "MISSED") {
+		t.Errorf("self-test missed a seeded failure or failed the good set:\n%s", out)
+	}
+	lines := strings.Split(out, "\n")
+	at := -1
+	for i, line := range lines {
+		if strings.TrimRight(line, " ") == "DETECTED  what-it-has" {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Errorf("self-test prints no line DETECTED  what-it-has:\n%s", out)
+		return
+	}
+	named := false
+	for _, line := range lines[at+1:] {
+		if !strings.HasPrefix(line, "          ") {
+			break
+		}
+		named = named || strings.Contains(line, "06-what-it-has.json")
+	}
+	if !named {
+		t.Errorf("self-test's what-it-has finding does not name the known-bad file 06-what-it-has.json:\n%s", out)
+	}
+}
+
+// Epic 341 (G3), test case 150d7fb9 (TC-G3-13): check's changed-after-record
+// finding tells the agent to add what a requirement has in a new file of
+// reference entries under the stored ids. That it still says "changed after it
+// was recorded" holds on the first slice (guard).
+func TestG3_150d7fb9_CheckChangedAfterRecordAddsWhatItHasByReference(t *testing.T) {
+	out, err := chkBad(t, nil, func(dir string) {
+		old := chkGoodSet()
+		old["requirements"] = []any{chkGoodUR()}
+		chkWrite(t, filepath.Join(dir, "recorded", "01-cards.json"), old)
+		chkWrite(t, filepath.Join(dir, "recorded", "01-cards.json.receipt"), `{"requirements":[],"trace_count":0}`)
+	})
+	if err == nil || !strings.Contains(out, "FAIL  changed-after-record") {
+		t.Errorf("check did not fail changed-after-record for an edited recorded file: %v\n%s", err, out)
+	}
+	plain := g3Plain(out)
+	if !strings.Contains(plain, "01-cards.json changed after it was recorded") {
+		t.Errorf("check's finding does not say the file changed after it was recorded:\n%s", out)
+	}
+	if phrase := g3Plain("add what a requirement has in a new file of reference entries under the stored ids"); !strings.Contains(plain, phrase) {
+		t.Errorf("check's changed-after-record finding does not say %q:\n%s", phrase, out)
+	}
+}
+
+// Epic 341 (G3), test case 3981fe20 (TC-G3-19): check --help lists the check
+// what-it-has among the checks that fail and names what_it_has among a
+// reference entry's keys.
+func TestG3_3981fe20_CheckHelpNamesWhatItHas(t *testing.T) {
+	out, err := runRoot(t, "reverse-engineer", "check", "--help")
+	if err != nil || !strings.Contains(out, "Checks that fail:") {
+		t.Fatalf("reverse-engineer check --help printed no check help (err %v):\n%s", err, out)
+	}
+	failing := out[strings.Index(out, "Checks that fail:"):]
+	if end := strings.Index(failing, "Warnings:"); end >= 0 {
+		failing = failing[:end]
+	}
+	listed := false
+	for _, line := range strings.Split(failing, "\n") {
+		listed = listed || strings.HasPrefix(strings.TrimSpace(line), "what-it-has")
+	}
+	if !listed {
+		t.Errorf("check --help has no line starting with what-it-has in its list of checks that fail:\n%s", failing)
+	}
+	if phrase := "kind, id and what_it_has"; !strings.Contains(g3Plain(out), phrase) {
+		t.Errorf("check --help does not name %q among a reference entry's keys:\n%s", phrase, out)
+	}
+}

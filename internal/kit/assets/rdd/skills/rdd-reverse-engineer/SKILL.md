@@ -21,10 +21,19 @@ the user's requested repository and behavior scope. Use the CLI to read existing
    name that no listed context has; never "—" or Unclassified, which stand for
    requirements without a context. To move a recorded requirement to another
    context, regroup it with a requirement update.
-4. Record requirements, source file references and typed Traces atomically.
+4. Record with each requirement what it has, decided from the code you read
+   and not from file names alone: an interface when its behaviour is seen in
+   requests and responses, messages or jobs at the system's boundary; stored
+   data when it creates, changes or deletes data the system keeps; a screen
+   when a person sees or uses it on a screen; none of these, an empty list.
+   Leave `what_it_has` out only when the code you read does not say; a
+   requirement recorded earlier gets what it has from a reference entry: its
+   kind, its id and what it has, which is current metadata and keeps its
+   revision and content.
+5. Record requirements, source file references and typed Traces atomically.
    Use IDs for trace endpoints. File references name repository and path;
    a known revision is optional context. New requirements start as PROPOSED.
-5. Read back the recorded requirements, criteria, files and traces. Report
+6. Read back the recorded requirements, criteria, files and traces. Report
    created and reused records, unresolved questions and remaining requested work.
 
 Do not hash files, inventories, documents or reports. Do not require source

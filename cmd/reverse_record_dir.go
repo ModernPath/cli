@@ -150,7 +150,7 @@ files:
 			if copied, err := os.ReadFile(copyPath); err == nil && recordDirSame(raw, copied) {
 				report.add(name, "skipped", "already recorded")
 			} else {
-				report.add(name, "changed", "changed after record: make a new file with new UUIDs")
+				report.add(name, "changed", "changed after record: make a new file with new UUIDs; add what a requirement has in a new file of reference entries under the stored ids")
 			}
 			continue
 		}

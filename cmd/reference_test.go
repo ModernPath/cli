@@ -644,3 +644,86 @@ func TestG1RegroupReferenceGivesTheListsNameAndRefusals(t *testing.T) {
 		}
 	}
 }
+
+// Epic 341 (G3), test case 3981fe20 (TC-G3-19): the kit's copy of the CLI
+// guide, opened as the tests above open it, says that each requirement entry
+// may carry what_it_has, that a different value replaces the stored one
+// without a new revision and that check fails on a value the server refuses;
+// its roadmap selection section gives the basis recorded its words as one of
+// the codes, like B4's codes, and no longer calls it a planned change (B4
+// wrote "a planned change (Epic 341) adds recorded"). The phrases are compared
+// with g3Plain.
+func TestG3_3981fe20_CLIGuideGivesTheRulesForWhatItHas(t *testing.T) {
+	body, err := os.ReadFile("../internal/kit/assets/cli-guide/cli.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide := g3Plain(string(body))
+	for _, phrase := range []string{
+		"Each requirement entry may carry what_it_has",
+		"replaces the stored one without a new revision",
+		"check also fails on a what_it_has value the server refuses",
+	} {
+		if !strings.Contains(guide, g3Plain(phrase)) {
+			t.Errorf("the kit's CLI guide does not say %q", phrase)
+		}
+	}
+	section, names := b4f3GuideSelectionSection(string(body))
+	if section == "" {
+		t.Fatal("the kit's CLI guide has no section whose heading names a selection and that documents roadmap selection")
+	}
+	if phrase := "recorded by reverse engineering"; !strings.Contains(g3Plain(section), phrase) {
+		t.Errorf("the CLI guide's roadmap selection section (%s) does not give the basis recorded the words %q", strings.Join(names, "; "), phrase)
+	}
+	if phrase := `- recorded, "recorded by reverse engineering"`; !strings.Contains(g3Plain(section), phrase) {
+		t.Errorf("the CLI guide's roadmap selection section (%s) does not list the code recorded as %q, as it lists B4's codes", strings.Join(names, "; "), phrase)
+	}
+	if stale := "a planned change"; strings.Contains(g3Plain(section), stale) {
+		t.Errorf("the CLI guide's roadmap selection section (%s) still calls the basis recorded %q", strings.Join(names, "; "), stale)
+	}
+}
+
+// Epic 341 (G3), test case 3981fe20 (TC-G3-19): the CLI reference's section on
+// reverse-engineer record gives the rules of what_it_has, says the receipt
+// lists it and names the refusals invalid_what_it_has and requirement_deleted.
+func TestG3_3981fe20_RecordReferenceGivesTheRulesForWhatItHas(t *testing.T) {
+	section := g3Plain(referenceSection(t, renderCLIReference(rootCmd), "modernpath reverse-engineer record"))
+	for _, phrase := range []string{
+		"what_it_has",
+		"replaces the stored one without a new revision",
+		"the receipt lists what_it_has",
+		"invalid_what_it_has",
+		"requirement_deleted",
+		"(requirement_deleted), which names the entry's position, kind and id; the request writes nothing",
+	} {
+		if !strings.Contains(section, phrase) {
+			t.Errorf("the reverse-engineer record section of the CLI reference does not say %q", phrase)
+		}
+	}
+}
+
+// Epic 341 (G3), test case 3981fe20 (TC-G3-19): the refusal glossary has a row
+// keyed on invalid_what_it_has and one keyed on requirement_deleted, each with
+// the origin server 422, a cause naming reverse-engineer record and what clears
+// it; the row of requirement_in_progress and requirement_owned names
+// reverse-engineer record in its cause.
+func TestG3_3981fe20_GlossaryNamesTheWhatItHasRefusals(t *testing.T) {
+	loop := renderedLoop()
+	for _, key := range []string{"invalid_what_it_has", "requirement_deleted"} {
+		cells := g1GlossaryCells(loop, key)
+		if cells == nil {
+			t.Errorf("the refusal glossary has no row keyed %q", key)
+			continue
+		}
+		if len(cells) != 4 || cells[1] != "server 422" || !strings.Contains(g3Plain(cells[2]), "reverse-engineer record") || strings.TrimSpace(cells[3]) == "" {
+			t.Errorf("the %q row must give origin server 422, a cause naming reverse-engineer record and what clears it: %q", key, cells)
+		}
+	}
+	key := "requirement_in_progress` / `requirement_owned"
+	cells := g1GlossaryCells(loop, key)
+	if len(cells) != 4 {
+		t.Errorf("the refusal glossary has no four-cell row keyed %q: %q", key, cells)
+	} else if !strings.Contains(g3Plain(cells[2]), "reverse-engineer record") {
+		t.Errorf("the cause of the %q row does not name reverse-engineer record: %q", key, cells[2])
+	}
+}

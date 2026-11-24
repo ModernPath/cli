@@ -63,7 +63,10 @@ explicit list of its Epics.
 func newInitiativeListCommand(load func() (*cliEnv, error)) *cobra.Command {
 	list := &cobra.Command{Use: "list", Short: "List the bound System's Initiatives", Args: cobra.NoArgs,
 		Long: `List the bound System's Initiatives in one read: <uuid>  <text>  release <id>
-horizon <horizon>  <progress>. --json prints the served list.`,
+horizon <horizon>  <progress>. An Initiative that is built, accepted or done
+shows its stage in the words of roadmap show (Built · waits for acceptance,
+Accepted and what remains, Done or Done · accepted); one at an earlier step
+shows its progress code. --json prints the served list.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			lines, _, err := initiativeLines(load)
 			if err != nil {
@@ -335,8 +338,14 @@ func initiativeSummary(line map[string]any) string {
 	if line["release_id"] != nil {
 		release = acceptanceText(line["release_id"])
 	}
+	// Epic 459 (H2): an Initiative that is built, accepted or done prints the
+	// web app's stage phrase; an earlier step prints its progress code.
+	stage := roadmapStagePhrase(line)
+	if stage == "" {
+		stage = orDash(str(line, "progress"))
+	}
 	return fmt.Sprintf("%s  %s  release %s  horizon %s  %s", orDash(str(line, "id")), orDash(oneLine(str(line, "text"))),
-		release, orDash(str(line, "horizon")), orDash(str(line, "progress")))
+		release, orDash(str(line, "horizon")), stage)
 }
 
 // -- Initiative rounds -------------------------------------------------------

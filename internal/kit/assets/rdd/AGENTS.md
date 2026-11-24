@@ -53,6 +53,8 @@ Use `skills/rdd-pr-review/SKILL.md` to review a pull request against the Epics
 it delivers and the System's Active Engineering Constraints; the review stays
 in chat and records nothing.
 `skills/rdd-audit/SKILL.md` is a shared utility invoked by other passes, not a phase.
+Use `skills/rdd-modernize/SKILL.md` when an Initiative replaces part of a
+legacy system.
 
 Read relevant product documents and inspect their cited code and tests. A
 valid Trace establishes a relationship; inspect its endpoints and source

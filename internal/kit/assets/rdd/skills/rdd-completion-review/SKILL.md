@@ -55,9 +55,30 @@ still-published requirements, ownership, implementation, traces and evidence.
    Epic, unless the Epic changes no code or tests; no gate checks it. Also present the
    changes since approval and the assumed defaults not yet confirmed, which
    block nothing: the presentation lists them as `changes_since_approval` and
-   `assumed_defaults`. Obtain
-   the separate explicit completion answer; never infer it from implementation
-   approval, an autopilot grant, tests, code review or repository state.
+   `assumed_defaults`. For an Epic of a Modernization Release, also present
+   the three completion reads, which inform the answer and never block it:
+   the presentation lists them as `completion_reads`.
+   - `revisions` names the Release's reference revision, the totals of the
+     baseline (the legacy tests' results captured at that revision) and each
+     captured run the reads use, with its commit and when it was captured.
+     It says that no run will count until the merge commit of the last pull
+     request that carried the change is recorded on the Epic. It also says
+     that, once that commit is recorded, only a run at the merge commit, or at
+     a commit that contains it, will count for the requirements this Epic
+     takes or reaches. An Epic reaches a requirement when its saved plan holds a
+     verifies trace to the requirement or one of its criteria. It gives the
+     Proof tab's reasons in that tab's words.
+   - In place, `kept_touched` lists the kept requirements (legacy
+     requirements an Initiative keeps as they are) whose files the change
+     touched, each with the newest captured result of each of its replays.
+   - `suite_comparison` compares, in place, each legacy test's newest
+     captured result since the baseline with its result at the reference
+     revision; onto a new system it compares each replay's newest captured
+     result with the one captured before it.
+
+   Obtain the separate explicit completion answer; never infer it from
+   implementation approval, an autopilot grant, tests, code review or
+   repository state.
    For a round, submit with `modernpath initiative submit-review`, fetch
    `modernpath initiative presentation <initiative-id> --epics <ids>`, present
    every Epic in the round, and apply the human's one answer with
@@ -65,6 +86,13 @@ still-published requirements, ownership, implementation, traces and evidence.
    person may approve a round's completion, which writes each Epic's own completion records, all
    or nothing. A refusal changes no Epic.
    Epics that are not a round of one Initiative are approved one by one.
+   After the merge, once the Epic's merge commit is recorded, also capture
+   every test of the criteria of each kept requirement in the Release's scope
+   that the completion presentation listed as touched by the change, its
+   replay and break test among them. Put all the tests of one requirement in
+   one run, with the runs that prove the Epic's requirements, or in runs of
+   their own when the capture's limits of 500 tests and 50 criteria in one run
+   require it.
 5. Apply only the human's explicit current-state approval and reason through the
    CLI. Upload no plan or presentation. The server rechecks current eligible
    state under locks. Read back atomic publication, one revision increment per
