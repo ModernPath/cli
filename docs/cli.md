@@ -2086,6 +2086,24 @@ An Initiative is a roadmap line of the bound System; API fields keep the name
 an archived one answers `not_found`. A non-UUID Initiative ID fails before any
 request.
 
+### Planning images
+
+Use `modernpath epics images` with an Epic ID or `modernpath initiative images`
+with an Initiative UUID in the bound System.
+
+| Command suffix | Result |
+| --- | --- |
+| `list <owner-id>` | Prints the image IDs, names, types, sizes and upload times as JSON. |
+| `download <owner-id> <image-uuid> --output <path>` | Saves the image to a new local file. |
+| `upload <owner-id> <file> --request-id <uuid>` | Uploads a PNG or JPEG of up to 20 MB and returns its metadata as JSON. Generate a new UUID for a new upload, and reuse it when retrying the same upload. |
+| `remove <owner-id> <image-uuid>` | Removes the image from that owner. |
+
+The same permissions and lifecycle rules apply as in the web app. Epic image
+edits require a Proposed Epic. An actual image change can make a plan review
+outdated.
+
+### Initiative records
+
 - `modernpath initiative list [--json]` lists the bound System's Initiatives in
   one read: ID, text, release, horizon and progress. `--json` prints the served
   list.

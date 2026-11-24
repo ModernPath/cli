@@ -50,6 +50,7 @@ explicit list of its Epics.
 	parent.AddCommand(
 		newInitiativeListCommand(load), newInitiativeGetCommand(load), newInitiativeCreateCommand(load),
 		newInitiativeLinkCommand(load, "link"), newInitiativeLinkCommand(load, "unlink"),
+		newPlanningImagesCommand(load, "Initiative", "/api/roadmap/lines/"),
 	)
 	for _, c := range newInitiativeRoundCommands(load) {
 		parent.AddCommand(c)

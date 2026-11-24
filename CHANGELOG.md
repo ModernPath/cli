@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Use `epics images` or `initiative images` to list, download, upload, and
+  remove planning images in the bound System.
+
 - Process: a PR review pass, `rdd-pr-review`, and its read-only reviewer
   `rdd-pr-reviewer` (installed for Claude Code and Codex). The pass reviews a
   pull request after one Epic or several Epics were built on its branch: the

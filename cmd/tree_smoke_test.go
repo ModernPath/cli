@@ -436,6 +436,10 @@ var leafDispositions = map[string]disposition{
 	"analysis reanalyze":                {kind: dispExecute, args: []string{"analysis", "reanalyze", "7"}},
 	"analysis reset":                    {kind: dispExecute, args: []string{"analysis", "reset", "--yes"}},
 	"analysis status":                   {kind: dispExecute},
+	"epics images list":                 {kind: dispExecute, args: []string{"epics", "images", "list", "42"}},
+	"epics images download":             {kind: dispExecute, args: []string{"epics", "images", "download", "42", "10000000-0000-4000-8000-000000000002", "--output", "epics-image.png"}},
+	"epics images upload":               {kind: dispExecute, args: []string{"epics", "images", "upload", "42", "smoke-image.png", "--request-id", "10000000-0000-4000-8000-000000000002"}},
+	"epics images remove":               {kind: dispExecute, args: []string{"epics", "images", "remove", "42", "10000000-0000-4000-8000-000000000002"}},
 	"epics search":                      {kind: dispExecute, args: []string{"epics", "search", "teams", "--json"}},
 	"epics gates check":                 {kind: dispExecute, args: []string{"epics", "gates", "check", "42"}},
 	"epics gates review-bundle":         {kind: dispExecute, args: []string{"epics", "gates", "review-bundle", "42"}},
@@ -516,6 +520,10 @@ var leafDispositions = map[string]disposition{
 	"epics plan return-to-implementation": {kind: dispExecute, args: []string{"epics", "plan", "return-to-implementation", "42", "--reason", "smoke"}},
 
 	// Epic 345: Initiatives and Initiative rounds.
+	"initiative images list":            {kind: dispExecute, args: []string{"initiative", "images", "list", "10000000-0000-4000-8000-000000000001"}},
+	"initiative images download":        {kind: dispExecute, args: []string{"initiative", "images", "download", "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002", "--output", "initiative-image.png"}},
+	"initiative images upload":          {kind: dispExecute, args: []string{"initiative", "images", "upload", "10000000-0000-4000-8000-000000000001", "smoke-image.png", "--request-id", "10000000-0000-4000-8000-000000000002"}},
+	"initiative images remove":          {kind: dispExecute, args: []string{"initiative", "images", "remove", "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"}},
 	"initiative list":                   {kind: dispExecute, args: []string{"initiative", "list"}},
 	"initiative get":                    {kind: dispExecute, args: []string{"initiative", "get", "10000000-0000-4000-8000-000000000001"}},
 	"initiative create":                 {kind: dispExecute, args: []string{"initiative", "create", "--file", "-", "--json"}},
@@ -727,6 +735,7 @@ func seedSmokeWorkspace(t *testing.T, dir string) {
 	}
 	mk(".modernpath/modernpath/t/architecture/overview.md", "# Doc\n\nbody\n")
 	mk("README.md", "# r\n")
+	mk("smoke-image.png", "\x89PNG\r\n\x1a\nfixture")
 	git := func(args ...string) {
 		_ = exec.Command("git", append([]string{"-C", dir}, args...)...).Run()
 	}

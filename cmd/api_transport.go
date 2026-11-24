@@ -58,20 +58,23 @@ func (e *cliEnv) write(method, apiPath string, payload any) (int, map[string]any
 }
 
 func (e *cliEnv) request(method, apiPath string, payload any) (int, map[string]any, error) {
+	return retryRateLimited(method, apiPath, func() (int, map[string]any, error) {
+		return e.sendOnce(method, apiPath, payload)
+	})
+}
+
+func retryRateLimited[T any](method, apiPath string, send func() (int, T, error)) (int, T, error) {
 	var waited time.Duration
 	next := limitFirstWait
 	for {
-		status, body, err := e.sendOnce(method, apiPath, payload)
+		status, body, err := send()
 		var limiting serverLimitingError
 		if !errors.As(err, &limiting) || hookMode(os.Args[1:]) {
 			return status, body, err
 		}
 		wait := next
 		if limiting.retryAfter > 0 {
-			wait = time.Duration(limiting.retryAfter) * time.Second
-		}
-		if wait > limitMaxWait {
-			wait = limitMaxWait
+			wait = time.Duration(min(limiting.retryAfter, int(limitMaxWait/time.Second))) * time.Second
 		}
 		if waited+wait > limitAllWaits {
 			return status, body, err
@@ -80,6 +83,9 @@ func (e *cliEnv) request(method, apiPath string, payload any) (int, map[string]a
 		limitSleep(wait)
 		waited += wait
 		next *= 2
+		if next > limitMaxWait {
+			next = limitMaxWait
+		}
 	}
 }
 
@@ -99,37 +105,11 @@ func (e *cliEnv) sendOnce(method, apiPath string, payload any) (int, map[string]
 		body = bytes.NewReader(nil)
 	}
 
-	req, err := http.NewRequest(method, e.APIURL+apiPath, body)
+	resp, err := e.sendHTTP(method, apiPath, body, "application/json", nil)
 	if err != nil {
-		return 0, nil, err
-	}
-	platform.Prepare(req)
-	req.Header.Set("Content-Type", "application/json")
-	if err := platform.Authorize(req, e.token); err != nil {
-		return 0, nil, err
-	}
-
-	// REQ-CROSS-176: a call that is taking long says so. Eight sequential
-	// calls at 120s each can turn "a few seconds" into silent minutes on a
-	// stalled connection, and a slow server is indistinguishable from a hung
-	// CLI until this line exists.
-	timeout := e.callTimeout
-	if timeout == 0 {
-		timeout = defaultCallTimeout
-	}
-	notice := time.AfterFunc(slowCallNoticeAfter, func() {
-		fmt.Fprintf(slowCallNoticeTo, "… still waiting on %s %s (slow server or connection; times out at %s)\n", method, apiPath, timeout)
-	})
-	resp, err := (&http.Client{Timeout: timeout}).Do(req)
-	notice.Stop()
-	if err != nil {
-
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	if rev := resp.Header.Get(storeRevisionHeader); rev != "" {
-		e.storeRevision = rev
-	}
 
 	// REQ-CROSS-372: keep an undecodable body (a proxy or gateway error page)
 	// as the refusal text instead of dropping it — every `server %d` formatter
@@ -185,8 +165,47 @@ func (e *cliEnv) sendOnce(method, apiPath string, payload any) (int, map[string]
 	// REQ-CROSS-535: the edge limits requests and asks the client to wait.
 	// Core's own 429 (a locked release PIN) carries its error body and stays
 	// a refusal with its reason (REQ-CROSS-338/380).
+	return resp.StatusCode, decoded, rateLimitError(resp, raw)
+}
+
+func rateLimitError(resp *http.Response, raw []byte) error {
 	if resp.StatusCode == http.StatusTooManyRequests && !coreErrorBody(raw) {
-		return resp.StatusCode, decoded, serverLimitingError{retryAfter: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now())}
+		return serverLimitingError{retryAfter: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now())}
 	}
-	return resp.StatusCode, decoded, nil
+	return nil
+}
+
+func (e *cliEnv) sendHTTP(method, apiPath string, body io.Reader, contentType string, checkRedirect func(*http.Request, []*http.Request) error) (*http.Response, error) {
+	req, err := http.NewRequest(method, e.APIURL+apiPath, body)
+	if err != nil {
+		return nil, err
+	}
+	platform.Prepare(req)
+	req.Header.Set("Content-Type", contentType)
+	if err := platform.Authorize(req, e.token); err != nil {
+		return nil, err
+	}
+
+	// REQ-CROSS-176: a call that is taking long says so. Eight sequential
+	// calls at 120s each can turn "a few seconds" into silent minutes on a
+	// stalled connection, and a slow server is indistinguishable from a hung
+	// CLI until this line exists.
+	timeout := e.callTimeout
+	if timeout == 0 {
+		timeout = defaultCallTimeout
+	}
+	notice := time.AfterFunc(slowCallNoticeAfter, func() {
+		fmt.Fprintf(slowCallNoticeTo, "… still waiting on %s %s (slow server or connection; times out at %s)\n", method, apiPath, timeout)
+	})
+	client := &http.Client{Timeout: timeout, CheckRedirect: checkRedirect}
+	resp, err := client.Do(req)
+	notice.Stop()
+	if err != nil {
+		return nil, err
+	}
+	if rev := resp.Header.Get(storeRevisionHeader); rev != "" {
+		e.storeRevision = rev
+	}
+
+	return resp, nil
 }
