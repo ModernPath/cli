@@ -14,7 +14,7 @@ import (
 // whose only ground is a constraint is recorded with severity `note`, so it is
 // information, not a verdict, and blocks no gate (decisions D4 and bffb8deb).
 // The skill names the PR-review read as outside this skill, belonging to the
-// plan Automated Code Review Skills. The rule stands in the rdd-cold-review
+// kit skill rdd-pr-review (Epic 350, SR-4923 revision 2). The rule stands in the rdd-cold-review
 // skill, in the reviewer agent definition and in its generated Codex copy,
 // in the assets and the installed copies. Phrases are compared on folded text
 // with backticks removed, as the plan review method rules are.
@@ -27,14 +27,14 @@ var engineeringConstraintsReviewPhrases = []string{
 	"a finding whose only ground is a constraint is recorded with severity note",
 	"information, not a verdict",
 	"blocks no gate",
-	"belongs to the plan Automated Code Review Skills and is outside this",
+	"belongs to rdd-pr-review and is outside this",
 }
 
 // TestCase a42dbf75-4288-489a-b8bc-ffebeb2563c3
 func TestColdReviewSkillReadsAndCitesTheEngineeringConstraints(t *testing.T) {
 	phrases := append([]string{
 		"the plan or change keeps to the Active Engineering Constraints the review bundle carries (engineering_constraints: ref, revision, title, statement, rationale and verification method)",
-		"the PR-review read of constraints belongs to the plan Automated Code Review Skills and is outside this skill",
+		"the PR-review read of constraints belongs to rdd-pr-review and is outside this skill",
 	}, engineeringConstraintsReviewPhrases...)
 	const asset = "assets/rdd/skills/rdd-cold-review/SKILL.md"
 	requireBuildRecordPhrases(t, asset, buildRecordText(t, asset), phrases)

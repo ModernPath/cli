@@ -880,6 +880,7 @@ gap.
 | Accept existing behavior | `rdd-reverse-engineer-accept` | Exact verified targets explicitly accepted by a human and atomically published as DONE, or left PROPOSED with the tooling gap reported |
 | Discoveries and blockers | `rdd-triage` | Discovery routed into a draft plan or reported as a separate-work decision/blocker; active approvals preserved |
 | Record an Engineering Constraint | `rdd-constraint` | Proposed constraint created on the person's word and read back by ref; acceptance left to the person |
+| Review a pull request | `rdd-pr-review` | Review returned in chat: findings by severity, intent verdict per Epic and for the branch, constraint assessment, checks and limits; nothing recorded, nothing posted unless asked |
 
 A focused pass is a handoff, not whole-task completion. Stop when its exit is
 reached and report what remains.
@@ -989,8 +990,10 @@ ends by writing the build handoff, an input file for one command and not a
 record, and returns it to the agent handling the task, who records the build
 with `modernpath epics build record`. A cold review or verification pass
 returns findings, verdict and sources to the agent handling the task, who
-records them through the CLI. Recording a reviewer's verdict does not make that
-agent an independent reviewer. A delegated pass that encounters a permission, authentication or
+records them through the CLI. A PR review (`rdd-pr-review`) runs the same way:
+the reviewer returns findings, verdict and limits to the agent handling the
+task, who hands them to the person in chat and records nothing. Recording a
+reviewer's verdict does not make that agent an independent reviewer. A delegated pass that encounters a permission, authentication or
 process-tool refusal stops and returns it verbatim; it does not retry by
 rewriting or splitting the refused action.
 A delegated pass that returns an empty or missing result has failed. Record

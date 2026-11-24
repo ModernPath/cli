@@ -77,7 +77,7 @@ Check that:
   and says what the change does against it; a finding whose only ground is a
   constraint is recorded with severity `note`: it is information, not a
   verdict, and blocks no gate; the PR-review read of constraints belongs to
-  the plan Automated Code Review Skills and is outside this skill;
+  `rdd-pr-review` and is outside this skill;
 - every reader and screen of changed data, behavior at the largest expected
   input, and the privileges and bypasses of any database or security
   mechanism the plan relies on are covered;

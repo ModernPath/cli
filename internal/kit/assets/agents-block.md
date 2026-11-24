@@ -23,6 +23,9 @@ Read and follow these before starting product work:
    - `rdd-triage` — route discoveries, blockers and deferrals;
    - `rdd-constraint` — turn a rule in a person's words into a Proposed
      Engineering Constraint; acceptance stays the person's;
+   - `rdd-pr-review` — review a pull request against the Epics it delivers and
+     the System's Active Engineering Constraints; the review stays in chat,
+     nothing is recorded;
    - `rdd-deliver` — deliver the approved Epic through verification and human completion;
    - `rdd-autopilot` — a sprint under a human's autopilot grant: product
      questions asked without waiting, process refusals cleared or logged, one
@@ -51,7 +54,9 @@ the agent definition the CLI installs at `.claude/agents/rdd-cold-reviewer.md`
 inspection when separate read tools are unavailable); it returns findings and a verdict, and the
 session records them. The reviewer is installed for Claude Code
 (`.claude/agents/*.md`) and Codex (`.codex/agents/*.toml`), which Cursor also
-reads; its role is written for any harness. The former workspace `rdd-audit` and `rdd-reverse-engineer` are
+reads; its role is written for any harness. The delegated PR review runs the
+same way in `.claude/agents/rdd-pr-reviewer.md` (Codex:
+`.codex/agents/rdd-pr-reviewer.toml`). The former workspace `rdd-audit` and `rdd-reverse-engineer` are
 now package skills; `rdd-audit` inspects Traces, endpoints and evidence.
 
 Project instructions may add stack, commands, architecture, domain, and safety

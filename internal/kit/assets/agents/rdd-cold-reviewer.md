@@ -99,8 +99,8 @@ A finding that concerns an Engineering
 Constraint cites it as `EC-<number>` with the revision read and says what the
 change does against it; a finding whose only ground is a constraint is
 recorded with severity `note`: it is information, not a verdict, and blocks no
-gate. The PR-review read of constraints belongs to the plan Automated Code
-Review Skills and is outside this review.
+gate. The PR-review read of constraints belongs to `rdd-pr-review` and is
+outside this review.
 
 For implementation, check authorization, tenant isolation, atomic ownership,
 accepted-content preservation, immutable versions and audit history where

@@ -143,7 +143,7 @@ func TestCLIReferenceCarriesTheLoopAndTheFileContracts(t *testing.T) {
 		"### Refusals and what clears them",
 		"`rdd-start`", "`rdd-plan`", "`rdd-entry-review`", "`rdd-build`", "`rdd-verify`",
 		"`rdd-completion-review`", "`rdd-reverse-engineer`", "`rdd-reverse-engineer-verify`",
-		"`rdd-reverse-engineer-accept`", "`rdd-triage`",
+		"`rdd-reverse-engineer-accept`", "`rdd-triage`", "`rdd-pr-review`",
 		"One store command per shell call",
 		"tooling gap",
 		// Epic 288 (B5): the nested-workspace refusal is in the glossary.

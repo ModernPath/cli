@@ -40,6 +40,10 @@ var installTargets = map[string]string{
 	// The Codex rendering of the same reviewer (codexAgentTOML; Cursor reads
 	// both .claude/agents and .codex/agents).
 	"assets/agents-codex/rdd-cold-reviewer.toml": ".codex/agents/rdd-cold-reviewer.toml",
+	// Epic 350 (SR-5038): the delegated PR review's agent definition, read-only
+	// like the cold reviewer, and its Codex rendering.
+	"assets/agents/rdd-pr-reviewer.md":         ".claude/agents/rdd-pr-reviewer.md",
+	"assets/agents-codex/rdd-pr-reviewer.toml": ".codex/agents/rdd-pr-reviewer.toml",
 }
 
 // retiredInstallTargets are tool-owned files from released package layouts

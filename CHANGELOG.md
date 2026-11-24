@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Process: a PR review pass, `rdd-pr-review`, and its read-only reviewer
+  `rdd-pr-reviewer` (installed for Claude Code and Codex). The pass reviews a
+  pull request after one Epic or several Epics were built on its branch: the
+  pull request with `gh`, each delivered Epic's approved plan and
+  implementation review bundle, and the System's Active Engineering
+  Constraints at their current revision, each cited `EC-<number>` with the
+  revision read. The review is returned in chat; nothing is written to the
+  store and nothing is posted unless the person asks. The cold review now
+  names `rdd-pr-review` as the home of the PR-review read (SR-4923 revision
+  2). Run `modernpath install` to refresh the process (Epic 350).
 - Process: `PROCESS.md` defines an Initiative with the wording of
   `terminology.md`: the business and UX planning container for one clear,
   scoped feature or change to one bounded context. It no longer calls an
