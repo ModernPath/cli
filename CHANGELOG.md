@@ -1,6 +1,10 @@
 # Changelog
 
+## Unreleased
+
 ## v0.31.0 - Direct source uploads and modernization proof
+
+Released on 2026-11-25 from monorepo commit `e7c0fd085c`.
 
 Known limit: the server still imports or stages a directly uploaded zip
 inside the complete request. When that takes longer than 120 seconds (seen
