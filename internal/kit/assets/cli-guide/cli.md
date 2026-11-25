@@ -462,6 +462,11 @@ filter left out with its file count and bytes. The filters are:
   `'**/fixtures/**'` matches at every depth. A directory that matches is left
   out with everything under it.
 
+Only regular files are packed. Symbolic links, named pipes, sockets and
+devices are left out and counted under `Skipped (links and special files)`:
+the file or directory a link points to is packed once at its own path when it
+is inside the tree, and never when it is outside.
+
 `--keep <name>` (repeatable) uploads a directory the built-in list skips for
 this run, for example `--keep packages` in a JavaScript monorepo whose code
 lives under `packages/`; the report names it under `Kept (--keep)`. A name

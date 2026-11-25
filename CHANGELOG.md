@@ -23,6 +23,12 @@
   before anything is sent, naming the file and an `--exclude` that leaves it
   out. Before, it was packed as an empty file, and a push replaced the
   stored copy with an empty one.
+- `import --local` and `source push` pack regular files only. Symbolic links,
+  named pipes, sockets and devices are left out and counted under `Skipped
+  (links and special files)` in the scan report (SR-3882-0). Before, a link to
+  a directory stopped the zip with `is a directory` (the Linux kernel tree has
+  such links), a link to a file packed whatever it pointed at, even outside
+  the tree, and a named pipe blocked the zip.
 
 - `modernization record` sends the commit's details as `commit_details`: the
   first line of its message cut to 200 characters (code points), its author's

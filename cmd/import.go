@@ -236,6 +236,10 @@ type importReport struct {
 	BuiltIn []filterDrop
 	// Kept is the built-in directory drops --keep turned off (AC3).
 	Kept []string
+	// Links is the symbolic links and other files that are not regular files
+	// (pipes, sockets, devices): never packed, since opening one follows the
+	// link out of the scanned tree or blocks.
+	Links int
 }
 
 // filterDrop is what one built-in rule dropped: a directory name ("bin/"), an
@@ -281,6 +285,10 @@ func collectImportFiles(sourceDir string, opts importFilterOptions) ([]importFil
 				drop(base+"/", files, size)
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			report.Links++
 			return nil
 		}
 
@@ -368,6 +376,9 @@ func printImportReport(w io.Writer, report importReport) {
 	}
 	if report.Excluded > 0 {
 		fmt.Fprintf(w, "  Skipped (--exclude):  %s, %s\n", fileCount(report.Excluded), byteCount(report.SizeExcluded))
+	}
+	if report.Links > 0 {
+		fmt.Fprintf(w, "  Skipped (links and special files): %s\n", fileCount(report.Links))
 	}
 	if len(report.BuiltIn) > 0 {
 		fmt.Fprintln(w, "  Skipped (built-in):")
