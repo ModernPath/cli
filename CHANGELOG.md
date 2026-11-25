@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.31.0 - Direct source uploads and modernization proof
+
+Known limit: the server still imports or stages a directly uploaded zip
+inside the complete request. When that takes longer than 120 seconds (seen
+with the Linux kernel tree, a 332 MB zip), Cloudflare answers 524 although
+the upload reached storage.
 
 - `import --local` and `source push` upload the zip directly to Google Cloud
   Storage when the server offers `direct_upload` in `GET
@@ -16,8 +21,7 @@
   uploaded`. When the storage host cannot be reached, or something on the way
   answers for it, a zip that fits the server's upload limit is posted as
   before, with a warning; a larger one is refused. A server without
-  `direct_upload` gets the multipart post as before. Release the CLI only once
-  the server that offers `direct_upload` is live.
+  `direct_upload` gets the multipart post as before.
 - A file in the tree that cannot be read (no permission, a dangling link, or
   removed while the zip is built) now stops `import --local` and `source push`
   before anything is sent, naming the file and an `--exclude` that leaves it
