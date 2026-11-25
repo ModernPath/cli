@@ -256,7 +256,7 @@ func TestUploadPrintsA413OnceWithTheGuidance(t *testing.T) {
 
 // C1: a server that answers 404 to the read predates it, and its limit is the
 // endpoint's 50,000,000 bytes; a read that fails with a 5xx falls back to the
-// default 200,000,000. Either way the CLI says which limit it used, and a body
+// default 90,000,000. Either way the CLI says which limit it used, and a body
 // under it is uploaded.
 func TestUploadLimitWhenTheServerDoesNotPublishIt(t *testing.T) {
 	for _, verb := range uploadVerbs {
@@ -266,7 +266,7 @@ func TestUploadLimitWhenTheServerDoesNotPublishIt(t *testing.T) {
 			want   []string
 		}{
 			{"404, a server that predates the read", 0, []string{"50,000,000 bytes", "predates"}},
-			{"503, the read failed", http.StatusServiceUnavailable, []string{"200,000,000 bytes", "assuming"}},
+			{"503, the read failed", http.StatusServiceUnavailable, []string{"90,000,000 bytes", "assuming"}},
 		} {
 			t.Run(verb.name+"/"+tc.name, func(t *testing.T) {
 				s := newLifecycleStub(t)
