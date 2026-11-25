@@ -28,7 +28,7 @@ const (
 	legacyUploadLimitBytes int64 = 50_000_000
 	// defaultUploadLimitBytes is the limit a server with the read has by
 	// default; assumed when the read fails.
-	defaultUploadLimitBytes int64 = 90_000_000
+	defaultUploadLimitBytes int64 = 200_000_000
 	// largestDirectoriesShown is how many top-level directories a size
 	// refusal lists.
 	largestDirectoriesShown = 10

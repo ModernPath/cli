@@ -474,12 +474,12 @@ differs from the imported one.
 `import --local` and `source push` upload the tree as one zip. `--max-size`
 (MiB, default 100) bounds the compressed zip, not the files before
 compression. Before sending, both commands read the server's upload limit
-(`GET /api/import/capabilities`, 90,000,000 bytes by default) and compare the
+(`GET /api/import/capabilities`, 200,000,000 bytes by default) and compare the
 whole request body with it. A body that does not fit is not sent: the command
 prints the zip size, the limit, the ten largest top-level directories by
 compressed size and an `--exclude` example, and exits non-zero. A server that
 answers 404 to the read predates it and accepts 50,000,000 bytes; when the
-read fails the CLI assumes 90,000,000 bytes. Either way it prints the limit it
+read fails the CLI assumes 200,000,000 bytes. Either way it prints the limit it
 used. A `413` from the server prints the same guidance once and exits
 non-zero.
 
