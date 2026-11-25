@@ -3,10 +3,8 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -55,7 +53,9 @@ ingests it, computes its revision and reports whether it changed.
 --max-size bounds the compressed zip. Before uploading, the request is
 compared with the server's upload limit; one that does not fit is refused
 without sending, with the zip size, the limit, the largest top-level
-directories and an --exclude example.
+directories and an --exclude example. A server that stores sources in cloud
+storage takes the zip directly there, in chunks: without --max-size the
+server's direct upload limit bounds the zip instead of 100 MiB.
 
 A server refusal — the system is being analysed or its documentation
 updated, or the repository is linked to a git provider the platform
@@ -82,12 +82,13 @@ Examples:
 			return reportFailure(err)
 		}
 		opts := sourcePushOptions{
-			Exclude:     sourcePushExclude,
-			Keep:        sourcePushKeep,
-			MaxSizeMB:   sourcePushMaxSizeMB,
-			NoGitignore: sourcePushNoIgnore,
-			JSON:        sourcePushJSON,
-			Root:        root,
+			Exclude:      sourcePushExclude,
+			Keep:         sourcePushKeep,
+			MaxSizeMB:    sourcePushMaxSizeMB,
+			NoGitignore:  sourcePushNoIgnore,
+			MaxSizeGiven: cmd.Flags().Changed("max-size"),
+			JSON:         sourcePushJSON,
+			Root:         root,
 		}
 		if err := sourcePush(cfg, opts, os.Stdout); err != nil {
 			return reportFailure(err)
@@ -112,7 +113,10 @@ type sourcePushOptions struct {
 	Keep        []string
 	MaxSizeMB   int
 	NoGitignore bool
-	JSON        bool
+	// MaxSizeGiven is whether --max-size was given: without it a direct
+	// upload is bounded by the server's direct_upload.max_bytes (SR-5075-0).
+	MaxSizeGiven bool
+	JSON         bool
 	// Root is the tree to pack: the directory the binding lives in, never
 	// merely the working directory (see pushRoot). Empty means the working
 	// directory, for callers that resolved it already.
@@ -209,33 +213,13 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 	pushURL := fmt.Sprintf("%s/api/systems/%d/repositories/%d/source-archive", client.baseURL, cfg.SystemID, repositoryID)
 
 	// The server ingests the archive and decides whether it changes source.
-	archive, err := zipFiles(files)
+	// SR-5075-0: the zip is built in a temporary file, hashed as it is written.
+	archive, err := packZip(files)
 	if err != nil {
 		return err
 	}
-	// REQ-CROSS-500: --max-size bounds the zip; the body must fit the
-	// server's upload limit before anything is sent.
-	sizes := uploadSizes{command: "modernpath source push", zip: archive.Bytes()}
-	if int64(archive.Len()) > int64(opts.MaxSizeMB)*1024*1024 {
-		return sizes.overMaxSize(opts.MaxSizeMB)
-	}
-	var body bytes.Buffer
-	form := multipart.NewWriter(&body)
-	for key, value := range gitRevisionMetadata(root) {
-		_ = form.WriteField(key, value)
-	}
-	_ = form.WriteField("captured_at", time.Now().UTC().Format(time.RFC3339))
-	part, err := form.CreateFormFile("file", "source.zip")
-	if err != nil {
-		return err
-	}
-	if _, err := part.Write(archive.Bytes()); err != nil {
-		return err
-	}
-	if err := form.Close(); err != nil {
-		return err
-	}
-	sizes.body = int64(body.Len())
+	defer archive.Close()
+	sizes := uploadSizes{command: "modernpath source push", zip: archive}
 	capabilities, err := readUploadCapabilities(client)
 	if err != nil {
 		return err
@@ -244,15 +228,37 @@ func sourcePush(cfg *config.Config, opts sourcePushOptions, out io.Writer) error
 	if limit.note != "" {
 		printWarning("%s\n", limit.note)
 	}
-	if sizes.body > limit.bytes {
-		return sizes.overLimit(limit.bytes)
+	// REQ-CROSS-500: --max-size bounds the zip, or direct_upload.max_bytes
+	// when the flag is not given (SR-5075-0); the body must fit the server's
+	// upload limit before anything is sent.
+	if err := uploadZipBound(opts.MaxSizeMB, opts.MaxSizeGiven, capabilities).check(sizes); err != nil {
+		return err
 	}
-	fmt.Fprintf(progress, "pushing %d files (%.2f MB)\n", len(files), float64(archive.Len())/(1024*1024))
-	result, err := postPush(client, pushURL, form.FormDataContentType(), &body)
-	var tooLarge bodyTooLargeError
-	if errors.As(err, &tooLarge) {
-		return sizes.refused(tooLarge.limitOr(limit.bytes))
+	revision := gitRevisionMetadata(root)
+	capturedAt := time.Now().UTC().Format(time.RFC3339)
+	form := [][2]string{}
+	complete := map[string]any{"captured_at": capturedAt}
+	for key, value := range revision {
+		form = append(form, [2]string{key, value})
+		complete[key] = value
 	}
+	form = append(form, [2]string{"captured_at", capturedAt})
+	fmt.Fprintf(progress, "pushing %d files (%.2f MB)\n", len(files), float64(archive.size)/(1024*1024))
+	raw, err := sourceSend{
+		client:   client,
+		caps:     capabilities,
+		sizes:    sizes,
+		postURL:  pushURL,
+		fileName: "source.zip",
+		form:     form,
+		complete: complete,
+		session:  map[string]any{"system_id": cfg.SystemID, "repository_id": repositoryID},
+		failure:  "push failed",
+	}.send()
+	if err != nil {
+		return err
+	}
+	result, err := parsePushResult(raw)
 	if err != nil {
 		return err
 	}
@@ -281,22 +287,10 @@ func reportPush(out io.Writer, result *pushResult, jsonOutput bool) error {
 	return nil
 }
 
-func postPush(client *authenticatedClient, url, contentType string, body io.Reader) (*pushResult, error) {
-	resp, err := client.Post(url, contentType, body)
-	if err != nil {
-		return nil, fmt.Errorf("push failed: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusRequestEntityTooLarge {
-		return nil, bodyTooLarge(raw)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, pushRefusal(resp, raw)
-	}
+func parsePushResult(raw []byte) (*pushResult, error) {
 	var result pushResult
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("unexpected response %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return nil, fmt.Errorf("unexpected response: %s", strings.TrimSpace(string(raw)))
 	}
 	result.raw = raw
 	return &result, nil

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- `import --local` and `source push` upload the zip directly to Google Cloud
+  Storage when the server offers `direct_upload` in `GET
+  /api/import/capabilities` (SR-5075-0), so a codebase larger than the 90 MB
+  request limit can be uploaded. The CLI builds the zip in a temporary file,
+  sends its size and MD5 to `POST /api/source-uploads`, uploads it in 16 MiB
+  chunks to the resumable session the server opens, resumes an interrupted
+  chunk from the range storage reports, and completes the import or push with
+  a JSON body naming the upload. Without `--max-size` the zip is then bounded
+  by the server's `direct_upload.max_bytes` (500,000,000 bytes by default)
+  instead of 100 MiB, and a larger one is refused with `the zip is {size} and
+  the server accepts at most {size} for a direct upload; nothing was
+  uploaded`. When the storage host cannot be reached, or something on the way
+  answers for it, a zip that fits the server's upload limit is posted as
+  before, with a warning; a larger one is refused. A server without
+  `direct_upload` gets the multipart post as before. Release the CLI only once
+  the server that offers `direct_upload` is live.
+- A file in the tree that cannot be read (no permission, a dangling link, or
+  removed while the zip is built) now stops `import --local` and `source push`
+  before anything is sent, naming the file and an `--exclude` that leaves it
+  out. Before, it was packed as an empty file, and a push replaced the
+  stored copy with an empty one.
+
 - `modernization record` sends the commit's details as `commit_details`: the
   first line of its message cut to 200 characters (code points), its author's
   name cut to 255 and its author date, read with git from the folder it runs

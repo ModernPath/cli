@@ -424,8 +424,9 @@ The command packs the directory with the import filters (skip lists,
 the selected archive. The server ingests it, computes the source revision and
 reports whether the source changed. The checkout's git head, branch and dirty
 flag travel as metadata and show on the system's Define page beside the
-revision and time it was received. The CLI does not hash the local tree or
-compare a local digest with the server before uploading.
+revision and time it was received. The CLI does not compare a local digest
+with the server before uploading; it hashes the zip only for a direct upload
+(see Upload size).
 
 The command never prompts. A server refusal — the system is being analysed or
 its documentation updated, or the repository is linked to a git provider
@@ -469,6 +470,10 @@ sign-in credential) and the version control directories. Pass the same
 `--exclude` and `--keep` to `source push` as to the import, or the pushed tree
 differs from the imported one.
 
+A file in the tree that cannot be read (no permission, or removed while the
+zip is built) stops the command before anything is sent, naming the file and
+the `--exclude` that leaves it out.
+
 #### Upload size
 
 `import --local` and `source push` upload the tree as one zip. `--max-size`
@@ -482,6 +487,26 @@ answers 404 to the read predates it and accepts 50,000,000 bytes; when the
 read fails the CLI assumes 90,000,000 bytes. Either way it prints the limit it
 used. A `413` from the server prints the same guidance once and exits
 non-zero.
+
+When the capabilities read offers `direct_upload` (the server stores sources
+in Google Cloud Storage), the zip goes directly to storage instead
+(SR-5075-0). The CLI builds the zip in a temporary file, sends its size
+and md5 to `POST /api/source-uploads`, uploads it in 16 MiB chunks to
+the resumable session the server opens, continues from the range storage
+reports after an interrupted chunk, and completes the import or push through
+the same endpoint with a JSON body naming the upload. The output is the same.
+Without `--max-size` the zip is then bounded by `direct_upload.max_bytes`
+instead of the 100 MiB default; a given `--max-size` still applies. When
+`storage.googleapis.com` cannot be reached, or something on the way (a proxy
+or firewall) answers for it before storage has accepted any of the zip, a zip
+that fits the upload limit is posted as before; a larger one is refused. A
+connection that breaks while a chunk is sent, the first one included, is
+resumed from the range storage reports. Without `direct_upload` the
+commands post multipart as described above.
+The server deletes the uploaded object when the import or push completes it,
+and refuses a complete with 404 `upload_not_found` (missing, not the
+caller's, or completed already), 422 `size_mismatch` or `checksum_mismatch`, or 503; the endpoint
+contract is in `docs/07-api-contracts.md` of the workspace.
 
 ### Run and follow the analysis
 

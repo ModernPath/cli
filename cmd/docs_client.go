@@ -61,6 +61,28 @@ func (c *authenticatedClient) get(url string, closing bool) (*http.Response, err
 }
 
 func (c *authenticatedClient) Post(url string, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := c.newPost(url, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	return c.client.Do(req)
+}
+
+// PostLength posts a streamed body of a known length with its
+// Content-Length; Post would send a reader of unknown length chunked. body
+// answers a fresh reader each time, so the transport can send it again on a
+// connection that closed before the request went out.
+func (c *authenticatedClient) PostLength(url string, contentType string, body func() io.Reader, length int64) (*http.Response, error) {
+	req, err := c.newPost(url, contentType, body())
+	if err != nil {
+		return nil, err
+	}
+	req.ContentLength = length
+	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(body()), nil }
+	return c.client.Do(req)
+}
+
+func (c *authenticatedClient) newPost(url string, contentType string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
 		return nil, err
@@ -71,7 +93,7 @@ func (c *authenticatedClient) Post(url string, contentType string, body io.Reade
 	if err := platform.Authorize(req, c.token); err != nil {
 		return nil, err
 	}
-	return c.client.Do(req)
+	return req, nil
 }
 
 func (c *authenticatedClient) Delete(url string) (*http.Response, error) {

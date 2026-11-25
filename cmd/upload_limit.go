@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"archive/zip"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,11 +34,13 @@ const (
 )
 
 // uploadCapabilities is what the one capabilities read says (D2): the upload
-// limit, and the app address UI links open (REQ-CROSS-502), empty when the
-// server names none or one that is not a web address.
+// limit, the app address UI links open (REQ-CROSS-502), empty when the
+// server names none or one that is not a web address, and the direct upload
+// offer (SR-5075-0), nil when the server makes none.
 type uploadCapabilities struct {
 	limit  uploadLimit
 	appURL string
+	direct *directUploadOffer
 }
 
 // uploadLimit is the largest request body the upload routes accept. note
@@ -79,11 +80,19 @@ func readUploadCapabilities(client *authenticatedClient) (uploadCapabilities, er
 	var answer struct {
 		UploadLimitBytes int64  `json:"upload_limit_bytes"`
 		AppURL           string `json:"app_url"`
+		DirectUpload     *struct {
+			MaxBytes int64 `json:"max_bytes"`
+		} `json:"direct_upload"`
 	}
-	if err := json.Unmarshal(raw, &answer); err != nil || answer.UploadLimitBytes <= 0 {
-		return uploadCapabilities{limit: assumedUploadLimit("the answer has no upload_limit_bytes"), appURL: webAddress(answer.AppURL)}, nil
+	err = json.Unmarshal(raw, &answer)
+	capabilities := uploadCapabilities{limit: uploadLimit{bytes: answer.UploadLimitBytes}, appURL: webAddress(answer.AppURL)}
+	if err != nil || answer.UploadLimitBytes <= 0 {
+		capabilities.limit = assumedUploadLimit("the answer has no upload_limit_bytes")
 	}
-	return uploadCapabilities{limit: uploadLimit{bytes: answer.UploadLimitBytes}, appURL: webAddress(answer.AppURL)}, nil
+	if err == nil && answer.DirectUpload != nil && answer.DirectUpload.MaxBytes > 0 {
+		capabilities.direct = &directUploadOffer{maxBytes: answer.DirectUpload.MaxBytes}
+	}
+	return capabilities, nil
 }
 
 // webAddress is raw when it is an absolute http or https URL with a host and
@@ -158,7 +167,7 @@ func bodyTooLarge(raw []byte) bodyTooLargeError {
 // uploadSizes is what a size refusal reports about one upload.
 type uploadSizes struct {
 	command string // the command an --exclude example repeats
-	zip     []byte
+	zip     *packedZip
 	body    int64 // the multipart request body; 0 before it is built
 }
 
@@ -166,28 +175,35 @@ type uploadSizes struct {
 func (u uploadSizes) overLimit(limit int64) error {
 	return fmt.Errorf("the upload does not fit: the request body would be %s (the zip is %s) "+
 		"and the server accepts at most %s; nothing was uploaded%s",
-		byteCount(u.body), byteCount(int64(len(u.zip))), byteCount(limit), u.guidance(""))
+		byteCount(u.body), byteCount(u.zip.size), byteCount(limit), u.guidance(""))
 }
 
 // refused renders a 413 the server sent.
 func (u uploadSizes) refused(limit int64) error {
 	return fmt.Errorf("the server refused the upload as too large (413): the request body was %s (the zip is %s) "+
 		"and the server accepts at most %s%s",
-		byteCount(u.body), byteCount(int64(len(u.zip))), byteCount(limit), u.guidance(""))
+		byteCount(u.body), byteCount(u.zip.size), byteCount(limit), u.guidance(""))
 }
 
 // overMaxSize refuses a zip larger than --max-size.
 func (u uploadSizes) overMaxSize(maxSizeMB int) error {
 	return fmt.Errorf("the zip is %s, over --max-size %d MiB (%s bytes); nothing was uploaded%s",
-		byteCount(int64(len(u.zip))), maxSizeMB, groupDigits(int64(maxSizeMB)*1024*1024),
+		byteCount(u.zip.size), maxSizeMB, groupDigits(int64(maxSizeMB)*1024*1024),
 		u.guidance(", or raise --max-size"))
+}
+
+// overDirectMax refuses a zip larger than the server's direct upload limit
+// (SR-5075-0), which bounds the zip when --max-size is not given.
+func (u uploadSizes) overDirectMax(limit int64) error {
+	return fmt.Errorf("the zip is %s and the server accepts at most %s for a direct upload; nothing was uploaded%s",
+		byteCount(u.zip.size), byteCount(limit), u.guidance(""))
 }
 
 // guidance lists the largest top-level directories of the zip and an
 // --exclude example built from the largest one.
 func (u uploadSizes) guidance(alternative string) string {
 	var b strings.Builder
-	shares := largestTopLevel(u.zip, largestDirectoriesShown)
+	shares := largestTopLevel(u.zip, u.zip.size, largestDirectoriesShown)
 	example := "<directory>"
 	if len(shares) > 0 {
 		b.WriteString("\n  Largest top-level directories in the zip (compressed):")
@@ -226,8 +242,8 @@ func (s topLevelShare) label() string {
 
 // largestTopLevel sums the compressed size of the zip's entries by top-level
 // directory, from the zip itself rather than a second walk of the tree.
-func largestTopLevel(data []byte, n int) []topLevelShare {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+func largestTopLevel(data io.ReaderAt, size int64, n int) []topLevelShare {
+	reader, err := zip.NewReader(data, size)
 	if err != nil {
 		return nil
 	}

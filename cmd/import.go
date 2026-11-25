@@ -2,11 +2,10 @@ package cmd
 
 import (
 	"archive/zip"
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/modernpath/cli/internal/config"
-	"github.com/modernpath/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +34,10 @@ var (
 const (
 	defaultMaxSizeMB = 100 // 100 MiB default max zip size
 	// REQ-CROSS-500 AC3: --max-size bounds the zip as uploaded.
-	maxSizeUsage = "Maximum size of the compressed zip in MiB (the server's upload limit applies as well)"
+	// SR-5075-0: with a direct upload the server's direct_upload.max_bytes
+	// replaces the default.
+	maxSizeUsage = "Maximum size of the compressed zip in MiB; without it, a server that offers a direct upload " +
+		"to storage sets the bound (the server's upload limit applies as well)"
 	// REQ-CROSS-501 AC2/AC3: the matching matchesExclude does, and --keep.
 	excludeUsage = "Leave out matching paths (repeatable). Without /, a name or glob matches a file or directory " +
 		"at any depth (fixtures, *.min.js); with /, a path glob matches from the top, * within one directory " +
@@ -75,12 +76,14 @@ Local upload flags:
                         any depth
   --keep <name>         upload a directory the built-in filter skips
   --no-gitignore        upload files that .gitignore excludes
-  --max-size <MiB>      the largest compressed zip to upload
+  --max-size <MiB>      the largest compressed zip to upload (default 100,
+                        or the server's direct upload limit)
 
 The scan report lists what each filter left out. Before sending, the request
 is compared with the server's upload limit; one that does not fit is refused
 with the zip size, the limit, the largest top-level directories and an
---exclude example.
+--exclude example. A server that stores sources in cloud storage takes the
+zip directly there, in chunks, and resumes an interrupted upload.
 
 Examples:
   modernpath import                          # summary, confirmation, upload
@@ -393,31 +396,37 @@ func fileCount(n int) string {
 	return fmt.Sprintf("%d files", n)
 }
 
-// zipFiles packs exactly the given files, in memory. The set was decided by
-// collectImportFiles; zipping walks that list rather than the tree again, so
-// the archive cannot disagree with the files whose size was checked.
-func zipFiles(files []importFile) (*bytes.Buffer, error) {
-	var zipBuffer bytes.Buffer
-	zipWriter := zip.NewWriter(&zipBuffer)
+// writeZip writes the zip of exactly the given files to w. The set was decided
+// by collectImportFiles; zipping walks that list rather than the tree again,
+// so the archive cannot disagree with the files whose size was checked. A file
+// that cannot be read stops it: packed empty or left out, it would replace the
+// source's copy.
+func writeZip(w io.Writer, files []importFile) error {
+	zipWriter := zip.NewWriter(w)
 	for _, c := range files {
-		writer, err := zipWriter.Create(c.rel)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create zip: %w", err)
-		}
 		file, err := os.Open(c.abs)
 		if err != nil {
-			continue // Skip files we can't read
+			return fmt.Errorf("cannot read %s (%w); exclude it with --exclude %q", c.rel, unwrapPathError(err), c.rel)
 		}
-		_, err = io.Copy(writer, file)
+		writer, err := zipWriter.Create(c.rel)
+		if err == nil {
+			_, err = io.Copy(writer, file)
+		}
 		file.Close()
 		if err != nil {
-			return nil, fmt.Errorf("failed to create zip: %w", err)
+			return fmt.Errorf("failed to create zip: %w", err)
 		}
 	}
-	if err := zipWriter.Close(); err != nil {
-		return nil, err
+	return zipWriter.Close()
+}
+
+// unwrapPathError drops the absolute path an *os.PathError repeats.
+func unwrapPathError(err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
 	}
-	return &zipBuffer, nil
+	return err
 }
 
 // importViaUpload packs sourceDir, checks the zip against --max-size and the
@@ -447,37 +456,20 @@ func importViaUpload(baseURL, token, name, sourceDir string, output ...*cobra.Co
 
 	printInfo("Creating zip archive...\n")
 
-	zipBuffer, err := zipFiles(files)
+	// SR-5075-0: the zip is built in a temporary file, hashed as it is written.
+	archive, err := packZip(files)
 	if err != nil {
 		return reportFailure(err)
 	}
+	defer archive.Close()
 	if !machine {
-		fmt.Printf("  Zip size: %s\n", byteCount(int64(zipBuffer.Len())))
+		fmt.Printf("  Zip size: %s\n", byteCount(archive.size))
 	}
-	sizes := uploadSizes{command: "modernpath import --local", zip: zipBuffer.Bytes()}
-	if int64(zipBuffer.Len()) > int64(importMaxSizeMB)*1024*1024 {
-		return reportFailure(sizes.overMaxSize(importMaxSizeMB))
-	}
+	sizes := uploadSizes{command: "modernpath import --local", zip: archive}
 
-	// Create multipart request
-	var requestBody bytes.Buffer
-	mpWriter := multipart.NewWriter(&requestBody)
-
-	// Add name field
-	mpWriter.WriteField("name", name)
-	mpWriter.WriteField("import_type", "upload")
-
-	// Add zip file
-	part, err := mpWriter.CreateFormFile("file", name+".zip")
-	if err != nil {
-		return reportFailure(fmt.Errorf("failed to create form: %w", err))
-	}
-	part.Write(zipBuffer.Bytes())
-	mpWriter.Close()
-	sizes.body = int64(requestBody.Len())
-
-	// One read gives the upload limit and the app address the next steps
-	// link to (D2).
+	// One read gives the upload limit, the direct upload offer and the app
+	// address the next steps link to (D2).
+	uploadClient := &authenticatedClient{client: &http.Client{Timeout: 300 * time.Second}, token: token, baseURL: baseURL}
 	capabilities, err := readUploadCapabilities(&authenticatedClient{client: &http.Client{Timeout: 30 * time.Second}, token: token, baseURL: baseURL})
 	if err != nil {
 		return reportFailure(err)
@@ -486,34 +478,25 @@ func importViaUpload(baseURL, token, name, sourceDir string, output ...*cobra.Co
 	if limit.note != "" {
 		printWarning("%s\n", limit.note)
 	}
-	if sizes.body > limit.bytes {
-		return reportFailure(sizes.overLimit(limit.bytes))
+	maxSizeGiven := cmd != nil && cmd.Flags().Changed("max-size")
+	if err := uploadZipBound(importMaxSizeMB, maxSizeGiven, capabilities).check(sizes); err != nil {
+		return reportFailure(err)
 	}
 
 	printInfo("Uploading to ModernPath...\n")
 
-	req, _ := http.NewRequest("POST", baseURL+"/api/systems/import", &requestBody)
-	platform.Prepare(req)
-	req.Header.Set("Content-Type", mpWriter.FormDataContentType())
-	if err := platform.Authorize(req, token); err != nil {
-		return reportFailure(err)
-	}
-
-	// Longer timeout for upload
-	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Do(req)
+	body, err := sourceSend{
+		client:   uploadClient,
+		caps:     capabilities,
+		sizes:    sizes,
+		postURL:  baseURL + "/api/systems/import",
+		fileName: name + ".zip",
+		form:     [][2]string{{"name", name}, {"import_type", "upload"}},
+		complete: map[string]any{"name": name},
+		failure:  "upload failed",
+	}.send()
 	if err != nil {
-		return reportFailure(fmt.Errorf("upload failed: %w", err))
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode == http.StatusRequestEntityTooLarge {
-		return reportFailure(sizes.refused(bodyTooLarge(body).limitOr(limit.bytes)))
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return reportFailure(pushRefusal(resp, body))
+		return reportFailure(err)
 	}
 
 	var result struct {

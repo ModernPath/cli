@@ -59,11 +59,12 @@ func packedZipSize(t *testing.T, dir string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive, err := zipFiles(files)
+	archive, err := packZip(files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return archive.Len()
+	defer archive.Close()
+	return int(archive.size)
 }
 
 func capabilities(limit int) map[string]any {
