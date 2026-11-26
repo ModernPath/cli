@@ -77,7 +77,7 @@ func newEpicGatesCommand(load func() (*cliEnv, error)) *cobra.Command {
 		{"recover-legacy", "/recover-legacy", "Apply an explicit human decision to return an active legacy plan to planning", true},
 	} {
 		op := op
-		c := &cobra.Command{Use: op.name + " <epic-id>", Short: op.help, Args: cobra.ExactArgs(1)}
+		c := &cobra.Command{Use: op.name + " <epic-id>", Short: op.help, Long: epicGateOperationHelp[op.name], Args: cobra.ExactArgs(1)}
 		c.Flags().Bool("json", false, "Emit JSON")
 		if op.name == "review-bundle" {
 			c.Flags().String("phase", "", "Include Epic context, reviews and readiness for this phase")
@@ -192,6 +192,33 @@ func epicCheckGitProvenance(override string, explicit bool) (map[string]any, err
 		provenance["git_dirty"] = len(strings.TrimSpace(string(status))) > 0
 	}
 	return provenance, nil
+}
+
+// epicGateOperationHelp is the long help of a gates subcommand that has one.
+var epicGateOperationHelp = map[string]string{
+	// The finding shape is what Core.Planning.EpicPhaseRecords keeps.
+	"review": `Record an attributable independent plan or implementation review.
+
+The file (--file, or standard input) is one JSON object:
+
+  {"phase": "plan" | "implementation",
+   "reviewer_context": "<the separate context the review ran in>",
+   "criteria": ["<each active criterion UUID of the plan, once>"],
+   "obligations": ["<each obligation id in verification.criteria, once>"],
+   "reason": "<the review's conclusion>",
+   "findings": [{"severity": "material" | "note", "description": "<what is wrong and what to change>"}],
+   "scope_implemented": true | false}
+
+A finding has two fields: severity, material or note, and a description that
+is not empty. The server gives each finding an id and stores no other field.
+Use "findings": [] when there are none. Example finding:
+
+  {"severity": "material", "description": "Criterion 'Order total' has no test for an order with no items. Add a test case and its verifies trace."}
+
+An unresolved material finding blocks the gates until epics gates resolve
+records its resolution. A plan review needs a reviewer_context other than the
+plan's author_context. An implementation review that confirms all approved
+scope sends "scope_implemented": true. Any other top-level field is refused.`,
 }
 
 const epicGatesHelp = `Check Epic readiness and record independent reviews and human decisions.

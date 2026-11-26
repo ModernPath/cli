@@ -381,6 +381,27 @@ func TestInitSignedInWithOneSystemBindsIt(t *testing.T) {
 	}
 }
 
+// init ends by naming the next command. Before 'modernpath install' runs there
+// is no AGENTS.md telling an agent what to read, so the receipt alone left
+// the order to be learned from install --help.
+func TestInitNamesInstallAsTheNextStep(t *testing.T) {
+	srv := newInitFakeServer(t)
+	root := initTestSetup(t, srv)
+	writeInitAuth(t, root, initGoodToken, time.Now().Add(time.Hour))
+
+	out, err := runCapturing(t, func() error { return initCmd.RunE(initCmd, nil) })
+	if err != nil {
+		t.Fatalf("signed-in init with one system: %v\n%s", err, out)
+	}
+	want := "Next: run 'modernpath install' to add the delivery process and agent instructions to this checkout."
+	if !strings.Contains(out, want) {
+		t.Fatalf("init output must end with %q, got:\n%s", want, out)
+	}
+	if idx := strings.Index(out, want); idx < strings.Index(out, "operation: initialized") {
+		t.Fatalf("the next step must follow the receipt, got:\n%s", out)
+	}
+}
+
 func TestInitReservedSlugUsesNestedRootAndPreservesCLIState(t *testing.T) {
 	srv := newInitFakeServer(t, map[string]any{"id": 1, "name": "Runtime", "slug": "runtime"})
 	root := initTestSetup(t, srv)

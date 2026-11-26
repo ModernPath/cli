@@ -5,12 +5,11 @@ package cmd
 // release_closed for `roadmap apply`, with and without --dry-run, when a
 // set_selection names an Initiative under a released or archived Modernization
 // Release and nothing was written; its remedy says the Initiative's decisions
-// can no longer change and that an Initiative under an open Release can still
-// take one of its legacy requirements that no approved Epic or written
-// modernizes trace holds (review 3's note 10: by a move). The row for
-// `roadmap accept-lower-level` stays as it is. Before the build the only
-// release_closed key was inside that row, so glossaryRow finds no row keyed
-// release_closed and the test fails.
+// can no longer change and that another Initiative cannot take them with
+// `move: true`, because they stay with the closed Release (Epic 529, E1b: the
+// product owner's word of 4 Nov 2026 excludes the move the remedy offered
+// before). The row for `roadmap accept-lower-level` stays as it is. Before
+// Epic 529 the remedy offered the move, so cell 4 fails.
 
 import (
 	"strings"
@@ -29,7 +28,7 @@ func TestH5_GlossaryNamesReleaseClosedForRoadmapApplysSetSelection(t *testing.T)
 		"`release_closed`",
 		"server 422",
 		"`roadmap apply`, with or without `--dry-run`, for a `set_selection` that names an Initiative under a released or archived Modernization Release; nothing was written",
-		"this Initiative's decisions can no longer change; an Initiative under an open Release can still take one of its legacy requirements that no approved Epic or written modernizes trace holds, with a row of `move: true` in that Initiative's `set_selection`",
+		"this Initiative's decisions can no longer change, and another Initiative cannot take them with `move: true`: they stay with the closed Release",
 	}
 	if len(cells) != len(want) {
 		t.Fatalf("the release_closed row has %d cells, want %d: %q", len(cells), len(want), cells)

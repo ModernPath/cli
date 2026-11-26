@@ -11,7 +11,11 @@ package cmd
 //     which rule admits it;
 //   - `roadmap apply`, with or without --dry-run, prints a held row of a
 //     refused set_selection with its title, its holder, the person who
-//     approved it and who can act;
+//     approved it and who can act, unless the row says move and the
+//     Initiative that holds the row is stored in a closed Modernization
+//     Release: it then prints the selection_row_closed sentence (Epic 529,
+//     E1b, ee7c0a33's corrected clause; the command already printed a row's
+//     message, so the row passed as soon as it was added);
 //   - `roadmap show` prints drafted and built after B3's decided count on each
 //     context line of a Modernization Release and after each replacing
 //     Initiative's keep, change and drop counts (contract §7);
@@ -221,7 +225,10 @@ func TestC1_84b06f8f_CLIGuideDescribesTheModernizesTrace(t *testing.T) {
 
 // A refused set_selection whose rows a live trace holds (contract §6): an Epic
 // holds row 1, a written trace's new requirement row 2; rows 3 and 4 are moves
-// of rows another Initiative holds, held by an Epic and by a requirement.
+// of rows another Initiative holds, held by an Epic and by a requirement. Row 5
+// (Epic 529, E1b) is a move of a held row whose Initiative is stored in a
+// closed Modernization Release, refused with selection_row_closed and its
+// sentence, with no holder.
 const c1HeldSelectionError = `{"index":1,"op":"set_selection","reason":"selection_rows_refused","rows":[
  {"position":1,"requirement_kind":"user_requirement","requirement_id":"a1a1a1a1-1111-4111-8111-111111111111","title":"Export invoices","reason":"selection_row_held",
   "holder":{"kind":"epic","id":77,"title":"Billing export","approver":{"id":5,"name":"Ada Lovelace"}}},
@@ -232,14 +239,18 @@ const c1HeldSelectionError = `{"index":1,"op":"set_selection","reason":"selectio
   "holder":{"kind":"epic","id":77,"title":"Billing export","approver":{"id":5,"name":"Ada Lovelace"}}},
  {"position":4,"requirement_kind":"system_requirement","requirement_id":"e5e5e5e5-5555-4555-8555-555555555555","title":"Print receipts","reason":"selection_row_held",
   "held_by":{"id":"c3c3c3c3-3333-4333-8333-333333333333","title":"Provider connections"},
-  "holder":{"kind":"requirement","id":"f6f6f6f6-6666-4666-8666-666666666666","title":"UR-12 Remind customers","approver":{"id":6,"name":"Grace Hopper"}}}]}`
+  "holder":{"kind":"requirement","id":"f6f6f6f6-6666-4666-8666-666666666666","title":"UR-12 Remind customers","approver":{"id":6,"name":"Grace Hopper"}}},
+ {"position":5,"requirement_kind":"user_requirement","requirement_id":"a7a7a7a7-7777-4777-8777-777777777777","title":"Shift import","reason":"selection_row_closed",
+  "message":"UR-41-1 Shift import stays with Scheduling: its decision was recorded when field-planner-03 closed, and it stays with that closed Release.",
+  "held_by":{"id":"c8c8c8c8-8888-4888-8888-888888888888","title":"Scheduling"}}]}`
 
 const c1HeldSelectionPlanFile = `{"request_id":"c1-held-rows","operations":[
  {"op":"set_selection","line_id":"66666666-6666-4666-8666-666666666666","rows":[
   {"requirement_kind":"user_requirement","requirement_id":"a1a1a1a1-1111-4111-8111-111111111111","outcome":"drop","reason":"The bank takes it now."},
   {"requirement_kind":"system_requirement","requirement_id":"b2b2b2b2-2222-4222-8222-222222222222","outcome":"drop","reason":"The bank takes it now."},
   {"requirement_kind":"user_requirement","requirement_id":"d4d4d4d4-4444-4444-8444-444444444444","outcome":"keep","move":true},
-  {"requirement_kind":"system_requirement","requirement_id":"e5e5e5e5-5555-4555-8555-555555555555","outcome":"keep","move":true}]}]}`
+  {"requirement_kind":"system_requirement","requirement_id":"e5e5e5e5-5555-4555-8555-555555555555","outcome":"keep","move":true},
+  {"requirement_kind":"user_requirement","requirement_id":"a7a7a7a7-7777-4777-8777-777777777777","outcome":"keep","move":true}]}]}`
 
 func TestC1_84b06f8f_ApplyPrintsAHeldRowWithItsHolder(t *testing.T) {
 	cases := []struct {
@@ -268,6 +279,8 @@ func TestC1_84b06f8f_ApplyPrintsAHeldRowWithItsHolder(t *testing.T) {
 			"row 3: Archive statements cannot move to this initiative: the initiative Provider connections holds its decision, and the Epic Billing export, approved by Ada Lovelace, relies on it. Ada Lovelace can return that Epic to planning."},
 		{"row 4, a move of a row a written trace's new requirement holds",
 			"row 4: Print receipts cannot move to this initiative: the initiative Provider connections holds its decision, and UR-12 Remind customers, approved by Grace Hopper, modernizes it. A later Epic that holds UR-12 Remind customers can retire that trace."},
+		{"row 5, a move of a decision of an Initiative under a closed Release (Epic 529)",
+			"row 5: UR-41-1 Shift import stays with Scheduling: its decision was recorded when field-planner-03 closed, and it stays with that closed Release."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

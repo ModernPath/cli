@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modernpath/cli/internal/config"
@@ -120,8 +121,9 @@ func TestBareAuthOnAHostWithoutAProfileDoesNotRunTheDeviceFlow(t *testing.T) {
 
 	bindWorkspaceTo(t, "https://legacy.example.test")
 	withEmptyStdin(t)
-	if err := runAuth(authCmd, nil); err != nil {
-		t.Fatalf("runAuth: %v", err)
+	// The empty prompt signs nothing in, so the command fails; the binding stays.
+	if err := runAuth(authCmd, nil); err == nil {
+		t.Fatal("runAuth with no token must fail")
 	}
 
 	cfg, err := config.ReadConfig()
@@ -130,6 +132,35 @@ func TestBareAuthOnAHostWithoutAProfileDoesNotRunTheDeviceFlow(t *testing.T) {
 	}
 	if cfg.APIURL != "https://legacy.example.test" {
 		t.Fatalf("API URL = %q, want the configured %q", cfg.APIURL, "https://legacy.example.test")
+	}
+}
+
+// A token prompt answered with nothing signs nothing in. It used to print
+// "Continuing without authentication" and exit 0, so a script or agent went on
+// unauthenticated and failed later with another message. The command fails,
+// stores no credential and names the flag that takes the token.
+func TestAuthWithoutATokenFailsAndNamesTheTokenFlag(t *testing.T) {
+	restore := stubZitadelLogin(func(ctx context.Context, p zitadel.Profile, out io.Writer, _ zitadel.Options) (*zitadel.Token, error) {
+		t.Fatal("the local server has no sign-in profile")
+		return nil, nil
+	})
+	defer restore()
+	withAuthFlags(t, false, false, "", "", true)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	withEmptyStdin(t)
+
+	err := runAuth(authCmd, nil)
+	if err == nil {
+		t.Fatal("auth --local with no token must exit non-zero")
+	}
+	for _, want := range []string{"no token given", "modernpath auth --local --token=<token>", config.LocalAPIURL} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to say %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".modernpath", "auth.json")); statErr == nil {
+		t.Fatal("auth with no token must store no credential")
 	}
 }
 

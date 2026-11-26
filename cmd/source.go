@@ -334,8 +334,9 @@ func fetchSourceState(client *authenticatedClient, systemID, repositoryID int) (
 	return &envelope.Data, nil
 }
 
-// The system's one repository with no URL; a system whose repositories are
-// all provider-linked is refused before anything is packed (AC5).
+// The system's one repository with no URL; a system with no repository, or
+// whose repositories are all provider-linked, is refused before anything is
+// packed (AC5).
 func resolveUploadRepository(client *authenticatedClient, systemID int) (int, error) {
 	resp, err := client.Get(fmt.Sprintf("%s/api/systems/%d", client.baseURL, systemID))
 	if err != nil {
@@ -367,9 +368,12 @@ func resolveUploadRepository(client *authenticatedClient, systemID int) (int, er
 	case 1:
 		return uploads[0], nil
 	case 0:
+		if len(system.Repositories) == 0 {
+			return 0, noRepositoryError(systemID)
+		}
 		return 0, fmt.Errorf("system %d has no upload repository: its repositories are linked to a git provider, which the platform refreshes itself (scheduled refresh)", systemID)
 	default:
-		return 0, fmt.Errorf("system %d has %d upload repositories; set repository_id in .modernpath/config.json", systemID, len(uploads))
+		return 0, fmt.Errorf("system %d has %d upload repositories and this checkout's binding names none of them. Run 'modernpath source push' in the checkout where 'modernpath import' created the repository: its binding names it", systemID, len(uploads))
 	}
 }
 

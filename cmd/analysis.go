@@ -622,7 +622,7 @@ func readRepositoryStatus(client *authenticatedClient, systemID, repositoryID in
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("repository %d was not found in system %d; check repository_id in .modernpath/config.json", repositoryID, systemID)
+		return nil, fmt.Errorf("system %d has no repository %d. If this checkout's binding names it, run 'modernpath init --force --system-id %d' to bind the checkout again without a recorded repository", systemID, repositoryID, systemID)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, pushRefusal(resp, raw)

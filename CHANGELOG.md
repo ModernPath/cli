@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+- `reverse-engineer record` records a new requirement sent with no context, or
+  a blank one, and no name without a context, as before Epic 340, and the
+  server no longer refuses it with `context_required`; a `context_name` sent
+  without a context is refused with `invalid_context`. A retried file with
+  empty context values reuses the requirements it recorded. In the System's
+  list of contexts (`requirements contexts`), a code's name is the one most of
+  its requirements with a name carry, and the code itself only when none of
+  them has a name, so a human name wins over requirements without one. The
+  help of `reverse-engineer record` and `requirements contexts`, the refusal
+  glossary and the CLI guide say so.
+- The help of `roadmap show` and the CLI guide no longer say that the
+  `--readiness` block uses the words of the Release page's Modernization
+  panel, which the Release page no longer has, nor that the block says the
+  legacy system has not been analysed yet: while the files cannot be read it
+  prints the read's message, which says why. What the command prints is
+  unchanged.
+- `auth --local`, and `auth` for a custom `--api-url`, exits non-zero when the
+  token prompt gets no token. It used to print "Continuing without
+  authentication" and exit 0, so a script went on unauthenticated. The error
+  says nothing was signed in and names the command with `--token=<token>`.
+- `init` ends with the next step: run `modernpath install` to add the delivery
+  process and agent instructions to the checkout.
+- `epics plan --help` and `epics plan save --help` state the three rules the
+  gates check on a plan's verification: one obligation per active criterion,
+  a `verifies` trace from each declared test to its criterion, and an
+  obligation for each applicable boundary. Another test may verify the same
+  criterion through its own trace, and completion needs a passing result of
+  each.
+- `epics gates review --help` shows the review file and the shape of a
+  finding, `{"severity": "material" | "note", "description": "..."}`, with an
+  example. The server stores no other field of a finding.
+- `epics list` with no Epics prints `No Epics in this System yet.` and the
+  create command, or `No Epics match these filters.`, on standard error. It
+  used to print nothing.
+- Core: the completion blocker for a requirement without an implements trace
+  says "Epic completion requires a current stored implements Trace" instead of
+  "Existing-behavior approval requires …" on an ordinary Epic. The entry
+  blocker of an existing-behavior Epic keeps its text.
+- `source push`, `analysis status`, `docs preview` and `docs refresh` on a
+  System with no repository, such as one made in the web app, say so and
+  name `modernpath import`, which creates a new System with the directory as
+  its repository. `source push` used to say the repositories were linked to a
+  git provider.
+- The same commands no longer advise a hand edit of `.modernpath/config.json`.
+  With several upload repositories they name the checkout where
+  `modernpath import` created the repository; a recorded repository the
+  System no longer has names `modernpath init --force --system-id <id>`.
+- A refused `releases activate` (`incumbent_has_unfinished_work`) also names
+  the dropped requirements that the close of an active in-place Modernization
+  Release would set obsolete: `<Release> (<slug>) still has dropped
+  requirements to set obsolete; close it on its close page first.`, a line
+  `<reference> <title>` for each requirement the server lists (at most 50),
+  then `<N> more dropped requirements are not shown here.` for the rest. The
+  unfinished-work line prints only when unfinished work or decisions that go on
+  also stop activation, and then comes first. An older server sends no list,
+  and the command prints the unfinished-work line as before. The refusal
+  glossary and the CLI guide say what the lines mean.
+- The delivery process (`PROCESS.md`, Human approvals) names the close of an
+  active in-place Modernization Release as the human act outside an Epic that
+  ends published behavior, with its three exceptions, and its sentence on
+  human completion approval begins "Within an Epic". Run `modernpath install`
+  to refresh the installed copy.
+
 ## v0.31.0 - Direct source uploads and modernization proof
 
 Released on 2026-11-25 from monorepo commit `e7c0fd085c`.

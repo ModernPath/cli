@@ -103,6 +103,16 @@ func init() {
 		if machine, _ := cmd.Flags().GetBool("json"); machine {
 			return writeCommandJSON(cmd, map[string]any{"items": selected, "next_cursor": nullableCursor(cursor)})
 		}
+		// An empty page printed nothing, which reads like a failed read. The
+		// line goes to stderr, so stdout stays one row per Epic.
+		if len(selected) == 0 {
+			message := "No Epics in this System yet. Create one with 'modernpath epics create --file epic.json'."
+			if p.Has("status") || p.Has("query") || p.Has("cursor") {
+				message = "No Epics match these filters."
+			}
+			_, err := fmt.Fprintln(cmd.ErrOrStderr(), message)
+			return err
+		}
 		for _, raw := range selected {
 			row := raw.(map[string]any)
 			title := strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(row["title"].(string))

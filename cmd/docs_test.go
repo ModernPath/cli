@@ -109,11 +109,14 @@ func TestDocsRefreshAndPreviewExitNonZeroWhenNoRepositoryResolves(t *testing.T) 
 			if err == nil {
 				t.Fatalf("docs %s must exit non-zero when no repository resolves:\n%s", verb, out)
 			}
-			if !strings.Contains(out, "repository_id") {
-				t.Errorf("the refusal must name the repository_id remedy:\n%s", out)
+			// The remedy is the checkout import bound, not a hand edit of
+			// the CLI's private config file (end-to-end finding F-1-8).
+			remedy := "in the checkout where 'modernpath import' created the repository"
+			if strings.Contains(out, "config.json") {
+				t.Errorf("the refusal must not advise editing config.json:\n%s", out)
 			}
-			if n := strings.Count(out, "repository_id"); n != 1 {
-				t.Errorf("the refusal must be printed once, printed %d times:\n%s", n, out)
+			if n := strings.Count(out, remedy); n != 1 {
+				t.Errorf("the refusal must name the import checkout once, named it %d times:\n%s", n, out)
 			}
 		})
 	}

@@ -392,9 +392,16 @@ func finalizeSystemInit(client *api.Client, baseURL string, selectedSystem *api.
 		output = &cobra.Command{}
 	}
 	if initJSON {
-		return writeCommandJSON(output, receipt)
+		err = writeCommandJSON(output, receipt)
+	} else {
+		err = writeRecord(output, receipt)
 	}
-	return writeRecord(output, receipt)
+	if err != nil {
+		return err
+	}
+	// Until install runs there is no AGENTS.md telling an agent what to read.
+	printInfo("Next: run 'modernpath install' to add the delivery process and agent instructions to this checkout.\n")
+	return nil
 }
 
 func downloadExportWithStatus(client *api.Client, systemID int) ([]byte, error) {

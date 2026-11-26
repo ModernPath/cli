@@ -306,6 +306,21 @@ const epicPlanHelp = `An Epic's plan is one JSON object the server stores with t
                                 "test_case_id": "<test-case UUID>", "boundary": "<name>"}],
                     "boundaries": [{"name": "<name>", "applicable": true}]}}
 
+Save accepts a plan that breaks these three rules on verification; the gates
+report each break, and epics gates check <id> --phase plan-ready names it:
+- One obligation per active criterion: list each active criterion once in
+  verification.criteria, with the one test_case_id that proves it, its
+  declared test. The gates report a repeated id as a duplicate obligation ID.
+- A verifies trace from each declared test to its criterion, in traces:
+    {"source_type":"test_case","source_id":"<test-case UUID>",
+     "target_type":"criterion","target_id":"<criterion UUID>","link_kind":"verifies"}
+  A trace from another test does not satisfy the obligation. Another test may
+  verify the same criterion through its own verifies trace; completion needs a
+  passing result of every test that verifies the criterion.
+- An obligation for each applicable boundary: at least one entry of
+  verification.criteria names the boundary. A check that names the boundary
+  does not count. A boundary with "applicable": false needs a reason instead.
+
 verification.mode is optional: omitted or "implementation" retains ordinary
 implementation rules. To verify behavior already present, use
 "mode":"existing_behavior" and "existing_behavior_reason":"<explanation>".
@@ -430,7 +445,7 @@ and audit after an uncertain nonterminal response.
 
 var epicPlanOperationHelp = map[string]string{
 	"show":                     "Read current saved plan, approvals and surviving accepted versions. Select additional fields, such as plan or modernization, with --fields or --full.",
-	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval. A removal Epic lists the published requirements it retires as \"retire\": [{\"kind\", \"id\", \"reason\"}] and removes their traces through remove_traces (see epics plan --help).",
+	"save":                     "Save proposed content from --file while the Epic is PROPOSED. Read it back before review and human approval. verification needs one obligation per active criterion, a verifies trace from each declared test to its criterion, and an obligation for each applicable boundary; epics gates check --phase plan-ready reports each break (see epics plan --help). A removal Epic lists the published requirements it retires as \"retire\": [{\"kind\", \"id\", \"reason\"}] and removes their traces through remove_traces (see epics plan --help).",
 	"approve-implementation":   "Apply the human's explicit implementation decision to the current saved plan after its separate review. The server rechecks current state and acquires ownership atomically. Use --reason with the explicit USER: decision and optional --agent. Moves to IN_PROGRESS.",
 	"return-to-planning":       "Withdraw implementation approval and release ownership under any authorized workspace member’s account. --reason must begin USER:. Repeat --carry-decision <id> to keep a decision and its answer. Return clears current proof for each published criterion whose approved meaning differs from its published meaning; unchanged criterion proof remains current. Obtain a new plan review and implementation approval, then retest each changed published criterion. DONE stays closed.",
 	"submit-review":            "Check completion-review readiness and submit current implementation for the separate human completion decision. Any authorized workspace member can submit.",

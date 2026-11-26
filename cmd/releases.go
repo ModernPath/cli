@@ -76,7 +76,7 @@ func newReleaseList(load func() (*cliEnv, error)) *cobra.Command {
 
 func newReleaseActivate(load func() (*cliEnv, error)) *cobra.Command {
 	c := &cobra.Command{Use: "activate <id|slug>", Short: "Make a delivery release active with your compliance PIN", Args: cobra.ExactArgs(1),
-		Long: "Activate or reactivate a release in the bound System. Use --pin-stdin for secret-store input; otherwise the terminal prompts without echo. --close-current consents to closing the active incumbent read from this System. Unfinished work must be handled through the release close flow first: a refusal names each release to close and each Initiative whose decisions would go on, with its INIT-<n> and how many. Creation stays planned. No retired process-store gate is written."}
+		Long: "Activate or reactivate a release in the bound System. Use --pin-stdin for secret-store input; otherwise the terminal prompts without echo. --close-current consents to closing the active incumbent read from this System. Unfinished work must be handled through the release close flow first: a refusal names each release to close and each Initiative whose decisions would go on, with its INIT-<n> and how many. For an active in-place Modernization Release it also lists the dropped requirements that its close sets obsolete, at most 50, and how many more. Creation stays planned. No retired process-store gate is written."}
 	c.Flags().String("by", "auto", "Select by auto, id, or exact slug; disambiguate numeric slugs explicitly")
 	c.Flags().Bool("pin-stdin", false, "Read PIN from stdin instead of a hidden terminal prompt")
 	c.Flags().Bool("close-current", false, "Explicitly consent to closing the current active delivery release")
@@ -272,7 +272,10 @@ func releaseFailure(status int, body map[string]any) error {
 // unfinishedReleases names, from the named fields only (the activation sends a
 // PIN, so its body is never printed), each release the activation must close
 // first and, Epic 458 (H1a), each partly done Initiative whose decisions would
-// go on: its title, INIT-<n> and count.
+// go on: its title, INIT-<n> and count. Epic 530 (E1c): the unfinished-work
+// line prints when has_unfinished_work is true or missing (an older server),
+// and the dropped requirements the release's close sets obsolete follow it,
+// as the server cut them at the close record's list bound, then how many more.
 func unfinishedReleases(body map[string]any) string {
 	releases, _ := body["open_releases"].([]any)
 	var text strings.Builder
@@ -281,21 +284,51 @@ func unfinishedReleases(body map[string]any) string {
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&text, "\n%s (%s) still has unfinished work or decisions that go on; close it on its close page first.",
-			str(release, "name"), str(release, "slug"))
-		undelivered, _ := release["undelivered_decisions"].([]any)
-		for _, u := range undelivered {
-			entry, ok := u.(map[string]any)
-			if !ok {
-				continue
+		if unfinished, known := release["has_unfinished_work"].(bool); unfinished || !known {
+			fmt.Fprintf(&text, "\n%s (%s) still has unfinished work or decisions that go on; close it on its close page first.",
+				str(release, "name"), str(release, "slug"))
+			undelivered, _ := release["undelivered_decisions"].([]any)
+			for _, u := range undelivered {
+				entry, ok := u.(map[string]any)
+				if !ok {
+					continue
+				}
+				count := roadmapCount(entry["decisions"])
+				noun := "decisions go"
+				if count == 1 {
+					noun = "decision goes"
+				}
+				fmt.Fprintf(&text, "\n  %s (INIT-%v): %d %s on", str(entry, "title"), entry["display_number"], count, noun)
 			}
-			count := roadmapCount(entry["decisions"])
-			noun := "decisions go"
-			if count == 1 {
-				noun = "decision goes"
-			}
-			fmt.Fprintf(&text, "\n  %s (INIT-%v): %d %s on", str(entry, "title"), entry["display_number"], count, noun)
 		}
+		writeRequirementsToSetObsolete(&text, release)
 	}
 	return text.String()
+}
+
+// writeRequirementsToSetObsolete prints the release's requirements_to_set_obsolete
+// (Epic 530): its line, "  <reference> <title>" for each item served, then how
+// many more the bounded list leaves out. An empty or missing list prints nothing.
+func writeRequirementsToSetObsolete(text *strings.Builder, release map[string]any) {
+	list, _ := release["requirements_to_set_obsolete"].(map[string]any)
+	items, _ := list["items"].([]any)
+	count := roadmapCount(list["count"])
+	if count == 0 && len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(text, "\n%s (%s) still has dropped requirements to set obsolete; close it on its close page first.",
+		str(release, "name"), str(release, "slug"))
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(text, "\n  %s %s", str(item, "display_ref"), str(item, "title"))
+	}
+	switch more := count - len(items); {
+	case more == 1:
+		text.WriteString("\n  1 more dropped requirement is not shown here.")
+	case more > 1:
+		fmt.Fprintf(text, "\n  %d more dropped requirements are not shown here.", more)
+	}
 }

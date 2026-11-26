@@ -60,6 +60,22 @@ matches another release’s ID, selection refuses before reading the PIN; use
 activated, creation remains planned, and repeating activation is idempotent
 but still requires the PIN.
 
+A refused activation names each release to close first.
+`<Release> (<slug>) still has unfinished work or decisions that go on; close it on its close page first.`
+means that Epics, requirements or decisions that go on stop activation.
+An active in-place Modernization Release can also stop activation when its
+close would set dropped requirements obsolete. These are the requirements that
+its done Initiatives dropped, and that no active work, open small change or
+unfinished work of that Release keeps. The command then prints
+`<Release> (<slug>) still has dropped requirements to set obsolete; close it on its close page first.`,
+a line `  <reference> <title>` for each requirement the server lists (at most
+50), and `  <N> more dropped requirements are not shown here.` for the rest.
+When unfinished work also stops activation, these lines come after the
+unfinished-work line. Close that Release on its close page: its Review scope
+lists each dropped requirement, and its close sets them obsolete with the
+reasons of their drops. Then activate again. An older server sends no list,
+and the command prints only the unfinished-work line.
+
 `factory release activate` and `factory pin set/status` are compatibility
 entry points for these operations. A compatible server must expose
 `POST /api/compliance/releases/:id/activate`; UI and CLI share this endpoint.
@@ -200,7 +216,8 @@ modernpath auth
 For the cloud test environment, use `modernpath auth --test`. Local development
 is explicit: `modernpath env --set=local` or `modernpath auth --local`. Local and
 custom servers require an access token issued by their configured identity
-provider.
+provider. Pass it with `--token=<token>` or paste it at the prompt; an empty
+answer stores no credential and the command exits non-zero.
 If the command or flags differ from this guide, check `modernpath --version`
 and update using the installation method above.
 
@@ -293,7 +310,8 @@ CPU. Set `MODERNPATH_VERSION` to pin a release and
 
 `modernpath init` shows the systems available in your workspace. It downloads
 the selected system's Knowledge Core export and writes the repository binding
-to `.modernpath/config.json`.
+to `.modernpath/config.json`. It ends by naming `modernpath install` as the
+next step.
 
 `modernpath auth` opens your browser at ZITADEL and listens on a loopback port
 for the sign-in to come back (OAuth authorization code with PKCE). Sign in;
@@ -439,7 +457,11 @@ UI ends the run at once; a pushed tree the run had not made current yet is
 dropped, and the previous source stays current.
 `import --local` records the repository the push targets in the working
 directory's `.modernpath/config.json`; a workspace whose config predates that
-resolves the system's single upload repository through the API.
+resolves the system's single upload repository through the API. A system with
+no repository, such as one made in the web app, is refused with the advice to
+run `modernpath import`, which creates a new system with the directory as its
+repository. With several upload repositories, run the push in the checkout
+where `modernpath import` created the one you push to.
 
 #### What the upload leaves out
 
@@ -577,7 +599,11 @@ completed.
 repository `.modernpath/config.json` records (`repository_id`, written by
 `import --local`), else the system's single upload repository, else the
 repository whose local path is the current directory. When none resolves they
-exit non-zero and name the `repository_id` remedy.
+exit non-zero: a system with no repository names `modernpath import`, and
+several upload repositories name the checkout where `modernpath import`
+created the repository. A recorded repository the system no longer has names
+`modernpath init --force --system-id <id>`, which binds the checkout again
+without one.
 
 ### Explore the Knowledge Core
 
@@ -620,7 +646,9 @@ fields. Large content is returned only when explicitly selected or exported.
 `--json` preserves the same selection and includes list pagination metadata.
 The command-specific details below define identity fields and any exceptions.
 
-- `epics list` prints the numeric ID and title, one row per Epic.
+- `epics list` prints the numeric ID and title, one row per Epic. An empty
+  page prints `No Epics in this System yet.` and the create command, or
+  `No Epics match these filters.`, on standard error.
   `requirements list` prints the display reference and title, one row per
   requirement. Titles are kept on one terminal line.
 - Both lists default to 20 items (maximum 200). Filtering, ordering and
@@ -986,10 +1014,13 @@ and result; `--json` prints the same items as a JSON array. A refusal reads
 
 A requirement's context is the group it belongs to: a code, such as
 `BILLING`, and a display name, such as `Billing`. The System's list of contexts
-is every code its requirements carry, each with one name: the name most of the
-code's requirements carry, ties broken alphabetically. A requirement without a
-name carries its code, so a code whose requirements carry no name has its code
-as its name.
+is every code its requirements carry, each with one name: the one most of the
+code's requirements with a name carry, ties broken alphabetically, and the code
+itself only when none of them has a name. A requirement has no name when its
+name is null, blank or exactly its code; a name that differs from the code only
+in letter case is a name. Its other names are the other names its requirements
+carry, in alphabetical order; the code is one of them when some of its
+requirements have no name and others have one.
 
 ```sh
 modernpath requirements contexts
@@ -1335,9 +1366,8 @@ neither. `--json` carries `drafted` and `built` in each context of
 `modernization.contexts` and in each Initiative's `selection`.
 
 `roadmap show --readiness` asks for each Modernization Release's readiness
-(`readiness=true`) and prints it after the Release's context lines, in the
-words of the Release page's Modernization panel and counted the way the
-Heartbeat counts it:
+(`readiness=true`) and prints it after the Release's context lines, counted
+the way the Heartbeat counts it:
 
 ```text
   Readiness:
@@ -1619,6 +1649,9 @@ that says what holds it and who can act:
 `row 1: Export invoices cannot change: the Epic Billing export, approved by Ada Lovelace, relies on its decision. Ada Lovelace can return that Epic to planning.`
 For a move it also names the Initiative that holds the decision:
 `row 3: Archive statements cannot move to this initiative: the initiative Provider connections holds its decision, and the Epic Billing export, approved by Ada Lovelace, relies on it. Ada Lovelace can return that Epic to planning.`
+A row that says `move` for a decision of an Initiative under a closed
+Modernization Release is refused with `selection_row_closed`, also when the
+row is held; the decision stays with the closed Release.
 An `archive_line` of an Initiative with a held row is refused with a sentence
 that names the Initiative, the legacy requirement, the holder and who can act.
 A held row's agreed level stays writable.
@@ -1985,6 +2018,15 @@ A check keeps its ID by name: a check saved without an ID takes the ID of the
 saved check with the same trimmed name, and a new name gets a new ID. Two checks
 with the same name, or a repeated check ID, are refused as
 `invalid_verification_obligations`. A nonapplicable boundary needs a reason.
+Save accepts a plan that breaks the following three rules, and the gates report
+each break (`epics gates check <id> --phase plan-ready` names it). One
+obligation per active criterion, naming the one test that proves it; the gates
+report a repeated id as a duplicate obligation ID. A `verifies` trace in
+`traces` from each declared test to its criterion; a trace from another test
+does not satisfy the obligation. Another test may verify the same criterion
+through its own `verifies` trace, and completion needs a passing result of every
+test that verifies it. At least one criterion obligation for each applicable
+boundary; a check that names the boundary does not count.
 Source files that do not exist yet use the existing plan-only `planned` trace;
 completion requires real scoped code endpoints.
 
@@ -2036,8 +2078,9 @@ latest committed outcome for each pair is current, including failures.
 
 A separate review records `phase`, `reviewer_context`, all criterion and obligation
 IDs, `reason`, `findings` and `scope_implemented`. Implementation review confirms
-scope with `scope_implemented: true`. Findings have `severity` and `description`;
-the server assigns IDs. Resolutions reference `review_id` and `finding_id` with a
+scope with `scope_implemented: true`. Findings have `severity` (`material` or
+`note`) and a `description` that is not empty; the server assigns IDs and stores
+no other field of a finding. Resolutions reference `review_id` and `finding_id` with a
 reason. A decision definition stores its question once; answers reference its
 existing decision ID and retain answer/source. No review uploads a presentation.
 Give each declared question a one-line title that names the choice (`title`, 1 to
@@ -2414,22 +2457,25 @@ requires a server version that exposes recording schema discovery.
 New requirements are recorded as `PROPOSED` in the bound System's Base release.
 The server creates Base if needed within the recording transaction.
 
-Every new requirement needs a context from the System's list of contexts
+Give every new requirement a context from the System's list of contexts
 (`modernpath requirements contexts`), also one given by a client UUID. Give a
 listed code and leave `context_name` out, and the requirement takes the name
 the list gives it; give a new code only when no listed context fits, with a
-name that no listed context has. The server checks the requirements of one
-request in order, so a later one in a code an earlier one introduced takes its
-name. It refuses with 422 and writes nothing for a requirement without a
-context (`context_required`), a listed code with another name
-(`context_name_mismatch`), a code that differs from a listed code only in
-letter case (`context_code_conflict`), a name another context has or its
-requirements carry (`context_name_conflict`), and a value with spaces before
-or after it, a blank name, the code `—` or `Unclassified`
-(`invalid_context`). The refusal names the requirement's position in the file,
-counted from 0, its title and the listed value. A requirement reused by id
-keeps its stored context, and a null `context_name` matches the stored name. Reused
-requirements retain their existing release assignments. The command reads the
+name that no listed context has (the code is its name when `context_name` is
+left out). A requirement sent with no context, or a blank one, and no name is
+recorded without a context and counted as Unclassified. The server checks the
+requirements of one request in order, so a later one in a code an earlier one
+introduced takes its name. It refuses with 422 and writes nothing for a listed
+code with another name (`context_name_mismatch`), a code that differs from a
+listed code only in letter case (`context_code_conflict`), a name another
+context has or its requirements carry (`context_name_conflict`), and a
+`context_name` without a context, a value with spaces before or after it, a
+blank name with a context, the code `—` or `Unclassified` (`invalid_context`).
+The refusal names the requirement's position in the file, counted from 0, its
+title and the listed value when it has one. A requirement reused by id keeps
+its stored context; there a blank context counts as null, and so does a blank
+`context_name` beside no context, and a null `context_name` matches the stored
+name. Reused requirements retain their existing release assignments. The command reads the
 supplied JSON and posts it directly; it does not inspect a repository checkout
 or require a run, content digest or proof report.
 

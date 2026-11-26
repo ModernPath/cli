@@ -299,14 +299,16 @@ New requirements start as PROPOSED. Recording is not implementation approval,
 verification, compliance approval or completion. Existing requirements may be
 referenced by identity and kind without replacing their content.
 
-Every requirement reverse engineering records has a context from the System's
+Give every requirement reverse engineering records a context from the System's
 one list of contexts: each context code its requirements carry, with one name.
 Read the list before recording, take a listed code and leave its name to the
 list, and add a new context only when no listed one fits, with a code and a
-name that no listed context has. The store refuses a new requirement without a
-context, or with a code or name that disagrees with the list, and writes
-nothing of that request. A recorded requirement moves to another context with
-a requirement update, which applies the same list and keeps the code that
+name that no listed context has. A requirement sent with no context, or a blank
+one, and no name is recorded without a context and counted as Unclassified
+until it is regrouped. The store refuses a context name sent without a
+context, or a code or name that disagrees with the list, and writes nothing of
+that request. A recorded requirement moves to another context with a
+requirement update, which applies the same list and keeps the code that
 Initiatives and Modernization Release scopes name.
 Authentication, tenant and System scope, valid endpoints and atomic
 writes remain normal store integrity rules.
@@ -350,11 +352,21 @@ the human can read, not a technical hash or plan-revision token.
 
 Human completion approval is separate. Present the approved proposal beside the
 still-published baseline, the implementation evidence, review findings, known
-failures and remaining risks. Only that approval publishes the approved
-requirement content, raises revisions, retains immutable accepted versions,
-records audit history and releases ownership in one transaction. Implementation
-approval, review, an autopilot grant, a commit, merge or silence is not a
-completion answer.
+failures and remaining risks. Within an Epic, only that approval publishes the
+approved requirement content, raises revisions, retains immutable accepted
+versions, records audit history and releases ownership in one transaction.
+Implementation approval, review, an autopilot grant, a commit, merge or silence
+is not a completion answer.
+
+Outside an Epic, one more human act ends published behavior: the close of an
+active in-place Modernization Release, by the person who closes it, sets to
+`OBSOLETE` each published requirement that an Initiative of that Release, done
+apart from proof when the close plan is read, dropped, unless active work owns
+it, a small change is open for it or it is unfinished work of that Release.
+The close page lists each one before the close, and the close is refused unless
+its request names each one. The close raises each one's revision once and keeps
+an immutable version of kind `release_close` with that person, the time and the
+drop's reason.
 
 An Initiative delivered by several Epics may be reviewed, approved, submitted
 and completed in rounds. A round is the explicit list of the Initiative's Epics

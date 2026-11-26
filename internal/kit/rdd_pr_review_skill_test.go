@@ -254,8 +254,9 @@ func TestRddPrReviewSkillInstallsToBothSkillTrees(t *testing.T) {
 
 // SR-5039 criterion 9f70a8b6: listed in the managed AGENTS.md block (skill
 // bullet and the reviewer sentence), the kit AGENTS.md required reading, the
-// PROCESS.md phase table and §Delegated passes, the pass-to-command map and
-// the changelog.
+// PROCESS.md phase table and §Delegated passes, and the pass-to-command map.
+// The changelog entry is not checked here: a release cut moves it out of
+// Unreleased into its release section.
 // TestCase 64d09ef7-44d3-473a-82b3-d0f95c014f9b
 func TestRddPrReviewIsNamedInTheProcessDocuments(t *testing.T) {
 	read := func(parts ...string) string {
@@ -313,14 +314,6 @@ func TestRddPrReviewIsNamedInTheProcessDocuments(t *testing.T) {
 		if !strings.Contains(loopRow, phrase) {
 			t.Errorf("the reference-loop rdd-pr-review row lacks %q", phrase)
 		}
-	}
-	changelog := read("..", "..", "CHANGELOG.md")
-	unreleased := changelog[strings.Index(changelog, "## Unreleased"):]
-	if next := strings.Index(unreleased[3:], "\n## "); next >= 0 {
-		unreleased = unreleased[:next+3]
-	}
-	if !strings.Contains(unreleased, "`rdd-pr-review`") {
-		t.Error("CHANGELOG.md Unreleased does not name `rdd-pr-review`")
 	}
 }
 

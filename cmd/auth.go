@@ -339,9 +339,11 @@ func authenticateWithManualToken(baseURL string) error {
 		authToken = strings.TrimSpace(authToken)
 	}
 
+	// An empty answer signs nothing in. It is a command error, so a script or
+	// agent stops here instead of failing later on a call without a credential.
 	if authToken == "" {
-		printInfo("No token given. Continuing without authentication.\n")
-		return nil
+		return fmt.Errorf("no token given, so nothing was signed in. Get an access token from the identity provider of %s, then run '%s --token=<token>'",
+			baseURL, authRepairCommand(baseURL))
 	}
 
 	return authenticateWithToken(baseURL, authToken)

@@ -26,9 +26,13 @@ func newRequirementContextsCommand(load func() (*cliEnv, error)) *cobra.Command 
 		Long: `List the bound System's list of contexts: every context code its requirements
 carry, with the name the list gives it, how many requirements carry it and the
 other names its requirements carry. The name is the one most of the code's
-requirements carry, ties broken alphabetically; a requirement without a name
-carries its code. A last line labelled Unclassified gives how many requirements
-have no context. The numbers count every requirement that is not deleted,
+requirements with a name carry, ties broken alphabetically, and the code itself
+only when none of them has a name. A requirement has no name when its name is
+null, blank or exactly its code; a name that differs from the code only in
+letter case is a name. Its other names are the other names its requirements
+carry, in alphabetical order; the code is one of them when some of its
+requirements have no name and others have one. A last line labelled
+Unclassified gives how many requirements have no context. The numbers count every requirement that is not deleted,
 OBSOLETE ones included.
 
 Read the list before recording with reverse-engineer record: give every new

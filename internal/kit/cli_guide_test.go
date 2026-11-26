@@ -61,10 +61,19 @@ func guideSectionRunning(guide, command string) string {
 	return strings.Join(section, "\n")
 }
 
+// g1NameRule is the name rule of the System's list of contexts (Epic 340, G1,
+// 11 November: a human name wins), as the CLI guide and the help of
+// requirements contexts give it.
+var g1NameRule = []string{
+	"the one most of the code's requirements with a name carry, ties broken alphabetically, and the code itself only when none of them has a name",
+	"A requirement has no name when its name is null, blank or exactly its code; a name that differs from the code only in letter case is a name.",
+	"Its other names are the other names its requirements carry, in alphabetical order; the code is one of them when some of its requirements have no name and others have one.",
+}
+
 // Epic 340 (G1), test case 94c50400: the CLI guide has a section on
 // requirements contexts, with the command and its Unclassified line, and the
-// command table's Native requirements row names it. The check runs this test
-// by its name.
+// name rule; and the command table's Native requirements row names it. The
+// check runs this test by its name.
 func TestG1ListGuideNamesRequirementsContexts(t *testing.T) {
 	guide := embeddedCLIGuide(t)
 	section := guideSectionRunning(guide, "modernpath requirements contexts")
@@ -74,6 +83,12 @@ func TestG1ListGuideNamesRequirementsContexts(t *testing.T) {
 		for _, want := range []string{"Unclassified", "--json"} {
 			if !strings.Contains(section, want) {
 				t.Errorf("the CLI guide's section on requirements contexts does not name %q", want)
+			}
+		}
+		folded := strings.Join(strings.Fields(section), " ")
+		for _, want := range g1NameRule {
+			if !strings.Contains(folded, want) {
+				t.Errorf("the CLI guide's section on requirements contexts does not give the name rule %q", want)
 			}
 		}
 	}

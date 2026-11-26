@@ -356,6 +356,13 @@ func TestD4_6fd3853c_RoadmapShowHelpGivesReadinessAndWhatEachBuiltCounts(t *test
 			t.Errorf("the help of roadmap show does not say %q:\n%s", want, out)
 		}
 	}
+	// Revision 14: the Release page has no Modernization panel since Epic 460,
+	// and the read says why it cannot list the files in its own message.
+	for _, stale := range []string{"Modernization panel", "has not been analysed yet"} {
+		if strings.Contains(plain, stale) {
+			t.Errorf("the help of roadmap show still says %q:\n%s", stale, out)
+		}
+	}
 }
 
 func TestD4_6fd3853c_CLIGuideDescribesRoadmapShowReadiness(t *testing.T) {
@@ -380,6 +387,10 @@ func TestD4_6fd3853c_CLIGuideDescribesRoadmapShowReadiness(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Errorf("the CLI guide's Roadmap section does not say %q", want)
 		}
+	}
+	// Revision 14: the Release page has no Modernization panel since Epic 460.
+	if strings.Contains(plain, "Modernization panel") {
+		t.Errorf("the CLI guide's Roadmap section still says %q", "Modernization panel")
 	}
 }
 

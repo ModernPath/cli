@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/modernpath/cli/internal/kit"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -564,8 +566,9 @@ func TestA6BD44C890BacklogUpdateHelpPlacesTheUserSource(t *testing.T) {
 }
 
 // g1ContextRefusals are the refusals of a context that disagrees with the
-// System's list of contexts (Epic 340, G1).
-var g1ContextRefusals = []string{"context_required", "context_name_mismatch", "context_code_conflict", "context_name_conflict", "invalid_context"}
+// System's list of contexts (Epic 340, G1). Since 25 November recording
+// accepts a requirement without a context, so context_required is gone.
+var g1ContextRefusals = []string{"context_name_mismatch", "context_code_conflict", "context_name_conflict", "invalid_context"}
 
 // g1GlossaryCells returns the four cells of the glossary row keyed on key, or
 // nil, without stopping the test, so every missing row is reported.
@@ -590,13 +593,47 @@ func TestG1ListRecordRowNamesRequirementsContexts(t *testing.T) {
 	}
 }
 
+// g1NameRule is the name rule of the System's list of contexts (Epic 340, G1,
+// 11 November: a human name wins), as the help of requirements contexts gives
+// it.
+var g1NameRule = []string{
+	"the one most of the code's requirements with a name carry, ties broken alphabetically, and the code itself only when none of them has a name",
+	"A requirement has no name when its name is null, blank or exactly its code; a name that differs from the code only in letter case is a name.",
+	"Its other names are the other names its requirements carry, in alphabetical order; the code is one of them when some of its requirements have no name and others have one.",
+}
+
+// Epic 340 (G1), test case 94c50400: the rendered section of requirements
+// contexts, from its help in requirements_context_list.go, gives the name
+// rule. The check runs this test by its name.
+func TestG1ListReferenceGivesTheNameRule(t *testing.T) {
+	section := g1Folded(referenceSection(t, renderCLIReference(rootCmd), "modernpath requirements contexts"))
+	for _, want := range g1NameRule {
+		if !strings.Contains(section, want) {
+			t.Errorf("the requirements contexts section does not give the name rule %q", want)
+		}
+	}
+}
+
+// g1GuideParagraph returns the CLI guide's paragraph, folded, that holds
+// anchor, or "".
+func g1GuideParagraph(guide, anchor string) string {
+	for _, paragraph := range strings.Split(guide, "\n\n") {
+		if folded := g1Folded(paragraph); strings.Contains(folded, anchor) {
+			return folded
+		}
+	}
+	return ""
+}
+
 // Epic 340 (G1), test case e62a7b48: the refusal glossary has a row keyed on
 // each context refusal, with the origin server 422, a cause that names
-// reverse-engineer record and what clears it; and the section on
-// reverse-engineer record says that every new requirement needs a context
-// from the System's list and names requirements contexts. The check runs this
-// test by its name.
-func TestG1RecordingReferenceNeedsAContextFromTheList(t *testing.T) {
+// reverse-engineer record and what clears it, the invalid_context row naming a
+// context_name without a context, and no context_required row; and the section
+// on reverse-engineer record and the CLI guide's recording paragraph say that a
+// given context is checked against the System's list and that a requirement
+// may be recorded without one (25 November). The check runs this test by its
+// name.
+func TestG1RecordingReferenceChecksTheContextAgainstTheList(t *testing.T) {
 	loop := renderedLoop()
 	for _, key := range g1ContextRefusals {
 		cells := g1GlossaryCells(loop, key)
@@ -607,13 +644,42 @@ func TestG1RecordingReferenceNeedsAContextFromTheList(t *testing.T) {
 		if len(cells) != 4 || cells[1] != "server 422" || !strings.Contains(cells[2], "reverse-engineer record") || cells[3] == "" {
 			t.Errorf("the %q row must give origin server 422, a cause naming reverse-engineer record and what clears it: %q", key, cells)
 		}
+		if strings.Contains(strings.Join(cells, " | "), "needs a context") {
+			t.Errorf("the %q row still says that a requirement needs a context: %q", key, cells)
+		}
 	}
-	section := g1Folded(referenceSection(t, renderCLIReference(rootCmd), "modernpath reverse-engineer record"))
-	if !strings.Contains(strings.ToLower(section), "every new requirement needs a context from the system's list") {
-		t.Error("the reverse-engineer record section does not say that every new requirement needs a context from the System's list")
+	if cells := g1GlossaryCells(loop, "invalid_context"); len(cells) == 4 && !strings.Contains(cells[2], "a `context_name` without a context") {
+		t.Errorf("the invalid_context row's cause does not name a `context_name` without a context: %q", cells[2])
 	}
-	if !strings.Contains(section, "requirements contexts") {
-		t.Error("the reverse-engineer record section does not name requirements contexts")
+	if cells := g1GlossaryCells(loop, "context_required"); cells != nil {
+		t.Errorf("the refusal glossary still has a context_required row: %q", cells)
+	}
+
+	guide, err := fs.ReadFile(kit.Assets(), "assets/cli-guide/cli.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := map[string]string{
+		"the reverse-engineer record section": g1Folded(referenceSection(t, renderCLIReference(rootCmd), "modernpath reverse-engineer record")),
+		"the CLI guide's recording paragraph": g1GuideParagraph(string(guide), "The server checks the requirements of one request in order"),
+	}
+	for name, text := range texts {
+		if text == "" {
+			t.Errorf("%s is missing", name)
+			continue
+		}
+		for _, want := range []string{
+			"Give every new requirement a context from the System's list of contexts",
+			"is recorded without a context",
+			"requirements contexts",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not say %q", name, want)
+			}
+		}
+		if strings.Contains(text, "needs a context") {
+			t.Errorf("%s still says that a requirement needs a context", name)
+		}
 	}
 }
 

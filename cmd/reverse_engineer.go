@@ -118,19 +118,24 @@ the same requirement UUIDs and unchanged content avoids creating new requirement
 Any refusal leaves nothing written. Recording is neither verification nor
 acceptance; nothing here hashes files or needs a clean checkout.
 
-Every new requirement needs a context from the System's list of contexts, which
-modernpath requirements contexts shows. Give a listed code and leave
-context_name out, and the requirement takes the name the list gives it; give a
-new code only when no listed context fits, with a name no listed context has
-(the code is its name when context_name is left out). The server refuses a new
-requirement without a context (context_required), a listed code with another
-name (context_name_mismatch), a code that differs from a listed code only in
-letter case (context_code_conflict), a name another context has or its
-requirements carry (context_name_conflict), and a value with spaces before or
-after it, a blank name, the code "—" or Unclassified (invalid_context). The
-refusal names the requirement's position in the file, counted from 0, its
-title and the listed value. A requirement reused by id keeps its stored context,
-and a null context_name matches the stored name, so a retried file is reused.
+Give every new requirement a context from the System's list of contexts
+(modernpath requirements contexts), also one given by a client UUID. Give a
+listed code and leave context_name out, and the requirement takes the name the
+list gives it; give a new code only when no listed context fits, with a name
+that no listed context has (the code is its name when context_name is left
+out). A requirement sent with no context, or a blank one, and no name is
+recorded without a context and counted as Unclassified. The server checks the
+requirements of one request in order, so a later one in a code an earlier one
+introduced takes its name. It refuses with 422 and writes nothing for a listed
+code with another name (context_name_mismatch), a code that differs from a
+listed code only in letter case (context_code_conflict), a name another context
+has or its requirements carry (context_name_conflict), and a context_name
+without a context, a value with spaces before or after it, a blank name with a
+context, the code "—" or Unclassified (invalid_context). The refusal names the
+requirement's position in the file, counted from 0, its title and the listed
+value when it has one. A requirement reused by id keeps its stored context;
+there a blank context counts as null, and so does a blank context_name beside
+no context, and a null context_name matches the stored name.
 
 Each requirement entry may carry what_it_has: what the requirement has, as
 the code you read shows it, a list of interface (its behaviour is seen in

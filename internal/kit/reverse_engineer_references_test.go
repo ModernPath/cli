@@ -225,16 +225,25 @@ func TestReverseEngineerBaselineSentencesUnchanged(t *testing.T) {
 }
 
 // Epic 340 (G1), test case e1a8ea3a: the batch reference starts its batch
-// question from the System's list of contexts, and PROCESS.md says that every
-// recorded requirement has a context from that list. The check runs this test
-// by its name.
+// question from the System's list of contexts, and PROCESS.md says to give
+// every recorded requirement a context from that list, that one sent with no
+// context and no name is recorded without one (25 November), and that a
+// context name sent without a context is refused. The check runs this test by
+// its name.
 func TestG1FlowBatchReferenceAndProcessUseTheList(t *testing.T) {
 	requirePhrases(t, "batch.md", embeddedText(t, reverseEngineerSkillDir+"references/batch.md"), []string{
 		"Read the System's list of contexts before the batch question",
 		"A context on the list keeps its code and the list's name",
 	})
-	requirePhrases(t, "PROCESS.md", embeddedText(t, "assets/rdd/PROCESS.md"), []string{
+	process := embeddedText(t, "assets/rdd/PROCESS.md")
+	requirePhrases(t, "PROCESS.md", process, []string{
+		"Give every requirement reverse engineering records a context from the System's one list of contexts",
+		"is recorded without a context and counted as Unclassified",
+		"The store refuses a context name sent without a context",
+	})
+	forbidPhrases(t, "PROCESS.md", process, []string{
 		"Every requirement reverse engineering records has a context from the System's one list of contexts",
+		"The store refuses a new requirement without a context",
 	})
 }
 

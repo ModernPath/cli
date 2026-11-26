@@ -64,6 +64,20 @@ func resolveBoundRepository(cfg *config.Config) (int, error) {
 			return repo.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("cannot tell which repository of system %d to use: it has %d upload repositories and none has the local path %s; set repository_id in .modernpath/config.json",
+	if len(sysResult.Repositories) == 0 {
+		return 0, noRepositoryError(cfg.SystemID)
+	}
+	if len(uploads) == 0 {
+		return 0, fmt.Errorf("cannot tell which repository of system %d to use: its %d repositories are linked to a git provider and none has the local path %s. The platform refreshes and analyses them itself; see them in the web app",
+			cfg.SystemID, len(sysResult.Repositories), cwd)
+	}
+	return 0, fmt.Errorf("cannot tell which repository of system %d to use: it has %d upload repositories and none has the local path %s. Run the command in the checkout where 'modernpath import' created the repository: its binding names it",
 		cfg.SystemID, len(uploads), cwd)
+}
+
+// noRepositoryError refuses a System with no repository at all, such as one
+// made in the web app. The CLI's only upload of a local tree is import, which
+// makes a new System; no command adds a repository to an existing one.
+func noRepositoryError(systemID int) error {
+	return fmt.Errorf("system %d has no repository. To upload this directory, run 'modernpath import' in this directory: it creates a new System with this directory as its repository", systemID)
 }

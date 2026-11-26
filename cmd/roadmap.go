@@ -181,9 +181,8 @@ In place, it is drafted while an Epic's saved plan takes it or links a test to
 it, and built once that Epic is DONE. Drafted includes built.
 
 --readiness asks the server for each Modernization Release's readiness
-(readiness=true) and prints it after the Release's context lines, in the
-words of the Release page's Modernization panel, counted the way the
-Heartbeat counts them:
+(readiness=true) and prints it after the Release's context lines, counted
+the way the Heartbeat counts them:
 - Proved as agreed: how many of the kept or changed requirements runs
   captured after the change prove at least at their agreed level, with the
   percent. Before the reference revision is set the line says "Proof is read
@@ -197,10 +196,10 @@ Heartbeat counts them:
 - One line with how many are built, their Epic complete; how many kept or
   changed user requirements a domain expert accepted; and what the ledger
   misses: how many legacy files with behaviour (a screen, an interface or
-  stored data) no requirement traces, and in which contexts, or that the
-  legacy system has not been analysed yet. Every such file follows by path
-  and role ("no role" when its analysis gave none) under its context, then
-  those not placed in a context.
+  stored data) no requirement traces, and in which contexts, or, while the
+  files cannot be read, the read's message, which says why. Every such file
+  follows by path and role ("no role" when its analysis gave none) under its
+  context, then those not placed in a context.
 - The latest replays: how many of the replays with a captured result match
   in their newest capture and how many changed since the capture before,
   then each changed replay with both outcomes, commits and dates, each replay
@@ -298,7 +297,10 @@ its requirement id when it names no legacy requirement of the Release, and the
 reason; nothing is written. A held row cannot change, be cleared or move to
 another Initiative while an approved Epic relies on its decision or a written
 modernizes trace's new requirement modernizes it; the command prints a
-sentence that says what holds it, who approved that and who can act.
+sentence that says what holds it, who approved that and who can act. A row
+with move: true cannot take a decision of an Initiative under a closed
+Modernization Release, also when the row is held; that decision stays with
+the closed Release.
 'roadmap selection' writes the legacy requirements to decide.
 
 An archive_line of an Initiative that a later part continues is refused with
@@ -827,13 +829,17 @@ func roadmapLegacyRequirements(count int) string {
 
 // writeRoadmapReadiness prints, with --readiness, a Modernization Release's
 // readiness (Epic 338, D4) after the lines writeRoadmapModernization prints,
-// in the words of the Release page's Modernization panel: the four figures,
-// counted the way the Heartbeat counts them; one line with built, accepted
-// and what the ledger misses; every file the ledger misses under its context,
-// then those not placed in a context; and the latest replays. A Release whose
-// legacy system was deleted, which the server serves with a null
-// legacy_system_id and none of the readiness keys, prints one sentence. A
-// Delivery Release, or a read without the readiness, prints nothing.
+// counted the way the Heartbeat counts them: Proved as agreed with its
+// percent, or the sentence while proof waits for the reference revision;
+// Proved below the agreed level (Epic 459); Drafted, not proved yet, Not
+// drafted yet and Undecided with the dropped count; one line with built,
+// accepted and what the ledger misses, or the read's message while it cannot
+// list the files; every file the ledger misses under its context, then those
+// not placed in a context; the latest replays; and the Next step while the
+// reference revision is not chosen (Epic 460). A Release whose legacy system
+// was deleted, which the server serves with a null legacy_system_id and none
+// of the readiness keys, prints one sentence. A Delivery Release, or a read
+// without the readiness, prints nothing.
 func writeRoadmapReadiness(cmd *cobra.Command, release map[string]any, indent string) {
 	if str(release, "release_type") != "modernization" {
 		return
