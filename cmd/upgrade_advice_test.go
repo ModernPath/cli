@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,9 @@ import (
 )
 
 func TestReleasedBuildUpgradeAdviceUsesItsPlatform(t *testing.T) {
+	// A binary outside every folder the install rules recognize keeps the
+	// advice by operating system (Epic 422).
+	ucSwap(t, &runningBinaryPath, func() (string, error) { return "/opt/elsewhere/bin/modernpath", nil })
 	for _, tc := range []struct{ goos, primary, alternative string }{
 		{"darwin", "brew update && brew upgrade modernpath", "scripts/install.sh"},
 		{"linux", "brew update && brew upgrade modernpath", "scripts/install.sh"},
@@ -36,10 +40,12 @@ func TestPrepareHumanReportShowsObservedLatestRelease(t *testing.T) {
 	if err := prepareCmd.Flags().Set("json", "false"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writePrepare(prepareCmd, prepareReport{CLIVersion: "0.20.0", LatestCLI: "0.21.0"}); err != nil {
+	// The CLI: line comes from the release state (Epic 422).
+	report := prepareReport{CLIVersion: "0.20.0", LatestCLI: "0.21.0", CLIRelease: &cliReleaseReport{State: "newer", Latest: "0.21.0", CheckedAt: "2026-11-10T14:00:00Z"}}
+	if err := writePrepare(prepareCmd, report); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "latest release: 0.21.0") {
+	if !strings.Contains(out.String(), "latest release: 0.21.0; upgrade available") {
 		t.Fatalf("human report hides the live release: %s", out.String())
 	}
 }
@@ -82,8 +88,9 @@ func TestLatestReleaseReadIsBoundedAndTruthful(t *testing.T) {
 			old := releaseLookupURL
 			releaseLookupURL = srv.URL
 			defer func() { releaseLookupURL = old }()
-			if got := latestPublishedRelease(); got != tc.want {
-				t.Fatalf("latest = %q, want %q", got, tc.want)
+			got, err := latestPublishedRelease(context.Background())
+			if got != tc.want || (err == nil) != (tc.want != "") {
+				t.Fatalf("latest = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}

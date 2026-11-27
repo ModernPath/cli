@@ -605,6 +605,50 @@ needs no server change.
   `--status stale` or `--status all` asks for stale traces; each row then
   shows its status. The read of a whole type leaves out an active trace when
   no entity of the type at its ends exists in the System.
+- The CLI tells you when a newer CLI release is available and how to upgrade
+  (Epic 422). In a terminal, commands end with one notice about once a day for
+  each newer release, for example `⚠ modernpath 0.27.1 is available (you have
+  0.26.0). Upgrade: brew update && brew upgrade modernpath`. The command matches
+  a Homebrew, Scoop, install-script or PowerShell-installer install when the
+  CLI can see it from the path of its own binary. Otherwise the notice points
+  to `modernpath prepare`, which lists the commands.
+- In a terminal, `modernpath --version` looks up the latest release on every
+  run, for at most one second. After its unchanged first line it prints the
+  notice, `This is the latest release.`, `No newer release is available.` or
+  `Couldn't check for a newer release.`
+- `modernpath prepare` names the release state on its `CLI:` line instead of
+  `(latest release: unknown)`: a local build, a failed lookup or the update
+  check off. The JSON report adds a `cli_release` object with `state`,
+  `latest`, `checked_at` and `reason`, and keeps `cli_version` and
+  `latest_cli`. `prepare` now also looks up, and lists the upgrade command
+  first, when no connected repository is found or the configuration can't be
+  read. After a failed lookup, a release cache under 4 hours old that shows a
+  newer release still makes `prepare` list the upgrade and exit non-zero, and
+  its `CLI:` line says that the lookup failed. `prepare` now waits up to 3
+  seconds for its lookup, instead of one second, and runs its other checks in
+  the meantime.
+- The CLI keeps the latest release in `release-latest.json`, a 4-hour cache in
+  a `modernpath` folder under your user cache folder, with
+  `release-notice.json` and `release-attempt.json` beside it. When the cache
+  has expired, a command in a terminal starts a background lookup and goes on
+  without waiting for it. So ordinary commands in a terminal now contact
+  `api.github.com`, which only `prepare` did before. A lookup that a command
+  cancels when it ends can still count toward GitHub's limit for requests
+  without a credential. If its request had already gone out, the CLI records
+  the cut-off, and the next command that starts a background lookup waits up
+  to 3 seconds for its own lookup after its output, so that this lookup can
+  refresh the cache. After a failed background lookup, no new one starts for
+  an hour.
+- Set `MODERNPATH_NO_UPDATE_CHECK=1` to turn the update check off, for example
+  on a network that restricts outbound traffic or when your team pins a CLI
+  version. When `CI` is set to a value such as `true` or `1`, as most CI
+  services do, the check is off too, and `prepare` reports it as off. No notice
+  or background lookup appears when stdout or stderr is not a terminal, with
+  `--json` and in hook runs. Runs with `--offline` and `reverse-engineer check`
+  start no background lookup.
+- The `prepare` and root command help describe the update check. Run
+  `modernpath install` after upgrading to refresh
+  `.modernpath/cli-reference.md`.
 
 ## v0.28.0 - Analysis preparation and team collaboration
 

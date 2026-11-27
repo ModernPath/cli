@@ -236,16 +236,17 @@ for supported coding agents. Use `modernpath install --check` to inspect drift
 and `modernpath hooks status` to inspect hook configuration.
 
 `modernpath prepare` reports the signed-in actor, bound System access, CLI
-version, process-kit drift, local documentation export, live document edits and
-analysis status, then lists useful next commands. `--json` emits the same
-bounded report. The
-command exits non-zero when authentication, System access, kit compatibility
-or the document check needs attention; JSON still contains the report.
+version and release status, process-kit drift, local documentation export, live
+document edits and analysis status, then lists useful next commands. `--json`
+emits the same bounded report. The command exits non-zero when authentication,
+System access, kit compatibility or the document check needs attention, or when
+a newer CLI release exists; JSON still contains the report.
 It checks the stored credential locally and verifies it with one System read.
 It does not automatically refresh an expiring credential. On a released build,
-it checks the latest published CLI release through a public GitHub GET bounded
-at one second. An unavailable lookup leaves the latest version unknown; local
-builds do not compare themselves with releases. A live document edit newer than the
+it looks up the latest published CLI release on every run through a public
+GitHub GET, as [Update check](#update-check) describes, and waits up to 3
+seconds for the answer while it runs its other checks. Local builds do not
+compare themselves with releases. A live document edit newer than the
 export generation time means `modernpath docs sync` is useful. The check follows
 all metadata pages until a newer edit or the last page, with a two-second timeout
 per request. A failed request or repeated cursor leaves the check unavailable
@@ -255,13 +256,14 @@ deleted or other exported data may have changed. `prepare` does not sign in,
 change the System binding, sync, install, upgrade or start analysis. It does
 not select an Epic or grant delivery approval.
 
-If a newer release is confirmed, `prepare` lists the platform's upgrade
-command before `modernpath install` and `modernpath install --check`, even when
-the installed kit matches the running binary. When kit drift exists but the
-release lookup is unavailable, it asks you to check the release channel first.
-A local build points to the source build script when the checkout is present.
-The advice follows the operating system, not the selected server environment;
-it does not guess whether Homebrew, Scoop or an install script was used.
+When a newer CLI release exists, `prepare` lists the upgrade command first,
+before `modernpath install` and `modernpath install --check`, even when the
+installed kit matches the running binary. It also lists it first when it stops
+early because no connected repository is found or the configuration can't be
+read. When the kit has drifted and the latest release is unknown or the update
+check is off, it asks you to check your CLI release channel first. A local
+build points to the source build script when the checkout is present.
+[Update check](#update-check) describes how the CLI picks the upgrade command.
 
 Hook installation and removal clean up obsolete ModernPath entries while
 preserving project hooks. `modernpath hooks doctor` reports any remaining
@@ -290,6 +292,100 @@ With Scoop:
 ```powershell
 scoop update modernpath
 ```
+
+#### Update check
+
+The CLI checks whether a newer CLI release exists on GitHub (ModernPath/cli)
+and tells you how to upgrade. A CLI release is a published version of the
+command-line tool, not a Release on the Roadmap.
+
+On every run, `modernpath prepare` waits up to 3 seconds for its lookup of the
+latest CLI release. It runs its other checks in the meantime, so it takes
+longer only when GitHub takes longer to answer than those checks. Its `CLI:`
+line and the `cli_release` object of `prepare --json` name the release state:
+
+| `CLI:` line | `cli_release` |
+|---|---|
+| `latest release: 0.27.1; upgrade available` | `state` is `newer` |
+| `latest release: 0.27.1; up to date` | `state` is `current`, also when the running release is above the latest one |
+| `local build; update check not used` | `state` is `local_build`: a local build looks nothing up |
+| `latest release unknown: the lookup failed` | `state` is `unknown`, with `reason` `lookup_failed` |
+| `latest release: 0.27.1, found 2026-11-11T14:00Z; upgrade available; this lookup failed` | `state` is `newer`, with `reason` `lookup_failed`: the lookup failed, and the release cache, less than 4 hours old, shows a newer release |
+| `update check off: CI is set` | `state` is `off`, with `reason` `ci` |
+| `update check off: MODERNPATH_NO_UPDATE_CHECK is set` | `state` is `off`, with `reason` `opt_out` |
+
+In the states `newer` and `current`, `cli_release` also has `latest` and
+`checked_at`, the time of the lookup the state comes from. `latest_cli` holds
+the latest release in those two states and `unknown` in the others. `prepare`
+names the state also when no connected repository is found. A failed lookup
+prints no error and by itself changes no exit code, and `prepare` never reports
+`up to date` without a successful lookup.
+
+The CLI picks the upgrade command from the resolved path of its own binary:
+
+- under a `Cellar/modernpath/` folder (Homebrew), it is
+  `brew update && brew upgrade modernpath`;
+- under a `scoop/apps/modernpath/` folder (Scoop), in any letter case, it is
+  `scoop update modernpath`;
+- for `modernpath` in `~/.local/bin`, the install script's default folder, it
+  runs the install script again:
+  `curl -fsSL https://raw.githubusercontent.com/ModernPath/cli/main/scripts/install.sh | bash`;
+- for `modernpath.exe` in `%LOCALAPPDATA%\Programs\modernpath`, the PowerShell
+  installer's default folder, it runs that installer again:
+  `irm https://raw.githubusercontent.com/ModernPath/cli/main/scripts/install.ps1 | iex`.
+
+A default folder that is a symbolic link still counts as that folder: with
+`~/.local/bin` linked to `~/bin`, the advice is still the install script.
+
+For any other path, `prepare` lists the Homebrew command on macOS and Linux, or
+the Scoop command on Windows, with the official installer as the alternative.
+
+When stdout and stderr are both terminals, other commands end with one update
+notice on stderr when the release cache shows a newer CLI release:
+
+```text
+⚠ modernpath 0.27.1 is available (you have 0.26.0). Upgrade: brew update && brew upgrade modernpath
+```
+
+When the CLI can't tell how it was installed, the notice ends with `Upgrade it
+the way you installed it; modernpath prepare lists the commands.` instead. The
+notice appears about once in 24 hours for each user and CLI release. Commands
+that end at the same moment can each show it.
+
+The notice reads the release cache, `release-latest.json` in a `modernpath`
+folder under the user's cache folder: `~/Library/Caches` on macOS,
+`$XDG_CACHE_HOME` or `~/.cache` on Linux and `%LocalAppData%` on Windows. Every
+successful lookup writes it, and it stays fresh for 4 hours. When it has
+expired, a command starts a background lookup and goes on without waiting for
+it. If the command ends first, the CLI cancels the lookup. If the lookup had
+already sent its request, the CLI records it as cut off. Then the next command
+that starts a background lookup waits for its own lookup after its output, up
+to 3 seconds after that lookup started, so that this lookup can refresh the
+cache.
+After a failed background lookup, no new one starts for an hour.
+`release-notice.json` and `release-attempt.json` in the same folder record the
+last notice, the last cut-off and the last failed lookup. The CLI writes
+nothing about releases into the repository.
+
+In a terminal, `modernpath --version` prints `modernpath version <version>` on
+stdout. Then it looks up the latest release, on every run and for at most one
+second, and prints one line on stderr: the update notice,
+`This is the latest release.`, `No newer release is available.` when the
+running release is above the latest one, or
+`Couldn't check for a newer release.` When stdout or stderr is not a terminal,
+`--version` prints only its first line and looks nothing up.
+`modernpath --help --version` prints help and looks nothing up.
+
+The CLI prints no notice or `--version` status line, and starts no background
+lookup, when stdout or stderr is not a terminal, with `--json` (also written
+`--json=1` or `--json=true`) or `--format json`, and in hook runs. Runs with
+`--offline` and runs of `modernpath reverse-engineer check` start no background
+lookup, but can show the notice from a fresh cache. Set to any value except
+empty, `0`, `false`, `no` or `off`, ignoring letter case and surrounding spaces, `CI` and
+`MODERNPATH_NO_UPDATE_CHECK` turn every release lookup and update notice off,
+and `prepare` reports the update check as off. An agent tool that runs commands
+in a terminal also sees the notice. If your team pins a CLI version, or an
+agent should not see the notice, set `MODERNPATH_NO_UPDATE_CHECK=1`.
 
 #### After upgrading
 

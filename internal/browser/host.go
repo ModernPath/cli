@@ -4,7 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
+
+	"github.com/modernpath/cli/internal/envflag"
 )
 
 // Host is what the loopback pre-check knows about the process's
@@ -67,7 +68,7 @@ func LoopbackUnavailable(h Host) string {
 	if env("SSH_CONNECTION") != "" || env("SSH_TTY") != "" || env("SSH_CLIENT") != "" {
 		return "this is an SSH session, so a browser on your machine cannot reach a listener here"
 	}
-	if envTrue(env("CI")) {
+	if envflag.On(env("CI")) {
 		return "this is a CI shell (CI is set)"
 	}
 	if env("container") != "" || env("KUBERNETES_SERVICE_HOST") != "" || exists("/.dockerenv") || exists("/run/.containerenv") {
@@ -91,16 +92,4 @@ func LoopbackUnavailable(h Host) string {
 	default:
 		return "the CLI has no browser launcher for " + goos
 	}
-}
-
-// envTrue reads a flag-shaped variable the way ci-info and the tools built on
-// it do: set to anything but an explicit negation means on. A shell profile
-// that exports CI=false to switch other tools out of CI mode is not a CI
-// shell.
-func envTrue(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "0", "false", "no", "off":
-		return false
-	}
-	return true
 }

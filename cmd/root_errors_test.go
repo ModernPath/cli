@@ -107,12 +107,14 @@ func TestPrintOnlyErrorStillFailsAndPreservesLimitingExit(t *testing.T) {
 }
 
 func TestRequestsJSONOutput(t *testing.T) {
-	for _, args := range [][]string{{"--json"}, {"--json=true"}, {"--format=json"}, {"--format", "json"}} {
+	// --json takes every value cobra accepts for a boolean flag (Epic 422,
+	// criterion 47c073a2), so --json=1 suppresses the update check as --json does.
+	for _, args := range [][]string{{"--json"}, {"--json=true"}, {"--json=1"}, {"--json=TRUE"}, {"--json=True"}, {"--json=t"}, {"--format=json"}, {"--format", "json"}} {
 		if !requestsJSONOutput(args) {
 			t.Errorf("requestsJSONOutput(%v) = false", args)
 		}
 	}
-	for _, args := range [][]string{{"--json=false"}, {"--format=text"}, {"--jsonish"}} {
+	for _, args := range [][]string{{"--json=false"}, {"--json=0"}, {"--json=F"}, {"--json=bogus"}, {"--format=text"}, {"--jsonish"}} {
 		if requestsJSONOutput(args) {
 			t.Errorf("requestsJSONOutput(%v) = true", args)
 		}

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modernpath/cli/internal/config"
@@ -19,9 +20,25 @@ func TestPrepareReportsReadOnlySessionAndNextSteps(t *testing.T) {
 	oldVersion := Version
 	Version = "0.20.0"
 	defer func() { Version = oldVersion }()
+	// Epic 422: TestMain keeps CI and MODERNPATH_NO_UPDATE_CHECK out of the
+	// environment. This test's successful lookup writes the release cache, so
+	// it gets a cache folder of its own, and a binary path outside every
+	// recognized install keeps the advice by operating system.
+	ucOwnCacheFolder(t)
+	ucSwap(t, &runningBinaryPath, func() (string, error) { return "/opt/elsewhere/bin/modernpath", nil })
+	// The release lookup and the System list reach this server at the same
+	// time (Epic 422, decision 23), so the request log takes a lock.
+	var mu sync.Mutex
 	var methods []string
+	requests := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), methods...)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		methods = append(methods, r.Method+" "+r.URL.Path)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/releases/latest":
@@ -73,13 +90,17 @@ func TestPrepareReportsReadOnlySessionAndNextSteps(t *testing.T) {
 		t.Fatalf("invalid JSON: %v: %s", err, out.String())
 	}
 	if report["docs_state"] != "newer_edits" {
-		t.Fatalf("docs_state = %v; report=%s; requests=%v", report["docs_state"], out.String(), methods)
+		t.Fatalf("docs_state = %v; report=%s; requests=%v", report["docs_state"], out.String(), requests())
 	}
 	if report["actor"] != "alice@example.test" || report["system_id"] != float64(17) {
 		t.Fatalf("identity missing: %v", report)
 	}
 	if report["latest_cli"] != "0.21.0" {
 		t.Fatalf("released build must read latest release: %v", report["latest_cli"])
+	}
+	release, _ := report["cli_release"].(map[string]any)
+	if release == nil || release["state"] != "newer" || release["latest"] != "0.21.0" || release["checked_at"] == nil || release["reason"] != nil {
+		t.Fatalf("cli_release must name the newer release and its check time: %v", report["cli_release"])
 	}
 	if report["session_detail"] != "credential accepted by the server" {
 		t.Fatalf("online verification must replace the local-only detail: %v", report["session_detail"])
@@ -91,9 +112,10 @@ func TestPrepareReportsReadOnlySessionAndNextSteps(t *testing.T) {
 	if steps[0] != "brew update && brew upgrade modernpath" || steps[2] != "modernpath install" {
 		t.Fatalf("released build must upgrade before install: %v", steps)
 	}
-	for _, method := range methods {
+	made := requests()
+	for _, method := range made {
 		if !strings.HasPrefix(method, "GET ") {
-			t.Fatalf("prepare made a write request: %v", methods)
+			t.Fatalf("prepare made a write request: %v", made)
 		}
 	}
 }
