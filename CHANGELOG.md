@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `roadmap open-for-change --initiative <id>` or `--release <id>` with
+  `--reason <text>` opens a locked planning context for change, as Open for
+  change on the Initiative's page or the Release page does, and prints the
+  Initiatives whose agreement reopens and the approved Epics that read it;
+  `--json` writes the server's answer. Neither or both of `--initiative` and
+  `--release`, or a blank reason, are refused before anything is sent; a
+  server refusal (`planning_context_not_locked`, `release_closed`,
+  `not_found`) prints its code and exits non-zero (SR-5102). The CLI guide
+  and the help of `roadmap` say so.
+- `roadmap apply --dry-run --json` exits with an error when the server lists
+  errors for the plan, as the dry run without `--json` and the apply do; the
+  JSON is still written. Before, it exited 0, so an agent reading the exit
+  code took a refused plan for a passing one (SR-5102).
 - `roadmap apply` prints the server's reason for a 409 other than a reused
   request id: an `approved_epic_placement_locked` refusal now names its code,
   the operation, why the approved basis would change and the server's

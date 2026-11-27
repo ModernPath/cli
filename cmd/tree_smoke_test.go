@@ -421,6 +421,7 @@ var leafDispositions = map[string]disposition{
 	"roadmap recording":                 {kind: dispExecute, args: []string{"roadmap", "recording", "--file", "-", "--json"}},
 	"roadmap proof":                     {kind: dispExecute, args: []string{"roadmap", "proof", "--initiative", "11111111-1111-4111-8111-111111111111", "--json"}},
 	"roadmap accept-lower-level":        {kind: dispExecute, args: []string{"roadmap", "accept-lower-level", "--file", "-", "--agent", "claude-code", "--json"}},
+	"roadmap open-for-change":           {kind: dispExecute, args: []string{"roadmap", "open-for-change", "--release", "7", "--reason", "The provider changed its API", "--json"}},
 	"ask":                               {kind: dispExecute, args: []string{"ask", "smoke question"}},
 	"auth status":                       {kind: dispExecute},
 	"context":                           {kind: dispExecute, args: []string{"context", "smoke query"}},

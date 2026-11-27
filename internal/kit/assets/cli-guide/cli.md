@@ -1907,6 +1907,41 @@ file's: read the proof again), `proof_not_below`, `not_found`, and
 `subscription_read_only` in a read-only workspace. `--json` writes the
 server's answer, the Initiative's proof entry after the write.
 
+### Open a locked planning context for change
+
+```sh
+modernpath roadmap open-for-change --initiative <initiative-id> --reason "<why>"
+modernpath roadmap open-for-change --release <release-id> --reason "<why>" --json
+```
+
+An Epic's approval or the business owner's agreement of the Now plan locks the
+planning context of an Initiative and of its Release. While it is locked, a
+changed value is refused with `planning_context_locked`, by the pages and by
+`roadmap apply`, its dry run included; the stored value sent again passes.
+`roadmap open-for-change` opens it, as Open for change on the Initiative's page
+or the Release page does. Any member of the workspace may open it; an agent
+runs the command only on a person's word, with the person's reason. The
+opening is recorded with the reason and the signed-in person, and the next
+agreement of a Now plan that holds the planning context locks it again.
+
+Give exactly one of `--initiative` and `--release`, and a reason that is not
+blank; otherwise nothing is sent. The command prints that the planning context
+is open, who opened it and why, the Initiatives whose agreement reopens and the
+approved Epics that read it:
+
+```text
+The planning context of Initiative <initiative-id> is open for change.
+Opened by Pia Planner at 2026-11-27T10:00:00Z: The provider changed its API
+Initiatives whose agreement reopens: Card wallet (<initiative-id>)
+Approved Epics that read it: #42 Pay with a wallet
+```
+
+A refusal prints the server's code and the command exits non-zero:
+`planning_context_not_locked` (it is open already), `release_closed` (the
+Release is released or archived), `reason_required`, and `not_found` when the
+bound System, the Initiative or the Release is not found. `--json` writes the
+server's answer, the lock state after the opening.
+
 ### Epic gates and human approvals
 
 Plans and their decisions live in the server process store. The four Epic gate
@@ -2436,7 +2471,7 @@ phase-to-command map of the delivery loop and the refusal glossary into
 | Source and analysis | `import`, `source`, `analysis`, `scan`, `github` |
 | requirements | `requirements create`, `requirements update`, `requirements list`, `requirements search`, `requirements get`, `requirements obsolete`, `requirements set-context`, `requirements contexts` |
 | Epic records | `epics list`, `epics get`, `epics create`, `epics update`, `epics search` |
-| Roadmap | `roadmap show`, `roadmap verify`, `roadmap status-diagnostics`, `roadmap selection`, `roadmap apply`, `roadmap recording`, `roadmap proof` |
+| Roadmap | `roadmap show`, `roadmap verify`, `roadmap status-diagnostics`, `roadmap selection`, `roadmap apply`, `roadmap recording`, `roadmap proof`, `roadmap accept-lower-level`, `roadmap open-for-change` |
 | Epic plans and their history | `epics plan show/save/approve-implementation/submit-review/approve-completion/return-to-implementation/history`, `epics record-merge` |
 | Requirement traces and test records | `traces list`, `test-cases list/get/create/update` |
 | Evidence observations | `evidence record/latest/runs` |

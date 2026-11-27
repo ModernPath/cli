@@ -350,6 +350,31 @@ func TestRoadmapApplyDryRunSendsDryRunAndPrintsEachSummary(t *testing.T) {
 	}
 }
 
+// SR-5102: a dry run whose plan the server refuses exits with an error under
+// --json as without it, so an agent reading the exit code sees the refusal the
+// apply would give; the JSON is still written.
+func TestRoadmapApplyDryRunJSONExitsWithAnErrorWhenThePlanHasErrors(t *testing.T) {
+	refused := `{"index":1,"op":"update_line","reason":"planning_context_locked"}`
+	server, _ := roadmapServer(t, http.StatusOK, `{"data":{"operations":[{"index":1,"op":"update_line","summary":"Update initiative","release":null}],"errors":[`+refused+`],"dry_run":true}}`)
+	cobraWorkspace(t, server, 1)
+	plan := writeRoadmapPlan(t, "plan.json", roadmapPlanFile)
+
+	out, err := runRoot(t, "roadmap", "apply", "--file", plan, "--dry-run", "--json")
+	if err == nil || !strings.Contains(err.Error(), "1 error") {
+		t.Fatalf("roadmap apply --dry-run --json: err = %v; want the plan's 1 error\n%s", err, out)
+	}
+	if !strings.Contains(out, `"planning_context_locked"`) {
+		t.Errorf("--json output lacks the server's errors:\n%s", out)
+	}
+
+	server, _ = roadmapServer(t, http.StatusOK, `{"data":{"operations":[{"index":1,"op":"update_line","summary":"Update initiative","release":null}],"errors":[],"dry_run":true}}`)
+	cobraWorkspace(t, server, 1)
+	plan = writeRoadmapPlan(t, "plan.json", roadmapPlanFile)
+	if out, err := runRoot(t, "roadmap", "apply", "--file", plan, "--dry-run", "--json"); err != nil {
+		t.Fatalf("a clean dry run under --json: %v\n%s", err, out)
+	}
+}
+
 func TestRoadmapCommandsRefuseWithoutABoundSystem(t *testing.T) {
 	for _, args := range [][]string{
 		{"roadmap", "show"},
@@ -810,4 +835,135 @@ func TestH3_RoadmapShowCountsAnInitiativesEpicsInWords(t *testing.T) {
 			t.Errorf("the line of Points for every order = %q; want no Epic", got)
 		}
 	})
+}
+
+// SR-5102, criterion 58ff1d62: `roadmap open-for-change` posts the reason to
+// the Initiative's or the Release's Open for change route and prints that the
+// planning context is open, the Initiatives whose agreement reopens and the
+// approved Epics that read it, as the server returns them; --json writes the
+// server's answer. The tests drive the root command, so before the command
+// exists they build and fail on their assertions.
+const roadmapOpenedReply = `{"data":{"locked_at":null,"locked_by":null,
+"opened":{"at":"2026-11-27T10:00:00Z","by":{"id":5,"name":"Pia Planner"},"reason":"The provider changed its API"},
+"reopens":[{"id":"11111111-1111-4111-8111-111111111111","title":"Card wallet"}],
+"epics":[{"id":42,"title":"Pay with a wallet"}]}}`
+
+func TestRoadmapOpenForChangePostsTheReasonAndPrintsWhatItReaches(t *testing.T) {
+	line := "11111111-1111-4111-8111-111111111111"
+	for name, c := range map[string]struct {
+		args []string
+		path string
+		what string
+	}{
+		"initiative": {[]string{"--initiative", line}, "/api/roadmap/lines/" + line + "/planning-context/open-for-change", "Initiative " + line},
+		"release":    {[]string{"--release", "7"}, "/api/compliance/releases/7/planning-context/open-for-change", "Release 7"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server, seen := roadmapServer(t, http.StatusOK, roadmapOpenedReply)
+			cobraWorkspace(t, server, 1)
+
+			args := append([]string{"roadmap", "open-for-change"}, c.args...)
+			out, err := runRoot(t, append(args, "--reason", "The provider changed its API")...)
+			if err != nil {
+				t.Fatalf("roadmap open-for-change: %v\n%s", err, out)
+			}
+			got := requireOneRoadmapRequest(t, seen, http.MethodPost, c.path)
+			if got.body["reason"] != "The provider changed its API" {
+				t.Errorf("reason = %#v; want the --reason text", got.body["reason"])
+			}
+			if got.body["system_id"] != float64(1) {
+				t.Errorf("system_id = %#v; want the bound System 1", got.body["system_id"])
+			}
+			for _, want := range []string{c.what, "open for change", "Pia Planner", "The provider changed its API",
+				"Initiatives whose agreement reopens", "Card wallet", "Approved Epics that read it", "#42", "Pay with a wallet"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+
+	t.Run("none reached", func(t *testing.T) {
+		server, _ := roadmapServer(t, http.StatusOK, `{"data":{"locked_at":null,"opened":{"at":"2026-11-27T10:00:00Z","by":{"id":5,"name":"Pia Planner"},"reason":"r"},"reopens":[],"epics":[]}}`)
+		cobraWorkspace(t, server, 1)
+		out, err := runRoot(t, "roadmap", "open-for-change", "--release", "7", "--reason", "r")
+		if err != nil {
+			t.Fatalf("roadmap open-for-change: %v\n%s", err, out)
+		}
+		for _, want := range []string{"Initiatives whose agreement reopens: none", "Approved Epics that read it: none"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output lacks %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		server, _ := roadmapServer(t, http.StatusOK, roadmapOpenedReply)
+		cobraWorkspace(t, server, 1)
+		out, err := runRoot(t, "roadmap", "open-for-change", "--initiative", line, "--reason", "r", "--json")
+		if err != nil {
+			t.Fatalf("roadmap open-for-change --json: %v\n%s", err, out)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+			t.Fatalf("--json output is not JSON: %v\n%s", err, out)
+		}
+		if epics, _ := decoded["epics"].([]any); len(epics) != 1 {
+			t.Errorf("--json lacks the server's epics: %s", out)
+		}
+	})
+}
+
+// SR-5102, criterion 54d835f3: neither or both of --initiative and --release,
+// or a blank reason, are refused before any HTTP call; a server refusal is
+// printed in the server's words and the command exits with an error.
+func TestRoadmapOpenForChangeRefusesBeforeAnyRequestAndPrintsTheServersRefusal(t *testing.T) {
+	line := "11111111-1111-4111-8111-111111111111"
+	for name, c := range map[string]struct {
+		args []string
+		want string
+	}{
+		"neither":      {[]string{"--reason", "r"}, "exactly one of --initiative <id> and --release <id>"},
+		"both":         {[]string{"--initiative", line, "--release", "7", "--reason", "r"}, "exactly one of --initiative <id> and --release <id>"},
+		"no reason":    {[]string{"--initiative", line}, "needs --reason"},
+		"blank reason": {[]string{"--release", "7", "--reason", "   "}, "needs --reason"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server, seen := roadmapServer(t, http.StatusOK, roadmapOpenedReply)
+			cobraWorkspace(t, server, 1)
+			_, err := runRoot(t, append([]string{"roadmap", "open-for-change"}, c.args...)...)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v; want it to say %q", err, c.want)
+			}
+			if len(*seen) != 0 {
+				t.Errorf("requests = %#v; want none", *seen)
+			}
+		})
+	}
+
+	for name, c := range map[string]struct {
+		status int
+		body   string
+		want   []string
+	}{
+		"release_closed":              {http.StatusConflict, `{"error":"release_closed"}`, []string{"409", "release_closed"}},
+		"not_found":                   {http.StatusNotFound, `{"error":"not_found"}`, []string{"404", "not_found"}},
+		"planning_context_not_locked": {http.StatusConflict, `{"error":"planning_context_not_locked"}`, []string{"409", "planning_context_not_locked"}},
+		"reason_required":             {http.StatusUnprocessableEntity, `{"error":"reason_required"}`, []string{"422", "reason_required"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server, seen := roadmapServer(t, c.status, c.body)
+			cobraWorkspace(t, server, 1)
+			_, err := runRoot(t, "roadmap", "open-for-change", "--release", "7", "--reason", "r")
+			if err == nil {
+				t.Fatal("open-for-change succeeded; want the server's refusal")
+			}
+			requireOneRoadmapRequest(t, seen, http.MethodPost, "/api/compliance/releases/7/planning-context/open-for-change")
+			for _, want := range c.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error lacks %q: %v", want, err)
+				}
+			}
+		})
+	}
 }

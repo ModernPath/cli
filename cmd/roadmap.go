@@ -40,8 +40,9 @@ its break test to the replay, from a file; 'roadmap proof' prints the Proof tab
 of an Initiative: the agreed level of proof of each kept or changed legacy
 requirement and the level it reached; 'roadmap accept-lower-level' records, on
 a person's explicit word, that a requirement stays proved below its agreed
-level.`}
-	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load), newRoadmapRecordingCommand(load), newRoadmapProofCommand(load), newRoadmapAcceptLowerLevelCommand(load), newRoadmapVerifyCommand(load))
+level; 'roadmap open-for-change' opens the locked planning context of an
+Initiative or a Release for change, with a reason.`}
+	parent.AddCommand(newRoadmapShowCommand(load), newRoadmapSelectionCommand(load), newRoadmapApplyCommand(load), newRoadmapStatusDiagnosticsCommand(load), newRoadmapRecordingCommand(load), newRoadmapProofCommand(load), newRoadmapAcceptLowerLevelCommand(load), newRoadmapVerifyCommand(load), newRoadmapOpenForChangeCommand(load))
 	return parent
 }
 
@@ -373,7 +374,15 @@ Example: {"request_id":"intg-selection","operations":[{"op":"set_selection","lin
 				return err
 			}
 			if machine, _ := cmd.Flags().GetBool("json"); machine {
-				return writeCommandJSON(cmd, data)
+				if err := writeCommandJSON(cmd, data); err != nil {
+					return err
+				}
+				// SR-5102: a refused dry run exits with an error under --json
+				// too, as the apply of the same plan would.
+				if errs, _ := data["errors"].([]any); dryRun && len(errs) > 0 {
+					return fmt.Errorf("the plan has %d error(s); nothing was written", len(errs))
+				}
+				return nil
 			}
 			if dryRun {
 				return writeRoadmapDryRun(cmd, data)
