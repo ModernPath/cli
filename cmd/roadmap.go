@@ -256,9 +256,13 @@ func newRoadmapApplyCommand(load func() (*cliEnv, error)) *cobra.Command {
 		Long: `Apply a Roadmap plan from --file (or --file - for stdin) to the bound System, in
 one call and all or nothing, with the checks Chat's plan card runs. The file is
 a JSON object {"request_id": "...", "operations": [...]}: create_release,
-create_line, update_line, reorder, move_epic, archive_line and set_selection,
-with the fields Chat's plan takes, at most 50 operations besides the
-set_selection ones. create_line and update_line
+create_line, update_line, reorder, move_epic, archive_line, link_epic and
+set_selection, with the fields Chat's plan takes, at most 50 operations
+besides the set_selection ones. link_epic {"op": "link_epic", "line_id":
+"<initiative id>", "epic_id": <epic id>} puts an Epic under the Initiative.
+It can move an Epic from another Initiative that covers it through a link
+(not as that Initiative's own Epic), in one write that records the change of
+Initiative. create_line and update_line
 take "context", an Initiative's bounded context: a requirement context code or
 name of the System, or a new one (an empty string on update_line clears it).
 They also take "planning_context", the Initiative's whole planning context:
@@ -357,7 +361,10 @@ Example: {"request_id":"intg-selection","operations":[{"op":"set_selection","lin
 				payload["dry_run"] = true
 			}
 			status, body, err := env.write(http.MethodPost, "/api/v1/systems/"+strconv.Itoa(env.SystemID)+"/roadmap/plan", payload)
-			if err == nil && status == http.StatusConflict {
+			// SR-5099: only a reused request id is the request id's conflict;
+			// every other 409 (approved_epic_placement_locked) prints the
+			// server's refusal.
+			if err == nil && status == http.StatusConflict && str(body, "error") == "idempotency_conflict" {
 				return fmt.Errorf("request id %s was already used for a different plan: nothing was written. "+
 					"Change request_id in the file (or --request-id) to apply this plan", requestID)
 			}
@@ -478,7 +485,18 @@ func roadmapRefusal(body map[string]any) string {
 	// A refused set_selection lists its refused rows on the lines under the
 	// refusal (Epic 332, B3).
 	var rows strings.Builder
-	if errs, ok := body["errors"].([]any); ok {
+	errs, _ := body["errors"].([]any)
+	if len(errs) == 0 {
+		// SR-5099: a refusal without errors (the write's
+		// approved_epic_placement_locked) carries its reason and sentence at
+		// the top.
+		if reason := str(body, "reason"); reason != "" {
+			parts = append(parts, "reason "+reason)
+		}
+		if message := str(body, "message"); message != "" {
+			parts = append(parts, message)
+		}
+	} else {
 		for _, e := range errs {
 			if m, ok := e.(map[string]any); ok {
 				if index, ok := m["index"]; ok && index != nil {
@@ -556,13 +574,18 @@ func roadmapPlanError(m map[string]any) string {
 // roadmapMessageReasons are the reasons whose refusal carries the server's
 // own sentence in message, which names what the person needs: Epic 458 (H1a)'s
 // initiative_continued names the continuation.
-var roadmapMessageReasons = map[string]bool{"initiative_continued": true}
+var roadmapMessageReasons = map[string]bool{"initiative_continued": true, "approved_epic_placement_locked": true}
 
 // roadmapReasonWithMessage is an error's reason, followed by the server's
-// message for a reason that carries one.
+// message for a reason that carries one. SR-5099: the approved-Epic lock
+// also names why the basis would change (placement_reason).
 func roadmapReasonWithMessage(m map[string]any) string {
-	reason := str(m, "reason")
-	if message := str(m, "message"); message != "" && roadmapMessageReasons[reason] {
+	code := str(m, "reason")
+	reason := code
+	if placement := str(m, "placement_reason"); placement != "" {
+		reason += " (" + placement + ")"
+	}
+	if message := str(m, "message"); message != "" && roadmapMessageReasons[code] {
 		return reason + " — " + message
 	}
 	return reason

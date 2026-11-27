@@ -259,6 +259,75 @@ func TestRoadmapApplyNamesTheRequestIDOfAConflict(t *testing.T) {
 	requireOneRoadmapRequest(t, seen, http.MethodPost, "/api/v1/systems/1/roadmap/plan")
 }
 
+// SR-5099, criterion 1e4cb806: a 409 idempotency_conflict names the request
+// id and says how to apply the plan under a new one.
+func TestRoadmapApplyConflictOfARequestIDSaysToChangeIt(t *testing.T) {
+	server, _ := roadmapServer(t, http.StatusConflict, `{"error":"idempotency_conflict","request_id":"batch-7",
+"message":"request id batch-7 was already used for a different plan; use a new request id to apply this one"}`)
+	cobraWorkspace(t, server, 1)
+	plan := writeRoadmapPlan(t, "plan.json", `{"request_id":"batch-7","operations":[{"op":"create_line","horizon":"now","text":"Card wallet, changed"}]}`)
+
+	_, err := runRoot(t, "roadmap", "apply", "--file", plan)
+	if err == nil {
+		t.Fatal("apply succeeded; want the conflict")
+	}
+	for _, want := range []string{"batch-7", "already used", "request_id in the file", "--request-id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+}
+
+// SR-5099, criterion 5b02070e: any other 409, here the approved-Epic lock a
+// link_epic meets, prints the server's code and the reason and message of
+// each returned error, and never says the request id was already used. The
+// first body is the plan check's (validation_error), the second the write's.
+func TestRoadmapApplyPrintsTheServersReasonOfAnotherConflict(t *testing.T) {
+	message := "Card wallet's approved planning basis would change. Return the Epic to planning with an explicit human decision before moving it."
+	epic := `"epic":{"id":42,"title":"Card wallet"},"source_initiative_id":"11111111-1111-4111-8111-111111111111","target_initiative_id":"22222222-2222-4222-8222-222222222222"`
+	bodies := map[string]string{
+		"plan check": `{"error":"approved_epic_placement_locked","index":1,"reason":"planning_context_changed",` + epic + `,"message":"` + message + `",
+"errors":[{"index":1,"op":"link_epic","reason":"approved_epic_placement_locked","code":"approved_epic_placement_locked","placement_reason":"planning_context_changed",` + epic + `,"message":"` + message + `"}]}`,
+		"write": `{"error":"approved_epic_placement_locked","index":1,"reason":"planning_context_changed",` + epic + `,"message":"` + message + `"}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			server, seen := roadmapServer(t, http.StatusConflict, body)
+			cobraWorkspace(t, server, 1)
+			plan := writeRoadmapPlan(t, "plan.json", `{"request_id":"move-wallet","operations":[{"op":"link_epic","line_id":"22222222-2222-4222-8222-222222222222","epic_id":42}]}`)
+
+			_, err := runRoot(t, "roadmap", "apply", "--file", plan)
+			if err == nil {
+				t.Fatal("apply succeeded; want the refusal")
+			}
+			requireOneRoadmapRequest(t, seen, http.MethodPost, "/api/v1/systems/1/roadmap/plan")
+			for _, want := range []string{"approved_epic_placement_locked", "operation 1", "planning_context_changed", message} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error lacks %q: %v", want, err)
+				}
+			}
+			if strings.Contains(err.Error(), "already used") || strings.Contains(err.Error(), "--request-id") {
+				t.Errorf("a conflict other than idempotency_conflict must not blame the request id: %v", err)
+			}
+		})
+	}
+}
+
+// SR-5100, criterion da0b3dba: the help lists link_epic with its fields and
+// says it can move an Epic from another Initiative.
+func TestRoadmapApplyHelpListsLinkEpicAndItsMove(t *testing.T) {
+	out, err := runRoot(t, "roadmap", "apply", "--help")
+	if err != nil {
+		t.Fatalf("roadmap apply --help: %v\n%s", err, out)
+	}
+	flat := strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"link_epic", `"line_id"`, `"epic_id"`, "from another Initiative"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("help lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRoadmapApplyDryRunSendsDryRunAndPrintsEachSummary(t *testing.T) {
 	summary := `Add initiative \"Points for every order\" to Next, context Loyalty (new context)`
 	server, seen := roadmapServer(t, http.StatusOK, `{"data":{"operations":[{"index":1,"op":"create_line","summary":"`+summary+`","release":null}],"errors":[]}}`)

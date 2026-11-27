@@ -1439,6 +1439,11 @@ as the Heartbeat reads it; with no reference revision it has no `proved`,
 sends no parameter and prints none of this.
 
 `roadmap apply` applies a plan file `{"request_id": "...", "operations": [...]}`.
+`link_epic` `{"op": "link_epic", "line_id": "<initiative id>", "epic_id": <epic id>}`
+puts an Epic under an Initiative, and moves it from another Initiative that
+covers it through a link (not as its own Epic) in the same write, recorded as a
+change of Initiative. A refusal prints the server's code and the reason and
+message of each error; only a reused request id prints the request id.
 `create_line` and `update_line` take `planning_context`, the Initiative's whole
 planning context. A write sends four lists, and a list left out is stored
 empty, so `{}` is the empty planning context and on `update_line` clears it:

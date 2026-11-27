@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `roadmap apply` prints the server's reason for a 409 other than a reused
+  request id: an `approved_epic_placement_locked` refusal now names its code,
+  the operation, why the approved basis would change and the server's
+  sentence, instead of saying the request id was already used (SR-5099). A
+  reused request id still names the id and says to change it.
+- A Roadmap plan's `link_epic` moves an Epic from another named Initiative
+  that holds it through a link, in the plan's one write, recorded as a change
+  of Initiative; the dry run says Move. An Epic that is another Initiative's
+  own Epic, or that more than one other Initiative covers, is still refused
+  with `already_on_roadmap` (SR-5100). The help of `roadmap apply` lists
+  `link_epic` with `line_id` and `epic_id`, and the CLI guide says so.
 - `reverse-engineer record` records a new requirement sent with no context, or
   a blank one, and no name without a context, as before Epic 340, and the
   server no longer refuses it with `context_required`; a `context_name` sent
